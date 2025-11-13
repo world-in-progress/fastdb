@@ -44,7 +44,6 @@
 build/
 
 # Testing directories
-swig
 scripts
 node_modules
 

@@ -36,6 +36,7 @@ namespace wx
         layer->enableStringTableU32(m_string_table_u32);
         layer->setExtent(m_extent.minEdge.x, m_extent.minEdge.y, m_extent.maxEdge.x, m_extent.maxEdge.y);
         layer->setGeometryType(m_gt, m_ct, m_aabbox_enable);
+        layer->setDbIndex((int)m_layers.size());
         printf(
 "\nfastdb is creating layer[%s] with last(default) params:\n\
 geometry type:%s, coord format:%s, aabbox:%s\n\

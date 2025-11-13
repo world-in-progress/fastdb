@@ -61,8 +61,8 @@ namespace wx
 #endif
     FastVectorDbFeatureRef
     {
-       u32 ilayer  :16;
-       u32 ifeature:24; 
+        u32 ilayer  :16;
+        u32 ifeature:24; 
     };
 #ifdef MSVC
     #pragma pack(pop)

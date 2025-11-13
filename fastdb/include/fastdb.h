@@ -135,11 +135,11 @@ namespace wx
         FastVectorDbLayerBuild(FastVectorDbBuild* db,const char* name);
        ~FastVectorDbLayerBuild();
         const char* name();
-
         int  addField(const char *name, unsigned ft, double vmin = 0, double vmax = 1.0);
         void setGeometryType(GeometryLikeEnum gt, CoordinateFormatEnum ct, bool aabboxEnabled = false);
         void enableStringTableU32(bool b = true);
         void setExtent(double minx, double miny, double maxx, double maxy);
+        void setDbIndex(int ix);
         void addFeatureBegin();
         void setGeometry(void *data, size_t size, GeometryLikeFormat fmt);
         void setField(unsigned ix, double value);

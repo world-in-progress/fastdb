@@ -28,6 +28,25 @@ set(swig_dir   ${PROJECT_DIR}/swig)
 set(script_dir ${ROOT_DIR}/scripts)
 
 if(USE_SWIG_PYTHON)
+    set(script_dir ${ROOT_DIR}/python/fastdb/core)
+    set(SWIG_GENERATED_DIR ${CMAKE_BINARY_DIR}/swig_generated)
+
+    # Copy SWIG generated files to the build directory
+    add_custom_command(
+        OUTPUT ${SWIG_GENERATED_DIR}/fastdb4py_wrap.cxx 
+            ${SWIG_GENERATED_DIR}/fastdb4py.py
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${SWIG_GENERATED_DIR}
+        COMMAND swig -c++ -python 
+                -I${PROJECT_DIR}/include
+                -I${PROJECT_DIR}/swig
+                -outdir ${SWIG_GENERATED_DIR}
+                -o ${SWIG_GENERATED_DIR}/fastdb4py_wrap.cxx
+                ${PROJECT_DIR}/swig/fastdb4py.i
+        DEPENDS ${PROJECT_DIR}/swig/fastdb4py.i
+                ${PROJECT_DIR}/include/fastdb.h
+                ${PROJECT_DIR}/include/fastdb-geometry-utils.h
+        COMMENT "Generating SWIG Python bindings"
+    )
 
     set(Python3_FIND_VIRTUALENV FIRST)
     find_package(Python3 ${PYTHON_VERSION_STRING}  COMPONENTS Interpreter  Development NumPy)
@@ -39,7 +58,7 @@ if(USE_SWIG_PYTHON)
     add_definitions(-DUSE_SWIG_PYTHON)
     # endif(USE_SWIG_PYTHON)
     # if(USE_SWIG_PYTHON)
-    add_library(fastdb4py SHARED ${PROJECT_DIR}/swig/fastdb4py.cxx)
+    add_library(fastdb4py SHARED ${SWIG_GENERATED_DIR}/fastdb4py_wrap.cxx)
     target_link_libraries(fastdb4py PRIVATE ${PROJECT_NAME})
 
     target_link_options(fastdb4py
@@ -55,9 +74,8 @@ if(USE_SWIG_PYTHON)
     add_custom_command(TARGET fastdb4py POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:fastdb4py>  ${script_dir}/_fastdb4py.${pyd}
         COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:${PROJECT_NAME}>  ${script_dir}/$<TARGET_FILE_NAME:${PROJECT_NAME}>
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${swig_dir}/fastdb4py.py  ${script_dir}/fastdb4py.py
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${swig_dir}/__init__.py  ${script_dir}/__init__.py
-        COMMENT "updating fastdb4py into swig directory"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SWIG_GENERATED_DIR}/fastdb4py.py  ${script_dir}/__init__.py
+        COMMENT "updating fastdb4py into scripts directory"
     )
 
 else()

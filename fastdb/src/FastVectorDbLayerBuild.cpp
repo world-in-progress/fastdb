@@ -78,6 +78,11 @@ namespace wx
     {
         return m_name.c_str();
     }
+    void FastVectorDbLayerBuild::Impl::setDbIndex(int ix)
+    {
+        m_index_in_db=ix;
+        printf("\ncreate feature ref to layer %d",m_index_in_db);
+    }
     int FastVectorDbLayerBuild::Impl::addField(const char *name, unsigned ft, double vmin, double vmax)
     {
         field_desc_ex_t fd;
@@ -639,6 +644,10 @@ string table:%s\n",
         void   FastVectorDbLayerBuild::setExtent(double minx,double miny,double maxx,double maxy)
         {
             impl->setExtent(minx,miny,maxx,maxy);
+        }
+        void   FastVectorDbLayerBuild::setDbIndex(int ix)
+        {
+            impl->setDbIndex(ix);
         }
         void   FastVectorDbLayerBuild::addFeatureBegin()
         {

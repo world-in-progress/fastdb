@@ -45,6 +45,7 @@ namespace wx{
         Impl(FastVectorDbBuild* db,const char* name);
        ~Impl();
         const char* name();
+        void   setDbIndex(int ix);
         int    addField(const char* name,unsigned ft,double vmin,double vmax);
         void   setGeometryType(GeometryLikeEnum gt,CoordinateFormatEnum ct,bool aabboxEnabled);
         void   enableStringTableU32(bool b);
