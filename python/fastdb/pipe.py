@@ -1,11 +1,8 @@
 import weakref
 import warnings
-import inspect
-from typing import Optional
-from pydantic import BaseModel, ConfigDict, PrivateAttr
 from threading import Lock
 from dataclasses import dataclass
-from typing import Dict, Any, Type, TypeVar, get_type_hints, get_origin, get_args
+from typing import Dict, TypeVar, get_type_hints, get_origin, get_args
 
 from . import core
 from .type import OriginFieldType

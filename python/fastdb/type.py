@@ -1,4 +1,3 @@
-from typing import TypeVar
 from enum import unique, IntEnum
 
 # A map of the enum type used in the core fastdb library

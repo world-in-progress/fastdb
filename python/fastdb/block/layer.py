@@ -16,7 +16,7 @@ class Layer(Generic[T]):
     
     @staticmethod
     @contextmanager
-    def editing(layer: 'Layer[T]') -> Generator[core.WxLayerTableBuild, None, None]:
+    def push2(layer: 'Layer[T]') -> Generator[core.WxLayerTableBuild, None, None]:
         """Context manager to push features to the given layer."""
         if layer._db is None or layer._origin is None:
             raise RuntimeError('Layer has not connected to fastdb, not supporting push operation.')

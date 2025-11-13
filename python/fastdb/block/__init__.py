@@ -8,7 +8,7 @@ from typing import List, TypeVar, Type, Any
 from .. import core
 from .layer import Layer
 from ..type import OriginFieldType
-from ..pipe import STR, REF, FeaturePipe, get_all_defns
+from ..pipe import FeaturePipe, get_all_defns
 
 T = TypeVar('T', bound=FeaturePipe)
 
@@ -66,7 +66,7 @@ class Block:
                 layer.add_feature_begin()
                 layer.add_feature_end()
         
-        # Save db to a temporary file and reload
+        # Combine the memory by saving and reloading
         with tempfile.NamedTemporaryFile() as tmp:
             tmp_path = str(Path(tmp.name))
             db.save(tmp_path)
@@ -116,6 +116,8 @@ class Block:
                 raise FileNotFoundError(f"Block '{name}' not found in shared memory.")
         
         # Try to find name layer
+        # For most of the time, name layer should alaways indexed at 0 if exists
+        # But we still iterate through all layers to be safe, and the performance impact is negligible
         layer_count = block._origin.get_layer_count()
         for i in range (layer_count):
             o_layer: core.WxLayerTable = block._origin.get_layer(i)
@@ -161,7 +163,7 @@ class Block:
             layer = new_layer
         
         # Push pipe data to layer
-        with Layer.editing(layer) as l:
+        with Layer.push2(layer) as l:
             for idx, (fn, ft) in enumerate(defns):
                 value = getattr(pipe, fn)
                 if ft == OriginFieldType.u8     \
@@ -202,6 +204,8 @@ class Block:
         """Get feature pipe by name from the block."""
         if self._origin is None:
             raise RuntimeError('Block is empty, cannot get feature.')
+        if not self.fixed:
+            raise RuntimeError('Block still in build mode, cannot get feature.')
         if self._name_layer is None:
             raise RuntimeError('Block has no name layer, cannot get feature by name.')
         
@@ -215,7 +219,6 @@ class Block:
                 ref = nl.get_field_as_ref(1)
                 of = self._origin.tryGetFeature(ref)
                 break
-        nl.rewind()
         if not of:
             return None
         
@@ -244,10 +247,6 @@ class Block:
             raise RuntimeError('Block is empty, cannot share.')
         if isinstance(self._origin, core.WxDatabaseBuild):
             self._combine() # combine first if still in build mode
-        
-        if self._shm:
-            self._shm.close()
-            self._shm = None
         
         # Copy database buffer to shared memory
         chunk = self._origin.buffer()
