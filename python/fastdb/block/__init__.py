@@ -3,7 +3,7 @@ import warnings
 from pathlib import Path
 from dataclasses import dataclass
 from multiprocessing import shared_memory
-from typing import List, TypeVar, Type, Any
+from typing import List, TypeVar, Type, Any, Generic
 
 from .. import core
 from .layer import Layer
@@ -16,10 +16,40 @@ T = TypeVar('T', bound=FeaturePipe)
 class BlockScale:
     pipe_type: Type[FeaturePipe]
     feature_capacity: int
+    name: str = ''
+
+class LayerBuilder(Generic[T]):
+    def __init__(self, pipe_type: Type[T], block: 'Block'):
+        if not issubclass(pipe_type, FeaturePipe):
+            raise TypeError('pipe_type must be a subclass of FeaturePipe.')
+        self._block = block
+        self._pipe_type = pipe_type
+    
+    def __getitem__(self, layer_name: str | Type[T]) -> Layer[T]:
+        if not isinstance(layer_name, str):
+            layer_name = layer_name.__name__
+            if layer_name != self._pipe_type.__name__:
+                raise TypeError('layer_name must match the pipe_type name if you use a pipe type as the layer name.')
+            
+        if layer_name in self._block._layer_map:
+            return self._block._layer_map[layer_name]
+        
+        db = self._block._origin
+        layer_count = db.get_layer_count()
+        for i in range (layer_count):
+            o_layer: core.WxLayerTable = db.get_layer(i)
+            if o_layer.name() == layer_name:
+                layer = Layer[T]()
+                layer.map_from(self._pipe_type, o_layer, db)
+                
+                self._block._layer_map[layer_name] = layer
+                return layer
+        raise KeyError(f'Layer "{layer_name}" not found in block.')
+        
 
 class Block:
     def __init__(self):
-        self._layer_map: dict[str, Layer] = {}
+        self._layer_map: dict[str, Layer | LayerBuilder] = {}
         self._shm: shared_memory.SharedMemory | None = None
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._name_layer: core.WxLayerTable | core.WxLayerTableBuild | None = None
@@ -55,8 +85,10 @@ class Block:
         for scale in scales:
             defns = get_all_defns(scale.pipe_type)
             
+            layer_name = scale.name if scale.name else scale.pipe_type.__name__
+            
             # Define layer
-            layer: core.WxLayerTableBuild = db.create_layer_begin(scale.pipe_type.__name__)
+            layer: core.WxLayerTableBuild = db.create_layer_begin(layer_name)
             for defn in defns:
                 field_name, origin_type = defn
                 layer.add_field(field_name, origin_type.value)
@@ -279,23 +311,13 @@ class Block:
             return 0
         return self._origin.get_layer_count()
     
-    def __getitem__(self, pipe_type: Type[T]) -> Layer[T]:
+    def __getitem__(self, pipe_type: Type[T]) -> LayerBuilder[T]:
         """Get layer by index with specified feature schema."""
+        is_name = isinstance(pipe_type, str)
         if self._origin is None:
             raise RuntimeError('Block is empty, cannot access layers.')
         if not issubclass(pipe_type, FeaturePipe):
             raise TypeError('pipe_type must be a subclass of FeaturePipe.')
         
         layer_name = pipe_type.__name__
-        if layer_name in self._layer_map:
-            return self._layer_map[layer_name]
-        else:
-            layer_count = self._origin.get_layer_count()
-            for i in range (layer_count):
-                o_layer: core.WxLayerTable = self._origin.get_layer(i)
-                if o_layer.name() == layer_name:
-                    layer = Layer[T]()
-                    layer.map_from(pipe_type, o_layer, self._origin)
-                    return layer
-        
-        raise KeyError(f'Layer "{layer_name}" not found in block.')
+        return LayerBuilder[T](pipe_type, self)
