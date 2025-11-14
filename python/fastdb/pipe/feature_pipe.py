@@ -1,47 +1,15 @@
-import weakref
 import warnings
-import inspect
-from typing import Optional
-from pydantic import BaseModel, ConfigDict, PrivateAttr
-from threading import Lock
-from dataclasses import dataclass
-from typing import Dict, Any, Type, TypeVar, get_type_hints, get_origin, get_args
+import numpy as np
+from typing import Dict, TypeVar, Type
 
-from . import core
-from .type import OriginFieldType
+from .. import core
+from .base import BasePipe
+from .utils import get_defn
+from ..type import FIELD_TYPE_DEFAULTS, OriginFieldType
 
-T = TypeVar('T')
+T = TypeVar('T', bound='FeaturePipe')
 
-# Not used currently
-@dataclass
-class OriginFieldDefinition:
-    name: str
-    type: OriginFieldType
-    vmin: float = 0.0
-    vmax: float = 1.0
-
-# TypeVars for Python side type annotations
-BOOL = TypeVar('BOOL', bound=bool)
-U8 = TypeVar('U8', bound=int)
-U16 = TypeVar('U16', bound=int)
-U32 = TypeVar('U32', bound=int)
-I32 = TypeVar('I32', bound=int)
-U8N = TypeVar('U8N', bound=int)
-U16N = TypeVar('U16N', bound=int)
-F32 = TypeVar('F32', bound=float)
-F64 = TypeVar('F64', bound=float)
-STR = TypeVar('STR', bound=str)
-WSTR = TypeVar('WSTR', bound=str)
-REF = TypeVar('REF', bound=object)
-BYTES = TypeVar('BYTES', bound=bytes)
-
-# class LIST(list, Generic[T]):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-    
-#     def __getitem__(self, index: int) -> T:
-
-class FeaturePipe:
+class FeaturePipe(BasePipe):
     def __init__(self, **kwargs):
         self._cache: Dict[str, any] = {}
         self._origin: core.WxFeature | None = None
@@ -76,6 +44,8 @@ class FeaturePipe:
         
         ft, fid = defn
         
+        # Case for not mapping from database ##############################################
+        
         # If not on mapping, return cached value or default value
         if not self.fixed:
             value = self._cache.get(name, None)
@@ -91,7 +61,7 @@ class FeaturePipe:
                     return default_value
             return value
         
-        # Case for mapping from database ##########
+        # Case for mapping from database ##################################################
         
         # Type Bytes is specially stored in fastdb as geometry-like chunk
         # return it directly from layer
@@ -160,10 +130,10 @@ class FeaturePipe:
             object.__setattr__(self, name, value)
             return
         
-        # Try to get origin type definition for schema member with the given name
+        # Try to get origin type definition for member with the given name
         defn = get_defn(self.__class__, name)
         if defn is None or defn[0] is OriginFieldType.unknown:
-            raise AttributeError(f'Field "{name}" not found in the layer schema.')
+            raise AttributeError(f'Field "{name}" not found in feature pipe "{self.__class__.__name__}".')
         
         ft, fid = defn
         
@@ -185,32 +155,6 @@ class FeaturePipe:
         else:
             warnings.warn(f'Fastdb only support pipes to set numeric field for a scale-known block.', UserWarning)
 
-# class BOOL(FeaturePipe):
-#     pass
-# class U8(FeaturePipe):
-#     pass
-# class U16(FeaturePipe):
-#     pass
-# class U32(FeaturePipe):
-#     pass
-# class I32(FeaturePipe):
-#     pass
-# class U8N(FeaturePipe):
-#     pass
-# class U16N(FeaturePipe):
-#     pass
-# class F32(FeaturePipe):
-#     pass
-# class F64(FeaturePipe):
-#     pass
-# class STR(FeaturePipe):
-#     pass
-# class WSTR(FeaturePipe):
-#     pass
-# class REF(FeaturePipe):
-#     pass
-# class BYTES(FeaturePipe):
-#     pass
 # class LIST(FeaturePipe, Generic[T]):
 #     begin: U32
 #     length: U32
@@ -232,79 +176,13 @@ class FeaturePipe:
     
 #     def __getattr__(self, name):
 #         self._db.get_layer
-    
-        
-FIELD_TYPE_MAP = {
-    BOOL:   OriginFieldType.u8,
-    U8:     OriginFieldType.u8,
-    U16:    OriginFieldType.u16,
-    U32:    OriginFieldType.u32,
-    I32:    OriginFieldType.i32,
-    U8N:    OriginFieldType.u8n,
-    U16N:   OriginFieldType.u16n,
-    F32:    OriginFieldType.f32,
-    F64:    OriginFieldType.f64,
-    STR:    OriginFieldType.str,
-    WSTR:   OriginFieldType.wstr,
-    REF:    OriginFieldType.ref,
-    BYTES:  OriginFieldType.bytes
-}
 
-FIELD_TYPE_DEFAULTS = {
-    OriginFieldType.u8:    0,
-    OriginFieldType.u16:   0,
-    OriginFieldType.u32:   0,
-    OriginFieldType.i32:   0,
-    OriginFieldType.u8n:   0,
-    OriginFieldType.u16n:  0,
-    OriginFieldType.f32:   0.0,
-    OriginFieldType.f64:   0.0,
-    OriginFieldType.str:   '',
-    OriginFieldType.wstr:  '',
-    OriginFieldType.ref:   None,
-    OriginFieldType.bytes: bytes()
-}
-
-# Mapping from Python type annotations to OriginFieldType
-def get_origin_type(type_var: type) -> OriginFieldType:
-    return FIELD_TYPE_MAP.get(type_var, OriginFieldType.unknown)
-
-# Helpers ##################################################
-
-_global_pipe_defn_cache = weakref.WeakKeyDictionary()
-_cache_lock = Lock()
-
-def parse_defns(cls):
-    if cls in _global_pipe_defn_cache:
-        return _global_pipe_defn_cache[cls]
-    
-    with _cache_lock:
-        if cls in _global_pipe_defn_cache:
-            return _global_pipe_defn_cache[cls]
-        
-        m: Dict[str, tuple[OriginFieldType, int]] = {}
-        hints = get_type_hints(cls)
-        for idx, (field_name, hint) in enumerate(hints.items()):
-            if field_name.startswith('_'):
-                continue
-            
-            try:
-                origin_type = get_origin_type(hint)
-                if origin_type == OriginFieldType.unknown:
-                    if issubclass(hint, FeaturePipe):
-                        origin_type = OriginFieldType.ref
-            except Exception as e:
-                origin_type = OriginFieldType.unknown
-            m[field_name] = (origin_type, idx)
-        
-        _global_pipe_defn_cache[cls] = m
-        return m
-
-def get_defn(cls, field_name) -> tuple[OriginFieldType, int] | None:
-    m = parse_defns(cls)
-    return m.get(field_name)
-
-def get_all_defns(cls) -> list[tuple[str, OriginFieldType]]:
-    m = parse_defns(cls)
-    # Return sorted list of definitions by field index
-    return [(field_name, defn[0]) for field_name, defn in sorted(m.items(), key=lambda item: item[1][1])]
+def alias(original_class: Type[T], alias_name: str) -> Type[T]:
+    return type(
+        alias_name,
+        (original_class,),
+        {
+            '__annotations__': getattr(original_class, '__annotations__', {}).copy(),
+            '__module__': original_class.__module__,
+        }
+    )

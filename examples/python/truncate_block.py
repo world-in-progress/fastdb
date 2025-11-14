@@ -21,13 +21,14 @@ if __name__ == '__main__':
     # Create and save a block with fixed scale for Points and Triangles
     fastdb.Block.truncate([
         fastdb.BlockScale(Point, 6),
-        fastdb.BlockScale(Triangle, 2)
+        fastdb.BlockScale(Triangle, 1, 'TA'),
+        fastdb.BlockScale(Triangle, 1, 'TB'),
     ]).save(str(TEMP_DB_PATH))
     
     # Load the block and populate it with data
     block = fastdb.Block.load(str(TEMP_DB_PATH), from_file=True)
     
-    points = block[Point]
+    points = block[Point][Point]
     for i in range(6):
         point = points[i]
         point.x = i * 0.1
@@ -35,12 +36,12 @@ if __name__ == '__main__':
         point.z = i * 0.3
         print(f'Point {i}: x={point.x}, y={point.y}, z={point.z}')
     
-    triangle_a = block[Triangle][0]
+    triangle_a = block[Triangle]['TA'][0]
     triangle_a.a = 0
     triangle_a.b = 1
     triangle_a.c = 2
     
-    triangle_b = block[Triangle][1]
+    triangle_b = block[Triangle]['TB'][0]
     triangle_b.a = 3
     triangle_b.b = 4
     triangle_b.c = 5
