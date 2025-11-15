@@ -19,7 +19,7 @@ class Triangle(fastdb.FeaturePipe):
 
 def process_task(name):
     block = fastdb.Block.load(name)
-    t = block.get(Triangle, 'haha')
+    t = block[Triangle][Triangle][0]
     print(f'Triangle id: {t.id}')
     print(f'Point a idx: {t.a.idx}, x: {t.a.x}, y: {t.a.y}, z: {t.a.z}')
     print(f'Point b idx: {t.b.idx}, x: {t.b.x}, y: {t.b.y}, z: {t.b.z}')
@@ -39,7 +39,7 @@ if __name__ == '__main__':
     t.b = Point(idx=2, x=11.0, y=21.0, z=31.0)
     t.c = Point(idx=3, x=12.0, y=22.0, z=32.0)
     
-    block.push(t, 'haha')
+    block.push(t)
     block.share(str(TEMP_DB_PATH), close_after=True)
     
     a = Process(target=process_task, args=(str(TEMP_DB_PATH), ))

@@ -11,9 +11,9 @@ class Point(fastdb.FeaturePipe):
     z: fastdb.F64
 
 class Triangle(fastdb.FeaturePipe):
-    a: fastdb.U32
-    b: fastdb.U32
-    c: fastdb.U32
+    a: Point
+    b: Point
+    c: Point
     
 if __name__ == '__main__':
     TEMP_DB_PATH = Path.cwd() / 'truncate_block'
@@ -37,18 +37,18 @@ if __name__ == '__main__':
         print(f'Point {i}: x={point.x}, y={point.y}, z={point.z}')
     
     triangle_a = block[Triangle]['TA'][0]
-    triangle_a.a = 0
-    triangle_a.b = 1
-    triangle_a.c = 2
+    triangle_a.a = points[0]
+    triangle_a.b = points[1]
+    triangle_a.c = points[2]
     
     triangle_b = block[Triangle]['TB'][0]
-    triangle_b.a = 3
-    triangle_b.b = 4
-    triangle_b.c = 5
+    triangle_b.a = points[3]
+    triangle_b.b = points[4]
+    triangle_b.c = points[5]
 
     # Check the stored data
-    print(f'Triangle A: pointA=({points[triangle_a.a].x}, {points[triangle_a.a].y}, {points[triangle_a.a].z}), pointB=({points[triangle_a.b].x}, {points[triangle_a.b].y}, {points[triangle_a.b].z}), pointC=({points[triangle_a.c].x}, {points[triangle_a.c].y}, {points[triangle_a.c].z}))')
-    print(f'Triangle B: pointA=({points[triangle_b.a].x}, {points[triangle_b.a].y}, {points[triangle_b.a].z}), pointB=({points[triangle_b.b].x}, {points[triangle_b.b].y}, {points[triangle_b.b].z}), pointC=({points[triangle_b.c].x}, {points[triangle_b.c].y}, {points[triangle_b.c].z}))')
+    print(f'Triangle A: pointA=({triangle_a.a.x}, {triangle_a.a.y}, {triangle_a.a.z}), pointB=({triangle_a.b.x}, {triangle_a.b.y}, {triangle_a.b.z}), pointC=({triangle_a.c.x}, {triangle_a.c.y}, {triangle_a.c.z})')
+    print(f'Triangle B: pointA=({triangle_b.a.x}, {triangle_b.a.y}, {triangle_b.a.z}), pointB=({triangle_b.b.x}, {triangle_b.b.y}, {triangle_b.b.z}), pointC=({triangle_b.c.x}, {triangle_b.c.y}, {triangle_b.c.z})')
     
     # Clean up
     TEMP_DB_PATH.unlink()
