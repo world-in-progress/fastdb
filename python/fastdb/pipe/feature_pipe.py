@@ -4,7 +4,7 @@ from typing import Dict, TypeVar, Type
 
 from .. import core
 from .base import BasePipe
-from .utils import get_defn
+from .utils import get_defn, get_all_defns
 from ..type import FIELD_TYPE_DEFAULTS, OriginFieldType
 
 T = TypeVar('T', bound='FeaturePipe')
@@ -152,37 +152,17 @@ class FeaturePipe(BasePipe):
         or ft == OriginFieldType.u8n    \
         or ft == OriginFieldType.u16n:
             self._origin.set_field(fid, value)
+        if ft == OriginFieldType.ref:
+            # Get referenced feature
+            ref_pipe_type = self.__class__.__annotations__[name]
+            if not isinstance(value, ref_pipe_type):
+                raise TypeError(f'Field "{name}" expects a reference to type "{ref_pipe_type.__name__}", but got "{type(value).__name__}".')
+            
+            # Get the origin ref pipe and set all its fields with the given pipe
+            origin_pipe = getattr(self, name)
+            defns = get_all_defns(ref_pipe_type)
+            for ref_field_name, _ in defns:
+                setattr(origin_pipe, ref_field_name, getattr(value, ref_field_name))
+            
         else:
             warnings.warn(f'Fastdb only support pipes to set numeric field for a scale-known block.', UserWarning)
-
-# class LIST(FeaturePipe, Generic[T]):
-#     begin: U32
-#     length: U32
-    
-#     def __init__(self):
-#         super().__init__()
-#         layer_name = pipe_type.__name__
-#         layer_count = self._db.get_layer_count()
-        
-#         self._layer = None
-#         for i in range (layer_count):
-#             layer: core.WxLayerTable = self._db.get_layer(i)
-#             if layer.name() == layer_name:
-#                 self._layer = layer
-        
-#         if self._layer is None:
-#             raise ValueError(f'Layer "{layer_name}" not found in database for "{pipe_type.__name__}" when initializing LIST pipe.')
-#         self._pipe_type = pipe_type
-    
-#     def __getattr__(self, name):
-#         self._db.get_layer
-
-def alias(original_class: Type[T], alias_name: str) -> Type[T]:
-    return type(
-        alias_name,
-        (original_class,),
-        {
-            '__annotations__': getattr(original_class, '__annotations__', {}).copy(),
-            '__module__': original_class.__module__,
-        }
-    )

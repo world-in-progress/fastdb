@@ -73,6 +73,10 @@ class Block:
     
     @staticmethod
     def truncate(scales: List[BlockScale]) -> 'Block':
+        # Create block with dynamic scales
+        block = Block()
+        block._origin = core.WxDatabaseBuild()
+        
         # Check if all scales are valid
         for scale in scales:
             if not issubclass(scale.pipe_type, FeaturePipe):
@@ -80,34 +84,40 @@ class Block:
             if scale.feature_capacity <= 0:
                 raise ValueError('feature_capacity must be positive.')
         
-        # Create db instance
-        db = core.WxDatabaseBuild()
+        # Populate layers
+        db: core.WxDatabaseBuild = block._origin
         for scale in scales:
-            defns = get_all_defns(scale.pipe_type)
+            # defns = get_all_defns(scale.pipe_type)
             
+            empty_pipe = scale.pipe_type()
             layer_name = scale.name if scale.name else scale.pipe_type.__name__
-            
-            # Define layer
-            layer: core.WxLayerTableBuild = db.create_layer_begin(layer_name)
-            for defn in defns:
-                field_name, origin_type = defn
-                layer.add_field(field_name, origin_type.value)
-                
-            # Fill layer with specified feature capacity
             for _ in range (0, scale.feature_capacity):
-                layer.add_feature_begin()
-                layer.add_feature_end()
+                block.push(empty_pipe, layer_name)
+            
+            # # Define layer
+            # layer: core.WxLayerTableBuild = db.create_layer_begin(layer_name)
+            # for defn in defns:
+            #     field_name, origin_type = defn
+            #     layer.add_field(field_name, origin_type.value)
+                
+            # # Fill layer with specified feature capacity
+            # for _ in range (0, scale.feature_capacity):
+            #     layer.add_feature_begin()
+            #     layer.add_feature_end()
+                
         
         # Combine the memory by saving and reloading
-        with tempfile.NamedTemporaryFile() as tmp:
-            tmp_path = str(Path(tmp.name))
-            db.save(tmp_path)
-            db = core.WxDatabase.load(tmp_path)
+        block._combine()
+        return block
+        # with tempfile.NamedTemporaryFile() as tmp:
+        #     tmp_path = str(Path(tmp.name))
+        #     db.save(tmp_path)
+        #     db = core.WxDatabase.load(tmp_path)
         
-            # Return as a block
-            block = Block()
-            block._origin = db
-            return block
+        #     # Return as a block
+        #     block = Block()
+        #     block._origin = db
+        #     return block
     
     def _combine(self):
         """Combine memory from all layers into a single continuous block."""
@@ -159,7 +169,7 @@ class Block:
         
         return block
 
-    def push(self, pipe: T, name: str = '') -> Any:
+    def push(self, pipe: T, layer_name: str = '', *, name: str = '', is_ref=False) -> Any:
         """Push the given feature pipe to the block database."""
         # Check if is synchronizable
         if self._origin is None:
@@ -176,7 +186,7 @@ class Block:
         defns = get_all_defns(pipe_type)
         
         # Try to get layer
-        layer_name = pipe_type.__name__
+        layer_name = layer_name if layer_name else pipe_type.__name__
         layer: Layer[T] = self._layer_map.get(layer_name, None)
         if layer is not None:
             layer = self._layer_map[layer_name]
@@ -213,24 +223,26 @@ class Block:
                     l.set_geometry_raw(value)
                 elif ft == OriginFieldType.ref:
                     fref: FeaturePipe = value
-                    ref = self.push(fref)
+                    ref = self.push(fref, is_ref=True)
                     l.set_field(idx, ref)
                 else:
                     warnings.warn(f'Unsupported field type "{ft}" for field "{fn}".', UserWarning)
 
-        # Create a ref to the just added feature
-        pipe_idx = layer.feature_count - 1
-        ref = layer._origin.create_feature_ref(pipe_idx)
+        # Create a ref to the just added feature for it is a ref or need to be named
+        if is_ref or name:
+            pipe_idx = layer.feature_count - 1
+            ref = layer._origin.create_feature_ref(pipe_idx)
+            
+            if not name:
+                return ref
         
-        # Add ref feature to name layer if name is provided
-        if name:
-            nl = self._name_layer
-            nl.add_feature_begin()
-            nl.set_field_cstring(0, name)
-            nl.set_field(1, ref)
-            nl.add_feature_end()
-        
-        return ref
+            # Add ref feature to name layer if name is provided
+            if name:
+                nl = self._name_layer
+                nl.add_feature_begin()
+                nl.set_field_cstring(0, name)
+                nl.set_field(1, ref)
+                nl.add_feature_end()
     
     def get(self, pipe_type: Type[T], name: str) -> T | None:
         """Get feature pipe by name from the block."""
