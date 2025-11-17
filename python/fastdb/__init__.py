@@ -3,4 +3,4 @@ from .type import (
     F32, F64, STR, WSTR, REF, BYTES
 )
 from .pipe import FeaturePipe
-from .block import Block, BlockScale
+from .block import ORM, TableDefn

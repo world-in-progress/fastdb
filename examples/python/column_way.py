@@ -13,12 +13,12 @@ class Point(fastdb.FeaturePipe):
 if __name__ == '__main__':
     TEMP_DB_PATH = Path.cwd() / 'alias_test_block'
     
-    fastdb.Block.truncate([
-        fastdb.BlockScale(Point, 10),
-        fastdb.BlockScale(Point, 5, 'PointA'),
+    fastdb.ORM.truncate([
+        fastdb.TableDefn(Point, 10),
+        fastdb.TableDefn(Point, 5, 'PointA'),
     ]).save(str(TEMP_DB_PATH))
     
-    block = fastdb.Block.load(str(TEMP_DB_PATH), from_file=True)
+    block = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
     ps = block[Point]['PointA']
     for i in range(5):
         point = ps[i]
@@ -28,7 +28,7 @@ if __name__ == '__main__':
         print(f'PointA {i}: x={point.x}, y={point.y}, z={point.z}')
     
     block.save(str(TEMP_DB_PATH))
-    block = fastdb.Block.load(str(TEMP_DB_PATH), from_file=True)
+    block = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
     
     points_a = block[Point]['PointA']
     points_p = block[Point][Point]

@@ -19,14 +19,14 @@ if __name__ == '__main__':
     TEMP_DB_PATH = Path.cwd() / 'truncate_block'
     
     # Create and save a block with fixed scale for Points and Triangles
-    fastdb.Block.truncate([
-        fastdb.BlockScale(Point, 6),
-        fastdb.BlockScale(Triangle, 1, 'TA'),
-        fastdb.BlockScale(Triangle, 1, 'TB'),
+    fastdb.ORM.truncate([
+        fastdb.TableDefn(Point, 6),
+        fastdb.TableDefn(Triangle, 1, 'TA'),
+        fastdb.TableDefn(Triangle, 1, 'TB'),
     ]).save(str(TEMP_DB_PATH))
     
     # Load the block and populate it with data
-    block = fastdb.Block.load(str(TEMP_DB_PATH), from_file=True)
+    block = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
     
     points = block[Point][Point]
     for i in range(6):

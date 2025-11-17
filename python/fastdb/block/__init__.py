@@ -6,26 +6,26 @@ from multiprocessing import shared_memory
 from typing import List, TypeVar, Type, Any, Generic
 
 from .. import core
-from .layer import Layer
+from .table import Table
 from ..type import OriginFieldType
 from ..pipe import FeaturePipe, get_all_defns
 
 T = TypeVar('T', bound=FeaturePipe)
 
 @dataclass
-class BlockScale:
+class TableDefn:
     pipe_type: Type[FeaturePipe]
     feature_capacity: int
     name: str = ''
 
-class LayerBuilder(Generic[T]):
-    def __init__(self, pipe_type: Type[T], block: 'Block'):
+class TableBuilder(Generic[T]):
+    def __init__(self, pipe_type: Type[T], block: 'ORM'):
         if not issubclass(pipe_type, FeaturePipe):
             raise TypeError('pipe_type must be a subclass of FeaturePipe.')
         self._block = block
         self._pipe_type = pipe_type
     
-    def __getitem__(self, layer_name: str | Type[T]) -> Layer[T]:
+    def __getitem__(self, layer_name: str | Type[T]) -> Table[T]:
         if not isinstance(layer_name, str):
             layer_name = layer_name.__name__
             if layer_name != self._pipe_type.__name__:
@@ -39,7 +39,7 @@ class LayerBuilder(Generic[T]):
         for i in range (layer_count):
             o_layer: core.WxLayerTable = db.get_layer(i)
             if o_layer.name() == layer_name:
-                layer = Layer[T]()
+                layer = Table[T]()
                 layer.map_from(self._pipe_type, o_layer, db)
                 
                 self._block._layer_map[layer_name] = layer
@@ -47,34 +47,34 @@ class LayerBuilder(Generic[T]):
         raise KeyError(f'Layer "{layer_name}" not found in block.')
         
 
-class Block:
+class ORM:
     def __init__(self):
-        self._layer_map: dict[str, Layer | LayerBuilder] = {}
         self._shm: shared_memory.SharedMemory | None = None
+        self._layer_map: dict[str, Table | TableBuilder] = {}
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
-        self._name_layer: core.WxLayerTable | core.WxLayerTableBuild | None = None
+        self._named_table: core.WxLayerTable | core.WxLayerTableBuild | None = None
 
     @property
     def fixed(self) -> bool:
         return isinstance(self._origin, core.WxDatabase)
     
     @staticmethod
-    def create() -> 'Block':
-        block = Block()
+    def create() -> 'ORM':
+        block = ORM()
         block._origin = core.WxDatabaseBuild()
         
         # Create default name layer
         nl: core.WxLayerTableBuild = block._origin.create_layer_begin('_name_')
         nl.add_field('name', OriginFieldType.str.value)
         nl.add_field('ref', OriginFieldType.ref.value)
-        block._name_layer = nl
+        block._named_table = nl
         
         return block
     
     @staticmethod
-    def truncate(scales: List[BlockScale]) -> 'Block':
+    def truncate(scales: List[TableDefn]) -> 'ORM':
         # Create block with dynamic scales
-        block = Block()
+        block = ORM()
         block._origin = core.WxDatabaseBuild()
         
         # Check if all scales are valid
@@ -136,9 +136,9 @@ class Block:
             self._origin = core.WxDatabase.load(tmp_path)
     
     @staticmethod
-    def load(name: str, from_file: bool = False) -> 'Block':
+    def load(name: str, from_file: bool = False) -> 'ORM':
         """Create a Block instance by loading from file system or shared memory."""
-        block = Block()
+        block = ORM()
         
         # Try to load block from file system
         if from_file:
@@ -164,7 +164,7 @@ class Block:
         for i in range (layer_count):
             o_layer: core.WxLayerTable = block._origin.get_layer(i)
             if o_layer.name() == '_name_':
-                block._name_layer = o_layer
+                block._named_table = o_layer
                 break
         
         return block
@@ -187,12 +187,12 @@ class Block:
         
         # Try to get layer
         layer_name = layer_name if layer_name else pipe_type.__name__
-        layer: Layer[T] = self._layer_map.get(layer_name, None)
+        layer: Table[T] = self._layer_map.get(layer_name, None)
         if layer is not None:
             layer = self._layer_map[layer_name]
         else:
             # Create new layer
-            new_layer = Layer[pipe_type]()
+            new_layer = Table[pipe_type]()
             new_layer.map_from(pipe_type, self._origin.create_layer_begin(layer_name), self._origin)
             
             # Define layer
@@ -205,7 +205,7 @@ class Block:
             layer = new_layer
         
         # Push pipe data to layer
-        with Layer.push2(layer) as l:
+        with Table.push2(layer) as l:
             for idx, (fn, ft) in enumerate(defns):
                 value = getattr(pipe, fn)
                 if ft == OriginFieldType.u8     \
@@ -238,7 +238,7 @@ class Block:
         
             # Add ref feature to name layer if name is provided
             if name:
-                nl = self._name_layer
+                nl = self._named_table
                 nl.add_feature_begin()
                 nl.set_field_cstring(0, name)
                 nl.set_field(1, ref)
@@ -250,12 +250,12 @@ class Block:
             raise RuntimeError('Block is empty, cannot get feature.')
         if not self.fixed:
             raise RuntimeError('Block still in build mode, cannot get feature.')
-        if self._name_layer is None:
+        if self._named_table is None:
             raise RuntimeError('Block has no name layer, cannot get feature by name.')
         
         # Search name layer for the given name
         of: core.WxFeature | None = None
-        nl = self._name_layer
+        nl = self._named_table
         nl.rewind()
         while nl.next():
             n = nl.get_field_as_string(0)
@@ -323,7 +323,7 @@ class Block:
             return 0
         return self._origin.get_layer_count()
     
-    def __getitem__(self, pipe_type: Type[T]) -> LayerBuilder[T]:
+    def __getitem__(self, pipe_type: Type[T]) -> TableBuilder[T]:
         """Get layer by index with specified feature schema."""
         is_name = isinstance(pipe_type, str)
         if self._origin is None:
@@ -332,4 +332,4 @@ class Block:
             raise TypeError('pipe_type must be a subclass of FeaturePipe.')
         
         layer_name = pipe_type.__name__
-        return LayerBuilder[T](pipe_type, self)
+        return TableBuilder[T](pipe_type, self)

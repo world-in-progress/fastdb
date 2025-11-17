@@ -18,7 +18,7 @@ class Triangle(fastdb.FeaturePipe):
     c: Point
 
 def process_task(name):
-    block = fastdb.Block.load(name)
+    block = fastdb.ORM.load(name)
     t = block[Triangle][Triangle][0]
     print(f'Triangle id: {t.id}')
     print(f'Point a idx: {t.a.idx}, x: {t.a.x}, y: {t.a.y}, z: {t.a.z}')
@@ -31,7 +31,7 @@ def process_task(name):
 if __name__ == '__main__':
     TEMP_DB_PATH = 'tmp_shared_memory'
     
-    block = fastdb.Block.create()
+    block = fastdb.ORM.create()
     
     t = Triangle()
     t.id = 1

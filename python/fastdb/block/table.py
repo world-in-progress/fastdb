@@ -110,7 +110,7 @@ def _create_column_accessor(pipe_type: Type[T], layer_origin, pipe_type_class) -
     
     return ColumnAccessor(layer_origin, pipe_type_class)
 
-class Layer(Generic[T]):
+class Table(Generic[T]):
     def __init__(self):
         self.feature_count: int = 0
         self._column_pipe: T | None = None
@@ -120,7 +120,7 @@ class Layer(Generic[T]):
     
     @staticmethod
     @contextmanager
-    def push2(layer: 'Layer[T]') -> Generator[core.WxLayerTableBuild, None, None]:
+    def push2(layer: 'Table[T]') -> Generator[core.WxLayerTableBuild, None, None]:
         """Context manager to push features to the given layer."""
         if layer._db is None or layer._origin is None:
             raise RuntimeError('Layer has not connected to fastdb, not supporting push operation.')
