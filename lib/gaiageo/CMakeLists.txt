@@ -1,8 +1,12 @@
-cmake_minimum_required (VERSION 3.30)
+cmake_minimum_required (VERSION 3.27)
 set(CUR_PROJ_NAME 	gaiageo)
 set(CUR_PROJ_DIR	${LIB_DIR}/gaiageo)
 
-#添加源代码
+
+if(MSVC)
+    add_definitions(-DYY_NO_UNISTD_H)
+endif(MSVC)
+
 add_source_by_dir(${CUR_PROJ_DIR}   all_files)
 #设置包含目录
 include_directories(${CUR_PROJ_DIR}/headers)

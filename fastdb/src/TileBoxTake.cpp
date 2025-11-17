@@ -5,7 +5,7 @@
 using namespace Clipper2Lib;
 const long long MAX_SCALE_INT64 = 0xFFFFFFFFFFL;
 namespace wx
-{
+{  
     TileBoxTake::Impl::Impl(int maxLevel)
     :m_dirty(true)
     {
@@ -13,7 +13,7 @@ namespace wx
         {
             m_levels.push_back(new tile_box_level_t());
         }
-    }
+    }  
     TileBoxTake::Impl::~Impl()
     {
         for(auto i:m_levels)

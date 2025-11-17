@@ -23,12 +23,12 @@ namespace wx
         u16 y;
     };
 
-#ifdef MSVC
+#ifdef _MSC_VER
 #pragma pack(push, 1)
 #endif
 
-    struct
-#ifndef MSVC
+struct
+#ifndef _MSC_VER
         __attribute__((packed))
 #endif
         point2_x24_t
@@ -36,7 +36,7 @@ namespace wx
         u32 x : 24;
         u32 y : 24;
     };
-#ifdef MSVC
+#ifdef _MSC_VER
 #pragma pack(pop)
 #endif
 
@@ -52,19 +52,41 @@ namespace wx
         point2_x16_t maxEdge;
     };
 
-#ifdef MSVC
+#ifdef _MSC_VER
     #pragma pack(push, 1)
 #endif
     struct 
-#ifndef MSVC
+#ifndef _MSC_VER
     __attribute__((packed))
-#endif
+#endif 
     FastVectorDbFeatureRef
     {
-        u32 ilayer  :16;
-        u32 ifeature:24; 
+       u16 ilayer;
+       u8  ifeature;
+       u16 ifeatureH; 
+       static FastVectorDbFeatureRef make(u32 ilayer,u32 ifeature)
+       {
+          FastVectorDbFeatureRef ref;
+          ref.ilayer=ilayer;
+          ref.ifeature= ifeature;
+          ref.ifeatureH=ifeature>>16;
+          return ref;
+       }
+        static FastVectorDbFeatureRef* make_ref(u32 ilayer,u32 ifeature)
+       {
+          FastVectorDbFeatureRef* ret = new FastVectorDbFeatureRef();
+          *ret = make(ilayer,ifeature);
+          return ret;
+       }
+       static u32 decodeIFeature(FastVectorDbFeatureRef* ref)
+       {
+          u32 ifeature = ref->ifeature|(((u32)ref->ifeatureH));
+          return ifeature;
+       }
     };
-#ifdef MSVC
+
+
+#ifdef _MSC_VER
     #pragma pack(pop)
 #endif
 

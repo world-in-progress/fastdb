@@ -19,7 +19,7 @@ namespace wx{
 #ifdef SWIG
     #define fastdb_api
 #else
-    #ifdef WIN32
+    #ifdef _WIN32
         #ifdef FASTDB_EXPORT
             #define fastdb_api __declspec(dllexport)
         #else

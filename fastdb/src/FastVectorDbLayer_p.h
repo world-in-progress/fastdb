@@ -13,7 +13,7 @@ namespace wx
     class FastVectorDbLayer::Impl
     {
     public:
-        Impl(const u8 *pdata, size_t size);
+        Impl(u8 *pdata, size_t size);
        ~Impl();
         const char*     name();
         GeometryLikeEnum getGeometryType();
@@ -89,23 +89,23 @@ namespace wx
         FastVectorDb*           m_db;
         FastVectorDbLayer*      m_layer;
         u32                     m_layer_index;
-        const u8*               m_data;
+        u8*                     m_data;
         size_t                  m_size;
         layer_header_t*         m_header;
-        const u8*               m_data_ptr0;
+        u8*                     m_data_ptr0;
         size_t                  m_table_line_size;
         int                     m_ifeature;
         const field_desc_ex_t*  m_field_descs;
         //const u8*               m_table_data_ptr;
-        const u8*               m_table_data_ptr0;
-        const u8*               m_geometry_ptr0;
-        const u8*               m_geometry_ptr;
+        u8*                     m_table_data_ptr0;
+        u8*                     m_geometry_ptr0;
+        u8*                     m_geometry_ptr;
         vector<const char *>    m_string_table;
         vector<const uchar_t *> m_wstring_table;
         vector<void*>           m_feature_cookie_map;
         vector<point2_t>        points;//a variant for return temp points
         vector<FastVectorDbFeature*>    m_feature_cache;
-        vector<const u8*>       m_geometry_ptr_map;
+        vector<u8*>             m_geometry_ptr_map;
         friend class FastVectorDbFeature;
         friend class FastVectorDb::Impl;
     };

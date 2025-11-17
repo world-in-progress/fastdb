@@ -1,8 +1,14 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.27)
 #set(CMAKE_TOOLCHAIN_FILE /Users/laowine-x/code/vcpkg/scripts/buildsystems/vcpkg.cmake)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 project(FastCarto)
+
+
+if(WIN32)
+    add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>")
+    add_compile_options("$<$<C_COMPILER_ID:MSVC>:/source-charset:utf-8>")
+endif()
 
 function( add_source_by_dir cur_dir return_list)
     file(GLOB_RECURSE new_files
@@ -20,8 +26,17 @@ endfunction(add_source_by_dir)
 set(LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib)
 set(ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    set(is_emscripten ON)
+endif()
 
 add_subdirectory(lib)
 add_subdirectory(fastdb)
-add_subdirectory(make-fastdb)
-add_subdirectory(dump-fastdb)
+if (NOT is_emscripten)
+    add_subdirectory(make-fastdb)
+    add_subdirectory(dump-fastdb)
+endif()
+
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY   ${CMAKE_SOURCE_DIR}/bin)
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY   ${CMAKE_SOURCE_DIR}/bin)
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY   ${CMAKE_SOURCE_DIR}/bin)

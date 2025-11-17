@@ -132,7 +132,7 @@ void importOgrToFastDb(const char *layerName, OGRLayer *ogrLayer,
             build.addFeatureBegin();
             size_t wkbSize = geom->WkbSize();
             wkbBuffer.resize(wkbSize);
-            geom->exportToWkb(wkbBuffer.data());
+            geom->exportToWkb(wkbNDR,wkbBuffer.data());
             build.setGeometry(wkbBuffer.data(), wkbSize, ginWKB);
             for (size_t i = 0; i < validFields.size(); i++)
             {

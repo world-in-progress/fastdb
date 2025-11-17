@@ -10,7 +10,7 @@ namespace wx
             len++;
         return len;
     }
-    FastVectorDbLayer::Impl::Impl(const u8 *pdata, size_t size)
+    FastVectorDbLayer::Impl::Impl(u8 *pdata, size_t size)
         :m_data(pdata), m_size(size), m_ifeature(-1)
     {
          m_header = (layer_header_t *)m_data;
@@ -194,7 +194,7 @@ namespace wx
                 impl.convert_coord_format(c, p);
                 points.push_back(p);
                 cb->begin(NULL);
-                cb->returnGeomrtryPart(GeometryReturn::gptPoint2, points.data(), 1);
+                cb->returnGeomrtryPart(gptPoint2, points.data(), 1);
                 cb->end();
             }
             else
@@ -266,7 +266,7 @@ namespace wx
     chunk_data_t FastVectorDbLayer::Impl::getGeometryLikeChunk_internal(u32 ifeature)
     {
         chunk_data_t data;
-        const u8* geometry_ptr = m_geometry_ptr_map[ifeature];
+        u8* geometry_ptr = m_geometry_ptr_map[ifeature];
         if(m_header->geometry_type==(u16)gtNone)
         {
             data.pdata=NULL;

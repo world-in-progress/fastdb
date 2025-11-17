@@ -214,7 +214,7 @@ namespace wx
                 u16 npart = 1;
                 aabbox=get_line_string_aabbox(points,point_count);
                 write_buffer_t(buffer, npart);
-                write_points_to_buffer_t<point2_t, coord_type>(buffer, build, GeometryReturn::gptLineString, points, point_count);
+                write_points_to_buffer_t<point2_t, coord_type>(buffer, build, gptLineString, points, point_count);
             }
             else if (gaiaHandle &&
                      (gaiaType == GAIA_LINESTRING ||
@@ -224,7 +224,7 @@ namespace wx
                 auto lineString = gaiaHandle->FirstLinestring;
                 while (lineString)
                 {
-                    write_points_to_buffer_t<point2_t, coord_type>(buffer, build, GeometryReturn::gptLineString, (point2_t *)lineString->Coords, lineString->Points);
+                    write_points_to_buffer_t<point2_t, coord_type>(buffer, build,gptLineString, (point2_t *)lineString->Coords, lineString->Points);
                     lineString = lineString->Next;
                     npart++;
                 }
@@ -246,11 +246,11 @@ namespace wx
                 auto polygon = gaiaHandle->FirstPolygon;
                 while (polygon)
                 {
-                    write_points_to_buffer_t<point2_t, coord_type>(buffer, build, GeometryReturn::gptRingExternal, (point2_t *)polygon->Exterior->Coords, polygon->Exterior->Points);
+                    write_points_to_buffer_t<point2_t, coord_type>(buffer, build, gptRingExternal, (point2_t *)polygon->Exterior->Coords, polygon->Exterior->Points);
                     for (int i = 0; i < polygon->NumInteriors; i++)
                     {
                         auto ring = polygon->Interiors + i;
-                        write_points_to_buffer_t<point2_t, coord_type>(buffer, build, GeometryReturn::gptRingInternal, (point2_t *)ring->Coords, ring->Points);
+                        write_points_to_buffer_t<point2_t, coord_type>(buffer, build, gptRingInternal, (point2_t *)ring->Coords, ring->Points);
                     }
                     npart += polygon->NumInteriors + 1;
                     polygon = polygon->Next;
@@ -530,7 +530,7 @@ string table:%s\n",
         {
             ix = m_feature_count-1;//using the last one as feature ref
         }
-        auto ref =  new FastVectorDbFeatureRef{m_index_in_db,ix};
+        auto ref =  FastVectorDbFeatureRef::make_ref(m_index_in_db,ix);
         m_created_feature_refs.push_back(ref);//he we should have a better way 
         return ref;
     }
