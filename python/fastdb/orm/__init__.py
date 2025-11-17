@@ -87,37 +87,14 @@ class ORM:
         # Populate layers
         db: core.WxDatabaseBuild = block._origin
         for scale in scales:
-            # defns = get_all_defns(scale.pipe_type)
-            
             empty_pipe = scale.pipe_type()
             layer_name = scale.name if scale.name else scale.pipe_type.__name__
             for _ in range (0, scale.feature_capacity):
                 block.push(empty_pipe, layer_name)
-            
-            # # Define layer
-            # layer: core.WxLayerTableBuild = db.create_layer_begin(layer_name)
-            # for defn in defns:
-            #     field_name, origin_type = defn
-            #     layer.add_field(field_name, origin_type.value)
                 
-            # # Fill layer with specified feature capacity
-            # for _ in range (0, scale.feature_capacity):
-            #     layer.add_feature_begin()
-            #     layer.add_feature_end()
-                
-        
         # Combine the memory by saving and reloading
         block._combine()
         return block
-        # with tempfile.NamedTemporaryFile() as tmp:
-        #     tmp_path = str(Path(tmp.name))
-        #     db.save(tmp_path)
-        #     db = core.WxDatabase.load(tmp_path)
-        
-        #     # Return as a block
-        #     block = Block()
-        #     block._origin = db
-        #     return block
     
     def _combine(self):
         """Combine memory from all layers into a single continuous block."""
@@ -130,10 +107,14 @@ class ORM:
             return
         
         # Save to a temporary file and reload
-        with tempfile.NamedTemporaryFile() as tmp:
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
             tmp_path = str(Path(tmp.name))
+        # Use try-finally to ensure capability of tempfile using in Windows
+        try:
             self._origin.save(tmp_path)
             self._origin = core.WxDatabase.load(tmp_path)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
     
     @staticmethod
     def load(name: str, from_file: bool = False) -> 'ORM':

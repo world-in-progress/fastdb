@@ -13,6 +13,6 @@ Fastdb uses CMake as its build system. Below are instructions for building the c
 ```bash
 mkdir build
 cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_BINDINGS=ON
-make fastdb4py -j4
+cmake .. -DCMAKE_BUILD_TYPE=Release -DUSE_SWIG_PYTHON=ON 
+cmake --build . --config Release --parallel
 ```
