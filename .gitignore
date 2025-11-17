@@ -41,7 +41,7 @@
 *.dwo
 
 # Build directories
-build/
+build
 
 # Testing directories
 scripts

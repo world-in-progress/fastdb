@@ -4,7 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <vector>
+#include <vector> 
 namespace wx
 {
     FastVectorDbBuild::Impl::Impl(FastVectorDbBuild* thiz)

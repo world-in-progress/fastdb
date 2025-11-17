@@ -6,6 +6,9 @@
     using namespace wx;
 %}
 
+// Tell SWIG to ignore fastdb_api when parsing headers
+#define fastdb_api
+
 %include "typemaps.i"
 %include "cstring.i"
 %include "cpointer.i"

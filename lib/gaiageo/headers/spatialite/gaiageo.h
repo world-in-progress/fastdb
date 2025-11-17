@@ -65,7 +65,8 @@ the terms of any one of the MPL, the GPL or the LGPL.
 #define _GAIAGEO_H
 #endif
 
-typedef __int64_t sqlite3_int64;
+//typedef __int64_t sqlite3_int64;
+typedef long long sqlite3_int64;
 typedef struct sqlite3 sqlite3;
 #define SPATIALITE_PRIVATE extern
 

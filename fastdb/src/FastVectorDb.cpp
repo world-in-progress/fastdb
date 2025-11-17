@@ -2,11 +2,17 @@
 #include "FastVectorDbLayer_p.h"
 #include <stdlib.h>
 #include <sys/stat.h>
+
+#ifdef _WIN32
+    #include <io.h>
+#else
+    #include <unistd.h>
+#endif
+
 #include <fcntl.h>
-#include <unistd.h>
 
 namespace wx
-{
+{  
     FastVectorDb::Impl::Impl(void *pdata, size_t size, fnFreeDbBuffer fnFreeBuffer, void *cookie)
         : m_pdata(pdata), m_size(size), m_fnFreeBuffer(fnFreeBuffer), m_cookie(cookie)
     {
@@ -60,11 +66,13 @@ namespace wx
      }
     FastVectorDbFeature*  FastVectorDb::Impl::tryGetFeature(FastVectorDbFeatureRef* ref)
     {
+        int nsize = sizeof(FastVectorDbFeatureRef);
         if (ref->ilayer >= m_layers.size())
         {
             return nullptr;
         }
-        return m_layers[ref->ilayer]->impl->tryGetFeatureAt(ref->ifeature);
+        u32 ifeature = FastVectorDbFeatureRef::decodeIFeature(ref);
+        return m_layers[ref->ilayer]->impl->tryGetFeatureAt(ifeature);
     }
 
     ///////////////////////////////////////////////////////

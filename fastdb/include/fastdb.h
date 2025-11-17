@@ -66,8 +66,8 @@ namespace wx
 
     struct chunk_data_t
     {
-        u32         size;
-        const u8*   pdata;
+        u32 size;
+        u8* pdata;
     };
 
     class  FastVectorDbBuild;
@@ -77,7 +77,7 @@ namespace wx
     class  FastVectorDbFeature;
     struct FastVectorDbFeatureRef;
 
-    class /*fastdb_api*/ FastVectorDbBuild
+    class fastdb_api FastVectorDbBuild
     {
     public:
         class Impl;
@@ -127,7 +127,7 @@ namespace wx
         Impl *impl;
     };
     //
-    class  /*fastdb_api*/ FastVectorDbLayerBuild
+    class  fastdb_api FastVectorDbLayerBuild
     { 
     public:
         class Impl;
@@ -135,6 +135,7 @@ namespace wx
         FastVectorDbLayerBuild(FastVectorDbBuild* db,const char* name);
        ~FastVectorDbLayerBuild();
         const char* name();
+
         int  addField(const char *name, unsigned ft, double vmin = 0, double vmax = 1.0);
         void setGeometryType(GeometryLikeEnum gt, CoordinateFormatEnum ct, bool aabboxEnabled = false);
         void enableStringTableU32(bool b = true);
@@ -176,18 +177,19 @@ namespace wx
         friend class FastVectorDbBuild::Impl;
     };
 
+    enum GeometryPartEnum
+    {
+        gptPoint2 = 1,
+        // gptPoint3,
+        gptLineString,
+        gptRingExternal,
+        gptRingInternal
+    };
 
     class GeometryReturn
     {
     public:
-        enum GeometryPartEnum
-        {
-            gptPoint2 = 1,
-            // gptPoint3,
-            gptLineString,
-            gptRingExternal,
-            gptRingInternal
-        };
+        using GeometryPartEnum=GeometryPartEnum;
     public:
         virtual bool begin(const double aabox[4]) = 0;
         virtual void returnGeomrtryPart(GeometryPartEnum partType, point2_t *points, int np) = 0;
@@ -196,7 +198,7 @@ namespace wx
 
     typedef void (*fnFreeDbBuffer)(void *pdata, size_t size, void *pcookie);
     
-    class /*fastdb_api*/ FastVectorDb
+    class fastdb_api FastVectorDb
     {
     public:
         class Impl;
@@ -218,8 +220,61 @@ namespace wx
         Impl *impl;
     };
 
+    struct aabbox_t
+    {
+        point2_t maxEdge;
+        point2_t minEdge;
+        double width() const { return maxEdge.x - minEdge.x; }
+        double height() const { return maxEdge.y - minEdge.y; }
+        double minx() const { return minEdge.x; }
+        double miny() const { return minEdge.y; }
+        double maxx() const { return maxEdge.x; }
+        double maxy() const { return maxEdge.y; }
+
+        static aabbox_t make(point2_t min, point2_t max)
+        {
+            aabbox_t r;
+            r.minEdge = min;
+            r.maxEdge = max;
+            r.repair();
+            return r;
+        }
+        void repair()
+        {
+            if (minEdge.x > maxEdge.x){
+                double t = minEdge.x;
+                minEdge.x = maxEdge.x;
+                maxEdge.x = t;
+            }
+            if (minEdge.y > maxEdge.y)
+            {
+                double t = minEdge.y;
+                minEdge.y = maxEdge.y;
+                maxEdge.y = t;
+            }
+        }
+        static aabbox_t make(double minx, double miny, double maxx, double maxy)
+        {
+            return make(point2_t::make(minx, miny), point2_t::make(maxx, maxy));
+        }
+
+        bool contains(const point2_t &p) const
+        {
+            return p.x >= minx() && p.x <= maxx() && p.y >= miny() && p.y <= maxy();
+        }
+
+        bool intersects(const aabbox_t &b) const
+        {
+            return maxx() >= b.minx() && minx() <= b.maxx() && maxy() >= b.miny() && miny() <= b.maxy();
+        }
+
+        bool contains(const aabbox_t &b) const
+        {
+            return maxx() >= b.maxx() && minx() <= b.minx() && maxy() >= b.maxy() && miny() <= b.miny();
+        }
+    };
     
-    class  /*fastdb_api*/ FastVectorDbLayer
+    class  fastdb_api FastVectorDbLayer
     {
     public:
         class Impl;
@@ -255,9 +310,30 @@ namespace wx
             *ft = ft2;
             return retval;
         }
-        void getExtent_p(double *minx, double *miny, double *maxx, double *maxy)
+        inline void getExtent_p(double *minx, double *miny, double *maxx, double *maxy)
         {
             getExtent(*minx, *miny, *maxx, *maxy);
+        }
+
+        inline aabbox_t getAABBox()
+        {
+            aabbox_t box;
+            getExtent(box.minEdge.x, box.minEdge.y, box.maxEdge.x, box.maxEdge.y);
+            return box;
+        }
+
+        inline const char* getFieldName(unsigned ix)
+        {
+            FieldTypeEnum ft;
+            double vmin, vmax;
+            return getFieldDefn(ix, ft, vmin, vmax);
+        }
+        inline FieldTypeEnum getFieldType(unsigned ix)
+        {
+            FieldTypeEnum ft;
+            double vmin, vmax;
+            getFieldDefn(ix, ft, vmin, vmax);
+            return ft;
         }
         
     private:
@@ -266,7 +342,7 @@ namespace wx
         friend class FastVectorDb::Impl; 
     };
     
-    class  /*fastdb_api*/ FastVectorDbFeature
+    class  fastdb_api FastVectorDbFeature
     {
     public:
         class Impl;
@@ -290,7 +366,7 @@ namespace wx
         Impl*  impl;
         friend class FastVectorDbLayer::Impl;
     }; 
-    class /*fastdb_api*/ TileBoxTake
+    class fastdb_api TileBoxTake
     {
         class Impl;
     public:
@@ -337,7 +413,7 @@ namespace wx
         Impl* impl;
     };
 
-    class  /*fastdb_api*/ FastVectorTileDb
+    class  fastdb_api FastVectorTileDb
     {
     public:
         class Impl;
