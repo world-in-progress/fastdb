@@ -1,3 +1,4 @@
+import platform
 import tempfile
 import warnings
 from pathlib import Path
@@ -131,6 +132,7 @@ class ORM:
         
         # Try to load block from shared memory
         else:
+            name = _normalize_shm_name(name)
             try:
                 block._shm = shared_memory.SharedMemory(name=name)
                 block._origin = core.WxDatabase.load_xbuffer(block._shm.buf)
@@ -266,22 +268,24 @@ class ORM:
             self._shm = None
             self._origin = None
     
-    def share(self, name: str, close_after: bool = False):
+    def share(self, shm_name: str, close_after: bool = False):
         """Share the block in shared memory."""
         if self._origin is None:
             raise RuntimeError('Block is empty, cannot share.')
         if isinstance(self._origin, core.WxDatabaseBuild):
             self._combine() # combine first if still in build mode
         
+        shm_name = _normalize_shm_name(shm_name)
+        
         # Copy database buffer to shared memory
         chunk = self._origin.buffer()
-        self._shm = shared_memory.SharedMemory(create=True, size=chunk.size, name=name)
+        self._shm = shared_memory.SharedMemory(create=True, size=chunk.size, name=shm_name)
         chunk.copy_to_buffer(self._shm.buf)
         
         # Reload database from shared memory
         self._origin = core.WxDatabase.load_xbuffer(self._shm.buf)
         
-        if close_after:
+        if close_after and platform.system() != 'Windows':
             self.close()
     
     def save(self, path: str):
@@ -314,3 +318,12 @@ class ORM:
         
         layer_name = pipe_type.__name__
         return TableBuilder[T](pipe_type, self)
+    
+# Helpers ##################################################
+
+def _normalize_shm_name(shm_name: str) -> str:
+    if platform.system() != 'Windows':
+        return shm_name
+    if shm_name.startswith(('Local\\', 'Global\\')):
+        return shm_name
+    return f'Local\\{shm_name}'
