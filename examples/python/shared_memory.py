@@ -18,20 +18,20 @@ class Triangle(fastdb.Feature):
     c: Point
 
 def process_task(name):
-    block = fastdb.ORM.load(name)
-    t = block[Triangle][Triangle][0]
+    db = fastdb.ORM.load(name)
+    t = db[Triangle][Triangle][0]
     print(f'Triangle id: {t.id}')
     print(f'Point a idx: {t.a.idx}, x: {t.a.x}, y: {t.a.y}, z: {t.a.z}')
     print(f'Point b idx: {t.b.idx}, x: {t.b.x}, y: {t.b.y}, z: {t.b.z}')
     print(f'Point c idx: {t.c.idx}, x: {t.c.x}, y: {t.c.y}, z: {t.c.z}')
     
     # Clean up
-    block.unlink()
+    db.unlink()
 
 if __name__ == '__main__':
     TEMP_DB_PATH = 'tmp_shared_memory'
     
-    block = fastdb.ORM.create()
+    db = fastdb.ORM.create()
     
     t = Triangle()
     t.id = 1
@@ -39,8 +39,8 @@ if __name__ == '__main__':
     t.b = Point(idx=2, x=11.0, y=21.0, z=31.0)
     t.c = Point(idx=3, x=12.0, y=22.0, z=32.0)
     
-    block.push(t)
-    block.share(str(TEMP_DB_PATH), close_after=True)
+    db.push(t)
+    db.share(str(TEMP_DB_PATH), close_after=True)
     
     a = Process(target=process_task, args=(str(TEMP_DB_PATH), ))
     a.start()

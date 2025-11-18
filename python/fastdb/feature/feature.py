@@ -1,44 +1,50 @@
 import warnings
-from typing import Dict, TypeVar
+from threading import Lock
+from weakref import WeakKeyDictionary
+from typing import Dict, Any, TypeVar, Type, get_type_hints
 
 from .. import core
 from .base import BaseFeature
-from .utils import get_defn, get_all_defns
+from .utils import parse_defns
 from ..type import FIELD_TYPE_DEFAULTS, OriginFieldType
 
 T = TypeVar('T', bound='Feature')
+_feature_hints_cache_lock = Lock()
+_feature_hints_cache: WeakKeyDictionary = WeakKeyDictionary()
 
 class Feature(BaseFeature):
     def __init__(self, **kwargs):
-        self._cache: Dict[str, any] = {}
+        self._cache: Dict[str, Any] = {}
         self._origin: core.WxFeature | None = None
         self._db: core.WxDatabase | core.WxDatabaseBuild | None = None
-        self._layer: core.WxLayerTable | core.WxLayerTableBuild | None = None
+        self._type_hints: Dict[str, Any] = _get_feature_hints(self.__class__)
+        self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = parse_defns(self.__class__)
         
         for key, value in kwargs.items():
             setattr(self, key, value)
     
     @property
     def fixed(self) -> bool:
-        # If the feature is mapped from a fixed layer
-        # The _origin member must exist
+        # If the feature is mapped from a fixed table
+        # Its _origin member must exist
         return self._origin is not None
     
+    @classmethod
     def map_from(
-        self,
+        cls,
         db: core.WxDatabase | core.WxDatabaseBuild,
-        layer: core.WxLayerTable | core.WxLayerTableBuild,
         origin: core.WxFeature | None = None
-    ):
-        self._db = db
-        self._layer = layer
-        self._origin = origin
+    ) -> T:
+        feature = cls()
+        feature._db = db
+        feature._origin = origin
+        return feature
     
     def __getattr__(self, name: str):
-        # Try to get origin type definition for schema member with the given name
-        defn = get_defn(self.__class__, name)
+        # Try to get origin type definition with the given name
+        defn = self._origin_hints.get(name, None)
         if defn is None or defn[0] is OriginFieldType.unknown:
-            warnings.warn(f'Field "{name}" not found in the layer schema.', UserWarning)
+            warnings.warn(f'Field "{name}" not found in feature "{self.__class__.__name__}".', UserWarning)
             return None
         
         ft, fid = defn
@@ -47,37 +53,35 @@ class Feature(BaseFeature):
         
         # If not on mapping, return cached value or default value
         if not self.fixed:
-            value = self._cache.get(name, None)
-            if value is None:
+            if name in self._cache:
+                return self._cache[name]
+            else:
                 if ft == OriginFieldType.ref:
-                    ref_feature_type = self.__class__.__annotations__[name]
-                    feature = ref_feature_type()
-                    self._cache[name] = feature
-                    return feature
+                    ref_feature_type = self._type_hints[name]
+                    default_ref_feature = ref_feature_type()
+                    self._cache[name] = default_ref_feature
+                    return default_ref_feature
                 else:
                     default_value = FIELD_TYPE_DEFAULTS.get(ft, None)
                     self._cache[name] = default_value
                     return default_value
-            return value
         
         # Case for mapping from database ##################################################
         
         # Type Bytes is specially stored in fastdb as geometry-like chunk
-        # return it directly from layer
+        # Return it directly from table feature
         if ft == OriginFieldType.bytes:
             return self._origin.get_geometry_like_chunk()
         
         # Type Ref requires special handling to get referenced feature
         elif ft == OriginFieldType.ref:
-            # Get referenced feature
+            # Get feature referencing
             ref = self._origin.get_field_as_ref(fid)
             
             # Return as Feature object
+            ref_feature_type: Feature = self._type_hints[name]
             feature_origin: core.WxFeature = self._db.tryGetFeature(ref)
-            ref_feature_type = self.__class__.__annotations__[name]
-            ref_feature = ref_feature_type()
-            ref_feature.map_from(self._db, feature_origin.layer(), feature_origin)
-            return ref_feature
+            return ref_feature_type.map_from(self._db, feature_origin)
         
         # Other types: map to corresponding get_field_as_* method
         elif ft == OriginFieldType.u8:
@@ -103,19 +107,24 @@ class Feature(BaseFeature):
             object.__setattr__(self, name, value)
             return
         
-        # Try to get origin type definition for member with the given name
-        defn = get_defn(self.__class__, name)
+        # Try to get origin type definition with the given name
+        defn = self._origin_hints.get(name, None)
         if defn is None or defn[0] is OriginFieldType.unknown:
-            raise AttributeError(f'Field "{name}" not found in feature feature "{self.__class__.__name__}".')
+            warnings.warn(f'Field "{name}" not found in feature "{self.__class__.__name__}".', UserWarning)
+            return
         
         ft, fid = defn
         
+        # Case for not mapping from database ##############################################
+        
+        # Cache the value for later use
         if not self.fixed:
-            # Cache the value for later use
             self._cache[name] = value
             return
         
-        # Set field value according to its type
+        # Case for mapping from database ##################################################
+        
+        # Directly set field value to database according to its type
         if ft == OriginFieldType.u8     \
         or ft == OriginFieldType.u16    \
         or ft == OriginFieldType.u32    \
@@ -125,17 +134,32 @@ class Feature(BaseFeature):
         or ft == OriginFieldType.u8n    \
         or ft == OriginFieldType.u16n:
             self._origin.set_field(fid, value)
-        if ft == OriginFieldType.ref:
-            # Get referenced feature
-            ref_feature_type = self.__class__.__annotations__[name]
+        elif ft == OriginFieldType.ref:
+            # Get referenced feature type
+            ref_feature_type: Feature = self._type_hints[name]
             if not isinstance(value, ref_feature_type):
-                raise TypeError(f'Field "{name}" expects a reference to type "{ref_feature_type.__name__}", but got "{type(value).__name__}".')
+                warnings.warn(f'Field "{name}" expects a reference to type "{ref_feature_type.__name__}", but got "{type(value).__name__}".', UserWarning)
+                return
             
             # Get the origin ref feature and set all its fields with the given feature
-            origin_feature = getattr(self, name)
-            defns = get_all_defns(ref_feature_type)
-            for ref_field_name, _ in defns:
+            # Note: this is a deep copy operation, performance may be affected for feature with many fields
+            origin_feature: Feature = getattr(self, name)
+            for ref_field_name in origin_feature._type_hints.keys():
                 setattr(origin_feature, ref_field_name, getattr(value, ref_field_name))
             
         else:
             warnings.warn(f'Fastdb only support features to set numeric field for a scale-known block.', UserWarning)
+
+# Helpers ##################################################
+
+def _get_feature_hints(feature_type: Type[T]) -> Dict[str, Any]:
+    if feature_type in _feature_hints_cache:
+        return _feature_hints_cache[feature_type]
+    
+    with _feature_hints_cache_lock:
+        if feature_type in _feature_hints_cache:
+            return _feature_hints_cache[feature_type]
+        
+        hints = get_type_hints(feature_type)
+        _feature_hints_cache[feature_type] = hints
+        return hints    

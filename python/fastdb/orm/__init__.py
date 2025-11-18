@@ -20,10 +20,10 @@ class TableDefn:
     name: str = ''
 
 class TableBuilder(Generic[T]):
-    def __init__(self, feature_type: Type[T], block: 'ORM'):
+    def __init__(self, feature_type: Type[T], orm: 'ORM'):
         if not issubclass(feature_type, Feature):
-            raise TypeError('feature_type must be a subclass of Feature.')
-        self._block = block
+            raise TypeError('Feature_type must be a subclass of Feature.')
+        self._orm = orm
         self._feature_type = feature_type
     
     def __getitem__(self, table_name: str | Type[T]) -> Table[T]:
@@ -32,21 +32,19 @@ class TableBuilder(Generic[T]):
             if table_name != self._feature_type.__name__:
                 raise TypeError('table_name must match the feature_type name if you use a feature type as the table name.')
             
-        if table_name in self._block._table_map:
-            return self._block._table_map[table_name]
+        if table_name in self._orm._table_map:
+            return self._orm._table_map[table_name]
         
-        db = self._block._origin
+        db = self._orm._origin
         table_count = db.get_layer_count()
         for i in range (table_count):
             o_table: core.WxLayerTable = db.get_layer(i)
             if o_table.name() == table_name:
-                table = Table[T]()
-                table.map_from(self._feature_type, o_table, db)
+                table = Table.map_from(self._feature_type, o_table, db)
                 
-                self._block._table_map[table_name] = table
+                self._orm._table_map[table_name] = table
                 return table
-        raise KeyError(f'Table "{table_name}" not found in block.')
-        
+        raise KeyError(f'Table "{table_name}" not found in fastdb.')
 
 class ORM:
     def __init__(self):
@@ -61,22 +59,22 @@ class ORM:
     
     @staticmethod
     def create() -> 'ORM':
-        block = ORM()
-        block._origin = core.WxDatabaseBuild()
+        orm = ORM()
+        orm._origin = core.WxDatabaseBuild()
         
         # Create default name table
-        nl: core.WxLayerTableBuild = block._origin.create_layer_begin('_name_')
+        nl: core.WxLayerTableBuild = orm._origin.create_layer_begin('_name_')
         nl.add_field('name', OriginFieldType.str.value)
         nl.add_field('ref', OriginFieldType.ref.value)
-        block._named_table = nl
+        orm._named_table = nl
         
-        return block
+        return orm
     
     @staticmethod
     def truncate(scales: List[TableDefn]) -> 'ORM':
-        # Create block with dynamic scales
-        block = ORM()
-        block._origin = core.WxDatabaseBuild()
+        # Create orm with dynamic scales
+        orm = ORM()
+        orm._origin = core.WxDatabaseBuild()
         
         # Check if all scales are valid
         for scale in scales:
@@ -89,21 +87,21 @@ class ORM:
         for scale in scales:
             empty_feature = scale.feature_type()
             table_name = scale.name if scale.name else scale.feature_type.__name__
-            for _ in range (0, scale.feature_capacity):
-                block.push(empty_feature, table_name)
+            for _ in range (scale.feature_capacity):
+                orm.push(empty_feature, table_name)
                 
         # Combine the memory by saving and reloading
-        block._combine()
-        return block
+        orm._combine()
+        return orm
     
     def _combine(self):
         """Combine memory from all tables into a single continuous block."""
-        # Check if block need to be combined
+        # Check if database need to be combined
         if self._origin is None:
-            warnings.warn('Block is empty, cannot combine.', UserWarning)
+            warnings.warn('Database is empty, cannot combine.', UserWarning)
             return
         if isinstance(self._origin, core.WxDatabase):
-            warnings.warn('Block has been combined, no need to combine again.', UserWarning)
+            warnings.warn('Database has been combined, no need to combine again.', UserWarning)
             return
         
         # Save to a temporary file and reload
@@ -118,47 +116,47 @@ class ORM:
     
     @staticmethod
     def load(name: str, from_file: bool = False) -> 'ORM':
-        """Create a Block instance by loading from file system or shared memory."""
-        block = ORM()
+        """Create an orm instance by loading from file system or shared memory."""
+        orm = ORM()
         
-        # Try to load block from file system
+        # Try to load database from file system
         if from_file:
             path = Path(name)
             if path.exists():
-                block._origin = core.WxDatabase.load(str(path))
+                orm._origin = core.WxDatabase.load(str(path))
             else:
-                raise FileNotFoundError(f"Block '{name}' not found in file system.")
+                raise FileNotFoundError(f"Database '{name}' not found in file system.")
         
-        # Try to load block from shared memory
+        # Try to load database from shared memory
         else:
             name = _normalize_shm_name(name)
             try:
-                block._shm = shared_memory.SharedMemory(name=name)
-                block._origin = core.WxDatabase.load_xbuffer(block._shm.buf)
+                orm._shm = shared_memory.SharedMemory(name=name)
+                orm._origin = core.WxDatabase.load_xbuffer(orm._shm.buf)
             
             except FileNotFoundError:
-                raise FileNotFoundError(f"Block '{name}' not found in shared memory.")
+                raise FileNotFoundError(f"Database '{name}' not found in shared memory.")
         
-        # Try to find name table
+        # Try to find named table
         # For most of the time, name table should alaways indexed at 0 if exists
         # But we still iterate through all tables to be safe, and the performance impact is negligible
-        table_count = block._origin.get_layer_count()
+        table_count = orm._origin.get_layer_count()
         for i in range (table_count):
-            o_table: core.WxLayerTable = block._origin.get_layer(i)
+            o_table: core.WxLayerTable = orm._origin.get_layer(i)
             if o_table.name() == '_name_':
-                block._named_table = o_table
+                orm._named_table = o_table
                 break
         
-        return block
+        return orm
 
     def push(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
-        """Push the given feature to the block database."""
+        """Push the given feature to the database."""
         # Check if is synchronizable
         if self._origin is None:
-            warnings.warn('Block has not connected to fastdb, not supporting push operation.', UserWarning)
+            warnings.warn('Database has not connected to fastdb, not supporting push operation.', UserWarning)
             return
         if self.fixed:
-            warnings.warn('Block has fixed scale, not supporting push operation.', UserWarning)
+            warnings.warn('Database has fixed scale, not supporting push operation.', UserWarning)
             return
         if not isinstance(feature, Feature):
             warnings.warn('Provided feature is not an instance of Feature.', UserWarning)
@@ -174,8 +172,7 @@ class ORM:
             table = self._table_map[table_name]
         else:
             # Create new table
-            new_table = Table[feature_type]()
-            new_table.map_from(feature_type, self._origin.create_layer_begin(table_name), self._origin)
+            new_table = Table.map_from(feature_type, self._origin.create_layer_begin(table_name), self._origin)
             
             # Define table
             for defn in defns:
@@ -227,50 +224,48 @@ class ORM:
                 nl.add_feature_end()
     
     def get(self, feature_type: Type[T], name: str) -> T | None:
-        """Get feature by name from the block."""
+        """Get feature by name from the database."""
         if self._origin is None:
-            raise RuntimeError('Block is empty, cannot get feature.')
+            raise RuntimeError('Database is empty, cannot get feature.')
         if not self.fixed:
-            raise RuntimeError('Block still in build mode, cannot get feature.')
+            raise RuntimeError('Database still in build mode, cannot get feature.')
         if self._named_table is None:
-            raise RuntimeError('Block has no named table, cannot get feature by name.')
+            raise RuntimeError('Database has no named table, cannot get feature by name.')
         
         # Search named table for the given name
         of: core.WxFeature | None = None
-        nl = self._named_table
-        nl.rewind()
-        while nl.next():
-            n = nl.get_field_as_string(0)
+        nt = self._named_table
+        nt.rewind()
+        while nt.next():
+            n = nt.get_field_as_string(0)
             if n == name:
-                ref = nl.get_field_as_ref(1)
+                ref = nt.get_field_as_ref(1)
                 of = self._origin.tryGetFeature(ref)
                 break
         if not of:
             return None
         
         # Create feature and map from origin feature
-        feature = feature_type()
-        feature.map_from(self._origin, of.layer(), of)
-        return feature
+        return feature_type.map_from(self._origin, of)
 
     def close(self):
-        """Close the block and release resources."""
+        """Close the database and release resources."""
         if self._shm:
             self._shm.close()
             self._shm = None
             self._origin = None
     
     def unlink(self):
-        """Unlink the shared memory block."""
+        """Unlink the shared memory database."""
         if self._shm:
             self._shm.unlink()
             self._shm = None
             self._origin = None
     
     def share(self, shm_name: str, close_after: bool = False):
-        """Share the block in shared memory."""
+        """Share the database in shared memory."""
         if self._origin is None:
-            raise RuntimeError('Block is empty, cannot share.')
+            raise RuntimeError('Database is empty, cannot share.')
         if isinstance(self._origin, core.WxDatabaseBuild):
             self._combine() # combine first if still in build mode
         
@@ -288,9 +283,9 @@ class ORM:
             self.close()
     
     def save(self, path: str):
-        """Save the block to a file."""
+        """Save the database to a file."""
         if self._origin is None:
-            raise RuntimeError('Block is empty, cannot save.')
+            raise RuntimeError('Database is empty, cannot save.')
         
         # Directly save database to file if _db is WxDatabaseBuild
         if isinstance(self._origin, core.WxDatabaseBuild):
@@ -302,7 +297,7 @@ class ORM:
                 f.write(chunk.to_bytes())
         
     def __len__(self):
-        """Return the number of tables in the block."""
+        """Return the number of tables in the database."""
         if self._origin is None:
             return 0
         return self._origin.get_layer_count()
@@ -310,7 +305,7 @@ class ORM:
     def __getitem__(self, feature_type: Type[T]) -> TableBuilder[T]:
         """Get table builder by specific feature type."""
         if self._origin is None:
-            raise RuntimeError('Block is empty, cannot access tables.')
+            raise RuntimeError('Database is empty, cannot access tables.')
         if not issubclass(feature_type, Feature):
             raise TypeError('feature_type must be a subclass of Feature.')
         

@@ -8,17 +8,19 @@ from .. import core
 from ..feature import Feature, get_all_defns
 
 T = TypeVar('T', bound=Feature)
-
-_column_accessor_cache = weakref.WeakKeyDictionary()
 _column_accessor_cache_lock = Lock()
+_column_accessor_cache = weakref.WeakKeyDictionary()
 
 def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
     """
     Create a column accessor that provides numpy array access with proper type hints.
     
-    This dynamically creates a class with the same field names as feature_type,
-    but all fields are typed as np.ndarray instead of their original types (F64, STR, etc).
+    This dynamically creates a class with the same field names as feature_type.
     """
+    if feature_type in _column_accessor_cache:
+        ColumnAccessorClass = _column_accessor_cache[feature_type]
+        return ColumnAccessorClass(table_origin, feature_type)
+    
     with _column_accessor_cache_lock:
         if feature_type in _column_accessor_cache:
             ColumnAccessorClass = _column_accessor_cache[feature_type]
@@ -29,22 +31,16 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
         if hasattr(feature_type, '__annotations__'):
             original_annotations = feature_type.__annotations__.copy()
         
-        # Create new annotations where all types become np.ndarray
-        new_annotations = {}
-        for field_name, field_type in original_annotations.items():
-            if not field_name.startswith('_'):
-                new_annotations[field_name] = np.ndarray
-        
         # Create the dynamic column accessor class with modified annotations
         class ColumnAccessor:
             """Column accessor that returns numpy arrays for field access"""
             
             # Set the new annotations
-            __annotations__ = new_annotations
+            __annotations__ = original_annotations
             
             def __init__(self, table_origin, feature_type):
                 # Don't call parent __init__ to avoid initializing cache
-                # just set internal references
+                # Just set internal references
                 object.__setattr__(self, '_table_origin', table_origin)
                 object.__setattr__(self, '_feature_type', feature_type)
             
@@ -83,6 +79,24 @@ class Table(Generic[T]):
         self._db: core.WxDatabase | core.WxDatabaseBuild = None
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
     
+    def __len__(self) -> int:
+        return self._origin.get_feature_count()
+    
+    def __getitem__(self, index: int) -> T:
+        # Check index bounds
+        if index >= self._origin.get_feature_count():
+            raise IndexError(f'Feature index {index} out of range [0, {self._origin.get_feature_count()}].')
+        
+        if index < 0:
+            index = self._origin.get_feature_count() + index
+        
+        # Get feature
+        return  self._feature_type.map_from(self._db, self._origin.tryGetFeature(index))
+    
+    def __iter__(self) -> Generator[T, None, None]:
+        for i in range(self._origin.get_feature_count()):
+            yield self._feature_type.map_from(self._db, self._origin.tryGetFeature(i))
+    
     @staticmethod
     @contextmanager
     def push2(table: 'Table[T]') -> Generator[core.WxLayerTableBuild, None, None]:
@@ -90,7 +104,7 @@ class Table(Generic[T]):
         if table._db is None or table._origin is None:
             raise RuntimeError('Table has not connected to fastdb, not supporting push operation.')
         if table.fixed:
-            raise RuntimeError('Table has fixed scale, not supporting push operation.', UserWarning)
+            raise RuntimeError('Table has fixed scale, not supporting push operation.')
         
         table._origin.add_feature_begin()
         
@@ -116,50 +130,35 @@ class Table(Generic[T]):
         return self._column
     
     @property
-    def fixed(self) -> bool:
-        return isinstance(self._origin, core.WxLayerTable)
-    
-    def map_from(
-        self,
-        feature_type: Type[T] | None,
-        origin: core.WxLayerTable | core.WxLayerTableBuild,
-        db: core.WxDatabase | core.WxDatabaseBuild
-    ):
-        self._db = db
-        self._origin = origin
-        self._feature_type = feature_type
-        
-        # Get feature count if the fastdb table has fixed scale
-        if self.fixed:
-            self.feature_count = origin.get_feature_count()
-            # Create column accessor that pretends to be T but returns numpy arrays
-            self._column = _create_column_accessor(feature_type, origin) if feature_type is not None else None
-    
-    def __len__(self) -> int:
-        return self._origin.get_feature_count()
-    
-    def __getitem__(self, index: int) -> T:
-        # Check index bounds
-        if index < 0 or index >= self._origin.get_feature_count():
-            raise IndexError(f'Feature index {index} out of range [0, {self._origin.get_feature_count()}].')
-        # Get feature
-        feature = self._feature_type()
-        feature.map_from(self._db, self._origin, self._origin.tryGetFeature(index))
-        return feature
-    
-    def __iter__(self) -> Generator[T, None, None]:
-        for i in range(self._origin.get_feature_count()):
-            feature = self._feature_type()
-            feature.map_from(self._db, self._origin, self._origin.tryGetFeature(i))
-            yield feature
+    def row(self) -> int:
+        return self._origin.row()
     
     @property
     def next(self) -> bool:
         return self._origin.next()
     
     @property
-    def row(self) -> int:
-        return self._origin.row()
+    def fixed(self) -> bool:
+        return isinstance(self._origin, core.WxLayerTable)
+    
+    @staticmethod
+    def map_from(
+        feature_type: Type[T] | None,
+        origin: core.WxLayerTable | core.WxLayerTableBuild,
+        db: core.WxDatabase | core.WxDatabaseBuild
+    ) -> 'Table[T]':
+        table = Table[T]()
+        table._db = db
+        table._origin = origin
+        table._feature_type = feature_type
+        
+        # Get feature count if the fastdb table has fixed scale
+        if table.fixed:
+            table.feature_count = origin.get_feature_count()
+            # Create column accessor that pretends to be T but returns numpy arrays
+            table._column = _create_column_accessor(feature_type, origin) if feature_type is not None else None
+        
+        return table
     
     def rewind(self):
         self._origin.rewind()

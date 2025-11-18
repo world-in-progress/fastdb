@@ -1,6 +1,6 @@
 import weakref
 from threading import Lock
-from typing import Dict, get_type_hints, get_origin, get_args
+from typing import Dict, get_type_hints
 
 from .base import BaseFeature
 from ..type import OriginFieldType, get_origin_type
@@ -33,10 +33,6 @@ def parse_defns(cls):
         
         _global_feature_defn_cache[cls] = m
         return m
-
-def get_defn(cls, field_name) -> tuple[OriginFieldType, int] | None:
-    m = parse_defns(cls)
-    return m.get(field_name)
 
 def get_all_defns(cls) -> list[tuple[str, OriginFieldType]]:
     m = parse_defns(cls)

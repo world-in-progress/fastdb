@@ -18,8 +18,8 @@ if __name__ == '__main__':
         fastdb.TableDefn(Point, 5, 'PointA'),
     ]).save(str(TEMP_DB_PATH))
     
-    block = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
-    ps = block[Point]['PointA']
+    db = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
+    ps = db[Point]['PointA']
     for i in range(5):
         point = ps[i]
         point.x = i * 1.0
@@ -27,12 +27,10 @@ if __name__ == '__main__':
         point.z = i * 3.0
         print(f'PointA {i}: x={point.x}, y={point.y}, z={point.z}')
     
-    block.save(str(TEMP_DB_PATH))
-    block = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
+    db.save(str(TEMP_DB_PATH))
+    db = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
     
-    points_a = block[Point]['PointA']
-    points_p = block[Point][Point]
-        
+    points_a = db[Point]['PointA']
     for p in points_a:
         print(f'PointA before modify: x={p.x}, y={p.y}, z={p.z}')
     
