@@ -88,20 +88,20 @@ if ($Build) {
     }
 
     # Check for a C++ compiler (cl.exe for MSVC or g++/clang++)
-    $compilerFound = $false
-    $clCmd = Get-Command cl -ErrorAction SilentlyContinue
-    $gppCmd = Get-Command g++ -ErrorAction SilentlyContinue
-    $clangCmd = Get-Command clang++ -ErrorAction SilentlyContinue
+    # $compilerFound = $false
+    # $clCmd = Get-Command cl -ErrorAction SilentlyContinue
+    # $gppCmd = Get-Command g++ -ErrorAction SilentlyContinue
+    # $clangCmd = Get-Command clang++ -ErrorAction SilentlyContinue
     
-    if ($clCmd -or $gppCmd -or $clangCmd) {
-        $compilerFound = $true
-    }
+    # if ($clCmd -or $gppCmd -or $clangCmd) {
+    #     $compilerFound = $true
+    # }
 
-    if (-not $compilerFound) {
-        Write-Red "Error: No C++ compiler found."
-        Write-Host "Please install Visual Studio with C++ tools, MinGW, or LLVM/Clang."
-        exit 1
-    }
+    # if (-not $compilerFound) {
+    #     Write-Red "Error: No C++ compiler found."
+    #     Write-Host "Please install Visual Studio with C++ tools, MinGW, or LLVM/Clang."
+    #     exit 1
+    # }
 
     Write-Green "All build tools are available."
 
@@ -111,10 +111,20 @@ if ($Build) {
     }
     
     Set-Location "./build"
+
+    if (-not $env:CONDA_PREFIX) {
+        Write-Red "Error: CONDA_PREFIX environment variable is not set."
+        Write-Host "Please activate your conda environment first."
+        exit 1
+    }
+    Write-Host "CONDA_PREFIX is set to: $env:CONDA_PREFIX"
     
+    $condaPrefix = $env:CONDA_PREFIX    
     cmake .. `
         -DCMAKE_BUILD_TYPE=Release `
-        -DCMAKE_PREFIX_PATH="$env:CONDA_PREFIX" `
+        -DCMAKE_PREFIX_PATH="$condaPrefix" `
+        -DGDAL_INCLUDE_DIR="$condaPrefix/Library/include" `
+        -DGDAL_LIBRARY="$condaPrefix/Library/lib/gdal.lib" `
         -DUSE_SWIG_PYTHON=ON
     
     if ($LASTEXITCODE -ne 0) {
