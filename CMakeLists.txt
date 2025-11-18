@@ -1,8 +1,10 @@
-cmake_minimum_required(VERSION 3.27)
-#set(CMAKE_TOOLCHAIN_FILE /Users/laowine-x/code/vcpkg/scripts/buildsystems/vcpkg.cmake)
+include(cmake/FastdbCMakeMinimumRequired.cmake)
+cmake_minimum_required(VERSION ${FASTDB_CMAKE_VERSION_MIN}...${FASTDB_CMAKE_VERSION_MAX})
+
+project(FastCarto)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-project(FastCarto)
 
 
 if(WIN32)
