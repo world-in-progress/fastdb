@@ -137,7 +137,14 @@
             typenum = descr->type_num;
         }
 
-        npy_intp item_size = ((_PyArray_DescrNumPy2*)descr)->elsize;
+        // get element size - compatible with NumPy 1.x and 2.x
+        npy_intp item_size;
+        %#if defined(NPY_ABI_VERSION) && NPY_ABI_VERSION >= 0x02000000
+            item_size = PyDataType_ELSIZE(descr);
+        %#else
+            item_size = descr->elsize;
+        %#endif
+
         Py_DECREF(descr);
         
         npy_intp num_elements = $self->size / item_size;

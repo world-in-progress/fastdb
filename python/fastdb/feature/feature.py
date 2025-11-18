@@ -1,15 +1,14 @@
 import warnings
-import numpy as np
-from typing import Dict, TypeVar, Type
+from typing import Dict, TypeVar
 
 from .. import core
-from .base import BasePipe
+from .base import BaseFeature
 from .utils import get_defn, get_all_defns
 from ..type import FIELD_TYPE_DEFAULTS, OriginFieldType
 
-T = TypeVar('T', bound='FeaturePipe')
+T = TypeVar('T', bound='Feature')
 
-class FeaturePipe(BasePipe):
+class Feature(BaseFeature):
     def __init__(self, **kwargs):
         self._cache: Dict[str, any] = {}
         self._origin: core.WxFeature | None = None
@@ -51,10 +50,10 @@ class FeaturePipe(BasePipe):
             value = self._cache.get(name, None)
             if value is None:
                 if ft == OriginFieldType.ref:
-                    ref_pipe_type = self.__class__.__annotations__[name]
-                    pipe = ref_pipe_type()
-                    self._cache[name] = pipe
-                    return pipe
+                    ref_feature_type = self.__class__.__annotations__[name]
+                    feature = ref_feature_type()
+                    self._cache[name] = feature
+                    return feature
                 else:
                     default_value = FIELD_TYPE_DEFAULTS.get(ft, None)
                     self._cache[name] = default_value
@@ -74,37 +73,11 @@ class FeaturePipe(BasePipe):
             ref = self._origin.get_field_as_ref(fid)
             
             # Return as Feature object
-            feature = self._db.tryGetFeature(ref)
-            ref_pipe_type = self.__class__.__annotations__[name]
-            pipe = ref_pipe_type()
-            pipe.map_from(self._db, feature.layer(), feature)
-            return pipe
-
-        # elif ft == OriginFieldType.list:
-        #     pipe_type = get_args(self.__class__.__annotations__[name])[0]
-        #     layer_name = pipe_type.__name__
-        #     layer_count = self._db.get_layer_count()
-            
-        #     layer = None
-        #     list_layer = None
-        #     for i in range (layer_count):
-        #         l: core.WxLayerTable = self._db.get_layer(i)
-        #         l_name = l.name()
-        #         if l_name == layer_name:
-        #             layer = l
-        #         elif l_name == '_list':
-        #             list_layer = l
-            
-        #     if layer is None:
-        #         raise ValueError(f'Layer "{layer_name}" not found in database for "{pipe_type.__name__}" when initializing LIST pipe.')
-        #     if list_layer is None:
-        #         raise ValueError(f'Layer "_list" not found in database for "{pipe_type.__name__}" when initializing LIST pipe.')
-            
-            
-            
-        #     pipe = LIST()
-        #     pipe.map_from(self._db, layer, )
-            
+            feature_origin: core.WxFeature = self._db.tryGetFeature(ref)
+            ref_feature_type = self.__class__.__annotations__[name]
+            ref_feature = ref_feature_type()
+            ref_feature.map_from(self._db, feature_origin.layer(), feature_origin)
+            return ref_feature
         
         # Other types: map to corresponding get_field_as_* method
         elif ft == OriginFieldType.u8:
@@ -133,7 +106,7 @@ class FeaturePipe(BasePipe):
         # Try to get origin type definition for member with the given name
         defn = get_defn(self.__class__, name)
         if defn is None or defn[0] is OriginFieldType.unknown:
-            raise AttributeError(f'Field "{name}" not found in feature pipe "{self.__class__.__name__}".')
+            raise AttributeError(f'Field "{name}" not found in feature feature "{self.__class__.__name__}".')
         
         ft, fid = defn
         
@@ -154,15 +127,15 @@ class FeaturePipe(BasePipe):
             self._origin.set_field(fid, value)
         if ft == OriginFieldType.ref:
             # Get referenced feature
-            ref_pipe_type = self.__class__.__annotations__[name]
-            if not isinstance(value, ref_pipe_type):
-                raise TypeError(f'Field "{name}" expects a reference to type "{ref_pipe_type.__name__}", but got "{type(value).__name__}".')
+            ref_feature_type = self.__class__.__annotations__[name]
+            if not isinstance(value, ref_feature_type):
+                raise TypeError(f'Field "{name}" expects a reference to type "{ref_feature_type.__name__}", but got "{type(value).__name__}".')
             
-            # Get the origin ref pipe and set all its fields with the given pipe
-            origin_pipe = getattr(self, name)
-            defns = get_all_defns(ref_pipe_type)
+            # Get the origin ref feature and set all its fields with the given feature
+            origin_feature = getattr(self, name)
+            defns = get_all_defns(ref_feature_type)
             for ref_field_name, _ in defns:
-                setattr(origin_pipe, ref_field_name, getattr(value, ref_field_name))
+                setattr(origin_feature, ref_field_name, getattr(value, ref_field_name))
             
         else:
-            warnings.warn(f'Fastdb only support pipes to set numeric field for a scale-known block.', UserWarning)
+            warnings.warn(f'Fastdb only support features to set numeric field for a scale-known block.', UserWarning)

@@ -5,12 +5,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..',
 
 from python import fastdb
 
-class Point(fastdb.FeaturePipe):
+class Point(fastdb.Feature):
     x: fastdb.F64
     y: fastdb.F64
     z: fastdb.F64
 
-class Triangle(fastdb.FeaturePipe):
+class Triangle(fastdb.Feature):
     a: Point
     b: Point
     c: Point

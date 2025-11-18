@@ -2,19 +2,19 @@ import weakref
 from threading import Lock
 from typing import Dict, get_type_hints, get_origin, get_args
 
-from .base import BasePipe
+from .base import BaseFeature
 from ..type import OriginFieldType, get_origin_type
 
 _cache_lock = Lock()
-_global_pipe_defn_cache = weakref.WeakKeyDictionary()
+_global_feature_defn_cache = weakref.WeakKeyDictionary()
 
 def parse_defns(cls):
-    if cls in _global_pipe_defn_cache:
-        return _global_pipe_defn_cache[cls]
+    if cls in _global_feature_defn_cache:
+        return _global_feature_defn_cache[cls]
     
     with _cache_lock:
-        if cls in _global_pipe_defn_cache:
-            return _global_pipe_defn_cache[cls]
+        if cls in _global_feature_defn_cache:
+            return _global_feature_defn_cache[cls]
         
         m: Dict[str, tuple[OriginFieldType, int]] = {}
         hints = get_type_hints(cls)
@@ -25,13 +25,13 @@ def parse_defns(cls):
             try:
                 origin_type = get_origin_type(hint)
                 if origin_type == OriginFieldType.unknown:
-                    if issubclass(hint, BasePipe):
+                    if issubclass(hint, BaseFeature):
                         origin_type = OriginFieldType.ref
             except Exception as e:
                 origin_type = OriginFieldType.unknown
             m[field_name] = (origin_type, idx)
         
-        _global_pipe_defn_cache[cls] = m
+        _global_feature_defn_cache[cls] = m
         return m
 
 def get_defn(cls, field_name) -> tuple[OriginFieldType, int] | None:
