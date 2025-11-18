@@ -279,11 +279,9 @@ namespace wx{
             PyObject* py_long = PyLong_FromVoidPtr(ptr);
             return py_long;
         } else {
-            // 转换失败，处理错误（例如，抛出 Python 异常）
-            PyErr_SetString(PyExc_TypeError, "Failed to convert Python object to Foo*");
-            PyObject *none = Py_None;
-            SWIG_Py_INCREF(none);
-            return none;
+            // conversion failed, handle error
+            PyErr_SetString(PyExc_TypeError, "Failed to convert Python object to void*");
+            Py_RETURN_NONE;
         }
     }
 }
