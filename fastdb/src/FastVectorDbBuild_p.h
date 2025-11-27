@@ -64,31 +64,42 @@ struct
        u16 ilayer;
        u8  ifeature;
        u16 ifeatureH; 
-       static FastVectorDbFeatureRef make(u32 ilayer,u32 ifeature)
+       static FastVectorDbFeatureRef make(u32 ilayer, u32 ifeature)
        {
           FastVectorDbFeatureRef ref;
-          ref.ilayer=ilayer;
-          ref.ifeature= ifeature;
-          ref.ifeatureH=ifeature>>16;
+          ref.ilayer = ilayer;
+          ref.ifeature = ifeature & 0xFF;           // low 8 bits
+          ref.ifeatureH= (ifeature >> 8) & 0xFFFF;  // high 16 bits
           return ref;
        }
-        static FastVectorDbFeatureRef* make_ref(u32 ilayer,u32 ifeature)
+        static FastVectorDbFeatureRef* make_ref(u32 ilayer, u32 ifeature)
        {
           FastVectorDbFeatureRef* ret = new FastVectorDbFeatureRef();
-          *ret = make(ilayer,ifeature);
+          *ret = make(ilayer, ifeature);
           return ret;
        }
        static u32 decodeIFeature(FastVectorDbFeatureRef* ref)
        {
-          u32 ifeature = ref->ifeature|(((u32)ref->ifeatureH));
+          u32 ifeature = ref->ifeature | (((u32)ref->ifeatureH) << 8);
           return ifeature;
        }
     };
 
-
 #ifdef _MSC_VER
     #pragma pack(pop)
 #endif
+
+    class MemoryStream::Impl
+    {
+    public:
+        Impl();
+        ~Impl();
+        chunk_data_t data();
+        void reset();   // reset buffer
+        void write(void *pdata, size_t size);
+    private:
+        vector<u8> m_buffer;
+    };
 
     class FastVectorDbLayerBuild;
     class FastVectorDbBuild::Impl

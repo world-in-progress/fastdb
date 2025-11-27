@@ -7,6 +7,61 @@
 #include <vector> 
 namespace wx
 {
+    MemoryStream::MemoryStream()
+    {
+        impl = new MemoryStream::Impl();
+    }
+
+    MemoryStream::~MemoryStream()
+    {
+        delete impl;
+    }
+
+    chunk_data_t MemoryStream::data()
+    {
+        return impl->data();
+    }
+
+    void MemoryStream::reset()
+    {
+        impl->reset();
+    }
+
+    void MemoryStream::write(void *pdata, size_t size)
+    {
+        impl->write(pdata, size);
+    }
+
+    MemoryStream::Impl::Impl()
+        :m_buffer()
+    {
+    }
+
+    MemoryStream::Impl::~Impl()
+    {
+    }
+
+    chunk_data_t MemoryStream::Impl::data()
+    {
+        chunk_data_t cd;
+        cd.pdata = m_buffer.data();
+        cd.size = m_buffer.size();
+        return cd;
+    }
+
+    void MemoryStream::Impl::reset()
+    {
+        m_buffer.clear();
+        m_buffer.shrink_to_fit();
+    }
+
+    void MemoryStream::Impl::write(void *pdata, size_t size)
+    {
+        size_t old_size = m_buffer.size();
+        m_buffer.resize(old_size + size);
+        memcpy(m_buffer.data() + old_size, pdata, size);
+    }
+
     FastVectorDbBuild::Impl::Impl(FastVectorDbBuild* thiz)
         :m_thiz(thiz)
     {

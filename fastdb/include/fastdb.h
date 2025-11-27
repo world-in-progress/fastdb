@@ -54,6 +54,26 @@ namespace wx
         virtual void write(void *pdata, size_t size) = 0;
     };
 
+    struct chunk_data_t
+    {
+        u32 size;
+        u8* pdata;
+    };
+
+    class MemoryStream :public WriteStream
+    {
+    public:
+        class Impl;
+    public:
+        MemoryStream();
+        ~MemoryStream();
+        chunk_data_t data();  
+        void reset();
+        void write(void *pdata, size_t size) override;
+    private:
+        Impl* impl;
+    };
+
     struct point2_t
     {
         double x;
@@ -62,12 +82,6 @@ namespace wx
         {
             return point2_t{x, y};
         }
-    };
-
-    struct chunk_data_t
-    {
-        u32 size;
-        u8* pdata;
     };
 
     class  FastVectorDbBuild;

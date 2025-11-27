@@ -1,5 +1,4 @@
 import platform
-import tempfile
 import warnings
 from pathlib import Path
 from dataclasses import dataclass
@@ -104,15 +103,23 @@ class ORM:
             warnings.warn('Database has been combined, no need to combine again.', UserWarning)
             return
         
-        # Save to a temporary file and reload
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp_path = str(Path(tmp.name))
-        # Use try-finally to ensure capability of tempfile using in Windows
-        try:
-            self._origin.save(tmp_path)
-            self._origin = core.WxDatabase.load(tmp_path)
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+        # Use memory stream to combine
+        memory_stream = core.WxMemoryStream()
+        self._origin.post(memory_stream)
+        self._origin = core.WxDatabase.load_xbuffer(memory_stream.get_bytes())
+        
+        # TODO(Dsssyc): Deprecated: Use memory stream to combine directly
+        # Removed these codes about temporary file way after full testing
+        
+        # # Save to a temporary file and reload
+        # with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        #     tmp_path = str(Path(tmp.name))
+        # # Use try-finally to ensure capability of tempfile using in Windows
+        # try:
+        #     self._origin.save(tmp_path)
+        #     self._origin = core.WxDatabase.load(tmp_path)
+        # finally:
+        #     Path(tmp_path).unlink(missing_ok=True)
     
     @staticmethod
     def load(name: str, from_file: bool = False) -> 'ORM':

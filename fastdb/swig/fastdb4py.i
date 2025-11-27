@@ -65,7 +65,7 @@
 %apply  size_t* OUTPUT {size_t* ft};
 
 %ignore wx::GeometryReturn;
-%ignore wx::WriteStream;
+// %ignore wx::WriteStream;
 %ignore setGeometry;
 %ignore wx::TileBoxTake;
 %ignore wx::FastVectorTileDb;
@@ -84,6 +84,7 @@
 %nodefaultctor FastVectorDbLayer;
 %nodefaultdtor FastVectorDbLayer;
 
+%rename(WxMemoryStream)     wx::MemoryStream;
 %rename(WxLayerTable)       wx::FastVectorDbLayer;
 %rename(WxDatabase)         wx::FastVectorDb;
 %rename(WxFeature)          wx::FastVectorDbFeature;
@@ -253,6 +254,13 @@
                         )
             return __column_np_interface__.create_from_table(self,index)
     %}
+}
+
+%extend wx::MemoryStream {
+    PyObject* get_bytes() {
+        chunk_data_t cd = $self->data();
+        return PyBytes_FromStringAndSize((const char*)cd.pdata, cd.size);
+    }
 }
 
 %apply  char            {i8};
