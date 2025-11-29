@@ -4,6 +4,10 @@
 #include "fastdb.h"
 using namespace std;
 
+#ifndef WIN32
+#include <cmath>
+#endif
+
 namespace wx
 {
     class GeometryUtils : public GeometryReturn

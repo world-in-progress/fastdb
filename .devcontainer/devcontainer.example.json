@@ -1,0 +1,29 @@
+{
+    "name": "FastDB Dev Container",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            // Add proxy here if needed
+            // "HTTP_PROXY": "http://host.docker.internal:your_proxy_port",
+            // "HTTPS_PROXY": "http://host.docker.internal:your_proxy_port",
+            // "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal"
+        }
+    },
+    
+    "postCreateCommand": "conda env create -f environment.yml || conda env update -f environment.yml",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "ms-python.python",
+                "vadimcn.vscode-lldb"
+            ],
+            "settings": {
+                "cmake.configureOnOpen": true,
+                "python.defaultInterpreterPath": "/opt/conda/envs/myenv/bin/python"
+            }
+        }
+    },
+    "remoteUser": "root"
+}

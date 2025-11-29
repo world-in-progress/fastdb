@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 3.27)
+# cmake_minimum_required (VERSION 3.27)
 set(CUR_PROJ_NAME 	gpc)
 set(CUR_PROJ_DIR	${LIB_DIR}/gpc)
 
