@@ -1,0 +1,9 @@
+include fastcarto/cmake/*.cmake
+include fastcarto/CMakeLists.txt
+recursive-include fastcarto/lib *
+recursive-include fastcarto/fastdb *
+recursive-include fastcarto/make-fastdb *
+recursive-include fastcarto/dump-fastdb *
+recursive-include python *
+global-exclude *.py[cod]
+global-exclude *.so *.dylib *.dll

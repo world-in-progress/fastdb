@@ -1,3 +1,4 @@
+import tempfile
 import platform
 import warnings
 from pathlib import Path
@@ -62,10 +63,10 @@ class ORM:
         orm._origin = core.WxDatabaseBuild()
         
         # Create default name table
-        nl: core.WxLayerTableBuild = orm._origin.create_layer_begin('_name_')
-        nl.add_field('name', OriginFieldType.str.value)
-        nl.add_field('ref', OriginFieldType.ref.value)
-        orm._named_table = nl
+        nt = _get_default_table_build(orm._origin, '_name_')
+        nt.add_field('name', OriginFieldType.str.value)
+        nt.add_field('ref', OriginFieldType.ref.value)
+        orm._named_table = nt
         
         return orm
     
@@ -103,23 +104,51 @@ class ORM:
             warnings.warn('Database has been combined, no need to combine again.', UserWarning)
             return
         
+        # TODO Warning(Dsssyc):
+        # core.WxDatabse.load_xbuffer DO NOT maintains the buffer memory after loading
+        # Meaning that if memory_stream goes out of scope (under GC), the loaded database will be invalid
+        # !!!!
+        # Only if the C++ core implement:
+        # (1) a buffer loader or 
+        # (2) a copy constructor or 
+        # (3) a toDatabase static method in WxDatabaseBuild (may be the best choice),
+        # Could we replace file temporary way to memory way.
+        # !!!!
         # Use memory stream to combine
-        memory_stream = core.WxMemoryStream()
-        self._origin.post(memory_stream)
-        self._origin = core.WxDatabase.load_xbuffer(memory_stream.get_bytes())
+        # memory_stream = core.WxMemoryStream()
+        # self._origin.post(memory_stream)
+        # buffer = memory_stream.get_bytes()
+        # self._origin = core.WxDatabase.load_xbuffer(buffer)
         
         # TODO(Dsssyc): Deprecated: Use memory stream to combine directly
         # Removed these codes about temporary file way after full testing
         
-        # # Save to a temporary file and reload
-        # with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        #     tmp_path = str(Path(tmp.name))
-        # # Use try-finally to ensure capability of tempfile using in Windows
-        # try:
-        #     self._origin.save(tmp_path)
-        #     self._origin = core.WxDatabase.load(tmp_path)
-        # finally:
-        #     Path(tmp_path).unlink(missing_ok=True)
+        # Save to a temporary file and reload
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = str(Path(tmp.name))
+        # Use try-finally to ensure capability of tempfile using in Windows
+        try:
+            self._origin.save(tmp_path)
+            self._origin = core.WxDatabase.load(tmp_path)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+        
+        # Empty build cache
+        if self._shm:
+            self._shm.close()
+            self._shm = None
+        self._table_map = {}
+        self._named_table = None
+        
+        # Try to find named table
+        # For most of the time, name table should alaways indexed at 0 if exists
+        # But we still iterate through all tables to be safe, and the performance impact is negligible
+        table_count = self._origin.get_layer_count()
+        for i in range (table_count):
+            o_table: core.WxLayerTable = self._origin.get_layer(i)
+            if o_table.name() == '_name_':
+                self._named_table = o_table
+                break
     
     @staticmethod
     def load(name: str, from_file: bool = False) -> 'ORM':
@@ -179,7 +208,7 @@ class ORM:
             table = self._table_map[table_name]
         else:
             # Create new table
-            new_table = Table.map_from(feature_type, self._origin.create_layer_begin(table_name), self._origin)
+            new_table = Table.map_from(feature_type, _get_default_table_build(self._origin, table_name), self._origin)
             
             # Define table
             for defn in defns:
@@ -326,3 +355,9 @@ def _normalize_shm_name(shm_name: str) -> str:
     if shm_name.startswith(('Local\\', 'Global\\')):
         return shm_name
     return f'Local\\{shm_name}'
+
+def _get_default_table_build(db: core.WxDatabaseBuild, t_name: str) -> core.WxLayerTableBuild:
+    t = db.create_layer_begin(t_name)
+    t.set_geometry_type(core.gtPoint,core.cfTx32,aabboxEnabled=True)
+    t.set_extent(-180, -90, 180, 90)
+    return t

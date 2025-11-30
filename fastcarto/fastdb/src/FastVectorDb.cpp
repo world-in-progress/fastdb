@@ -123,9 +123,11 @@ namespace wx
 
     FastVectorDb *FastVectorDb::load(const char *filename)
     {
+#ifdef DEBUG
 printf("\nFastVectorDB:A fast vector database for local cache\n\
 Author: wenyongning@njnu.edu.cn\n");
 printf("loading [%s] ...",filename);
+#endif
         int fd = open(filename, O_RDONLY); // 打开文件获取描述符
         if (fd == -1)
         { 
@@ -147,7 +149,9 @@ printf("loading [%s] ...",filename);
         auto db = load(pdata,size,free_data_buffer,0);
         if(db)
         {
-            printf("done!\n");
+#ifdef DEBUG
+            printf("Fastdb load done!\n");
+#endif
         }
         else
         {

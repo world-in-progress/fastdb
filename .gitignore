@@ -51,3 +51,29 @@ node_modules
 .DS_Store
 
 devcontainer.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+ENV/
+.venv/
+env.bak/
+venv.bak/
+.pytest_cache/
+.ipynb_checkpoints
+
+# Python UV
+uv.lock
+.python-version
+
+# Build system files
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+*.egg
