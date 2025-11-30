@@ -50,9 +50,9 @@ if [[ "$1" == "--build" || "$2" == "--py" ]]; then
             exit 1
         fi
         uv python pin "$PY_VERSION"
-        echo -e "${GREEN}Using Python version: $(python --version)${NC}"
+        echo -e "${GREEN}Using Python version: $(uv run python --version)${NC}"
     else
-        echo -e "${YELLOW}Using current Python environment: $(python --version)${NC}"
+        echo -e "${YELLOW}Using current Python environment: $(uv run python --version)${NC}"
     fi
 
     # Build process
