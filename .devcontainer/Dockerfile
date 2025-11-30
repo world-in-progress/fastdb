@@ -20,8 +20,13 @@ RUN apt-get update && apt-get install -y \
     git \
     && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
+ARG GIT_USER_NAME
+ARG GIT_USER_EMAIL
+
 RUN git config --global http.proxy ${HTTP_PROXY} && \
-    git config --global https.proxy ${HTTPS_PROXY}
+    git config --global https.proxy ${HTTPS_PROXY} && \
+    git config --global user.name "${GIT_USER_NAME}" && \
+    git config --global user.email "${GIT_USER_EMAIL}"
 
 # Install uv (Universal Version Manager) and add to PATH
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
