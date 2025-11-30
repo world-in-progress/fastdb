@@ -1,0 +1,34 @@
+[build-system]
+requires = [
+    "setuptools>=42",
+    "wheel",
+    "numpy",
+    "cmake>=3.16",
+    "swig>=4.0"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fastdb4py"
+version = "0.1.0"
+description = "FastCarto database bindings"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+]
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+python_files = ["test_*.py", "tests_*.py", "*_test.py"]

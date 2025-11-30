@@ -81,7 +81,9 @@ namespace wx
 
     void FastVectorDbBuild::Impl::begin(const char *cfg)
     {
+#ifdef DEBUG
         printf("FastVectorDB:A fast vector database for local cache\nAuthor: wenyongning@njnu.edu.cn\nbegin...\n");
+#endif
         m_cfg = cfg;
     }
 
@@ -92,6 +94,8 @@ namespace wx
         layer->setExtent(m_extent.minEdge.x, m_extent.minEdge.y, m_extent.maxEdge.x, m_extent.maxEdge.y);
         layer->setGeometryType(m_gt, m_ct, m_aabbox_enable);
         layer->setDbIndex((int)m_layers.size());
+
+#ifdef DEBUG
         printf(
 "\nfastdb is creating layer[%s] with last(default) params:\n\
 geometry type:%s, coord format:%s, aabbox:%s\n\
@@ -104,6 +108,8 @@ you should check and reset them before adding any feature!!\n",
                 m_aabbox_enable?"yes":"no",
                 m_extent.minEdge.x, m_extent.minEdge.y, m_extent.maxEdge.x, m_extent.maxEdge.y,
                 m_string_table_u32?"u32":"u16");
+#endif
+
         m_layers.push_back(layer);
         m_current_layer = layer;
         return layer;
@@ -305,10 +311,14 @@ you should check and reset them before adding any feature!!\n",
 
     void FastVectorDbBuild::save(const char *filename)
     {
-printf("\nFastVectorDB:A fast vector database for local cache\n\
-saving [%s] ...",filename);
+#ifdef DEBUG
+        printf("\nFastVectorDB:A fast vector database for local cache\n\
+        saving [%s] ...",filename);
+#endif
         impl->save(filename);
-printf("done!\n");
+#ifdef DEBUG
+        printf("done!\n");
+#endif
     }
     
     void warning(const char* message)

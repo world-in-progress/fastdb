@@ -1,9 +1,5 @@
-import os
-import sys
+import fastdb
 from pathlib import Path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-
-from python import fastdb
 
 class Point(fastdb.Feature):
     x: fastdb.F64
@@ -23,15 +19,15 @@ if __name__ == '__main__':
     TEMP_DB_PATH = Path.cwd() / 'truncate_block'
     
     # Create and save a block with fixed scale for Points and Triangles
-    fastdb.ORM.truncate([
+    db = fastdb.ORM.truncate([
         fastdb.TableDefn(Point, 6),
         fastdb.TableDefn(Rectangle, 1),
         fastdb.TableDefn(Triangle, 1, 'TA'),
         fastdb.TableDefn(Triangle, 1, 'TB'),
-    ]).save(str(TEMP_DB_PATH))
+    ])
     
-    # Load the block and populate it with data
-    db = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
+    # # Load the block and populate it with data
+    # db = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
     
     points = db[Point][Point]
     for i in range(6):
@@ -60,4 +56,4 @@ if __name__ == '__main__':
     print(f'Triangle B: pointA=({triangle_b.a.x}, {triangle_b.a.y}, {triangle_b.a.z}), pointB=({triangle_b.b.x}, {triangle_b.b.y}, {triangle_b.b.z}), pointC=({triangle_b.c.x}, {triangle_b.c.y}, {triangle_b.c.z})')
     print(f'Rectangle: triangleA=(({rectangle.ta.a.x}, {rectangle.ta.a.y}, {rectangle.ta.a.z}), ({rectangle.ta.b.x}, {rectangle.ta.b.y}, {rectangle.ta.b.z}), ({rectangle.ta.c.x}, {rectangle.ta.c.y}, {rectangle.ta.c.z})), triangleB=(({rectangle.tb.a.x}, {rectangle.tb.a.y}, {rectangle.tb.a.z}), ({rectangle.tb.b.x}, {rectangle.tb.b.y}, {rectangle.tb.b.z}), ({rectangle.tb.c.x}, {rectangle.tb.c.y}, {rectangle.tb.c.z}))')
     # Clean up
-    TEMP_DB_PATH.unlink()
+    # TEMP_DB_PATH.unlink()

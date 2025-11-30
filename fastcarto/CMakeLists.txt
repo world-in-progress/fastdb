@@ -34,7 +34,9 @@ endif()
 
 add_subdirectory(lib)
 add_subdirectory(fastdb)
-if (NOT is_emscripten)
+option(BUILD_TOOLS "Build CLI tools" ON)
+
+if (NOT is_emscripten AND BUILD_TOOLS)
     add_subdirectory(make-fastdb)
     add_subdirectory(dump-fastdb)
 endif()

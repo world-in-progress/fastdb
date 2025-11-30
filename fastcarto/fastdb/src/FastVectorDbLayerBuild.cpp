@@ -81,7 +81,9 @@ namespace wx
     void FastVectorDbLayerBuild::Impl::setDbIndex(int ix)
     {
         m_index_in_db=ix;
+#ifdef DEBUG
         printf("\ncreate feature ref to layer %d",m_index_in_db);
+#endif
     }
     int FastVectorDbLayerBuild::Impl::addField(const char *name, unsigned ft, double vmin, double vmax)
     {
