@@ -20,25 +20,13 @@ RUN apt-get update && apt-get install -y \
     git \
     && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
+RUN git config --global http.proxy ${HTTP_PROXY} && \
+    git config --global https.proxy ${HTTPS_PROXY}
+
 # Install uv (Universal Version Manager) and add to PATH
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-
-# Install Miniforge (ARM64 compatible miniconda alternative)
-# ENV CONDA_DIR=/opt/conda
-# RUN wget "https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-$(uname -m).sh" -O /tmp/miniforge.sh \
-#     && bash /tmp/miniforge.sh -b -p ${CONDA_DIR} \
-#     && rm /tmp/miniforge.sh \
-#     && ${CONDA_DIR}/bin/conda clean -afy
-
-# ENV PATH="${CONDA_DIR}/bin:${PATH}"
-
 # Create a uv python environment with Python 3.13
 RUN uv python install 3.13 && \
     uv python pin 3.13
-
-# Create a conda environment named fastdb4py with Python 3.13
-# Install GDAL and Numpy in the environment
-# RUN conda create -n fastdb4py python=3.13 -y && \
-#     conda run -n fastdb4py conda install -c conda-forge gdal numpy -y
