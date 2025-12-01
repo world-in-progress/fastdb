@@ -43,10 +43,7 @@ namespace wx
 
     chunk_data_t MemoryStream::Impl::data()
     {
-        chunk_data_t cd;
-        cd.pdata = m_buffer.data();
-        cd.size = m_buffer.size();
-        return cd;
+        return chunk_data_t{ (u32)m_buffer.size(), m_buffer.data() };
     }
 
     void MemoryStream::Impl::reset()
@@ -57,9 +54,7 @@ namespace wx
 
     void MemoryStream::Impl::write(void *pdata, size_t size)
     {
-        size_t old_size = m_buffer.size();
-        m_buffer.resize(old_size + size);
-        memcpy(m_buffer.data() + old_size, pdata, size);
+        m_buffer.insert(m_buffer.end(), (u8*)pdata, ((u8*)pdata) + size);
     }
 
     FastVectorDbBuild::Impl::Impl(FastVectorDbBuild* thiz)
