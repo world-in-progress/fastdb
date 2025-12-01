@@ -19,11 +19,7 @@
                 "ms-vscode.cmake-tools",
                 "ms-python.python",
                 "vadimcn.vscode-lldb"
-            ],
-            "settings": {
-                "cmake.configureOnOpen": true,
-                "python.defaultInterpreterPath": "/opt/conda/envs/myenv/bin/python"
-            }
+            ]
         }
     },
     "remoteUser": "root"
