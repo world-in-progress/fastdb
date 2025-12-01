@@ -30,9 +30,9 @@ if [[ "$1" == "--test" ]]; then
     exit 0
 fi
 
-# Handle --build flag with --py flag (for python version)
-if [[ "$1" == "--build" || "$2" == "--py" ]]; then
-    echo -e "${YELLOW}Checking build tools...${NC}"
+# Handle --setup flag with --py flag (for python version)
+if [[ "$1" == "--setup" || "$2" == "--py" ]]; then
+    echo -e "${YELLOW}Checking setup tools...${NC}"
 
     # Check for UV
     if ! command -v uv &> /dev/null; then
@@ -55,8 +55,8 @@ if [[ "$1" == "--build" || "$2" == "--py" ]]; then
         echo -e "${YELLOW}Using current Python environment: $(uv run python --version)${NC}"
     fi
 
-    # Build process
-    echo -e "${YELLOW}Starting build process...${NC}"
+    # Setup process
+    echo -e "${YELLOW}Starting setup process...${NC}"
     if ! uv sync; then
         echo -e "${RED}Error: UV sync failed.${NC}"
         exit 1
@@ -70,9 +70,9 @@ if [[ "$1" == "--build" || "$2" == "--py" ]]; then
         exit 1
     fi
 
-    echo -e "${GREEN}Build completed successfully!${NC}"
+    echo -e "${GREEN}Setup completed successfully!${NC}"
     exit 0
 fi
 
-echo -e "${YELLOW}No valid flags provided. Use --clean to clean builds, --build to build the project, or --test to run tests.${NC}"
+echo -e "${YELLOW}No valid flags provided. Use --clean to clean builds, --setup to setup the project, or --test to run tests.${NC}"
 exit 1
