@@ -1,6 +1,7 @@
 import tempfile
 import platform
 import warnings
+import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
 from multiprocessing import shared_memory
@@ -104,34 +105,25 @@ class ORM:
             warnings.warn('Database has been combined, no need to combine again.', UserWarning)
             return
         
-        # TODO Warning(Dsssyc):
-        # core.WxDatabse.load_xbuffer DO NOT maintains the buffer memory after loading
-        # Meaning that if memory_stream goes out of scope (under GC), the loaded database will be invalid
-        # !!!!
-        # Only if the C++ core implement:
-        # (1) a buffer loader or 
-        # (2) a copy constructor or 
-        # (3) a toDatabase static method in WxDatabaseBuild (may be the best choice),
-        # Could we replace file temporary way to memory way.
-        # !!!!
-        # Use memory stream to combine
-        # memory_stream = core.WxMemoryStream()
-        # self._origin.post(memory_stream)
-        # buffer = memory_stream.get_bytes()
-        # self._origin = core.WxDatabase.load_xbuffer(buffer)
+        # Use memory stream to combine directly
+        memory_stream = core.WxMemoryStream()
+        self._origin.post(memory_stream)
+        buffer = memory_stream.data().as_array(np.uint8).tobytes()
+        self._origin = core.WxDatabase.load_xbuffer(buffer)
+        self._origin._buffer = buffer  # keep a reference to the buffer to prevent GC
         
         # TODO(Dsssyc): Deprecated: Use memory stream to combine directly
         # Removed these codes about temporary file way after full testing
         
-        # Save to a temporary file and reload
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp_path = str(Path(tmp.name))
-        # Use try-finally to ensure capability of tempfile using in Windows
-        try:
-            self._origin.save(tmp_path)
-            self._origin = core.WxDatabase.load(tmp_path)
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+        # # Save to a temporary file and reload
+        # with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        #     tmp_path = str(Path(tmp.name))
+        # # Use try-finally to ensure capability of tempfile using in Windows
+        # try:
+        #     self._origin.save(tmp_path)
+        #     self._origin = core.WxDatabase.load(tmp_path)
+        # finally:
+        #     Path(tmp_path).unlink(missing_ok=True)
         
         # Empty build cache
         if self._shm:
@@ -310,7 +302,11 @@ class ORM:
         # Copy database buffer to shared memory
         chunk = self._origin.buffer()
         self._shm = shared_memory.SharedMemory(create=True, size=chunk.size, name=shm_name)
-        chunk.copy_to_buffer(self._shm.buf)
+        dest = np.ndarray(chunk.size, dtype=np.uint8, buffer=self._shm.buf)
+        dest[:] = chunk.as_array(np.uint8)
+        
+        # Release buffer reference
+        self._origin._buffer = None
         
         # Reload database from shared memory
         self._origin = core.WxDatabase.load_xbuffer(self._shm.buf)
