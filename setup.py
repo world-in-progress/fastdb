@@ -39,6 +39,14 @@ class CMakeBuild(build_ext):
         except NotImplementedError:
             num_jobs = 1
             
+        # Ensure the temporary build directory exists before invoking CMake
+        if not os.path.exists(self.build_temp):
+            os.makedirs(self.build_temp, exist_ok=True)
+
+        # Ensure extension output directory exists so CMake can write artifacts
+        if not os.path.exists(extdir):
+            os.makedirs(extdir, exist_ok=True)
+
         subprocess.check_call(['cmake', ext.sourcedir + '/fastcarto'] + cmake_args, cwd=self.build_temp)
         subprocess.check_call(['cmake', '--build', '.', '--config', 'Release', '--parallel', str(num_jobs)], cwd=self.build_temp)
         
