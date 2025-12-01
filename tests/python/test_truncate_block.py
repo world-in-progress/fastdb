@@ -1,19 +1,19 @@
-import fastdb
+import fastdb4py
 import pytest
 from pathlib import Path
 from typing import Generator
 
-class Point(fastdb.Feature):
-    x: fastdb.F64
-    y: fastdb.F64
-    z: fastdb.F64
+class Point(fastdb4py.Feature):
+    x: fastdb4py.F64
+    y: fastdb4py.F64
+    z: fastdb4py.F64
 
-class Triangle(fastdb.Feature):
+class Triangle(fastdb4py.Feature):
     a: Point
     b: Point
     c: Point
 
-class Rectangle(fastdb.Feature):
+class Rectangle(fastdb4py.Feature):
     ta: Triangle
     tb: Triangle
 
@@ -25,11 +25,11 @@ def temp_db_path(tmp_path: Path) -> Generator[str, None, None]:
         db_file.unlink()
 
 def test_truncate_block_logic(temp_db_path: str):
-    db = fastdb.ORM.truncate([
-        fastdb.TableDefn(Point, 6),
-        fastdb.TableDefn(Rectangle, 1),
-        fastdb.TableDefn(Triangle, 1, 'TA'),
-        fastdb.TableDefn(Triangle, 1, 'TB'),
+    db = fastdb4py.ORM.truncate([
+        fastdb4py.TableDefn(Point, 6),
+        fastdb4py.TableDefn(Rectangle, 1),
+        fastdb4py.TableDefn(Triangle, 1, 'TA'),
+        fastdb4py.TableDefn(Triangle, 1, 'TB'),
     ])
     
     points = db[Point][Point]

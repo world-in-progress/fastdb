@@ -18,12 +18,6 @@ dependencies = [
     "numpy",
 ]
 
-[tool.setuptools]
-package-dir = { "" = "python" }
-
-[tool.setuptools.packages.find]
-where = ["python"]
-
 [dependency-groups]
 dev = [
     "pytest>=9.0.1",

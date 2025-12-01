@@ -12,7 +12,8 @@ if [[ "$1" == "--clean" ]]; then
     echo -e "${TELLOW}Cleaning previous builds...${NC}"
     rm -rf ./dist
     rm -rf ./fastcarto/build
-    rm -rf ./python/fastdb/core
+    rm -rf ./python/fastdb4py/core
+    rm -rf ./python/fastdb4py.egg-info
     rm -rf .venv
     uv cache clean
     echo -e "${GREEN}Cleaned previous builds.${NC}"

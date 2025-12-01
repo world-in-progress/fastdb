@@ -1,20 +1,20 @@
-import fastdb
+import fastdb4py
 from multiprocessing import Process
 
-class Point(fastdb.Feature):
-    idx: fastdb.U32
-    x: fastdb.F64
-    y: fastdb.F64
-    z: fastdb.F64
+class Point(fastdb4py.Feature):
+    idx: fastdb4py.U32
+    x: fastdb4py.F64
+    y: fastdb4py.F64
+    z: fastdb4py.F64
 
-class Triangle(fastdb.Feature):
-    id: fastdb.U32
+class Triangle(fastdb4py.Feature):
+    id: fastdb4py.U32
     a: Point
     b: Point
     c: Point
 
 def process_task(name):
-    db = fastdb.ORM.load(name)
+    db = fastdb4py.ORM.load(name)
     t = db[Triangle][Triangle][0]
     print(f'Triangle id: {t.id}')
     print(f'Point a idx: {t.a.idx}, x: {t.a.x}, y: {t.a.y}, z: {t.a.z}')
@@ -27,7 +27,7 @@ def process_task(name):
 if __name__ == '__main__':
     TEMP_DB_PATH = 'tmp_shared_memory'
     
-    db = fastdb.ORM.create()
+    db = fastdb4py.ORM.create()
     
     t = Triangle()
     t.id = 1

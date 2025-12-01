@@ -42,8 +42,8 @@ class CMakeBuild(build_ext):
         subprocess.check_call(['cmake', ext.sourcedir + '/fastcarto'] + cmake_args, cwd=self.build_temp)
         subprocess.check_call(['cmake', '--build', '.', '--config', 'Release', '--parallel', str(num_jobs)], cwd=self.build_temp)
         
-        cmake_out_dir = os.path.join(ext.sourcedir, 'python', 'fastdb', 'core')
-        dest_dir = os.path.join(self.build_lib, 'fastdb', 'core')
+        cmake_out_dir = os.path.join(ext.sourcedir, 'python', 'fastdb4py', 'core')
+        dest_dir = os.path.join(self.build_lib, 'fastdb4py', 'core')
         
         self.copy_tree(cmake_out_dir, dest_dir)
 
@@ -58,10 +58,10 @@ class CMakeBuild(build_ext):
                     shutil.copy2(s, d)
 
 setup(
-    name='fastdb',
+    name='fastdb4py',
     packages=find_packages(where='python'),
     package_dir={'': 'python'},
-    ext_modules=[CMakeExtension('fastdb.core._fastdb4py', sourcedir='.')],
+    ext_modules=[CMakeExtension('fastdb4py.core._fastdb4py', sourcedir='.')],
     cmdclass=dict(build_ext=CMakeBuild),
     zip_safe=False,
 )

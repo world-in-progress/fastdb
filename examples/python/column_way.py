@@ -1,20 +1,20 @@
-import fastdb
+import fastdb4py
 from pathlib import Path
 
-class Point(fastdb.Feature):
-    x: fastdb.F64
-    y: fastdb.F64
-    z: fastdb.F64
+class Point(fastdb4py.Feature):
+    x: fastdb4py.F64
+    y: fastdb4py.F64
+    z: fastdb4py.F64
 
 if __name__ == '__main__':
     TEMP_DB_PATH = Path.cwd() / 'alias_test_block'
     
-    fastdb.ORM.truncate([
-        fastdb.TableDefn(Point, 10),
-        fastdb.TableDefn(Point, 5, 'PointA'),
+    fastdb4py.ORM.truncate([
+        fastdb4py.TableDefn(Point, 10),
+        fastdb4py.TableDefn(Point, 5, 'PointA'),
     ]).save(str(TEMP_DB_PATH))
     
-    db = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
+    db = fastdb4py.ORM.load(str(TEMP_DB_PATH), from_file=True)
     ps = db[Point]['PointA']
     for i in range(5):
         point = ps[i]
@@ -24,7 +24,7 @@ if __name__ == '__main__':
         print(f'PointA {i}: x={point.x}, y={point.y}, z={point.z}')
     
     db.save(str(TEMP_DB_PATH))
-    db = fastdb.ORM.load(str(TEMP_DB_PATH), from_file=True)
+    db = fastdb4py.ORM.load(str(TEMP_DB_PATH), from_file=True)
     
     points_a = db[Point]['PointA']
     for p in points_a:

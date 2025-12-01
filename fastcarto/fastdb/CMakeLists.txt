@@ -35,7 +35,7 @@ set(script_dir ${ROOT_DIR}/scripts)
 
 if (NOT is_emscripten)
     if(USE_SWIG_PYTHON)
-        set(script_dir ${ROOT_DIR}/../python/fastdb/core)
+        set(script_dir ${ROOT_DIR}/../python/fastdb4py/core)
         set(SWIG_GENERATED_DIR ${CMAKE_BINARY_DIR}/swig_generated)
 
         # Copy SWIG generated files to the build directory

@@ -1,22 +1,22 @@
 import uuid
-import fastdb
+import fastdb4py
 from multiprocessing import Process, shared_memory
 
-class Point(fastdb.Feature):
-    idx: fastdb.U32
-    x: fastdb.F64
-    y: fastdb.F64
-    z: fastdb.F64
+class Point(fastdb4py.Feature):
+    idx: fastdb4py.U32
+    x: fastdb4py.F64
+    y: fastdb4py.F64
+    z: fastdb4py.F64
 
-class Triangle(fastdb.Feature):
-    id: fastdb.U32
+class Triangle(fastdb4py.Feature):
+    id: fastdb4py.U32
     a: Point
     b: Point
     c: Point
 
 def verify_shared_data(shm_name: str):
     try:
-        db = fastdb.ORM.load(shm_name)
+        db = fastdb4py.ORM.load(shm_name)
         
         triangles = db[Triangle][Triangle]
         assert len(triangles) == 1, f"Expected 1 triangle, got {len(triangles)}"
@@ -52,7 +52,7 @@ def verify_shared_data(shm_name: str):
 def test_shared_memory():
     shm_name = f"fastdb_test_{uuid.uuid4().hex}"
     
-    db = fastdb.ORM.create()
+    db = fastdb4py.ORM.create()
     
     t = Triangle()
     t.id = 1

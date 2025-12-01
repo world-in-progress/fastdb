@@ -1,15 +1,15 @@
-import fastdb
+import fastdb4py
 import pytest
 
-class Point(fastdb.Feature):
-    x: fastdb.F64
-    y: fastdb.F64
-    z: fastdb.F64
+class Point(fastdb4py.Feature):
+    x: fastdb4py.F64
+    y: fastdb4py.F64
+    z: fastdb4py.F64
 
 def test_column_way():
-    db = fastdb.ORM.truncate([
-        fastdb.TableDefn(Point, 10),
-        fastdb.TableDefn(Point, 5, 'PointA'),
+    db = fastdb4py.ORM.truncate([
+        fastdb4py.TableDefn(Point, 10),
+        fastdb4py.TableDefn(Point, 5, 'PointA'),
     ])
     
     ps = db[Point]['PointA']
