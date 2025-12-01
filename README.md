@@ -1,4 +1,4 @@
-# fastdb (v0.1.1 WIP)
+# fastdb (v0.1.2 WIP)
 
 **Wait and hope for the best...**
 
