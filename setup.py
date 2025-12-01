@@ -31,11 +31,16 @@ class CMakeBuild(build_ext):
             '-DBUILD_TOOLS=OFF',
         ]
 
-        if not os.path.exists(self.build_temp):
-            os.makedirs(self.build_temp)
-
+        # Limit parallel jobs to avoid OOM on Docker with limited memory
+        # Default to 4 or CPU count, whichever is smaller, to be safe
+        import multiprocessing
+        try:
+            num_jobs = min(4, multiprocessing.cpu_count())
+        except NotImplementedError:
+            num_jobs = 1
+            
         subprocess.check_call(['cmake', ext.sourcedir + '/fastcarto'] + cmake_args, cwd=self.build_temp)
-        subprocess.check_call(['cmake', '--build', '.', '--config', 'Release', '--parallel'], cwd=self.build_temp)
+        subprocess.check_call(['cmake', '--build', '.', '--config', 'Release', '--parallel', str(num_jobs)], cwd=self.build_temp)
         
         cmake_out_dir = os.path.join(ext.sourcedir, 'python', 'fastdb', 'core')
         dest_dir = os.path.join(self.build_lib, 'fastdb', 'core')

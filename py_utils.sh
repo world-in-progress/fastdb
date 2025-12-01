@@ -13,6 +13,8 @@ if [[ "$1" == "--clean" ]]; then
     rm -rf ./dist
     rm -rf ./fastcarto/build
     rm -rf ./python/fastdb/core
+    rm -rf .venv
+    uv cache clean
     echo -e "${GREEN}Cleaned previous builds.${NC}"
     exit 0
 fi
