@@ -11,7 +11,7 @@
             // "GIT_USER_EMAIL": "Your Email"
         }
     },
-    "postCreateCommand": "bash py_utils.sh --clean && bash py_utils.sh --setup && bash py_utils.sh --test",
+    "postCreateCommand": "bash py_utils.sh --clean && bash py_utils.sh --test",
     "customizations": {
         "vscode": {
             "extensions": [
