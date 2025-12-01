@@ -21,6 +21,7 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.1",
+    "setuptools>=42",
 ]
 
 [tool.pytest.ini_options]

@@ -7,14 +7,20 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # no color
 
+# Set UV cache directory to local project folder to enable hardlinking
+# since workspace (bind mount) and default cache (overlayfs) are on different filesystems.
+export UV_CACHE_DIR="${PWD}/.uv_cache"
+
 # Handle --clean flag
 if [[ "$1" == "--clean" ]]; then
     echo -e "${TELLOW}Cleaning previous builds...${NC}"
     rm -rf ./dist
+    rm -rf ./.pytest_cache
     rm -rf ./fastcarto/build
     rm -rf ./python/fastdb4py/core
     rm -rf ./python/fastdb4py.egg-info
     rm -rf .venv
+    rm -rf .uv_cache
     uv cache clean
     echo -e "${GREEN}Cleaned previous builds.${NC}"
     exit 0
