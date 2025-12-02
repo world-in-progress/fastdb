@@ -14,6 +14,11 @@
     "postCreateCommand": "bash py_utils.sh --clean && bash py_utils.sh --test",
     "customizations": {
         "vscode": {
+            "settings": {
+                // Add proxy settings here if use proxies
+                // "http.proxy": "http://host.docker.internal:your_proxy_port",
+                // "http.useLocalProxyConfiguration": false
+            },
             "extensions": [
                 "ms-vscode.cpptools",
                 "ms-vscode.cmake-tools",
