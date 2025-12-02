@@ -1,0 +1,68 @@
+name: Publish to PyPI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "pyproject.toml"
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run tests
+        run: uv run pytest
+
+      - name: Get version from pyproject.toml
+        id: get_version
+        run: |
+          # Extract version using python for reliability
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Check if tag exists
+        id: check_tag
+        run: |
+          if git rev-parse "v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
+            echo "Tag v${{ steps.get_version.outputs.VERSION }} already exists. Skipping publish."
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag v${{ steps.get_version.outputs.VERSION }} does not exist. Proceeding with publish."
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.get_version.outputs.VERSION }}" -m "Release v${{ steps.get_version.outputs.VERSION }}"
+          git push origin "v${{ steps.get_version.outputs.VERSION }}"
+
+      - name: Build package
+        if: steps.check_tag.outputs.exists == 'false'
+        run: uv build --sdist
+
+      - name: Publish to PyPI
+        if: steps.check_tag.outputs.exists == 'false'
+        run: uv publish
+        env:
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}

@@ -1,4 +1,6 @@
-# fastdb (v0.1.2 WIP)
+# fastdb (WIP)
+
+[![PyPI version](https://badge.fury.io/py/fastdb4py.svg)](https://badge.fury.io/py/fastdb4py)
 
 **Wait and hope for the best...**
 
