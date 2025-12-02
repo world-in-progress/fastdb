@@ -203,7 +203,7 @@ namespace wx
     class GeometryReturn
     {
     public:
-        using GeometryPartEnum=GeometryPartEnum;
+        using GeometryPartEnum = wx::GeometryPartEnum;
     public:
         virtual bool begin(const double aabox[4]) = 0;
         virtual void returnGeomrtryPart(GeometryPartEnum partType, point2_t *points, int np) = 0;

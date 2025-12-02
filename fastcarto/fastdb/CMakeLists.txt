@@ -4,6 +4,7 @@ set(PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 option(USE_SWIG_PYTHON "use swig python wrapper" OFF)
 option(USE_SWIG_NODE   "use swig node wrapper" OFF)
+option(USE_SWIG_GO     "use swig go wrapper"   OFF)
 
 add_definitions(-DFASTDB_EXPORT)
 
@@ -112,6 +113,36 @@ if (NOT is_emscripten)
             COMMENT "updating fastdb4node into swig directory"
         )
     endif(USE_SWIG_NODE)
+
+    if(USE_SWIG_GO)
+        set(SWIG_GO_OUT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../go/fastdb4go/core)
+        file(MAKE_DIRECTORY ${SWIG_GO_OUT_DIR})
+        
+        add_custom_command(
+            OUTPUT ${SWIG_GO_OUT_DIR}/fastdb4go_wrap.cxx 
+                   ${SWIG_GO_OUT_DIR}/fastdb4go.go
+            COMMAND swig -c++ -go -cgo -intgosize 64
+                    -I${PROJECT_DIR}/include
+                    -I${PROJECT_DIR}/swig
+                    -outdir ${SWIG_GO_OUT_DIR}
+                    -o ${SWIG_GO_OUT_DIR}/fastdb4go_wrap.cxx
+                    ${PROJECT_DIR}/swig/fastdb4go.i
+            DEPENDS ${PROJECT_DIR}/swig/fastdb4go.i
+                    ${PROJECT_DIR}/include/fastdb.h
+            COMMENT "Generating SWIG Go bindings"
+        )
+        
+        add_custom_target(fastdb_go_bindings ALL DEPENDS ${SWIG_GO_OUT_DIR}/fastdb4go.go)
+        message(STATUS "Go bindings will be generated in ${SWIG_GO_OUT_DIR}")
+
+        add_custom_command(TARGET fastdb_go_bindings POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:${PROJECT_NAME}> ${SWIG_GO_OUT_DIR}/$<TARGET_FILE_NAME:${PROJECT_NAME}>
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PROJECT_DIR}/include/fastdb.h ${SWIG_GO_OUT_DIR}/include/fastdb.h
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PROJECT_DIR}/include/fastdb-geometry-utils.h ${SWIG_GO_OUT_DIR}/include/fastdb-geometry-utils.h
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${PROJECT_DIR}/include/fastdb-config.h ${SWIG_GO_OUT_DIR}/include/fastdb-config.h
+            COMMENT "Copying fastdb library and headers to Go directory"
+        )
+    endif(USE_SWIG_GO)
 else()
     message(STATUS "linking swig wrapper...") 
      add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
