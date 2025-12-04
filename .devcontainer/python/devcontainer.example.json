@@ -1,0 +1,33 @@
+{
+    "name": "Fastdb4py Dev Container",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            // Add proxy here if needed
+            // "HTTP_PROXY": "http://host.docker.internal:your_proxy_port",
+            // "HTTPS_PROXY": "http://host.docker.internal:your_proxy_port",
+            // "NO_PROXY": "localhost,127.0.0.1,::1,host.docker.internal",
+            
+            // Add your git config here
+            // "GIT_USER_NAME": "Your Name",
+            // "GIT_USER_EMAIL": "Your Email"
+        }
+    },
+    "postCreateCommand": "bash py_utils.sh --clean && bash py_utils.sh --test",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                // Add proxy settings here if use proxies
+                // "http.proxy": "http://host.docker.internal:your_proxy_port",
+                // "http.useLocalProxyConfiguration": false
+            },
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "ms-python.python",
+                "vadimcn.vscode-lldb"
+            ]
+        }
+    },
+    "remoteUser": "root"
+}
