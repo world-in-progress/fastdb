@@ -3,4 +3,4 @@ from .type import (
     F32, F64, STR, WSTR, REF, BYTES
 )
 from .feature import Feature
-from .orm import ORM, TableDefn
+from .orm import ORM, Table, TableDefn

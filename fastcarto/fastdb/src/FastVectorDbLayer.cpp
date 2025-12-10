@@ -540,7 +540,7 @@ namespace wx
 
     size_t  FastVectorDbLayer::Impl::getFieldOffset(unsigned ix)
     {
-        if(ix>=m_header->field_count-1)
+        if(ix>=m_header->field_count)
             return -1;
         return  m_field_descs[ix].offset;
     }
