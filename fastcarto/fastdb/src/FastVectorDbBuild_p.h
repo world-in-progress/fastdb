@@ -108,6 +108,7 @@ struct
         Impl(FastVectorDbBuild* thiz);
         ~Impl();
         void begin(const char *cfg);
+        void truncate(const char *layerName, unsigned nfeatures);
         FastVectorDbLayerBuild* createLayerBegin(const char *layerName);
         void enableStringTableU32(bool b);
         int  addField(const char *name, unsigned ft, double vmin = 0, double vmax = 1.0);

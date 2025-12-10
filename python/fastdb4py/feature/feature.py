@@ -141,11 +141,13 @@ class Feature(BaseFeature):
                 warnings.warn(f'Field "{name}" expects a reference to type "{ref_feature_type.__name__}", but got "{type(value).__name__}".', UserWarning)
                 return
             
+            self._origin.set_field(fid, value._origin)
+            
             # Get the origin ref feature and set all its fields with the given feature
             # Note: this is a deep copy operation, performance may be affected for feature with many fields
-            origin_feature: Feature = getattr(self, name)
-            for ref_field_name in origin_feature._type_hints.keys():
-                setattr(origin_feature, ref_field_name, getattr(value, ref_field_name))
+            # origin_feature: Feature = getattr(self, name)
+            # for ref_field_name in origin_feature._type_hints.keys():
+            #     setattr(origin_feature, ref_field_name, getattr(value, ref_field_name))
             
         else:
             warnings.warn(f'Fastdb only support features to set numeric field for a scale-known block.', UserWarning)

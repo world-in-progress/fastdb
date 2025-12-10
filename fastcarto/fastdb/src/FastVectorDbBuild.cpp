@@ -110,6 +110,18 @@ you should check and reset them before adding any feature!!\n",
         return layer;
     }
 
+    void FastVectorDbBuild::Impl::truncate(const char *layerName, unsigned nfeatures)
+    {
+        for(auto layer:m_layers)
+        {
+            if(strcmp(layer->name(), layerName) == 0)
+            {
+                layer->impl->truncate(nfeatures);
+                return;
+            }
+        }   
+    }
+
     void FastVectorDbBuild::Impl::enableStringTableU32(bool b)
     {
         m_string_table_u32 = b;
@@ -227,6 +239,11 @@ you should check and reset them before adding any feature!!\n",
     FastVectorDbBuild::~FastVectorDbBuild()
     {
         delete impl;
+    }
+
+    void FastVectorDbBuild::truncate(const char *layerName, unsigned nfeatures)
+    {
+        impl->truncate(layerName, nfeatures);
     }
 
     void FastVectorDbBuild::begin(const char *cfg)

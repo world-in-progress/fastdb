@@ -10,6 +10,14 @@ namespace wx
             len++;
         return len;
     }
+
+    class FastVectorDbFeature::Impl
+    { 
+    public:
+        FastVectorDbLayer*     layer;
+        u32                    ifeature;
+    };
+
     FastVectorDbLayer::Impl::Impl(u8 *pdata, size_t size)
         :m_data(pdata), m_size(size), m_ifeature(-1)
     {
@@ -481,17 +489,26 @@ namespace wx
         u8* buffer = (u8*)getFeatureAddress(ifeature); 
         set_field_value_t(buffer,m_field_descs[ix],value);
     }
+
+    void FastVectorDbLayer::Impl::setFeatureRef_internal(u32 ifeature, u32 ix, FastVectorDbFeature* feature)
+    {
+        if(ix >= m_header->field_count || ifeature >= m_header->feature_count)
+            return;
+        u8* buffer = (u8*)getFeatureAddress(ifeature);
+
+        // Create a FastVectorDbFeatureRef from the FastVectorDbFeature
+        auto iFeature = feature->impl->ifeature;
+        auto iLayer = feature->impl->layer->impl->m_layer_index;
+        auto ref = FastVectorDbFeatureRef::make(iLayer, iFeature);
+
+        memcpy(buffer + m_field_descs[ix].offset, &ref, sizeof(FastVectorDbFeatureRef));
+    }
+
     void*   FastVectorDbLayer::Impl::getFeatureAddress(u32 ifeature)
     {
         return (void*)(m_table_data_ptr0+ifeature*m_table_line_size);
     }
     /////////////////////////////////////////////////////////////
-    class FastVectorDbFeature::Impl
-    { 
-    public:
-        FastVectorDbLayer*     layer;
-        u32                    ifeature;
-    };
 
     FastVectorDbFeature*    FastVectorDbLayer::Impl::tryGetFeatureAt(u32 ix)
     {
@@ -682,13 +699,19 @@ namespace wx
     {
         return impl->layer->impl->getFeatureAddress(impl->ifeature);
     }
+    
     void    FastVectorDbFeature::setField(u32 ix,double value)
     {
         impl->layer->impl->setField_internal(impl->ifeature,ix,value);
     }
+
     void    FastVectorDbFeature::setField(u32 ix,int    value)
     {
         impl->layer->impl->setField_internal(impl->ifeature,ix,value);
     }
 
+    void FastVectorDbFeature::setField(u32 ix, FastVectorDbFeature* feature)
+    {
+        impl->layer->impl->setFeatureRef_internal(impl->ifeature, ix, feature);
+    }
 }

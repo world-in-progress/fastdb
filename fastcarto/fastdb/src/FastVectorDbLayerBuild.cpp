@@ -546,10 +546,19 @@ string table:%s\n",
         m_table_buffer.insert(m_table_buffer.end(), m_current_line_buffer.begin(), m_current_line_buffer.end());
         m_geometries_buffer.insert(m_geometries_buffer.end(), m_current_geom_buffer.begin(), m_current_geom_buffer.end());
         m_feature_count++;
+#ifdef DEBUG
         if(m_feature_count%100==0)
         {
             printf(".");
         }
+#endif
+    }
+
+    void FastVectorDbLayerBuild::Impl::truncate(unsigned nfeatures)
+    {
+        m_feature_count=nfeatures;
+        m_table_buffer.resize(nfeatures * m_table_line_size);
+        // TODO(Dsssyc): need to recalc geometry buffer size
     }
     size_t FastVectorDbLayerBuild::Impl::get_total_size()
     {
