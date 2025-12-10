@@ -234,7 +234,7 @@
                     elif (tp==ftU16):
                         tystr='u2'
                     elif (tp==ftU32):
-                        tystr='i2'
+                        tystr='<u4'
                     elif (tp==ftI32):
                         tystr='<i4'
                     elif (tp==ftF32):
