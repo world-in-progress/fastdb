@@ -72,24 +72,61 @@ class ORM:
         return orm
     
     @staticmethod
-    def truncate(scales: List[TableDefn]) -> 'ORM':
+    def truncate(defns: List[TableDefn]) -> 'ORM':
+        """
+        Create an orm instance with fixed scale by truncating tables as defined.
+        
+        Note: 
+            (1) Truncate operation does not support variable-length field types (str, wstr, bytes).
+            (2) FeatueRef fields are supported, but the referred tables must be explicitly defined. This function does not automatically handle them for you may want to use the referred tables to store other data.
+        """
         # Create orm with dynamic scales
         orm = ORM()
         orm._origin = core.WxDatabaseBuild()
         
-        # Check if all scales are valid
-        for scale in scales:
-            if not issubclass(scale.feature_type, Feature):
+        # Check if all defns are valid
+        for defn in defns:
+            if not issubclass(defn.feature_type, Feature):
                 raise TypeError('feature_type must be a subclass of Feature.')
-            if scale.feature_capacity <= 0:
+            if defn.feature_capacity <= 0:
                 raise ValueError('feature_capacity must be positive.')
         
         # Populate tables with empty features
-        for scale in scales:
-            empty_feature = scale.feature_type()
-            table_name = scale.name if scale.name else scale.feature_type.__name__
-            for _ in range (scale.feature_capacity):
-                orm.push(empty_feature, table_name)
+        for defn in defns:
+            feature_type = defn.feature_type
+            f_defns = get_all_defns(feature_type)
+            for field_name, ft in f_defns:
+                if ft == OriginFieldType.bytes or ft == OriginFieldType.str or ft == OriginFieldType.wstr:
+                    raise ValueError(f'Table defined by feature "{defn.feature_type.__name__}" contains field "{field_name}" of type "{ft.name}". Truncate operation does not support variable-length field types (str, wstr, bytes).')
+            
+            # Try to get table
+            table_name = defn.name if defn.name else defn.feature_type.__name__
+            table: Table[T] = orm._table_map.get(table_name, None)
+            if table is not None:
+                table = orm._table_map[table_name]
+                warnings.warn(f'Table "{table_name}" already exists, truncate operation will overwrite it.', UserWarning)
+            else:
+                # Create new table
+                new_table = Table.map_from(feature_type, _get_default_table_build(orm._origin, table_name), orm._origin)
+                
+                # Define table
+                for f_defn in f_defns:
+                    field_name, origin_type = f_defn
+                    new_table._origin.add_field(field_name, origin_type.value)
+                
+                # Add to table map
+                orm._table_map[table_name] = new_table
+                table = new_table
+            orm._origin.truncate(table_name, defn.feature_capacity)
+                
+            # Dsssyc: Removed pushing empty features for performance consideration
+            # The table trucating way modified C++ side to directly allocate features without initializing them
+            # More test needed to ensure no side effects
+            # Change to the old way if table truncating has issues
+            # Old way:
+            # empty_feature = defn.feature_type()
+            # for _ in range (defn.feature_capacity):
+            #     orm.push(empty_feature, table_name)
                 
         # Combine the memory by saving and reloading
         orm._combine()

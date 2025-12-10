@@ -50,6 +50,8 @@ namespace wx
 
         void            setField_internal(u32 ifeature,u32 ix,double value);
         void            setField_internal(u32 ifeature,u32 ix,int    value);
+        
+        void            setFeatureRef_internal(u32 ifeature, u32 ix, FastVectorDbFeature* feature); // Add by Dsssyc
         void*           getFeatureAddress(u32 ifeature);
 
         size_t          getFieldOffset(unsigned ix);

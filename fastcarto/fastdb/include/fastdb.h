@@ -100,6 +100,7 @@ namespace wx
         ~FastVectorDbBuild();
         //!
         void begin(const char *cfg);
+        void truncate(const char *layerName, unsigned nfeatures);
         FastVectorDbLayerBuild*  createLayerBegin(const char *layerName);
         int  addField(const char *name, unsigned ft, double vmin = 0, double vmax = 1.0);
         void setGeometryType(GeometryLikeEnum gt, CoordinateFormatEnum ct=cfDefault, bool aabboxEnabled = false);
@@ -374,8 +375,9 @@ namespace wx
         void*                   getFeatureCookie();
     public:
         void*                   getAddress();
-        void                    setField(u32 ix,double value);
-        void                    setField(u32 ix,int    value);
+        void                    setField(u32 ix, double value);
+        void                    setField(u32 ix, int    value);
+        void                    setField(u32 ix, FastVectorDbFeature* feature);
     private:
         Impl*  impl;
         friend class FastVectorDbLayer::Impl;

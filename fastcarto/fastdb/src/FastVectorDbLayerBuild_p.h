@@ -51,6 +51,7 @@ namespace wx{
         void   enableStringTableU32(bool b);
         void   setExtent(double minx,double miny,double maxx,double maxy);
         void   addFeatureBegin();
+        void   truncate(unsigned nfeatures);
         void   setGeometry(const char* data,size_t size,GeometryLikeFormat fmt);
         void   setField(unsigned ix,double value);
         void   setField(unsigned ix,int    value);
