@@ -63,8 +63,8 @@ jobs:
         env:
           # MacOS: Build for x86_64 and arm64 (Apple Silicon)
           CIBW_ARCHS_MACOS: x86_64 arm64
-          # Linux: Build for x86_64 and aarch64 (ARM64)
-          CIBW_ARCHS_LINUX: auto aarch64
+          # Linux: Build for x86_64 and aarch64 (ARM64), skip 32-bit (i686)
+          CIBW_ARCHS_LINUX: x86_64 aarch64
           # Windows: Build only for AMD64 (64-bit), skip 32-bit (x86) to avoid build issues
           # CIBW_ARCHS_WINDOWS: AMD64
           # Skip PyPy
