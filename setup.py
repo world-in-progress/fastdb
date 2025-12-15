@@ -59,6 +59,10 @@ class CMakeBuild(build_ext):
         if not os.path.exists(extdir):
             os.makedirs(extdir, exist_ok=True)
 
+        if sys.platform == 'win32':
+            cmake_args += ['-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE=' + extdir]
+            cmake_args += ['-A', 'x64']
+
         subprocess.check_call(['cmake', ext.sourcedir + '/fastcarto'] + cmake_args, cwd=self.build_temp)
         subprocess.check_call(['cmake', '--build', '.', '--config', 'Release', '--parallel', str(num_jobs)], cwd=self.build_temp)
         
