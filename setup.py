@@ -31,6 +31,18 @@ class CMakeBuild(build_ext):
             '-DBUILD_TOOLS=OFF',
         ]
 
+        if sys.platform == 'darwin':
+            # Handle macOS architecture flags set by cibuildwheel (e.g. ARCHFLAGS="-arch x86_64")
+            archflags = os.environ.get("ARCHFLAGS", "")
+            if archflags:
+                archs = []
+                if "arm64" in archflags:
+                    archs.append("arm64")
+                if "x86_64" in archflags:
+                    archs.append("x86_64")
+                if archs:
+                    cmake_args.append(f'-DCMAKE_OSX_ARCHITECTURES={";".join(archs)}')
+
         # Limit parallel jobs to avoid OOM on Docker with limited memory
         # Default to 4 or CPU count, whichever is smaller, to be safe
         import multiprocessing
