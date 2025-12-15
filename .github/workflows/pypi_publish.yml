@@ -11,24 +11,16 @@ permissions:
   contents: write
 
 jobs:
-  publish:
+  check_version:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
+      exists: ${{ steps.check_tag.outputs.exists }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Run tests
-        run: uv run pytest
 
       - name: Get version from pyproject.toml
         id: get_version
@@ -42,27 +34,88 @@ jobs:
         id: check_tag
         run: |
           if git rev-parse "v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
-            echo "Tag v${{ steps.get_version.outputs.VERSION }} already exists. Skipping publish."
+            echo "Tag v${{ steps.get_version.outputs.VERSION }} already exists. Skipping build and publish."
             echo "exists=true" >> $GITHUB_OUTPUT
           else
-            echo "Tag v${{ steps.get_version.outputs.VERSION }} does not exist. Proceeding with publish."
+            echo "Tag v${{ steps.get_version.outputs.VERSION }} does not exist. Proceeding."
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+  build_wheels:
+    needs: check_version
+    if: needs.check_version.outputs.exists == 'false'
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.22.0
+        env:
+          # MacOS: Build for x86_64 and arm64 (Apple Silicon)
+          CIBW_ARCHS_MACOS: x86_64 arm64
+          # Linux: Build for x86_64 and aarch64 (ARM64)
+          CIBW_ARCHS_LINUX: auto aarch64
+          # Windows: Usually only AMD64 is needed
+          CIBW_ARCHS_WINDOWS: auto
+          # Skip PyPy
+          CIBW_SKIP: pp*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+          path: ./wheelhouse/*.whl
+
+  build_sdist:
+    needs: check_version
+    if: needs.check_version.outputs.exists == 'false'
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Build sdist
+        run: uv build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist/*.tar.gz
+
+  publish:
+    needs: [check_version, build_wheels, build_sdist]
+    if: needs.check_version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
       - name: Create and push tag
-        if: steps.check_tag.outputs.exists == 'false'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ steps.get_version.outputs.VERSION }}" -m "Release v${{ steps.get_version.outputs.VERSION }}"
-          git push origin "v${{ steps.get_version.outputs.VERSION }}"
-
-      - name: Build package
-        if: steps.check_tag.outputs.exists == 'false'
-        run: uv build --sdist
+          git tag -a "v${{ needs.check_version.outputs.version }}" -m "Release v${{ needs.check_version.outputs.version }}"
+          git push origin "v${{ needs.check_version.outputs.version }}"
 
       - name: Publish to PyPI
-        if: steps.check_tag.outputs.exists == 'false'
-        run: uv publish
-        env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
