@@ -69,6 +69,8 @@ jobs:
           # CIBW_ARCHS_WINDOWS: AMD64
           # Skip PyPy
           CIBW_SKIP: pp*
+          # Ensure cmake is available in the build environment
+          CIBW_BEFORE_ALL_LINUX: "yum install -y cmake || apt-get install -y cmake || apk add cmake"
 
       - uses: actions/upload-artifact@v4
         with:
