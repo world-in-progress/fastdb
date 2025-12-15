@@ -47,7 +47,7 @@ class CMakeBuild(build_ext):
         # Default to 4 or CPU count, whichever is smaller, to be safe
         import multiprocessing
         try:
-            num_jobs = min(4, multiprocessing.cpu_count())
+            num_jobs = min(2, multiprocessing.cpu_count())
         except NotImplementedError:
             num_jobs = 1
             
