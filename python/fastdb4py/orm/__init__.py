@@ -322,10 +322,10 @@ class ORM:
             Make sure to unlink the shared memory if you want to completely remove it through the unlink() method by other processes.
         """
         if self._shm:
+            resource_tracker.unregister(self._shm._name, 'shared_memory')
             self._shm.close()
             self._shm = None
             self._origin = None
-            resource_tracker.unregister(self._shm._name, 'shared_memory')
     
     def unlink(self):
         """Unlink the shared memory database."""
