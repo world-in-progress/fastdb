@@ -4,8 +4,8 @@ import warnings
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
-from multiprocessing import shared_memory
 from typing import List, TypeVar, Type, Any, Generic
+from multiprocessing import shared_memory, resource_tracker
 
 from .. import core
 from .table import Table
@@ -314,8 +314,15 @@ class ORM:
         return feature_type.map_from(self._origin, of)
 
     def close(self):
-        """Close the database and release resources."""
+        """
+        Close the database and release resources.
+        
+        Warning:
+            After calling this method, the shared memory database will no longer be accessible.
+            Make sure to unlink the shared memory if you want to completely remove it through the unlink() method by other processes.
+        """
         if self._shm:
+            resource_tracker.unregister(self._shm._name, 'shared_memory')
             self._shm.close()
             self._shm = None
             self._origin = None
