@@ -14,7 +14,9 @@ include_directories(${CUR_PROJ_DIR}/headers/spatialite)
 include_directories(${CUR_PROJ_DIR}/src)
 #设置生成库
 add_library(${CUR_PROJ_NAME} STATIC ${all_files})
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+if(NOT WIN32)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+endif()
 
 #设置链接目录
 link_directories(${BIN_DIR})
