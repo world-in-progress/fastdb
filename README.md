@@ -8,6 +8,7 @@
 A C++ local database library with cross language bindings. Aiming to be a fast, lightweight, and easy-to-use data communication solution for RPC and coupled modeling in scientific computing.
 
 ## What's new
+- **2026-02-28 (Release Improvement)**: Fix bugs related to build process in Windows. (PR #20)
 - **2025-12-31(Bug Fix)**: Fixed an issue where shared memory segments were not being properly unregistered from the resource tracker upon closing, which could lead to resource leaks. (PR #17)
 - **2025-12-15 (Release Improvement)**: Enabled distribution of pre-compiled binary wheels for macOS (Intel/Apple Silicon) and Linux (x86_64/aarch64), eliminating the need for local compilation tools during installation. (PR #15)
 - **2025-12-10 (Bug Fix)**: Fixed the data type mapping for `U32` fields in Python bindings to ensure correct representation as unsigned 32-bit integers in NumPy arrays. (PR #13)
