@@ -1,15 +1,16 @@
 #include "FastVectorDb_p.h"
 #include "FastVectorDbLayer_p.h"
 #include <stdlib.h>
-#include <sys/stat.h>
 
 #ifdef _WIN32
     #include <io.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
 #else
     #include <unistd.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
 #endif
-
-#include <fcntl.h>
 
 namespace wx
 {  
@@ -128,16 +129,36 @@ printf("\nFastVectorDB:A fast vector database for local cache\n\
 Author: wenyongning@njnu.edu.cn\n");
 printf("loading [%s] ...",filename);
 #endif
-        int fd = open(filename, O_RDONLY); // 打开文件获取描述符
+#ifdef _WIN32
+        int fd = _open(filename, _O_RDONLY | _O_BINARY);
         if (fd == -1)
-        { 
+        {
+            printf("Error opening file: %s\n", strerror(errno));
+            return NULL;
+        }
+
+        struct _stat fileStat;
+        if (_fstat(fd, &fileStat) == -1)
+        {
+            printf("Error getting file status: %s\n", strerror(errno));
+            _close(fd);
+            return NULL;
+        }
+        size_t size = fileStat.st_size;
+        void* pdata = malloc(sizeof(u8)*size+64);
+        _read(fd, pdata, size);
+        _close(fd);
+#else
+        int fd = open(filename, O_RDONLY);
+        if (fd == -1)
+        {
             printf("Error opening file: %s\n", strerror(errno));
             return NULL;
         }
 
         struct stat fileStat;
         if (fstat(fd, &fileStat) == -1)
-        { // 通过描述符获取状态
+        {
             printf("Error getting file status: %s\n", strerror(errno));
             close(fd);
             return NULL;
@@ -146,6 +167,7 @@ printf("loading [%s] ...",filename);
         void* pdata = malloc(sizeof(u8)*size+64);
         read(fd,pdata,size);
         close(fd);
+#endif
         auto db = load(pdata,size,free_data_buffer,0);
         if(db)
         {

@@ -60,7 +60,7 @@ namespace wx
         u8* pdata;
     };
 
-    class MemoryStream :public WriteStream
+    class fastdb_api MemoryStream :public WriteStream
     {
     public:
         class Impl;
