@@ -79,4 +79,6 @@ FIELD_TYPE_DEFAULTS = {
 
 # Mapping from Python type annotations to OriginFieldType
 def get_origin_type(type_var: type) -> OriginFieldType:
+    if get_origin(type_var) is list or type_var is list:
+        return OriginFieldType.list
     return FIELD_TYPE_MAP.get(type_var, OriginFieldType.unknown)
