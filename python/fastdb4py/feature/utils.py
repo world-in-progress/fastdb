@@ -25,7 +25,11 @@ def parse_defns(cls):
             try:
                 origin_type = get_origin_type(hint)
                 if origin_type == OriginFieldType.unknown:
-                    if issubclass(hint, BaseFeature):
+                    # Check if hint is a Feature subclass or forward reference
+                    if hasattr(hint, '__mro__') and issubclass(hint, BaseFeature):
+                        origin_type = OriginFieldType.ref
+                    # Heuristic for string/ForwardRef: Assume it's a Feature ref if it's not a basic type
+                    elif isinstance(hint, str) or hasattr(hint, '__forward_arg__'):
                         origin_type = OriginFieldType.ref
             except Exception as e:
                 origin_type = OriginFieldType.unknown

@@ -14,14 +14,26 @@ _feature_hints_cache: WeakKeyDictionary = WeakKeyDictionary()
 
 class Feature(BaseFeature):
     def __init__(self, **kwargs):
+        # Local cache for Python-side fields and serializer-hydrated values.
         self._cache: Dict[str, Any] = {}
+        # Origin feature mapped from fastdb layer (None means pure Python object).
         self._origin: core.WxFeature | None = None
+        # Database handle used when the feature is mapped from fastdb.
         self._db: core.WxDatabase | core.WxDatabaseBuild | None = None
+        # Full Python type hints declared on this Feature subclass.
         self._type_hints: Dict[str, Any] = _get_feature_hints(self.__class__)
+        # Parsed fastdb field definitions: name -> (field_type, field_index).
         self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = parse_defns(self.__class__)
         
+        # Constructor fast-path:
+        # kwargs are applied directly to cache to avoid __setattr__ dispatch overhead.
+        # This object is not fixed yet (_origin is None), so cache assignment is equivalent
+        # to the non-fixed path in __setattr__.
         for key, value in kwargs.items():
-            setattr(self, key, value)
+            if key.startswith('_'):
+                object.__setattr__(self, key, value)
+            else:
+                self._cache[key] = value
     
     @property
     def fixed(self) -> bool:
@@ -41,116 +53,144 @@ class Feature(BaseFeature):
         return feature
     
     def __getattr__(self, name: str):
-        # Try to get origin type definition with the given name
-        defn = self._origin_hints.get(name, None)
+        # Cache-first access: serializer-populated values and dynamic fields live here.
+        if name in self._cache:
+            return self._cache[name]
+
+        # Resolve field metadata from parsed feature definitions.
+        defn = self._origin_hints.get(name)
+
+        # Unknown field behavior:
+        # - If it is a typed Python field (e.g. List[T]), return None by default.
+        # - Otherwise, follow Python protocol and raise AttributeError.
         if defn is None or defn[0] is OriginFieldType.unknown:
-            warnings.warn(f'Field "{name}" not found in feature "{self.__class__.__name__}".', UserWarning)
-            return None
-        
+            if name in self._type_hints:
+                return None
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
         ft, fid = defn
-        
-        # Case for not mapping from database ##############################################
-        
-        # If not on mapping, return cached value or default value
+
+        # Case 1: not mapped from database yet (pure Python object).
+        # Return cached default values and persist them into cache.
         if not self.fixed:
-            if name in self._cache:
-                return self._cache[name]
-            else:
-                if ft == OriginFieldType.ref:
-                    ref_feature_type = self._type_hints[name]
-                    default_ref_feature = ref_feature_type()
-                    self._cache[name] = default_ref_feature
-                    return default_ref_feature
-                else:
-                    default_value = FIELD_TYPE_DEFAULTS.get(ft, None)
-                    self._cache[name] = default_value
-                    return default_value
-        
-        # Case for mapping from database ##################################################
-        
-        # Type Bytes is specially stored in fastdb as geometry-like chunk
-        # Return it directly from table feature
+            if ft == OriginFieldType.ref:
+                ref_feature_type = self._type_hints[name]
+                default_ref_feature = ref_feature_type()
+                self._cache[name] = default_ref_feature
+                return default_ref_feature
+
+            default_value = FIELD_TYPE_DEFAULTS.get(ft, None)
+            self._cache[name] = default_value
+            return default_value
+
+        # Case 2: mapped from database.
+        # Bytes field is stored as geometry-like chunk in fastdb.
         if ft == OriginFieldType.bytes:
             return self._origin.get_geometry_like_chunk()
-        
-        # Type Ref requires special handling to get referenced feature
-        elif ft == OriginFieldType.ref:
-            # Get feature referencing
-            ref = self._origin.get_field_as_ref(fid)
-            
-            # Return as Feature object
-            ref_feature_type: Feature = self._type_hints[name]
-            feature_origin: core.WxFeature = self._db.tryGetFeature(ref)
-            return ref_feature_type.map_from(self._db, feature_origin)
-        
-        # Other types: map to corresponding get_field_as_* method
-        elif ft == OriginFieldType.u8:
+
+        # Ref field handling strategy:
+        # 1) Try native fastdb ref lookup when origin/db are available.
+        # 2) Return None when native ref is unavailable/invalid.
+        # 3) Cache resolved feature instance for subsequent fast access.
+        if ft == OriginFieldType.ref:
+            try:
+                ref = self._origin.get_field_as_ref(fid)
+            except Exception:
+                return None
+
+            if not ref or self._db is None:
+                return None
+
+            ref_feature_origin = self._db.tryGetFeature(ref)
+            if not ref_feature_origin:
+                return None
+
+            ref_feature_type = self._type_hints.get(name, Feature)
+            feature = ref_feature_type.map_from(self._db, ref_feature_origin)
+            self._cache[name] = feature
+            return feature
+
+        # Scalar field mapping to fastdb getters.
+        if ft == OriginFieldType.u8:
             return self._origin.get_field_as_int(fid)
-        elif ft == OriginFieldType.u16:
+        if ft == OriginFieldType.u16:
             return self._origin.get_field_as_int(fid)
-        elif ft == OriginFieldType.u32:
+        if ft == OriginFieldType.u32:
             return self._origin.get_field_as_int(fid)
-        elif ft == OriginFieldType.i32:
+        if ft == OriginFieldType.i32:
             return self._origin.get_field_as_int(fid)
-        elif ft == OriginFieldType.f32:
+        if ft == OriginFieldType.f32:
             return self._origin.get_field_as_float(fid)
-        elif ft == OriginFieldType.f64:
+        if ft == OriginFieldType.f64:
             return self._origin.get_field_as_float(fid)
-        elif ft == OriginFieldType.str:
+        if ft == OriginFieldType.str:
             return self._origin.get_field_as_string(fid)
-        elif ft == OriginFieldType.wstr:
+        if ft == OriginFieldType.wstr:
             return self._origin.get_field_as_wstring(fid)
+
+        return None
     
     def __setattr__(self, name: str, value):
-        # Allow setting internal attributes directly
+        # Internal runtime attributes bypass field mapping.
         if name.startswith('_'):
             object.__setattr__(self, name, value)
             return
-        
-        # Try to get origin type definition with the given name
-        defn = self._origin_hints.get(name, None)
+
+        # Resolve field metadata from parsed feature definitions.
+        defn = self._origin_hints.get(name)
+
+        # Unknown or non-fastdb-mapped fields are kept in local cache.
         if defn is None or defn[0] is OriginFieldType.unknown:
-            warnings.warn(f'Field "{name}" not found in feature "{self.__class__.__name__}".', UserWarning)
+            self._cache[name] = value
             return
-        
+
         ft, fid = defn
-        
-        # Case for not mapping from database ##############################################
-        
-        # Cache the value for later use
+
+        # Pure Python object path: assign to cache only.
         if not self.fixed:
             self._cache[name] = value
             return
-        
-        # Case for mapping from database ##################################################
-        
-        # Directly set field value to database according to its type
-        if ft == OriginFieldType.u8     \
-        or ft == OriginFieldType.u16    \
-        or ft == OriginFieldType.u32    \
-        or ft == OriginFieldType.i32    \
-        or ft == OriginFieldType.f32    \
-        or ft == OriginFieldType.f64    \
-        or ft == OriginFieldType.u8n    \
-        or ft == OriginFieldType.u16n:
+
+        # Database-mapped numeric fields are written directly to fastdb origin.
+        if ft in (
+            OriginFieldType.u8,
+            OriginFieldType.u16,
+            OriginFieldType.u32,
+            OriginFieldType.i32,
+            OriginFieldType.f32,
+            OriginFieldType.f64,
+            OriginFieldType.u8n,
+            OriginFieldType.u16n,
+        ):
             self._origin.set_field(fid, value)
-        elif ft == OriginFieldType.ref:
-            # Get referenced feature type
+            return
+
+        # Ref field handling strategy:
+        # - Accept None as a nullable ref and keep it in cache.
+        # - Validate Python type against annotation.
+        # - Try native fastdb ref assignment when referenced origin exists.
+        # - Always cache Python-side value for serializer compatibility.
+        if ft == OriginFieldType.ref:
+            if value is None:
+                self._cache[name] = None
+                return
+
             ref_feature_type: Feature = self._type_hints[name]
             if not isinstance(value, ref_feature_type):
                 warnings.warn(f'Field "{name}" expects a reference to type "{ref_feature_type.__name__}", but got "{type(value).__name__}".', UserWarning)
                 return
-            
-            self._origin.set_field(fid, value._origin)
-            
-            # Get the origin ref feature and set all its fields with the given feature
-            # Note: this is a deep copy operation, performance may be affected for feature with many fields
-            # origin_feature: Feature = getattr(self, name)
-            # for ref_field_name in origin_feature._type_hints.keys():
-            #     setattr(origin_feature, ref_field_name, getattr(value, ref_field_name))
-            
-        else:
-            warnings.warn(f'Fastdb only support features to set numeric field for a scale-known block.', UserWarning)
+
+            try:
+                if value._origin is not None:
+                    self._origin.set_field(fid, value._origin)
+            except Exception:
+                pass
+
+            self._cache[name] = value
+            return
+
+        # Non-numeric writes are not supported by direct fastdb set_field API.
+        warnings.warn(f'Fastdb only support features to set numeric field for a scale-known block.', UserWarning)
 
 # Helpers ##################################################
 

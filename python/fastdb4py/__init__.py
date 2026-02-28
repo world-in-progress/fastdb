@@ -4,3 +4,4 @@ from .type import (
 )
 from .feature import Feature
 from .orm import ORM, Table, TableDefn
+from .serializer import FastSerializer
