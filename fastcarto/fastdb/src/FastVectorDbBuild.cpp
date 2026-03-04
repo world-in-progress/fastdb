@@ -43,7 +43,7 @@ namespace wx
 
     chunk_data_t MemoryStream::Impl::data()
     {
-        return chunk_data_t{ (u32)m_buffer.size(), m_buffer.data() };
+        return chunk_data_t{ m_buffer.size(), m_buffer.data() };
     }
 
     void MemoryStream::Impl::reset()

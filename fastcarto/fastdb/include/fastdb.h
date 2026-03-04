@@ -56,7 +56,7 @@ namespace wx
 
     struct chunk_data_t
     {
-        u32 size;
+        size_t size;
         u8* pdata;
     };
 
