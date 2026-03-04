@@ -146,7 +146,20 @@ printf("loading [%s] ...",filename);
         }
         size_t size = fileStat.st_size;
         void* pdata = malloc(sizeof(u8)*size+64);
-        _read(fd, pdata, size);
+        
+        size_t total_read = 0;
+        while(total_read < size) {
+            unsigned int chunk = (size - total_read > 0x40000000) ? 0x40000000 : (unsigned int)(size - total_read);
+            int r = _read(fd, (char*)pdata + total_read, chunk);
+            if (r == -1) {
+                printf("Error reading file: %s\n", strerror(errno));
+                _close(fd);
+                free(pdata);
+                return NULL;
+            }
+            if (r == 0) break;
+            total_read += r;
+        }
         _close(fd);
 #else
         int fd = open(filename, O_RDONLY);
@@ -165,7 +178,20 @@ printf("loading [%s] ...",filename);
         }
         size_t size =  fileStat.st_size;
         void* pdata = malloc(sizeof(u8)*size+64);
-        read(fd,pdata,size);
+        
+        size_t total_read = 0;
+        while(total_read < size) {
+            ssize_t r = read(fd, (char*)pdata + total_read, size - total_read);
+            if (r == -1) {
+                if (errno == EINTR) continue;
+                printf("Error reading file: %s\n", strerror(errno));
+                close(fd);
+                free(pdata);
+                return NULL;
+            }
+            if (r == 0) break; // EOF
+            total_read += r;
+        }
         close(fd);
 #endif
         auto db = load(pdata,size,free_data_buffer,0);
