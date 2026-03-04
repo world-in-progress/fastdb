@@ -322,7 +322,12 @@ class ORM:
             Make sure to unlink the shared memory if you want to completely remove it through the unlink() method by other processes.
         """
         if self._shm:
-            resource_tracker.unregister(self._shm._name, 'shared_memory')
+            # Not manually unregistering shared memory
+            # However, this may cause some warnings in multiprocessing resource tracker
+            # when the process that shares the memory transmits the ownership to other processes and exits without unlinking the shared memory. 
+            # But it is generally safe to ignore these warnings as long as you ensure proper unlinking of shared memory when it is no longer needed.
+            # May be optimized in the future if necessary.
+            # resource_tracker.unregister(self._shm._name, 'shared_memory')
             self._shm.close()
             self._shm = None
             self._origin = None
