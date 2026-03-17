@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-fastdb (`fastdb4py` on PyPI) is a C++ local database library with Python bindings (via SWIG). It provides fast, lightweight columnar data storage aimed at RPC and coupled modeling in scientific computing. Current version: **0.1.12**, requires Python >= 3.10.
+fastdb (`fastdb4py` on PyPI) is a C++ local database library with Python bindings (via SWIG). It provides fast, lightweight columnar data storage aimed at RPC and coupled modeling in scientific computing. Current version: **0.1.13**, requires Python >= 3.10.
 
 ## Repository Structure
 
