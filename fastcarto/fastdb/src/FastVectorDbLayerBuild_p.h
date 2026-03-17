@@ -162,6 +162,7 @@ namespace wx{
         else if (fdx.type == ftU16n)
         {
             u16 v = (u16)(0xFFFF * (value - fdx.vmin) / (fdx.vmax - fdx.vmin));
+            memcpy(buffer + fdx.offset, &v, sizeof(v));
         }
         else if (fdx.type == ftU8n)
         {

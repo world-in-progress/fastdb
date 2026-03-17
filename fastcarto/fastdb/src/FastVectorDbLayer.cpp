@@ -360,6 +360,10 @@ namespace wx
             u16 v = *(u16 *)ptr;
             return fd->vmin + (fd->vmax - fd->vmin) * v / 65535.0;
         }
+        case ftU8:  return *(u8  *)ptr;
+        case ftU16: return *(u16 *)ptr;
+        case ftU32: return *(u32 *)ptr;
+        case ftI32: return (int)*(i32 *)ptr;  // i32 is unsigned int; cast to int for signed reading
         }
         return NAN;
     }
@@ -713,5 +717,21 @@ namespace wx
     void FastVectorDbFeature::setField(u32 ix, FastVectorDbFeature* feature)
     {
         impl->layer->impl->setFeatureRef_internal(impl->ifeature, ix, feature);
+    }
+
+    void FastVectorDbFeature::getFieldsAsDoubles(const u32* field_ids, int n_fields, double* out)
+    {
+        auto* li = impl->layer->impl;   // cache pointer chain once
+        u32 ifeature = impl->ifeature;
+        for (int i = 0; i < n_fields; i++)
+            out[i] = li->getFieldAsFloat_internal(ifeature, field_ids[i]);
+    }
+
+    void FastVectorDbFeature::setFieldsFromDoubles(const u32* field_ids, const double* values, int n_fields)
+    {
+        auto* li = impl->layer->impl;
+        u8* buf = (u8*)li->getFeatureAddress(impl->ifeature);
+        for (int i = 0; i < n_fields; i++)
+            set_field_value_t(buf, li->m_field_descs[field_ids[i]], values[i]);
     }
 }

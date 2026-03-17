@@ -1,46 +1,86 @@
 import warnings
-from threading import Lock
-from weakref import WeakKeyDictionary
-from typing import Dict, Any, TypeVar, Type, get_type_hints
+import numpy as np
+from typing import Dict, Any, TypeVar, Type
 
 from .. import core
 from .base import BaseFeature
 from .utils import parse_defns
+from ._schema import ClassSchema, get_class_schema, _SCHEMA_ATTR
 from ..type import FIELD_TYPE_DEFAULTS, OriginFieldType
 
 T = TypeVar('T', bound='Feature')
-_feature_hints_cache_lock = Lock()
-_feature_hints_cache: WeakKeyDictionary = WeakKeyDictionary()
+
+# Module-level dispatch table: replaces the if-chain in __getattr__ for scalar fields.
+# dict lookup is O(1) and avoids repeated branch evaluation on every field access.
+_SCALAR_GETTER = {
+    OriginFieldType.u8:   lambda o, fid: o.get_field_as_int(fid),
+    OriginFieldType.u16:  lambda o, fid: o.get_field_as_int(fid),
+    OriginFieldType.u32:  lambda o, fid: o.get_field_as_int(fid),
+    OriginFieldType.i32:  lambda o, fid: o.get_field_as_int(fid),
+    OriginFieldType.f32:  lambda o, fid: o.get_field_as_float(fid),
+    OriginFieldType.f64:  lambda o, fid: o.get_field_as_float(fid),
+    OriginFieldType.str:  lambda o, fid: o.get_field_as_string(fid),
+    OriginFieldType.wstr: lambda o, fid: o.get_field_as_wstring(fid),
+}
+
+# frozenset for O(1) membership test in __setattr__ numeric branch.
+_NUMERIC_FIELD_TYPES = frozenset((
+    OriginFieldType.u8,
+    OriginFieldType.u16,
+    OriginFieldType.u32,
+    OriginFieldType.i32,
+    OriginFieldType.f32,
+    OriginFieldType.f64,
+    OriginFieldType.u8n,
+    OriginFieldType.u16n,
+))
 
 class Feature(BaseFeature):
     def __init__(self, **kwargs):
-        # Local cache for Python-side fields and serializer-hydrated values.
-        self._cache: Dict[str, Any] = {}
+        # _cache is lazily allocated on first write to avoid dict alloc overhead
+        # for db-mapped read-only Features (scalar reads go directly to SWIG).
+        self._cache: Dict[str, Any] | None = None
         # Origin feature mapped from fastdb layer (None means pure Python object).
         self._origin: core.WxFeature | None = None
         # Database handle used when the feature is mapped from fastdb.
         self._db: core.WxDatabase | core.WxDatabaseBuild | None = None
-        # Full Python type hints declared on this Feature subclass.
-        self._type_hints: Dict[str, Any] = _get_feature_hints(self.__class__)
+        # Class-attr lookup (~40 ns) beats WeakKeyDict (~209 ns). Falls back to
+        # get_class_schema() only on the very first instantiation of this class.
+        _schema: ClassSchema = (
+            type(self).__dict__.get(_SCHEMA_ATTR) or get_class_schema(type(self))
+        )
+        # Store schema ref for cold-path access (ref/unknown fields).
+        self._schema: ClassSchema = _schema
         # Parsed fastdb field definitions: name -> (field_type, field_index).
-        self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = parse_defns(self.__class__)
-        
+        # Kept as instance attr so hot-path __getattr__/__setattr__ avoids extra lookup.
+        self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = _schema.origin_hints
+
         # Constructor fast-path:
-        # kwargs are applied directly to cache to avoid __setattr__ dispatch overhead.
-        # This object is not fixed yet (_origin is None), so cache assignment is equivalent
-        # to the non-fixed path in __setattr__.
-        for key, value in kwargs.items():
-            if key.startswith('_'):
-                object.__setattr__(self, key, value)
-            else:
-                self._cache[key] = value
-    
+        # Only allocate _cache when kwargs are actually provided.
+        # kwargs are applied directly to avoid __setattr__ dispatch overhead.
+        if kwargs:
+            cache: Dict[str, Any] = {}
+            for key, value in kwargs.items():
+                if key.startswith('_'):
+                    object.__setattr__(self, key, value)
+                else:
+                    cache[key] = value
+            object.__setattr__(self, '_cache', cache)
+
+    def _get_cache(self) -> Dict[str, Any]:
+        """Return _cache, allocating it on first call."""
+        cache = self._cache
+        if cache is None:
+            cache = {}
+            object.__setattr__(self, '_cache', cache)
+        return cache
+
     @property
     def fixed(self) -> bool:
         # If the feature is mapped from a fixed table
         # Its _origin member must exist
         return self._origin is not None
-    
+
     @classmethod
     def map_from(
         cls,
@@ -51,11 +91,12 @@ class Feature(BaseFeature):
         feature._db = db
         feature._origin = origin
         return feature
-    
+
     def __getattr__(self, name: str):
         # Cache-first access: serializer-populated values and dynamic fields live here.
-        if name in self._cache:
-            return self._cache[name]
+        cache = self._cache
+        if cache is not None and name in cache:
+            return cache[name]
 
         # Resolve field metadata from parsed feature definitions.
         defn = self._origin_hints.get(name)
@@ -64,7 +105,7 @@ class Feature(BaseFeature):
         # - If it is a typed Python field (e.g. List[T]), return None by default.
         # - Otherwise, follow Python protocol and raise AttributeError.
         if defn is None or defn[0] is OriginFieldType.unknown:
-            if name in self._type_hints:
+            if name in self._schema.hints:
                 return None
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
@@ -74,13 +115,13 @@ class Feature(BaseFeature):
         # Return cached default values and persist them into cache.
         if not self.fixed:
             if ft == OriginFieldType.ref:
-                ref_feature_type = self._type_hints[name]
+                ref_feature_type = self._schema.hints[name]
                 default_ref_feature = ref_feature_type()
-                self._cache[name] = default_ref_feature
+                self._get_cache()[name] = default_ref_feature
                 return default_ref_feature
 
             default_value = FIELD_TYPE_DEFAULTS.get(ft, None)
-            self._cache[name] = default_value
+            self._get_cache()[name] = default_value
             return default_value
 
         # Case 2: mapped from database.
@@ -105,31 +146,18 @@ class Feature(BaseFeature):
             if not ref_feature_origin:
                 return None
 
-            ref_feature_type = self._type_hints.get(name, Feature)
+            ref_feature_type = self._schema.hints.get(name, Feature)
             feature = ref_feature_type.map_from(self._db, ref_feature_origin)
-            self._cache[name] = feature
+            self._get_cache()[name] = feature
             return feature
 
-        # Scalar field mapping to fastdb getters.
-        if ft == OriginFieldType.u8:
-            return self._origin.get_field_as_int(fid)
-        if ft == OriginFieldType.u16:
-            return self._origin.get_field_as_int(fid)
-        if ft == OriginFieldType.u32:
-            return self._origin.get_field_as_int(fid)
-        if ft == OriginFieldType.i32:
-            return self._origin.get_field_as_int(fid)
-        if ft == OriginFieldType.f32:
-            return self._origin.get_field_as_float(fid)
-        if ft == OriginFieldType.f64:
-            return self._origin.get_field_as_float(fid)
-        if ft == OriginFieldType.str:
-            return self._origin.get_field_as_string(fid)
-        if ft == OriginFieldType.wstr:
-            return self._origin.get_field_as_wstring(fid)
+        # Scalar field mapping via dispatch table (O(1) dict lookup).
+        getter = _SCALAR_GETTER.get(ft)
+        if getter is not None:
+            return getter(self._origin, fid)
 
         return None
-    
+
     def __setattr__(self, name: str, value):
         # Internal runtime attributes bypass field mapping.
         if name.startswith('_'):
@@ -141,27 +169,19 @@ class Feature(BaseFeature):
 
         # Unknown or non-fastdb-mapped fields are kept in local cache.
         if defn is None or defn[0] is OriginFieldType.unknown:
-            self._cache[name] = value
+            self._get_cache()[name] = value
             return
 
         ft, fid = defn
 
         # Pure Python object path: assign to cache only.
         if not self.fixed:
-            self._cache[name] = value
+            self._get_cache()[name] = value
             return
 
         # Database-mapped numeric fields are written directly to fastdb origin.
-        if ft in (
-            OriginFieldType.u8,
-            OriginFieldType.u16,
-            OriginFieldType.u32,
-            OriginFieldType.i32,
-            OriginFieldType.f32,
-            OriginFieldType.f64,
-            OriginFieldType.u8n,
-            OriginFieldType.u16n,
-        ):
+        # frozenset membership test is O(1) vs tuple's O(n) scan.
+        if ft in _NUMERIC_FIELD_TYPES:
             self._origin.set_field(fid, value)
             return
 
@@ -172,10 +192,10 @@ class Feature(BaseFeature):
         # - Always cache Python-side value for serializer compatibility.
         if ft == OriginFieldType.ref:
             if value is None:
-                self._cache[name] = None
+                self._get_cache()[name] = None
                 return
 
-            ref_feature_type: Feature = self._type_hints[name]
+            ref_feature_type: Feature = self._schema.hints[name]
             if not isinstance(value, ref_feature_type):
                 warnings.warn(f'Field "{name}" expects a reference to type "{ref_feature_type.__name__}", but got "{type(value).__name__}".', UserWarning)
                 return
@@ -186,22 +206,37 @@ class Feature(BaseFeature):
             except Exception:
                 pass
 
-            self._cache[name] = value
+            self._get_cache()[name] = value
             return
 
         # Non-numeric writes are not supported by direct fastdb set_field API.
         warnings.warn(f'Fastdb only support features to set numeric field for a scale-known block.', UserWarning)
 
-# Helpers ##################################################
+    def read_all_scalars(self, out=None) -> np.ndarray:
+        """Batch-read all scalar fields into a numpy float64 array (1 SWIG call).
 
-def _get_feature_hints(feature_type: Type[T]) -> Dict[str, Any]:
-    if feature_type in _feature_hints_cache:
-        return _feature_hints_cache[feature_type]
-    
-    with _feature_hints_cache_lock:
-        if feature_type in _feature_hints_cache:
-            return _feature_hints_cache[feature_type]
-        
-        hints = get_type_hints(feature_type)
-        _feature_hints_cache[feature_type] = hints
-        return hints    
+        Requires a db-mapped Feature (feature.fixed == True).
+        Returns a float64 array of length = number of scalar fields, ordered by field index.
+
+        Args:
+            out: Pre-allocated numpy float64 array to fill. Created if not provided.
+        """
+        if not self.fixed:
+            raise RuntimeError('read_all_scalars() requires a db-mapped Feature.')
+        fids = self._schema.scalar_field_ids_np
+        if out is None:
+            out = np.empty(len(fids), dtype=np.float64)
+        self._origin.get_fields_into(fids, out)
+        return out
+
+    def write_all_scalars(self, values: np.ndarray) -> None:
+        """Batch-write all scalar fields from a numpy float64 array (1 SWIG call).
+
+        Requires a db-mapped Feature (feature.fixed == True).
+        values: float64 array of length = number of scalar fields, ordered by field index.
+        """
+        if not self.fixed:
+            raise RuntimeError('write_all_scalars() requires a db-mapped Feature.')
+        fids = self._schema.scalar_field_ids_np
+        self._origin.set_fields_from_doubles(fids, values)
+

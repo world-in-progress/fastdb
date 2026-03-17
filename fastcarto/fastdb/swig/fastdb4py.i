@@ -256,6 +256,48 @@
     %}
 }
 
+%extend wx::FastVectorDbFeature {
+    // Batch-read: read multiple scalar fields into a freshly allocated numpy float64 array.
+    PyObject* get_fields_as_doubles(PyObject* py_field_ids) {
+        if (!PyArray_Check(py_field_ids)) {
+            PyErr_SetString(PyExc_TypeError, "field_ids must be a numpy uint32 array");
+            return NULL;
+        }
+        PyArrayObject* arr_fids = (PyArrayObject*)py_field_ids;
+        npy_intp n = PyArray_SIZE(arr_fids);
+        npy_intp dims[1] = {n};
+        PyObject* out = PyArray_SimpleNew(1, dims, NPY_DOUBLE);
+        if (!out) return NULL;
+        $self->getFieldsAsDoubles(
+            (const u32*)PyArray_DATA(arr_fids), (int)n,
+            (double*)PyArray_DATA((PyArrayObject*)out)
+        );
+        return out;
+    }
+
+    // Batch-read into a pre-allocated numpy float64 array (hot-path, no allocation).
+    void get_fields_into(PyObject* py_field_ids, PyObject* py_out) {
+        PyArrayObject* arr_fids = (PyArrayObject*)py_field_ids;
+        PyArrayObject* arr_out  = (PyArrayObject*)py_out;
+        $self->getFieldsAsDoubles(
+            (const u32*)PyArray_DATA(arr_fids),
+            (int)PyArray_SIZE(arr_fids),
+            (double*)PyArray_DATA(arr_out)
+        );
+    }
+
+    // Batch-write scalar fields from numpy float64 values array.
+    void set_fields_from_doubles(PyObject* py_field_ids, PyObject* py_values) {
+        PyArrayObject* arr_fids = (PyArrayObject*)py_field_ids;
+        PyArrayObject* arr_vals = (PyArrayObject*)py_values;
+        $self->setFieldsFromDoubles(
+            (const u32*)PyArray_DATA(arr_fids),
+            (const double*)PyArray_DATA(arr_vals),
+            (int)PyArray_SIZE(arr_fids)
+        );
+    }
+}
+
 %extend wx::MemoryStream {
     PyObject* get_bytes() {
         chunk_data_t cd = $self->data();

@@ -378,6 +378,9 @@ namespace wx
         void                    setField(u32 ix, double value);
         void                    setField(u32 ix, int    value);
         void                    setField(u32 ix, FastVectorDbFeature* feature);
+        // Batch field access: read/write multiple scalar fields in one call.
+        void                    getFieldsAsDoubles(const u32* field_ids, int n_fields, double* out);
+        void                    setFieldsFromDoubles(const u32* field_ids, const double* values, int n_fields);
     private:
         Impl*  impl;
         friend class FastVectorDbLayer::Impl;
