@@ -1,16 +1,13 @@
 import warnings
-from threading import Lock
-from weakref import WeakKeyDictionary
-from typing import Dict, Any, TypeVar, Type, get_type_hints
+from typing import Dict, Any, TypeVar, Type
 
 from .. import core
 from .base import BaseFeature
 from .utils import parse_defns
+from ._schema import get_class_schema
 from ..type import FIELD_TYPE_DEFAULTS, OriginFieldType
 
 T = TypeVar('T', bound='Feature')
-_feature_hints_cache_lock = Lock()
-_feature_hints_cache: WeakKeyDictionary = WeakKeyDictionary()
 
 # Module-level dispatch table: replaces the if-chain in __getattr__ for scalar fields.
 # dict lookup is O(1) and avoids repeated branch evaluation on every field access.
@@ -46,10 +43,12 @@ class Feature(BaseFeature):
         self._origin: core.WxFeature | None = None
         # Database handle used when the feature is mapped from fastdb.
         self._db: core.WxDatabase | core.WxDatabaseBuild | None = None
+        # Single ClassSchema lookup replaces 2 separate WeakKeyDict lookups (OPT-6).
+        _schema = get_class_schema(self.__class__)
         # Full Python type hints declared on this Feature subclass.
-        self._type_hints: Dict[str, Any] = _get_feature_hints(self.__class__)
+        self._type_hints: Dict[str, Any] = _schema.hints
         # Parsed fastdb field definitions: name -> (field_type, field_index).
-        self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = parse_defns(self.__class__)
+        self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = _schema.origin_hints
 
         # Constructor fast-path:
         # Only allocate _cache when kwargs are actually provided.
@@ -208,16 +207,3 @@ class Feature(BaseFeature):
         # Non-numeric writes are not supported by direct fastdb set_field API.
         warnings.warn(f'Fastdb only support features to set numeric field for a scale-known block.', UserWarning)
 
-# Helpers ##################################################
-
-def _get_feature_hints(feature_type: Type[T]) -> Dict[str, Any]:
-    if feature_type in _feature_hints_cache:
-        return _feature_hints_cache[feature_type]
-
-    with _feature_hints_cache_lock:
-        if feature_type in _feature_hints_cache:
-            return _feature_hints_cache[feature_type]
-
-        hints = get_type_hints(feature_type)
-        _feature_hints_cache[feature_type] = hints
-        return hints

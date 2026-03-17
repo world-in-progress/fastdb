@@ -3,8 +3,9 @@ import numpy as np
 import ctypes
 from threading import Lock
 from weakref import WeakKeyDictionary
-from typing import Type, List, Dict, Any, get_type_hints, Tuple, get_origin, get_args
+from typing import Type, List, Dict, Any, Tuple, get_origin, get_args
 from .feature import Feature, get_all_defns
+from .feature._schema import get_class_schema as _get_unified_schema
 from .type import OriginFieldType, U32, F64
 from . import core
 
@@ -670,8 +671,10 @@ def _get_class_schema(cls):
         if schema is not None:
             return schema
 
-        hints = get_type_hints(cls)
-        defns = get_all_defns(cls)
+        # Read shared data from unified ClassSchema — no recomputation of get_type_hints().
+        base = _get_unified_schema(cls)
+        hints = base.hints
+        defns = base.ordered_defns
 
         numeric_field_kinds = {}
         numeric_fields = []

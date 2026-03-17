@@ -1,4 +1,3 @@
-import weakref
 import numpy as np
 from threading import Lock
 from contextlib import contextmanager
@@ -6,34 +5,34 @@ from typing import TypeVar, Generic, Type, Generator
 
 from .. import core
 from ..feature import Feature, get_all_defns
+from ..feature._schema import get_class_schema
 
 T = TypeVar('T', bound=Feature)
-_column_accessor_cache_lock = Lock()
-_column_accessor_cache = weakref.WeakKeyDictionary()
+_column_accessor_lock = Lock()
+
 
 def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
     """
     Create a column accessor that provides numpy array access with proper type hints.
-    
-    This dynamically creates a class with the same field names as feature_type.
-    """
-    if feature_type in _column_accessor_cache:
-        ColumnAccessorClass = _column_accessor_cache[feature_type]
-        return ColumnAccessorClass(table_origin, feature_type)
-    
-    with _column_accessor_cache_lock:
-        if feature_type in _column_accessor_cache:
-            ColumnAccessorClass = _column_accessor_cache[feature_type]
-            return ColumnAccessorClass(table_origin, feature_type)
-        
-        # Get original annotations from feature_type
-        original_annotations = {}
-        if hasattr(feature_type, '__annotations__'):
-            original_annotations = feature_type.__annotations__.copy()
 
-        # Pre-compute field_name → column_index mapping once at class creation time.
-        # This avoids an O(n) linear scan + get_all_defns() call on every attribute access.
-        _field_index_map = {name: idx for idx, (name, _) in enumerate(get_all_defns(feature_type))}
+    The ColumnAccessor class is cached inside ClassSchema.column_accessor_class,
+    eliminating the separate WeakKeyDictionary (Cache 3).
+    """
+    schema = get_class_schema(feature_type)
+    ColumnAccessorClass = schema.column_accessor_class
+    if ColumnAccessorClass is not None:
+        return ColumnAccessorClass(table_origin, feature_type)
+
+    with _column_accessor_lock:
+        ColumnAccessorClass = schema.column_accessor_class
+        if ColumnAccessorClass is not None:
+            return ColumnAccessorClass(table_origin, feature_type)
+
+        # Get original annotations from feature_type
+        original_annotations = getattr(feature_type, '__annotations__', {}).copy()
+
+        # field_index_map pre-computed in ClassSchema — no get_all_defns() call needed.
+        _field_index_map = schema.field_index_map
 
         # Create the dynamic column accessor class with modified annotations
         class ColumnAccessor:
@@ -79,8 +78,8 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
                         'Use table[index].{name} = value to modify individual features.'
                     )
         
-        # Cache the class, not the instance
-        _column_accessor_cache[feature_type] = ColumnAccessor
+        # Store the class in ClassSchema (replaces _column_accessor_cache WeakKeyDict).
+        schema.column_accessor_class = ColumnAccessor
         return ColumnAccessor(table_origin, feature_type)
 
 class Table(Generic[T]):
