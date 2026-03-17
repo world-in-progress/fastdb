@@ -174,3 +174,41 @@ class Table(Generic[T]):
     
     def rewind(self):
         self._origin.rewind()
+
+    def fill(self, **col_arrays) -> None:
+        """
+        Batch-write multiple columns from numpy arrays in a single call.
+
+        Each keyword argument maps a field name to a numpy array whose length
+        must equal the table's feature count.
+
+        Only supported for fixed-scale tables (table.fixed == True).
+        Usage:
+            tbl.fill(x=xs, y=ys, z=zs)   # xs, ys, zs are numpy arrays of length N
+        """
+        if not self.fixed:
+            raise RuntimeError('fill() only supports fixed-scale tables.')
+        col = self._column
+        for field_name, arr in col_arrays.items():
+            getattr(col, field_name)[:] = arr
+
+    def iter_reuse(self) -> Generator[T, None, None]:
+        """
+        High-performance iterator that reuses a single Feature wrapper instance.
+
+        WARNING: Do NOT hold references to the yielded object across iterations.
+        The same object is mutated on each step — any reference held outside the
+        loop body will see the NEXT item's data.
+
+        Only supported for fixed-scale tables (table.fixed == True).
+        """
+        if not self.fixed:
+            raise RuntimeError('iter_reuse() only supports fixed-scale tables.')
+
+        wrapper = self._feature_type()          # allocate once
+        object.__setattr__(wrapper, '_db', self._db)
+        count = self._origin.get_feature_count()
+        for i in range(count):
+            object.__setattr__(wrapper, '_origin', self._origin.tryGetFeature(i))
+            object.__setattr__(wrapper, '_cache', None)
+            yield wrapper

@@ -588,6 +588,22 @@ def run_macro(cfg: BenchConfig) -> list[BenchResult]:
     )
     _print_row(r_col_write); results.append(r_col_write)
 
+    # ── Point cloud: fill() — batch column write via Table.fill() ─────────────
+    xs_fill = np.ones(cloud_n, dtype=np.float64)
+    ys_fill = np.zeros(cloud_n, dtype=np.float64)
+    zs_fill = np.zeros(cloud_n, dtype=np.float64)
+
+    def _fill_write():
+        tbl_cloud.fill(x=xs_fill, y=ys_fill, z=zs_fill)
+
+    r_fill_write = _make_result(
+        "macro", "point_cloud_write_fill", f"N={cloud_n}",
+        _timeit_ns(_fill_write, cfg.n_iters // 5, cfg.n_warmup),
+        n_ops=cloud_n,
+        note="Table.fill(): 3 column writes (1×SWIG+memcpy per field)"
+    )
+    _print_row(r_fill_write); results.append(r_fill_write)
+
     # ── Speedup callout ───────────────────────────────────────────────────────
     read_speedup = r_row_read.median_ns / r_col_read.median_ns if r_col_read.median_ns > 0 else float("inf")
     write_speedup = r_row_write.median_ns / r_col_write.median_ns if r_col_write.median_ns > 0 else float("inf")
@@ -644,6 +660,18 @@ def run_macro(cfg: BenchConfig) -> list[BenchResult]:
         note="__iter__: tryGetFeature(i) + map_from per step"
     )
     _print_row(r); results.append(r)
+
+    def _iter_reuse():
+        for _pt in tbl_iter.iter_reuse():
+            pass
+
+    r_reuse = _make_result(
+        "macro", "iter_reuse (table.iter_reuse())", f"N={iter_n}",
+        _timeit_ns(_iter_reuse, macro_iters * 3, macro_warmup),
+        n_ops=iter_n,
+        note="iter_reuse: reuse wrapper, update _origin+_cache per step (no Feature alloc)"
+    )
+    _print_row(r_reuse); results.append(r_reuse)
 
     return results
 
