@@ -693,5 +693,5 @@ round o7  ─── OPT-8                  (SIGBUS bug 修复，需 ASan 定位)
 | o3 | OPT-4 ✅ | [o3/benchmark.md](o3/benchmark.md)（iter_reuse N=500: 976µs→**232µs 4.2×**；0.46µs/item vs 1.95µs/item；超出预期 2.8×） |
 | o4 | OPT-5 ✅ | [o4/benchmark.md](o4/benchmark.md)（fill 3-col N=1000: **2.75 µs vs rowwise 6.04ms → ~2200×**；API 更简洁） |
 | o5 | OPT-6 ✅ | [o5/benchmark.md](o5/benchmark.md)（feature_init_pure_python 1.83µs→**1.25µs −32%**；feature_init_db_mapped 2.42µs→**1.71µs −29%**；schema_cache_miss 7.29µs→6.17µs −15%；4 WeakKeyDict→1 ClassSchema） |
-| o6 | OPT-7 | o6/benchmark.md（待创建） |
+| o6 | class-attr schema cache ✅ | [o6/benchmark.md](o6/benchmark.md)（schema_cache_hit 209ns→**166ns −21%**；feature_init_pure 1.25µs→**1.08µs −14%**；iter_table N=500 −9%；point_cloud_read_rowwise −13%） |
 | o7 | OPT-8 | o7/benchmark.md（待创建） |

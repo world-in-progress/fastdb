@@ -4,7 +4,7 @@ from typing import Dict, Any, TypeVar, Type
 from .. import core
 from .base import BaseFeature
 from .utils import parse_defns
-from ._schema import get_class_schema
+from ._schema import ClassSchema, get_class_schema, _SCHEMA_ATTR
 from ..type import FIELD_TYPE_DEFAULTS, OriginFieldType
 
 T = TypeVar('T', bound='Feature')
@@ -43,11 +43,15 @@ class Feature(BaseFeature):
         self._origin: core.WxFeature | None = None
         # Database handle used when the feature is mapped from fastdb.
         self._db: core.WxDatabase | core.WxDatabaseBuild | None = None
-        # Single ClassSchema lookup replaces 2 separate WeakKeyDict lookups (OPT-6).
-        _schema = get_class_schema(self.__class__)
-        # Full Python type hints declared on this Feature subclass.
-        self._type_hints: Dict[str, Any] = _schema.hints
+        # Class-attr lookup (~40 ns) beats WeakKeyDict (~209 ns). Falls back to
+        # get_class_schema() only on the very first instantiation of this class.
+        _schema: ClassSchema = (
+            type(self).__dict__.get(_SCHEMA_ATTR) or get_class_schema(type(self))
+        )
+        # Store schema ref for cold-path access (ref/unknown fields).
+        self._schema: ClassSchema = _schema
         # Parsed fastdb field definitions: name -> (field_type, field_index).
+        # Kept as instance attr so hot-path __getattr__/__setattr__ avoids extra lookup.
         self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = _schema.origin_hints
 
         # Constructor fast-path:
@@ -100,7 +104,7 @@ class Feature(BaseFeature):
         # - If it is a typed Python field (e.g. List[T]), return None by default.
         # - Otherwise, follow Python protocol and raise AttributeError.
         if defn is None or defn[0] is OriginFieldType.unknown:
-            if name in self._type_hints:
+            if name in self._schema.hints:
                 return None
             raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
@@ -110,7 +114,7 @@ class Feature(BaseFeature):
         # Return cached default values and persist them into cache.
         if not self.fixed:
             if ft == OriginFieldType.ref:
-                ref_feature_type = self._type_hints[name]
+                ref_feature_type = self._schema.hints[name]
                 default_ref_feature = ref_feature_type()
                 self._get_cache()[name] = default_ref_feature
                 return default_ref_feature
@@ -141,7 +145,7 @@ class Feature(BaseFeature):
             if not ref_feature_origin:
                 return None
 
-            ref_feature_type = self._type_hints.get(name, Feature)
+            ref_feature_type = self._schema.hints.get(name, Feature)
             feature = ref_feature_type.map_from(self._db, ref_feature_origin)
             self._get_cache()[name] = feature
             return feature
@@ -190,7 +194,7 @@ class Feature(BaseFeature):
                 self._get_cache()[name] = None
                 return
 
-            ref_feature_type: Feature = self._type_hints[name]
+            ref_feature_type: Feature = self._schema.hints[name]
             if not isinstance(value, ref_feature_type):
                 warnings.warn(f'Field "{name}" expects a reference to type "{ref_feature_type.__name__}", but got "{type(value).__name__}".', UserWarning)
                 return

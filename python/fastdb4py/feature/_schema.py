@@ -7,6 +7,9 @@ from .base import BaseFeature
 
 _SCHEMA_CACHE: WeakKeyDictionary = WeakKeyDictionary()
 _SCHEMA_LOCK = Lock()
+# Attribute name used to cache the ClassSchema directly on the class object.
+# cls.__dict__.get(_SCHEMA_ATTR) is ~40-50 ns vs 209 ns for WeakKeyDict lookup.
+_SCHEMA_ATTR = '__fastdb_schema__'
 
 
 class ClassSchema:
@@ -41,13 +44,28 @@ class ClassSchema:
 
 
 def get_class_schema(cls: Type) -> ClassSchema:
-    """Return the ClassSchema for the given Feature subclass, computing it on first call."""
-    if cls in _SCHEMA_CACHE:
-        return _SCHEMA_CACHE[cls]
+    """Return the ClassSchema for the given Feature subclass, computing it on first call.
+
+    Two-level cache:
+    1. Class-level attribute (cls.__dict__.get): ~40-50 ns — no WeakRef overhead.
+    2. WeakKeyDictionary fallback: ~209 ns — used for metaclass-protected types that
+       rejected setattr, and kept in sync for GC safety.
+    """
+    # Hot path: class owns the schema as a plain class attribute (~40-50 ns).
+    schema = cls.__dict__.get(_SCHEMA_ATTR)
+    if schema is not None:
+        return schema
+
+    # Warm fallback: WeakKeyDict for types that could not accept setattr.
+    schema = _SCHEMA_CACHE.get(cls)
+    if schema is not None:
+        return schema
 
     with _SCHEMA_LOCK:
-        if cls in _SCHEMA_CACHE:
-            return _SCHEMA_CACHE[cls]
+        # Re-check both under lock (double-checked locking).
+        schema = cls.__dict__.get(_SCHEMA_ATTR) or _SCHEMA_CACHE.get(cls)
+        if schema is not None:
+            return schema
 
         hints = get_type_hints(cls)
 
@@ -78,5 +96,11 @@ def get_class_schema(cls: Type) -> ClassSchema:
         field_index_map = {name: i for i, (name, _) in enumerate(ordered_defns)}
 
         schema = ClassSchema(hints, origin_hints, ordered_defns, field_index_map)
-        _SCHEMA_CACHE[cls] = schema
+
+        # Primary cache: store directly on the class — O(1) dict lookup next time.
+        try:
+            setattr(cls, _SCHEMA_ATTR, schema)
+        except (TypeError, AttributeError):
+            pass  # metaclass-protected class: WeakKeyDict only
+        _SCHEMA_CACHE[cls] = schema  # keep WeakKeyDict in sync as GC-safe fallback
         return schema
