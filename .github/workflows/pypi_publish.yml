@@ -67,8 +67,8 @@ jobs:
           CIBW_ARCHS_LINUX: x86_64 aarch64
           # Windows: Build only for AMD64 (64-bit), skip 32-bit (x86) to avoid build issues
           CIBW_ARCHS_WINDOWS: AMD64
-          # Skip PyPy
-          CIBW_SKIP: pp* *musllinux*
+          # Skip PyPy and free-threaded Python (cp314t, etc.)
+          CIBW_SKIP: pp* *musllinux* cp*t-*
           # Ensure cmake is available in the build environment
           CIBW_BEFORE_ALL_LINUX: "yum install -y cmake || apt-get install -y cmake || apk add cmake"
 
