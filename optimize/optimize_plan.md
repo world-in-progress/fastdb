@@ -689,7 +689,7 @@ round o7  ─── OPT-8                  (SIGBUS bug 修复，需 ASan 定位)
 | o1 | OPT-1 + OPT-3 ✅ | [o1/benchmark.md](o1/benchmark.md)（scalar_read ↑19%，row-wise ↑10–12%；column_scan 真实瓶颈为 SWIG get_column ~5µs） |
 | o1.1 | OPT-1.1 ✅ | [o1.1/benchmark.md](o1.1/benchmark.md)（column_scan 8.67µs→333ns **26×**；column_read 33µs→5.75µs **5.8×**；Column vs row = **692×**） |
 | o1.2 | OPT-1.2 ✅ | [o1.2/benchmark.md](o1.2/benchmark.md)（column_scan 333ns→**250ns 1.33×**；总计 o0→**35×**；`__getattr__` 协议成新下限 ~80ns） |
-| o2 | OPT-2 | o2/benchmark.md（待创建） |
+| o2 | OPT-2 ✅ | [o2/benchmark.md](o2/benchmark.md)（iter_table ↑4%；dict free-list 使 alloc 仅 ~80 ns，真瓶颈是 WeakKeyDict×2 → OPT-6） |
 | o3 | OPT-4 | o3/benchmark.md（待创建） |
 | o4 | OPT-5 | o4/benchmark.md（待创建） |
 | o5 | OPT-6 | o5/benchmark.md（待创建） |
