@@ -36,7 +36,7 @@
 | OPT-3 | Python | `__getattr__` if-chain → dict dispatch ✅ | ★★★ | S | 极低 | 🔥 极高（已完成） |
 | OPT-2 | Python | `Feature._cache` 懒分配 | ★★ | S | 低 | ⬆ 高 |
 | OPT-4 | API | `Table.iter_reuse()` — 复用 Feature 实例 ✅ | ★★★ | M | 低 | ⬆ 高 |
-| OPT-5 | API | `ORM.push_many()` — 批量写入 | ★★★★ | M | 中 | ⬆ 高 |
+| OPT-5 | API | `Table.fill()` — 批量列写入 ✅ | ★★★★ | M | 中 | ⬆ 高 |
 | OPT-6 | Python | 统一 ClassSchema cache | ★★ | L | 中 | ▶ 中 |
 | OPT-7 | C++ | 批量 get_fields SWIG API | ★★★★ | L | 高 | ▶ 中 |
 | OPT-8 | Bug | FastSerializer SIGBUS 修复 | ★★★★★ | XL | 极高 | ⚠ 必修 |
@@ -691,7 +691,7 @@ round o7  ─── OPT-8                  (SIGBUS bug 修复，需 ASan 定位)
 | o1.2 | OPT-1.2 ✅ | [o1.2/benchmark.md](o1.2/benchmark.md)（column_scan 333ns→**250ns 1.33×**；总计 o0→**35×**；`__getattr__` 协议成新下限 ~80ns） |
 | o2 | OPT-2 ✅ | [o2/benchmark.md](o2/benchmark.md)（iter_table ↑4%；dict free-list 使 alloc 仅 ~80 ns，真瓶颈是 WeakKeyDict×2 → OPT-6） |
 | o3 | OPT-4 ✅ | [o3/benchmark.md](o3/benchmark.md)（iter_reuse N=500: 976µs→**232µs 4.2×**；0.46µs/item vs 1.95µs/item；超出预期 2.8×） |
-| o4 | OPT-5 | o4/benchmark.md（待创建） |
+| o4 | OPT-5 ✅ | [o4/benchmark.md](o4/benchmark.md)（fill 3-col N=1000: **2.75 µs vs rowwise 6.04ms → ~2200×**；API 更简洁） |
 | o5 | OPT-6 | o5/benchmark.md（待创建） |
 | o6 | OPT-7 | o6/benchmark.md（待创建） |
 | o7 | OPT-8 | o7/benchmark.md（待创建） |

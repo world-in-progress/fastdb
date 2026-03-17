@@ -673,6 +673,95 @@ def run_macro(cfg: BenchConfig) -> list[BenchResult]:
     )
     _print_row(r_reuse); results.append(r_reuse)
 
+    # ── ORM vs pickle: end-to-end file I/O comparison ────────────────────────
+    print()
+    print("  ── ORM vs pickle file I/O (N={}, 3×F64) ─────────────────────────────".format(cloud_n))
+    xs_io = np.linspace(0.0, 1.0, cloud_n)
+    ys_io = np.linspace(0.0, 0.5, cloud_n)
+    zs_io = np.zeros(cloud_n)
+    pickle_dict_io = {'x': xs_io, 'y': ys_io, 'z': zs_io}
+
+    with tempfile.NamedTemporaryFile(suffix='.fastdb', delete=False) as _f:
+        fastdb_tmp = _f.name
+    with tempfile.NamedTemporaryFile(suffix='.pkl', delete=False) as _f:
+        pickle_tmp = _f.name
+
+    try:
+        # Pre-build files to measure read latency
+        _db_io = ORM.truncate([TableDefn(BenchPoint, cloud_n)])
+        _db_io[BenchPoint][BenchPoint].fill(x=xs_io, y=ys_io, z=zs_io)
+        _db_io.save(fastdb_tmp)
+        fastdb_nbytes = Path(fastdb_tmp).stat().st_size
+
+        with open(pickle_tmp, 'wb') as _pf:
+            pickle.dump(pickle_dict_io, _pf, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle_nbytes = Path(pickle_tmp).stat().st_size
+
+        io_iters   = max(3, cfg.n_iters // 50)
+        io_warmup  = max(1, cfg.n_warmup // 10)
+
+        def _fastdb_write_io():
+            db = ORM.truncate([TableDefn(BenchPoint, cloud_n)])
+            db[BenchPoint][BenchPoint].fill(x=xs_io, y=ys_io, z=zs_io)
+            db.save(fastdb_tmp)
+
+        def _pickle_write_io():
+            with open(pickle_tmp, 'wb') as f:
+                pickle.dump(pickle_dict_io, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        def _fastdb_read_io():
+            db2 = ORM.load(fastdb_tmp, from_file=True)
+            tbl2 = db2[BenchPoint][BenchPoint]
+            _ = tbl2.column.x[:]
+
+        def _pickle_read_io():
+            with open(pickle_tmp, 'rb') as f:
+                data = pickle.load(f)
+            _ = data['x']
+
+        r_fdb_w = _make_result(
+            "macro", "fastdb write (truncate+fill+save)", f"N={cloud_n}",
+            _timeit_ns(_fastdb_write_io, io_iters, io_warmup),
+            n_ops=cloud_n, note=f"truncate+fill(3 cols)+save | {fastdb_nbytes//1024}KB"
+        )
+        _print_row(r_fdb_w); results.append(r_fdb_w)
+
+        r_pkl_w = _make_result(
+            "macro", "pickle write (dump 3 arrays)", f"N={cloud_n}",
+            _timeit_ns(_pickle_write_io, io_iters, io_warmup),
+            n_ops=cloud_n, note=f"pickle.dump dict of 3 np arrays | {pickle_nbytes//1024}KB"
+        )
+        _print_row(r_pkl_w); results.append(r_pkl_w)
+
+        r_fdb_r = _make_result(
+            "macro", "fastdb read (load+column.x)", f"N={cloud_n}",
+            _timeit_ns(_fastdb_read_io, io_iters, io_warmup),
+            n_ops=cloud_n, note="ORM.load(file) + tbl.column.x[:] (zero-copy view)"
+        )
+        _print_row(r_fdb_r); results.append(r_fdb_r)
+
+        r_pkl_r = _make_result(
+            "macro", "pickle read (load 3 arrays)", f"N={cloud_n}",
+            _timeit_ns(_pickle_read_io, io_iters, io_warmup),
+            n_ops=cloud_n, note="pickle.load(file) + data['x'] access"
+        )
+        _print_row(r_pkl_r); results.append(r_pkl_r)
+
+        def _ratio_str(a_ns, b_ns, a_name, b_name):
+            if a_ns <= 0 or b_ns <= 0:
+                return "N/A"
+            if a_ns <= b_ns:
+                return f"{a_name} {b_ns/a_ns:.1f}× faster"
+            return f"{b_name} {a_ns/b_ns:.1f}× faster"
+
+        print(f"\n  >> write: {_ratio_str(r_fdb_w.median_ns, r_pkl_w.median_ns, 'fastdb', 'pickle')}")
+        print(f"  >> read:  {_ratio_str(r_fdb_r.median_ns, r_pkl_r.median_ns, 'fastdb', 'pickle')}")
+        print(f"  >> file:  fastdb {fastdb_nbytes//1024}KB vs pickle {pickle_nbytes//1024}KB\n")
+
+    finally:
+        Path(fastdb_tmp).unlink(missing_ok=True)
+        Path(pickle_tmp).unlink(missing_ok=True)
+
     return results
 
 
