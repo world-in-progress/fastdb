@@ -30,8 +30,10 @@
 
 | ID | 类别 | 标题 | 收益 | 努力 | 风险 | ROI |
 |----|------|------|------|------|------|-----|
-| OPT-1 | Python | ColumnAccessor O(1) 字段查找 | ★★★★★ | S | 极低 | 🔥 极高 |
-| OPT-3 | Python | `__getattr__` if-chain → dict dispatch | ★★★ | S | 极低 | 🔥 极高 |
+| OPT-1 | Python | ColumnAccessor O(1) 字段查找 ✅ | ★★ | S | 极低 | ▶ 中（实际收益被 SWIG 掩盖） |
+| OPT-1.1 | Python | ColumnAccessor numpy 数组缓存 ✅ | ★★★★★ | S | 低 | 🔥 极高 |
+| OPT-1.2 | Python | ColumnAccessor 热路径单步查找 ✅ | ★★ | S | 极低 | ▶ 中（333→250 ns，__getattr__ 协议成瓶颈） |
+| OPT-3 | Python | `__getattr__` if-chain → dict dispatch ✅ | ★★★ | S | 极低 | 🔥 极高（已完成） |
 | OPT-2 | Python | `Feature._cache` 懒分配 | ★★ | S | 低 | ⬆ 高 |
 | OPT-4 | API | `Table.iter_reuse()` — 复用 Feature 实例 | ★★★ | M | 低 | ⬆ 高 |
 | OPT-5 | API | `ORM.push_many()` — 批量写入 | ★★★★ | M | 中 | ⬆ 高 |
@@ -107,6 +109,121 @@ class ColumnAccessor:
 > 预期值 ~300 ns = 1× WeakKeyDict class cache lookup + 1× dict.get + 1× SWIG get_column + 1× as_nparray
 
 **benchmark 验证指标**：`column_accessor_scan`，`point_cloud_read_columnwise`
+
+> **o1 实测更正**：OPT-1 实际只改善了 12–19%（而非预期 29×）。真实瓶颈是 SWIG `get_column(idx)` 调用本身（~4–5 µs/次），与字段名查找方式无关。见 OPT-1.1。
+
+---
+
+### OPT-1.1 ｜ ColumnAccessor numpy 数组缓存
+
+**类别**：Python 层 &nbsp;｜&nbsp; **努力**：S（~10 行）&nbsp;｜&nbsp; **风险**：低
+**依赖**：OPT-1 已完成 ✅
+
+#### 问题
+
+o1 实测发现 `table.column.x` 的 ~7.6 µs 开销来源：
+
+| 步骤 | 估算耗时 |
+|------|----------|
+| `object.__getattribute__` ×2 | ~200 ns |
+| `dict.get(name)` | ~50 ns |
+| SWIG `get_column(idx)` | **~4–5 µs** ← 真实瓶颈 |
+| `as_nparray()` + `__array_interface__` 包装 | ~500 ns–1 µs |
+
+`ColumnAccessor` 实例在 `table.column` 属性中**已被缓存**（`table._column`），每次 `table.column` 返回的是同一个 `ColumnAccessor` 实例。因此可以在实例内部缓存每列的 numpy array，避免重复调用 `get_column()`。
+
+由于 numpy array 是 C++ 内存的零拷贝 view（通过 `__array_interface__`），只要底层 `WxLayerTable` 不重新分配（fixed-scale table 不会），缓存是安全的。
+
+#### 方案
+
+在 `ColumnAccessor.__getattr__` 中首次访问时将 numpy array 存入实例级缓存字典，后续直接返回缓存值：
+
+```python
+class ColumnAccessor:
+    def __init__(self, table_origin, feature_type):
+        object.__setattr__(self, '_table_origin', table_origin)
+        object.__setattr__(self, '_field_index_map', _field_index_map)
+        object.__setattr__(self, '_array_cache', {})   # 新增：列数组缓存
+
+    def __getattr__(self, name: str) -> np.ndarray:
+        fmap = object.__getattribute__(self, '_field_index_map')
+        idx = fmap.get(name)
+        if idx is None:
+            raise AttributeError(f'Field "{name}" not found in the table.')
+
+        # O(1)：缓存命中时直接返回，跳过 SWIG get_column()
+        cache = object.__getattribute__(self, '_array_cache')
+        arr = cache.get(idx)
+        if arr is not None:
+            return arr
+
+        table_origin = object.__getattribute__(self, '_table_origin')
+        arr = table_origin.get_column(idx).as_nparray()
+        cache[idx] = arr
+        return arr
+```
+
+> **安全前提**：fixed-scale `WxLayerTable` 的列数据指针在整个生命周期内不移动。如果未来支持可变 table，需在写操作后调用 `_invalidate_array_cache()`。
+
+#### 文件改动
+
+| 文件 | 位置 | 改动说明 |
+|------|------|----------|
+| `python/fastdb4py/orm/table.py` | `_create_column_accessor()` ColumnAccessor 类 | `__init__` 加 `_array_cache`，`__getattr__` 加缓存命中路径 |
+
+#### 预期收益
+
+| 指标 | o1 实测 | 目标（首次访问） | 目标（缓存命中） |
+|------|---------|-----------------|-----------------|
+| `column_accessor_scan` (3f) | 7.62 µs | 7.6 µs（不变） | **~300 ns** |
+| `column_accessor_scan` (10f) | 7.75 µs | 7.7 µs（不变） | **~300 ns** |
+| `point_cloud_read_columnwise` (N=1000) | 33.58 µs | **~5 µs** | **~5 µs** |
+
+> benchmark 的 `column_accessor_scan` 每次测量都会 `_create_column_accessor()` 一个新实例（因为 scan 取的是第 3 次 / 第 10 次访问同一个 accessor 实例），缓存命中效果会在 `point_cloud_read_columnwise` 中体现更明显（同一 `table.column.x` 反复访问）。
+
+**benchmark 验证指标**：`column_accessor_scan`（缓存命中路径），`point_cloud_read_columnwise`
+
+---
+
+### OPT-1.2 ｜ ColumnAccessor 热路径单步查找
+
+**类别**：Python 层 &nbsp;｜&nbsp; **努力**：S（~5 行改动）&nbsp;｜&nbsp; **风险**：极低
+**依赖**：OPT-1.1 已完成 ✅
+
+#### 问题
+
+o1.1 热路径（缓存命中）仍有 2 次 `object.__getattribute__` + 2 次 `dict.get`（~290 ns），因为先查 `_field_index_map[name]→idx`，再查 `_array_cache[idx]→arr`，命中时 idx 完全是无用的中间层。
+
+#### 方案
+
+将 `_array_cache`（键为 idx）改为 `_name_cache`（键为 name），提到最前面。热路径：1× `object.__getattribute__` + 1× `dict.get`；冷路径才访问 `_field_index_map`。
+
+```python
+# __getattr__ 热/冷路径分离
+name_cache = object.__getattribute__(self, '_name_cache')
+arr = name_cache.get(name)
+if arr is not None:
+    return arr                       # 热路径：~160 ns
+
+fmap = object.__getattribute__(self, '_field_index_map')
+idx = fmap.get(name)                 # 冷路径
+if idx is None: raise AttributeError(...)
+arr = table_origin.get_column(idx).as_nparray()
+name_cache[name] = arr
+return arr
+```
+
+#### 预期 vs 实测
+
+| 指标 | o1.1 | 预期 | 实测 | 说明 |
+|------|------|------|------|------|
+| `column_accessor_scan` | 333 ns | ~170 ns | **250 ns** | `__getattr__` 协议本身 ~80 ns 不可消除 |
+| `point_cloud_read_columnwise` | 5.75 µs | ~3–4 µs | **5.58 µs** | 改善在误差范围内 |
+| Column vs row-wise | 692× | — | **727×** | — |
+
+> 250 ns 已接近 `__getattr__` 协议极限。进一步优化需改变 API 语义（绕过 `__getattr__`），ROI 递减。
+
+**benchmark 验证**：[o1.2/benchmark.md](o1.2/benchmark.md)
 
 ---
 
@@ -569,7 +686,9 @@ round o7  ─── OPT-8                  (SIGBUS bug 修复，需 ASan 定位)
 | 优化轮次 | 完成 OPT | 关键指标对比文件 |
 |----------|----------|-----------------|
 | o0 | — 基线 | [o0/benchmark.md](o0/benchmark.md) |
-| o1 | OPT-1 + OPT-3 | o1/benchmark.md（待创建） |
+| o1 | OPT-1 + OPT-3 ✅ | [o1/benchmark.md](o1/benchmark.md)（scalar_read ↑19%，row-wise ↑10–12%；column_scan 真实瓶颈为 SWIG get_column ~5µs） |
+| o1.1 | OPT-1.1 ✅ | [o1.1/benchmark.md](o1.1/benchmark.md)（column_scan 8.67µs→333ns **26×**；column_read 33µs→5.75µs **5.8×**；Column vs row = **692×**） |
+| o1.2 | OPT-1.2 ✅ | [o1.2/benchmark.md](o1.2/benchmark.md)（column_scan 333ns→**250ns 1.33×**；总计 o0→**35×**；`__getattr__` 协议成新下限 ~80ns） |
 | o2 | OPT-2 | o2/benchmark.md（待创建） |
 | o3 | OPT-4 | o3/benchmark.md（待创建） |
 | o4 | OPT-5 | o4/benchmark.md（待创建） |

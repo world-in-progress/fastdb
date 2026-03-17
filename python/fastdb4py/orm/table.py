@@ -30,32 +30,44 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
         original_annotations = {}
         if hasattr(feature_type, '__annotations__'):
             original_annotations = feature_type.__annotations__.copy()
-        
+
+        # Pre-compute field_name → column_index mapping once at class creation time.
+        # This avoids an O(n) linear scan + get_all_defns() call on every attribute access.
+        _field_index_map = {name: idx for idx, (name, _) in enumerate(get_all_defns(feature_type))}
+
         # Create the dynamic column accessor class with modified annotations
         class ColumnAccessor:
             """Column accessor that returns numpy arrays for field access"""
-            
+
             # Set the new annotations
             __annotations__ = original_annotations
-            
+
             def __init__(self, table_origin, feature_type):
                 # Don't call parent __init__ to avoid initializing cache
                 # Just set internal references
                 object.__setattr__(self, '_table_origin', table_origin)
-                object.__setattr__(self, '_feature_type', feature_type)
-            
+                object.__setattr__(self, '_field_index_map', _field_index_map)
+                object.__setattr__(self, '_name_cache', {})
+
             def __getattr__(self, name: str) -> np.ndarray:
                 """Override to return numpy array instead of single value"""
-                # Get field definitions
-                defns = get_all_defns(object.__getattribute__(self, '_feature_type'))
-                
-                for idx, (field_name, _) in enumerate(defns):
-                    if field_name == name:
-                        table_origin = object.__getattribute__(self, '_table_origin')
-                        column = table_origin.get_column(idx)
-                        return column.as_nparray()
-                
-                raise AttributeError(f'Field "{name}" not found in the table.')
+                # Hot path: name → array directly (1× getattribute + 1× dict.get).
+                # Cached arrays are stable: fixed-scale tables never reallocate columns.
+                name_cache = object.__getattribute__(self, '_name_cache')
+                arr = name_cache.get(name)
+                if arr is not None:
+                    return arr
+
+                # Cold path: validate field name, call SWIG, populate cache.
+                fmap = object.__getattribute__(self, '_field_index_map')
+                idx = fmap.get(name)
+                if idx is None:
+                    raise AttributeError(f'Field "{name}" not found in the table.')
+
+                table_origin = object.__getattribute__(self, '_table_origin')
+                arr = table_origin.get_column(idx).as_nparray()
+                name_cache[name] = arr
+                return arr
             
             def __setattr__(self, name: str, value):
                 """Prevent setting attributes on column accessor"""

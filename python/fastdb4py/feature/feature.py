@@ -12,6 +12,31 @@ T = TypeVar('T', bound='Feature')
 _feature_hints_cache_lock = Lock()
 _feature_hints_cache: WeakKeyDictionary = WeakKeyDictionary()
 
+# Module-level dispatch table: replaces the if-chain in __getattr__ for scalar fields.
+# dict lookup is O(1) and avoids repeated branch evaluation on every field access.
+_SCALAR_GETTER = {
+    OriginFieldType.u8:   lambda o, fid: o.get_field_as_int(fid),
+    OriginFieldType.u16:  lambda o, fid: o.get_field_as_int(fid),
+    OriginFieldType.u32:  lambda o, fid: o.get_field_as_int(fid),
+    OriginFieldType.i32:  lambda o, fid: o.get_field_as_int(fid),
+    OriginFieldType.f32:  lambda o, fid: o.get_field_as_float(fid),
+    OriginFieldType.f64:  lambda o, fid: o.get_field_as_float(fid),
+    OriginFieldType.str:  lambda o, fid: o.get_field_as_string(fid),
+    OriginFieldType.wstr: lambda o, fid: o.get_field_as_wstring(fid),
+}
+
+# frozenset for O(1) membership test in __setattr__ numeric branch.
+_NUMERIC_FIELD_TYPES = frozenset((
+    OriginFieldType.u8,
+    OriginFieldType.u16,
+    OriginFieldType.u32,
+    OriginFieldType.i32,
+    OriginFieldType.f32,
+    OriginFieldType.f64,
+    OriginFieldType.u8n,
+    OriginFieldType.u16n,
+))
+
 class Feature(BaseFeature):
     def __init__(self, **kwargs):
         # Local cache for Python-side fields and serializer-hydrated values.
@@ -110,23 +135,10 @@ class Feature(BaseFeature):
             self._cache[name] = feature
             return feature
 
-        # Scalar field mapping to fastdb getters.
-        if ft == OriginFieldType.u8:
-            return self._origin.get_field_as_int(fid)
-        if ft == OriginFieldType.u16:
-            return self._origin.get_field_as_int(fid)
-        if ft == OriginFieldType.u32:
-            return self._origin.get_field_as_int(fid)
-        if ft == OriginFieldType.i32:
-            return self._origin.get_field_as_int(fid)
-        if ft == OriginFieldType.f32:
-            return self._origin.get_field_as_float(fid)
-        if ft == OriginFieldType.f64:
-            return self._origin.get_field_as_float(fid)
-        if ft == OriginFieldType.str:
-            return self._origin.get_field_as_string(fid)
-        if ft == OriginFieldType.wstr:
-            return self._origin.get_field_as_wstring(fid)
+        # Scalar field mapping via dispatch table (O(1) dict lookup).
+        getter = _SCALAR_GETTER.get(ft)
+        if getter is not None:
+            return getter(self._origin, fid)
 
         return None
     
@@ -152,16 +164,8 @@ class Feature(BaseFeature):
             return
 
         # Database-mapped numeric fields are written directly to fastdb origin.
-        if ft in (
-            OriginFieldType.u8,
-            OriginFieldType.u16,
-            OriginFieldType.u32,
-            OriginFieldType.i32,
-            OriginFieldType.f32,
-            OriginFieldType.f64,
-            OriginFieldType.u8n,
-            OriginFieldType.u16n,
-        ):
+        # frozenset membership test is O(1) vs tuple's O(n) scan.
+        if ft in _NUMERIC_FIELD_TYPES:
             self._origin.set_field(fid, value)
             return
 

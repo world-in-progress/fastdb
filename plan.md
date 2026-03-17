@@ -230,6 +230,18 @@ Phase 4（C++ 改动，需重新编译）
 
 ## 已发现问题（待修复）
 
+### Bug: ORM.share() 共享内存名称超长导致 OSError（macOS）
+
+**现象**：`test_shared_memory.py` 在 macOS 上失败，报错 `OSError: [Errno 63] File name too long`。
+
+**根因**：macOS POSIX 共享内存名称上限为 31 个字符（含前导 `/`），但 `ORM.share()` 使用的默认名称格式为 `fastdb_test_{uuid4().hex}`（共 43 字符 + `/` = 44 字符），超出限制。
+
+**位置**：`python/fastdb4py/orm/__init__.py` `share()` 方法 + 测试中的 shm_name 生成逻辑。
+
+**修复方向**：`_normalize_shm_name()` 中对名称长度进行截断或改用更短的命名策略（如 `fdb_{uuid[:8]}`）。
+
+---
+
 ### Bug: FastSerializer 崩溃于 List[Feature] 元素数 ≥32
 
 **现象**：`FastSerializer.dumps(BenchPointCloud(points=[...]))` 在 `points` 列表包含 ≥32 个 `BenchPoint` 时，进程以 exit code 138（SIGBUS）崩溃。
