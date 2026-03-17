@@ -180,15 +180,76 @@ class _ClassSchema:
 
 ---
 
-#### OPT-7：C++ 批量 get_fields API
+#### OPT-7：C++ 批量 get_fields API ✅（已实现，o7）
 
 **问题**：scalar read 667 ns 中约 400 ns 是 SWIG 边界开销（Python→C++ context switch），实际 C++ 读内存只需 ~5 ns。每个字段一次 SWIG 调用，3 字段就是 3× 边界开销。
 
-**方案**：在 SWIG 接口中新增 `get_all_scalar_fields(feature_ptr, result_buffer)` 方法，一次调用返回所有 scalar 字段值（pack 到 numpy array 或 ctypes struct），消除 N-1 次冗余 SWIG 调用。
+**已实现**：`getFieldsAsDoubles` / `setFieldsFromDoubles` C++ 批量方法 + SWIG `%extend` 块 + Python `read_all_scalars()` / `write_all_scalars()`。
 
-**改动范围**：`fastcarto/fastdb/swig/fastdb4py.i` + `fastcarto/fastdb/include/fastdb.h` + Python `feature.py`
-**预期收益**：3 字段 Feature 的完整 read 从 3× 667 ns = 2 µs → ~700 ns（**3× 加速**）
+**实测收益**（o7）：
+- `feature_batch_read` 3×F64：**208 ns**（vs 3×417 ns = 1251 ns，**6.0× 加速**）
+- `feature_batch_write` 3×F64：**208 ns**（vs 3×875 ns = 2625 ns，**12.6× 加速**）
+
+**已知设计缺陷与精度分析**（详见下方"OPT-7 设计反思"）：
+
+**改动范围**：`fastcarto/fastdb/include/fastdb.h` + `src/FastVectorDbLayer.cpp` + `swig/fastdb4py.i` + `_schema.py` + `feature.py`
 **风险**：高，需 C++ 改动 + SWIG 重新生成 + 重新编译
+
+---
+
+#### OPT-7 设计反思：double 中转的三个问题
+
+##### 问题一：内存膨胀
+
+**结论**：无持久膨胀，但有临时分配问题。
+
+double 数组是**调用期间的临时 transfer buffer**，不改变 C++ 侧的存储格式（u8 仍 1 字节，f32 仍 4 字节）。
+
+实际隐患：`read_all_scalars(out=None)` 在循环中未传 `out` 时，每次调用分配一个新 numpy float64 数组（N_fields × 8 字节）。迭代 1000 行 = 1000 次小分配。`get_fields_into(fids, out)` 热路径设计用于避免此问题——调用者预分配一个 `out` 并复用。
+
+##### 问题二：精度丢失
+
+**写路径（`setFieldsFromDoubles`）：无精度损失**
+
+`set_field_value_t<double>` 对每种类型做显式 cast（[FastVectorDbLayerBuild_p.h:132-193](fastcarto/fastdb/src/FastVectorDbLayerBuild_p.h#L132-L193)）：
+- `ftU8/U16/U32/I32`：整型 cast，所有值 < 2^53，double 可精确表示
+- `ftF32`：f64 → f32 有精度收窄，但与原有 `setField(double)` 行为完全一致，无额外回归
+- `ftF64`：完全无损
+- `ftU8n/U16n`：线性归一化后截断，对称于读取路径
+
+**读路径（`getFieldsAsDoubles`）：存在实际 Bug ⚠️**
+
+`getFieldAsFloat_internal` 的 switch 语句**只处理 ftF32 / ftF64 / ftU8n / ftU16n**，对 ftU8 / ftU16 / ftU32 / ftI32 返回 `NAN`（[FastVectorDbLayer.cpp:347-364](fastcarto/fastdb/src/FastVectorDbLayer.cpp#L347-L364)）：
+
+```cpp
+switch (fd->type) {
+case ftF32:  return *(f32*)ptr;
+case ftF64:  return *(f64*)ptr;
+case ftU8n:  { return vmin + (vmax-vmin) * v / 255.0; }
+case ftU16n: { return vmin + (vmax-vmin) * v / 65535.0; }
+}
+return NAN;   // ← u8/u16/u32/i32 全部走到这里！
+```
+
+`_SCALAR_ORIGIN_TYPES` 中包含了 u8/u16/u32/i32，因此对含整型字段的 Feature 调用 `read_all_scalars()` / `get_fields_into()` 会**静默返回 NAN**。
+
+Benchmark 中 BenchPoint 使用的是 3×F64，因此未暴露此 Bug。
+
+**预修复方向**：`getFieldsAsDoubles` 内部对整型字段改用 `getFieldAsInt_internal()` 读取并转为 double，或在 `getFieldAsFloat_internal` 中补齐整型 case：
+```cpp
+case ftU8:  return *(u8*)ptr;
+case ftU16: return *(u16*)ptr;
+case ftU32: return *(u32*)ptr;
+case ftI32: return *(i32*)ptr;
+```
+
+##### 问题三：string 等非数值类型的区分
+
+Python 层在 `_SCALAR_ORIGIN_TYPES` 中正确排除了 `str`、`wstr`、`ref`、`bytes`，`scalar_field_ids_np` 不包含这些字段的 index，批量 API 不会接触它们。
+
+字符串字段仍通过原有的 `__getattr__` → `get_field_as_string()` / `get_field_as_wstring()` 路径访问，无变化。
+
+注意：`set_field_value_t` 中存在对 `ftSTR/ftWSTR` 的处理分支（将 double 值强转为字符串表索引），这是 build 阶段的遗留代码，在正确使用时不会被 `setFieldsFromDoubles` 触达。
 
 ---
 

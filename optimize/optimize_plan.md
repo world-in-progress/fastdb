@@ -38,7 +38,7 @@
 | OPT-4 | API | `Table.iter_reuse()` — 复用 Feature 实例 ✅ | ★★★ | M | 低 | ⬆ 高 |
 | OPT-5 | API | `Table.fill()` — 批量列写入 ✅ | ★★★★ | M | 中 | ⬆ 高 |
 | OPT-6 | Python | 统一 ClassSchema cache ✅ | ★★ | L | 中 | ▶ 中 |
-| OPT-7 | C++ | 批量 get_fields SWIG API | ★★★★ | L | 高 | ▶ 中 |
+| OPT-7 | C++ | 批量 get_fields SWIG API ✅ | ★★★★ | L | 高 | ▶ 中 |
 | OPT-8 | Bug | FastSerializer SIGBUS 修复 | ★★★★★ | XL | 极高 | ⚠ 必修 |
 
 ---
@@ -694,4 +694,5 @@ round o7  ─── OPT-8                  (SIGBUS bug 修复，需 ASan 定位)
 | o4 | OPT-5 ✅ | [o4/benchmark.md](o4/benchmark.md)（fill 3-col N=1000: **2.75 µs vs rowwise 6.04ms → ~2200×**；API 更简洁） |
 | o5 | OPT-6 ✅ | [o5/benchmark.md](o5/benchmark.md)（feature_init_pure_python 1.83µs→**1.25µs −32%**；feature_init_db_mapped 2.42µs→**1.71µs −29%**；schema_cache_miss 7.29µs→6.17µs −15%；4 WeakKeyDict→1 ClassSchema） |
 | o6 | class-attr schema cache ✅ | [o6/benchmark.md](o6/benchmark.md)（schema_cache_hit 209ns→**166ns −21%**；feature_init_pure 1.25µs→**1.08µs −14%**；iter_table N=500 −9%；point_cloud_read_rowwise −13%） |
-| o7 | OPT-8 | o7/benchmark.md（待创建） |
+| o7 | OPT-7 ✅ | [o7/benchmark.md](o7/benchmark.md)（batch_read 208ns **6×** vs 3×single；batch_write 208ns **12×** vs 3×single；大幅超出预期；C++ `getFieldsAsDoubles`/`setFieldsFromDoubles` + SWIG numpy 接口）|
+| o8 | OPT-8 | o8/benchmark.md（待创建） |

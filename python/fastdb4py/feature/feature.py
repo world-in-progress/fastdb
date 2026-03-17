@@ -1,4 +1,5 @@
 import warnings
+import numpy as np
 from typing import Dict, Any, TypeVar, Type
 
 from .. import core
@@ -210,4 +211,32 @@ class Feature(BaseFeature):
 
         # Non-numeric writes are not supported by direct fastdb set_field API.
         warnings.warn(f'Fastdb only support features to set numeric field for a scale-known block.', UserWarning)
+
+    def read_all_scalars(self, out=None) -> np.ndarray:
+        """Batch-read all scalar fields into a numpy float64 array (1 SWIG call).
+
+        Requires a db-mapped Feature (feature.fixed == True).
+        Returns a float64 array of length = number of scalar fields, ordered by field index.
+
+        Args:
+            out: Pre-allocated numpy float64 array to fill. Created if not provided.
+        """
+        if not self.fixed:
+            raise RuntimeError('read_all_scalars() requires a db-mapped Feature.')
+        fids = self._schema.scalar_field_ids_np
+        if out is None:
+            out = np.empty(len(fids), dtype=np.float64)
+        self._origin.get_fields_into(fids, out)
+        return out
+
+    def write_all_scalars(self, values: np.ndarray) -> None:
+        """Batch-write all scalar fields from a numpy float64 array (1 SWIG call).
+
+        Requires a db-mapped Feature (feature.fixed == True).
+        values: float64 array of length = number of scalar fields, ordered by field index.
+        """
+        if not self.fixed:
+            raise RuntimeError('write_all_scalars() requires a db-mapped Feature.')
+        fids = self._schema.scalar_field_ids_np
+        self._origin.set_fields_from_doubles(fids, values)
 

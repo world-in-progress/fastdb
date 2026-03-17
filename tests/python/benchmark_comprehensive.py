@@ -312,6 +312,35 @@ def run_micro(cfg: BenchConfig) -> list[BenchResult]:
     )
     _print_row(r); results.append(r)
 
+    # ── Batch read – get_fields_into (3 F64 scalar fields, 1 SWIG call) ─────────
+    import numpy as np
+    _fids_np3 = np.array([0, 1, 2], dtype=np.uint32)
+    _out_np3  = np.empty(3, dtype=np.float64)
+    _feat0_origin = db_p._origin.get_layer(0).tryGetFeature(0)
+
+    def _batch_read_into():
+        _feat0_origin.get_fields_into(_fids_np3, _out_np3)
+
+    r = _make_result(
+        "micro", "feature_batch_read", "3×F64 (get_fields_into)",
+        _timeit_ns(_batch_read_into, cfg.n_iters, cfg.n_warmup),
+        note="1 SWIG call for 3 scalar fields (vs 3× get_field_as_float)"
+    )
+    _print_row(r); results.append(r)
+
+    # ── Batch write – set_fields_from_doubles (3 F64 scalar fields, 1 SWIG call) ─
+    _vals_np3 = np.array([1.0, 2.0, 3.0], dtype=np.float64)
+
+    def _batch_write():
+        _feat0_origin.set_fields_from_doubles(_fids_np3, _vals_np3)
+
+    r = _make_result(
+        "micro", "feature_batch_write", "3×F64 (set_fields_from_doubles)",
+        _timeit_ns(_batch_write, cfg.n_iters, cfg.n_warmup),
+        note="1 SWIG call for 3 scalar fields (vs 3× set_field)"
+    )
+    _print_row(r); results.append(r)
+
     # ── I32 read – exercises different SWIG getter branch ─────────────────────
     db_i = ORM.truncate([TableDefn(BenchIntPoint, 1)])
     tbl_i = db_i[BenchIntPoint][BenchIntPoint]

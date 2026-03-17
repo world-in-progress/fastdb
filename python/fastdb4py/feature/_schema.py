@@ -2,8 +2,17 @@ from threading import Lock
 from weakref import WeakKeyDictionary
 from typing import Dict, Any, List, Tuple, Type, get_type_hints
 
+import numpy as _np
+
 from ..type import OriginFieldType, get_origin_type
 from .base import BaseFeature
+
+# Scalar field types that can be read/written via get_fields_as_doubles / set_fields_from_doubles.
+_SCALAR_ORIGIN_TYPES = frozenset((
+    OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32,
+    OriginFieldType.i32, OriginFieldType.f32, OriginFieldType.f64,
+    OriginFieldType.u8n, OriginFieldType.u16n,
+))
 
 _SCHEMA_CACHE: WeakKeyDictionary = WeakKeyDictionary()
 _SCHEMA_LOCK = Lock()
@@ -27,6 +36,7 @@ class ClassSchema:
         'ordered_defns',         # List[(name, OriginFieldType)] sorted by field index
         'field_index_map',       # Dict[str, int] — name → column position for ColumnAccessor
         'column_accessor_class', # Dynamically-created ColumnAccessor class, or None
+        'scalar_field_ids_np',   # numpy uint32 array of scalar field indices (for batch API)
     )
 
     def __init__(
@@ -35,12 +45,14 @@ class ClassSchema:
         origin_hints: Dict[str, tuple],
         ordered_defns: List[Tuple[str, OriginFieldType]],
         field_index_map: Dict[str, int],
+        scalar_field_ids_np,
     ):
         self.hints = hints
         self.origin_hints = origin_hints
         self.ordered_defns = ordered_defns
         self.field_index_map = field_index_map
         self.column_accessor_class = None  # lazily populated by table.py
+        self.scalar_field_ids_np = scalar_field_ids_np
 
 
 def get_class_schema(cls: Type) -> ClassSchema:
@@ -95,7 +107,11 @@ def get_class_schema(cls: Type) -> ClassSchema:
         # field_index_map: name → position in ordered list, used by ColumnAccessor.
         field_index_map = {name: i for i, (name, _) in enumerate(ordered_defns)}
 
-        schema = ClassSchema(hints, origin_hints, ordered_defns, field_index_map)
+        # scalar_field_ids_np: numpy uint32 array of scalar field indices for batch API.
+        scalar_ids = [idx for _, (ft, idx) in origin_hints.items() if ft in _SCALAR_ORIGIN_TYPES]
+        scalar_field_ids_np = _np.array(scalar_ids, dtype=_np.uint32)
+
+        schema = ClassSchema(hints, origin_hints, ordered_defns, field_index_map, scalar_field_ids_np)
 
         # Primary cache: store directly on the class — O(1) dict lookup next time.
         try:
