@@ -36,12 +36,14 @@ set_target_properties(fastdb4ts PROPERTIES
 
 target_link_options(fastdb4ts PRIVATE
     "--bind"
-    "-sWASM=1"
-    "-sNO_ENTRY=1"
-    "-sMODULARIZE=1"
-    "-sEXPORT_ES6=1"
-    "-sEXPORT_NAME=FastdbWasm"
-    "-sALLOW_MEMORY_GROWTH=1"
-    "-sENVIRONMENT=web,worker"
+    "SHELL:-s WASM=1"
+    "--no-entry"
+    "SHELL:-s MODULARIZE=1"
+    "SHELL:-s EXPORT_ES6=1"
+    "SHELL:-s EXPORT_NAME=FastdbWasm"
+    "SHELL:-s ALLOW_MEMORY_GROWTH=1"
+    "SHELL:-s ENVIRONMENT=web,worker,node"
+    "SHELL:-s EXPORTED_RUNTIME_METHODS=['HEAPU8','HEAPU32','HEAP32','HEAPF64']"
+    "SHELL:-s EXPORTED_FUNCTIONS=['_malloc','_free']"
     "--post-js=${CMAKE_CURRENT_SOURCE_DIR}/post.js"
 )
