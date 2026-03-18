@@ -11,6 +11,7 @@ export {
 } from './orm.js';
 export { Table } from './table.js';
 export { StridedColumn } from './column.js';
+export { FastSerializer } from './serializer.js';
 export {
   defineSchema,
   getClassSchema,
@@ -29,6 +30,7 @@ export {
   U16N,
   U32,
   WSTR,
+  listOf,
   ref,
 } from './types.js';
 export {
@@ -62,6 +64,8 @@ export type {
 export type {
   FieldKind,
   FieldTypeDef,
+  ListFieldDef,
+  ListItemDef,
   RefFieldDef,
   SchemaEntry,
   TypedArrayConstructor,

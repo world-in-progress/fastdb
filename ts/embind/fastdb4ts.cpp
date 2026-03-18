@@ -63,6 +63,14 @@ void db_build_set_geometry_wkt(FastVectorDbBuild& db, const std::string& value) 
     db.setGeometryWKT(value.c_str());
 }
 
+void db_build_set_geometry_wkb(FastVectorDbBuild& db, uintptr_t data_ptr, size_t size) {
+    db.setGeometryWKB(reinterpret_cast<const unsigned char*>(data_ptr), size);
+}
+
+void db_build_set_geometry_raw(FastVectorDbBuild& db, uintptr_t data_ptr, size_t size) {
+    db.setGeometryRaw(reinterpret_cast<const unsigned char*>(data_ptr), size);
+}
+
 void db_build_post_to_memory_stream(FastVectorDbBuild& db, MemoryStream& stream) {
     db.post(&stream);
 }
@@ -90,6 +98,14 @@ void layer_build_set_field_string(FastVectorDbLayerBuild& layer, unsigned ix, co
 
 void layer_build_set_geometry_wkt(FastVectorDbLayerBuild& layer, const std::string& value) {
     layer.setGeometryWKT(value.c_str());
+}
+
+void layer_build_set_geometry_wkb(FastVectorDbLayerBuild& layer, uintptr_t data_ptr, size_t size) {
+    layer.setGeometryWKB(reinterpret_cast<const unsigned char*>(data_ptr), size);
+}
+
+void layer_build_set_geometry_raw(FastVectorDbLayerBuild& layer, uintptr_t data_ptr, size_t size) {
+    layer.setGeometryRaw(reinterpret_cast<const unsigned char*>(data_ptr), size);
 }
 
 FieldDefView get_field_defn_view(FastVectorDbLayer& layer, unsigned ix) {
@@ -312,8 +328,8 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .function("setFieldInt", select_overload<void(unsigned, int)>(&FastVectorDbBuild::setField))
         .function("setFieldString", &db_build_set_field_string)
         .function("setGeometryWKT", &db_build_set_geometry_wkt)
-        .function("setGeometryWKB", &FastVectorDbBuild::setGeometryWKB, allow_raw_pointers())
-        .function("setGeometryRaw", &FastVectorDbBuild::setGeometryRaw, allow_raw_pointers())
+        .function("setGeometryWKB", &db_build_set_geometry_wkb)
+        .function("setGeometryRaw", &db_build_set_geometry_raw)
         .function("addFeatureEnd", &FastVectorDbBuild::addFeatureEnd)
         .function("createLayerEnd", &FastVectorDbBuild::createLayerEnd)
         .function("post", &db_build_post_to_memory_stream, allow_raw_pointers());
@@ -333,8 +349,8 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .function("createFeatureRef", &layer_build_create_feature_ref)
         .function("freeFeatureRef", &layer_build_free_feature_ref)
         .function("setGeometryWKT", &layer_build_set_geometry_wkt)
-        .function("setGeometryWKB", &FastVectorDbLayerBuild::setGeometryWKB, allow_raw_pointers())
-        .function("setGeometryRaw", &FastVectorDbLayerBuild::setGeometryRaw, allow_raw_pointers())
+        .function("setGeometryWKB", &layer_build_set_geometry_wkb)
+        .function("setGeometryRaw", &layer_build_set_geometry_raw)
         .function("addFeatureEnd", &FastVectorDbLayerBuild::addFeatureEnd);
 
     class_<FastVectorDb>("WxDatabase")

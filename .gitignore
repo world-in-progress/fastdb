@@ -83,3 +83,4 @@ pip-wheel-metadata/
 
 # fastdb4ts generated artifacts
 ts/fastdb4ts/src/wasm/*.wasm
+ts/tests/.tmp/

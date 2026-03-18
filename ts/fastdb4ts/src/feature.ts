@@ -45,6 +45,7 @@ export class Feature {
     if (initialValues && Object.keys(initialValues).length > 0) {
       this._cache = { ...initialValues };
     }
+    return wrapFeature(this);
   }
 
   get fixed(): boolean {

@@ -1,8 +1,11 @@
 import { FastdbSchemaError } from './errors.js';
 import {
   type FeatureClassLike,
+  type ListFieldDef,
+  type ListItemDef,
   type RefFieldDef,
   type SchemaEntry,
+  isListField,
   isNumericField,
   isRefField,
   isScalarField,
@@ -25,6 +28,7 @@ export interface ClassSchema {
   readonly scalarFieldIds: readonly number[];
   readonly numericFieldIds: readonly number[];
   readonly refFieldIds: readonly number[];
+  readonly listFieldIds: readonly number[];
 }
 
 const SCHEMA_CACHE = new WeakMap<FeatureClassLike, ClassSchema>();
@@ -51,6 +55,7 @@ export function getClassSchema(ctor: FeatureClassLike): ClassSchema {
   const scalarFieldIds: number[] = [];
   const numericFieldIds: number[] = [];
   const refFieldIds: number[] = [];
+  const listFieldIds: number[] = [];
 
   let index = 0;
   for (const [name, entry] of Object.entries(rawSchema.fields)) {
@@ -80,6 +85,9 @@ export function getClassSchema(ctor: FeatureClassLike): ClassSchema {
     if (isRefField(entry)) {
       refFieldIds.push(index);
     }
+    if (isListField(entry)) {
+      listFieldIds.push(index);
+    }
 
     index += 1;
   }
@@ -90,6 +98,7 @@ export function getClassSchema(ctor: FeatureClassLike): ClassSchema {
     scalarFieldIds: Object.freeze(scalarFieldIds),
     numericFieldIds: Object.freeze(numericFieldIds),
     refFieldIds: Object.freeze(refFieldIds),
+    listFieldIds: Object.freeze(listFieldIds),
   });
 
   SCHEMA_CACHE.set(ctor, schema);
@@ -119,4 +128,26 @@ export function getFieldDefinition(
   fieldName: string
 ): SchemaFieldDefinition | undefined {
   return schema.fieldMap.get(fieldName);
+}
+
+export function resolveFeatureClassLike(
+  target: FeatureClassLike | (() => FeatureClassLike)
+): FeatureClassLike {
+  if (typeof target !== 'function') {
+    return target;
+  }
+
+  if (target.prototype && target.prototype.constructor === target) {
+    return target as FeatureClassLike;
+  }
+
+  return (target as () => FeatureClassLike)();
+}
+
+export function resolveListItem(entry: ListFieldDef): Exclude<ListItemDef, (() => FeatureClassLike)> {
+  const item = entry.item;
+  if (typeof item !== 'function') {
+    return item;
+  }
+  return resolveFeatureClassLike(item);
 }

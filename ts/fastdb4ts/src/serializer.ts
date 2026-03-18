@@ -1,0 +1,769 @@
+import { createFeature, Feature, type FeatureClass } from './feature.js';
+import {
+  getClassSchema,
+  resolveListItem,
+  type SchemaFieldDefinition,
+} from './schema.js';
+import { FastdbRuntimeError, FastdbUsageError } from './errors.js';
+import { getInitializedFastdbModule, type FastdbModule, type WxLayerTableBuildHandle } from './wasm-loader.js';
+import { isListField, isRefField, type FeatureClassLike, type FieldTypeDef } from './types.js';
+
+const NUMERIC_LIST_LAYER_PREFIX = '__fastser_list__|';
+
+type NumericListKind = 'u32' | 'f64';
+
+interface ObjectWrapper {
+  obj: Feature;
+  layerIdx: number;
+  featureIdx: number;
+}
+
+interface SerializerSchema {
+  readonly fieldList: readonly SchemaFieldDefinition[];
+  readonly numericFieldKinds: ReadonlyMap<string, NumericListKind>;
+  readonly dbFieldIndexBySchema: ReadonlyMap<number, number>;
+}
+
+const SERIALIZER_SCHEMA_CACHE = new WeakMap<FeatureClassLike, SerializerSchema>();
+
+export class FastSerializer {
+  static dumps(obj: Feature): Uint8Array {
+    if (!(obj instanceof Feature)) {
+      throw new FastdbUsageError('Only fastdb4ts.Feature objects can be serialized.');
+    }
+
+    const module = getInitializedFastdbModule();
+    const ctx = new DumpContext();
+    ctx.register(obj);
+
+    const db = new module.WxDatabaseBuild();
+    db.begin('');
+
+    const layerBuilders = new Map<number, WxLayerTableBuildHandle>();
+    for (const [ctor, layerIdx] of ctx.typeToLayer.entries()) {
+      const lb = db.createLayerBegin(ctor.name);
+      lb.setGeometryType(module.gtAny, module.cfDefault, false);
+
+      const schema = getSerializerSchema(ctor);
+      for (const field of schema.fieldList) {
+        const dbFieldIndex = schema.dbFieldIndexBySchema.get(field.index);
+        if (dbFieldIndex !== undefined && dbFieldIndex !== -1) {
+          lb.addField(field.name, field.entry.originType, 0, 1);
+        }
+      }
+      layerBuilders.set(layerIdx, lb);
+    }
+
+    const numericListLayers = new Map<string, { kind: NumericListKind; layer: WxLayerTableBuildHandle }>();
+    for (const ctor of ctx.typeToLayer.keys()) {
+      const schema = getSerializerSchema(ctor);
+      for (const field of schema.fieldList) {
+        const kind = schema.numericFieldKinds.get(field.name);
+        if (!kind) {
+          continue;
+        }
+        const layerName = makeNumericListLayerName(ctor.name, field.name, kind);
+        const aux = db.createLayerBegin(layerName);
+        aux.setGeometryType(module.gtAny, module.cfDefault, false);
+        aux.addField('owner_fid', module.ftU32, 0, 1);
+        numericListLayers.set(`${ctor.name}:${field.name}`, { kind, layer: aux });
+      }
+    }
+
+    const orderedObjects = [...ctx.objects].sort(
+      (left, right) => left.layerIdx - right.layerIdx || left.featureIdx - right.featureIdx
+    );
+
+    for (const wrapper of orderedObjects) {
+      const ctor = wrapper.obj.constructor as FeatureClass;
+      const schema = getSerializerSchema(ctor);
+      const layer = layerBuilders.get(wrapper.layerIdx);
+      if (!layer) {
+        throw new FastdbRuntimeError(`Missing layer builder for "${ctor.name}".`);
+      }
+
+      layer.addFeatureBegin();
+      const blob = new ByteWriter();
+
+      for (const field of schema.fieldList) {
+        const value = getFeatureFieldValue(wrapper.obj, field.name);
+        const numericKind = schema.numericFieldKinds.get(field.name);
+
+        if (numericKind) {
+          const aux = numericListLayers.get(`${ctor.name}:${field.name}`);
+          if (!aux) {
+            throw new FastdbRuntimeError(`Missing numeric-list layer for "${ctor.name}.${field.name}".`);
+          }
+          writeNumericListChunk(module, aux.layer, wrapper.featureIdx, value, numericKind);
+          continue;
+        }
+
+        if (isListField(field.entry)) {
+          packList(blob, field, value, ctx);
+          continue;
+        }
+
+        if (field.entry.kind === 'bytes') {
+          const bytes = normalizeBytes(value);
+          blob.writeU32(bytes.length);
+          blob.writeBytes(bytes);
+          continue;
+        }
+
+        if (isRefField(field.entry)) {
+          packFeatureRef(blob, value instanceof Feature ? value : null, ctx);
+          continue;
+        }
+
+        const dbFieldIndex = schema.dbFieldIndexBySchema.get(field.index);
+        if (dbFieldIndex === undefined || dbFieldIndex === -1 || value === null || value === undefined) {
+          continue;
+        }
+
+        switch (field.entry.kind) {
+          case 'bool':
+            layer.setFieldInt(dbFieldIndex, value ? 1 : 0);
+            break;
+          case 'u8':
+          case 'u16':
+          case 'u32':
+          case 'i32':
+          case 'u8n':
+          case 'u16n':
+            layer.setFieldInt(dbFieldIndex, Math.trunc(Number(value)));
+            break;
+          case 'f32':
+          case 'f64':
+            layer.setFieldDouble(dbFieldIndex, Number(value));
+            break;
+          case 'str':
+          case 'wstr':
+            layer.setFieldString(dbFieldIndex, String(value));
+            break;
+          default:
+            throw new FastdbUsageError(
+              `Unsupported serializer scalar kind "${field.entry.kind}" on field "${field.name}".`
+            );
+        }
+      }
+
+      const blobBytes = blob.finish();
+      if (blobBytes.length > 0) {
+        withHeapBytes(module, blobBytes, (ptr, size) => {
+          layer.setGeometryRaw(ptr, size);
+        });
+      }
+      layer.addFeatureEnd();
+    }
+
+    const stream = new module.WxMemoryStream();
+    db.post(stream);
+    const data = copyChunkToBytes(module, stream.dataView());
+    stream.delete();
+    db.delete();
+    return data;
+  }
+
+  static loads<T extends Feature>(
+    data: Uint8Array | ArrayBuffer,
+    rootType: FeatureClass<T>
+  ): T | null {
+    const module = getInitializedFastdbModule();
+    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+    const db = withHeapBytes(module, bytes, (ptr, size) => module.WxDatabase.loadFromHeap(ptr, size));
+
+    if (db.getLayerCount() === 0) {
+      return null;
+    }
+
+    const rootLayer = db.getLayer(0);
+    if (rootLayer.getFeatureCount() === 0) {
+      return null;
+    }
+
+    const ctx = new LoadContext(db, module);
+    discoverTypes(rootType, ctx.typeMap);
+    return ctx.getObject(0, 0, rootType);
+  }
+}
+
+class DumpContext {
+  readonly objects: ObjectWrapper[] = [];
+  readonly typeToLayer = new Map<FeatureClassLike, number>();
+  readonly objToRef = new WeakMap<Feature, { layerIdx: number; featureIdx: number }>();
+  private readonly layerCounters = new Map<number, number>();
+
+  register(obj: Feature): void {
+    if (this.objToRef.has(obj)) {
+      return;
+    }
+
+    const ctor = obj.constructor as FeatureClass;
+    let layerIdx = this.typeToLayer.get(ctor);
+    if (layerIdx === undefined) {
+      layerIdx = this.typeToLayer.size;
+      this.typeToLayer.set(ctor, layerIdx);
+      this.layerCounters.set(layerIdx, 0);
+    }
+
+    const featureIdx = this.layerCounters.get(layerIdx) ?? 0;
+    this.layerCounters.set(layerIdx, featureIdx + 1);
+    this.objToRef.set(obj, { layerIdx, featureIdx });
+    this.objects.push({ obj, layerIdx, featureIdx });
+
+    const schema = getSerializerSchema(ctor);
+    for (const field of schema.fieldList) {
+      const value = getFeatureFieldValue(obj, field.name);
+      if (value === null || value === undefined) {
+        continue;
+      }
+
+      if (isRefField(field.entry)) {
+        if (value instanceof Feature) {
+          this.register(value);
+        }
+        continue;
+      }
+
+      if (!isListField(field.entry) || !Array.isArray(value) || value.length === 0) {
+        continue;
+      }
+
+      const item = resolveListItem(field.entry);
+      if (isFieldType(item)) {
+        continue;
+      }
+
+      for (const nested of value) {
+        if (nested instanceof Feature) {
+          this.register(nested);
+        }
+      }
+    }
+  }
+
+  getRef(obj: Feature | null | undefined): { layerIdx: number; featureIdx: number } | undefined {
+    if (!obj) {
+      return undefined;
+    }
+    return this.objToRef.get(obj);
+  }
+}
+
+class LoadContext {
+  readonly objectCache = new Map<string, Feature>();
+  readonly typeMap = new Map<string, FeatureClassLike>();
+  readonly numericListValues: Map<string, unknown[]>;
+
+  constructor(
+    private readonly db: ReturnType<typeof getInitializedFastdbModule>['WxDatabase'] extends never
+      ? never
+      : import('./wasm-loader.js').WxDatabaseHandle,
+    private readonly module: FastdbModule
+  ) {
+    this.numericListValues = loadNumericListValues(db, module);
+  }
+
+  getObject<T extends Feature>(layerIdx: number, featureIdx: number, expectedType: FeatureClass<T>): T {
+    const key = `${layerIdx}:${featureIdx}`;
+    const cached = this.objectCache.get(key);
+    if (cached) {
+      return cached as T;
+    }
+
+    const layer = this.db.getLayer(layerIdx);
+    const ctor = (this.typeMap.get(layer.name()) as FeatureClass<T> | undefined) ?? expectedType;
+    const row = layer.tryGetFeatureAt(featureIdx);
+    const obj = createFeature(ctor);
+    this.objectCache.set(key, obj);
+
+    const cache = obj._getCache();
+    const schema = getSerializerSchema(ctor);
+    const blob = copyChunkToBytes(this.module, row.geometryView());
+    const reader = new ByteReader(blob);
+
+    for (const field of schema.fieldList) {
+      const numericKind = schema.numericFieldKinds.get(field.name);
+      if (numericKind) {
+        cache[field.name] = this.numericListValues.get(`${ctor.name}:${field.name}:${featureIdx}`) ?? [];
+        continue;
+      }
+
+      if (isListField(field.entry)) {
+        cache[field.name] = unpackList(reader, field, this);
+        continue;
+      }
+
+      if (field.entry.kind === 'bytes') {
+        const size = reader.readU32();
+        cache[field.name] = reader.readBytes(size);
+        continue;
+      }
+
+      if (isRefField(field.entry)) {
+        const refLayer = reader.readU16();
+        const refFeature = reader.readU32();
+        if (refLayer === 0xffff) {
+          cache[field.name] = null;
+          continue;
+        }
+        if (!field.target) {
+          throw new FastdbRuntimeError(`Reference field "${field.name}" is missing a target type.`);
+        }
+        cache[field.name] = this.getObject(refLayer, refFeature, field.target as FeatureClass);
+        continue;
+      }
+
+      const dbFieldIndex = schema.dbFieldIndexBySchema.get(field.index);
+      if (dbFieldIndex === undefined || dbFieldIndex === -1) {
+        continue;
+      }
+
+      switch (field.entry.kind) {
+        case 'bool':
+          cache[field.name] = row.getFieldAsInt(dbFieldIndex) !== 0;
+          break;
+        case 'u8':
+        case 'u16':
+        case 'u32':
+        case 'i32':
+        case 'u8n':
+        case 'u16n':
+          cache[field.name] = row.getFieldAsInt(dbFieldIndex);
+          break;
+        case 'f32':
+        case 'f64':
+          cache[field.name] = row.getFieldAsFloat(dbFieldIndex);
+          break;
+        case 'str':
+        case 'wstr':
+          cache[field.name] = row.getFieldAsString(dbFieldIndex);
+          break;
+        default:
+          throw new FastdbRuntimeError(`Unsupported load field kind "${field.entry.kind}".`);
+      }
+    }
+
+    return obj as T;
+  }
+}
+
+function getSerializerSchema(ctor: FeatureClassLike): SerializerSchema {
+  const cached = SERIALIZER_SCHEMA_CACHE.get(ctor);
+  if (cached) {
+    return cached;
+  }
+
+  const classSchema = getClassSchema(ctor);
+  const numericFieldKinds = new Map<string, NumericListKind>();
+  const dbFieldIndexBySchema = new Map<number, number>();
+
+  let dbFieldIndex = 0;
+  for (const field of classSchema.fieldList) {
+    if (isListField(field.entry)) {
+      const item = resolveListItem(field.entry);
+      if (isFieldType(item) && item.kind === 'u32') {
+        numericFieldKinds.set(field.name, 'u32');
+      } else if (isFieldType(item) && item.kind === 'f64') {
+        numericFieldKinds.set(field.name, 'f64');
+      }
+      dbFieldIndexBySchema.set(field.index, -1);
+      continue;
+    }
+
+    if (field.entry.kind === 'ref' || field.entry.kind === 'bytes') {
+      dbFieldIndexBySchema.set(field.index, -1);
+      continue;
+    }
+
+    dbFieldIndexBySchema.set(field.index, dbFieldIndex);
+    dbFieldIndex += 1;
+  }
+
+  const schema: SerializerSchema = {
+    fieldList: classSchema.fieldList,
+    numericFieldKinds,
+    dbFieldIndexBySchema,
+  };
+  SERIALIZER_SCHEMA_CACHE.set(ctor, schema);
+  return schema;
+}
+
+function discoverTypes(ctor: FeatureClassLike, typeMap: Map<string, FeatureClassLike>): void {
+  if (typeMap.has(ctor.name)) {
+    return;
+  }
+  typeMap.set(ctor.name, ctor);
+
+  const schema = getSerializerSchema(ctor);
+  for (const field of schema.fieldList) {
+    if (isRefField(field.entry) && field.target) {
+      discoverTypes(field.target, typeMap);
+      continue;
+    }
+
+    if (!isListField(field.entry)) {
+      continue;
+    }
+
+    const item = resolveListItem(field.entry);
+    if (!isFieldType(item)) {
+      discoverTypes(item, typeMap);
+    }
+  }
+}
+
+function packFeatureRef(writer: ByteWriter, value: Feature | null, ctx: DumpContext): void {
+  const ref = value ? ctx.getRef(value) : undefined;
+  if (!ref) {
+    writer.writeU16(0xffff);
+    writer.writeU32(0xffffffff);
+    return;
+  }
+  writer.writeU16(ref.layerIdx);
+  writer.writeU32(ref.featureIdx);
+}
+
+function packList(writer: ByteWriter, field: SchemaFieldDefinition, value: unknown, ctx: DumpContext): void {
+  const list = Array.isArray(value) ? value : [];
+  writer.writeU32(list.length);
+  if (list.length === 0) {
+    return;
+  }
+
+  if (!isListField(field.entry)) {
+    throw new FastdbUsageError(`Field "${field.name}" is not declared as a list.`);
+  }
+  const item = resolveListItem(field.entry);
+  if (isFieldType(item)) {
+    switch (item.kind) {
+      case 'i32':
+      case 'u8':
+      case 'u16':
+      case 'bool':
+        for (const entry of list) {
+          writer.writeI32(Math.trunc(Number(entry)));
+        }
+        return;
+      case 'f32':
+      case 'f64':
+        for (const entry of list) {
+          writer.writeF64(Number(entry));
+        }
+        return;
+      case 'str':
+      case 'wstr':
+        for (const entry of list) {
+          const bytes = new TextEncoder().encode(String(entry));
+          writer.writeU32(bytes.length);
+          writer.writeBytes(bytes);
+        }
+        return;
+      default:
+        throw new FastdbUsageError(
+          `Unsupported list item kind "${item.kind}" on field "${field.name}".`
+        );
+    }
+  }
+
+  for (const entry of list) {
+    packFeatureRef(writer, entry instanceof Feature ? entry : null, ctx);
+  }
+}
+
+function unpackList(reader: ByteReader, field: SchemaFieldDefinition, ctx: LoadContext): unknown[] {
+  const count = reader.readU32();
+  if (count === 0) {
+    return [];
+  }
+
+  if (!isListField(field.entry)) {
+    throw new FastdbRuntimeError(`Field "${field.name}" is not declared as a list.`);
+  }
+  const item = resolveListItem(field.entry);
+  const out: unknown[] = [];
+
+  if (isFieldType(item)) {
+    switch (item.kind) {
+      case 'i32':
+      case 'u8':
+      case 'u16':
+      case 'bool':
+        for (let i = 0; i < count; i += 1) {
+          out.push(reader.readI32());
+        }
+        return out;
+      case 'f32':
+      case 'f64':
+        for (let i = 0; i < count; i += 1) {
+          out.push(reader.readF64());
+        }
+        return out;
+      case 'str':
+      case 'wstr':
+        for (let i = 0; i < count; i += 1) {
+          out.push(new TextDecoder().decode(reader.readBytes(reader.readU32())));
+        }
+        return out;
+      default:
+        throw new FastdbRuntimeError(
+          `Unsupported list item kind "${item.kind}" on field "${field.name}".`
+        );
+    }
+  }
+
+  for (let i = 0; i < count; i += 1) {
+    const refLayer = reader.readU16();
+    const refFeature = reader.readU32();
+    out.push(refLayer === 0xffff ? null : ctx.getObject(refLayer, refFeature, item as FeatureClass));
+  }
+  return out;
+}
+
+function writeNumericListChunk(
+  module: FastdbModule,
+  layer: WxLayerTableBuildHandle,
+  ownerFeatureId: number,
+  value: unknown,
+  kind: NumericListKind
+): void {
+  const list = Array.isArray(value) ? value : [];
+  layer.addFeatureBegin();
+  layer.setFieldInt(0, ownerFeatureId);
+
+  let payload = new Uint8Array(0);
+  if (list.length > 0) {
+    if (kind === 'u32') {
+      const view = new DataView(new ArrayBuffer(list.length * 4));
+      list.forEach((entry, index) => {
+        const iv = Number(entry);
+        if (!Number.isInteger(iv) || iv < 0 || iv > 0xffffffff) {
+          throw new FastdbUsageError(`List[U32] item out of range: ${entry}`);
+        }
+        view.setUint32(index * 4, iv, true);
+      });
+      payload = new Uint8Array(view.buffer);
+    } else {
+      const view = new DataView(new ArrayBuffer(list.length * 8));
+      list.forEach((entry, index) => {
+        view.setFloat64(index * 8, Number(entry), true);
+      });
+      payload = new Uint8Array(view.buffer);
+    }
+  }
+
+  if (payload.length > 0) {
+    withHeapBytes(module, payload, (ptr, size) => {
+      layer.setGeometryRaw(ptr, size);
+    });
+  }
+  layer.addFeatureEnd();
+}
+
+function loadNumericListValues(
+  db: import('./wasm-loader.js').WxDatabaseHandle,
+  module: FastdbModule
+): Map<string, unknown[]> {
+  const out = new Map<string, unknown[]>();
+
+  for (let layerIdx = 0; layerIdx < db.getLayerCount(); layerIdx += 1) {
+    const layer = db.getLayer(layerIdx);
+    const parsed = parseNumericListLayerName(layer.name());
+    if (!parsed) {
+      continue;
+    }
+
+    for (let rowIdx = 0; rowIdx < layer.getFeatureCount(); rowIdx += 1) {
+      const row = layer.tryGetFeatureAt(rowIdx);
+      const ownerFeatureId = row.getFieldAsInt(0);
+      const chunk = copyChunkToBytes(module, row.geometryView());
+      out.set(
+        `${parsed.className}:${parsed.fieldName}:${ownerFeatureId}`,
+        decodeNumericListChunk(chunk, parsed.kind)
+      );
+    }
+  }
+
+  return out;
+}
+
+function decodeNumericListChunk(chunk: Uint8Array, kind: NumericListKind): unknown[] {
+  if (chunk.length === 0) {
+    return [];
+  }
+
+  const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+  const out: number[] = [];
+  const step = kind === 'u32' ? 4 : 8;
+  for (let offset = 0; offset < chunk.length; offset += step) {
+    out.push(kind === 'u32' ? view.getUint32(offset, true) : view.getFloat64(offset, true));
+  }
+  return out;
+}
+
+function makeNumericListLayerName(className: string, fieldName: string, kind: NumericListKind): string {
+  return `${NUMERIC_LIST_LAYER_PREFIX}${className}|${fieldName}|${kind}`;
+}
+
+function parseNumericListLayerName(
+  layerName: string
+): { className: string; fieldName: string; kind: NumericListKind } | null {
+  if (!layerName.startsWith(NUMERIC_LIST_LAYER_PREFIX)) {
+    return null;
+  }
+  const parts = layerName.slice(NUMERIC_LIST_LAYER_PREFIX.length).split('|');
+  if (parts.length !== 3) {
+    return null;
+  }
+  const [className, fieldName, kind] = parts;
+  if (kind !== 'u32' && kind !== 'f64') {
+    return null;
+  }
+  return { className, fieldName, kind };
+}
+
+function normalizeBytes(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) {
+    return value;
+  }
+  if (value instanceof ArrayBuffer) {
+    return new Uint8Array(value);
+  }
+  return new Uint8Array(0);
+}
+
+function withHeapBytes<T>(
+  module: FastdbModule,
+  bytes: Uint8Array,
+  fn: (ptr: number, size: number) => T
+): T {
+  if (bytes.length === 0) {
+    return fn(0, 0);
+  }
+
+  const ptr = module._malloc(bytes.length);
+  try {
+    module.HEAPU8.set(bytes, ptr);
+    return fn(ptr, bytes.length);
+  } finally {
+    module._free(ptr);
+  }
+}
+
+function copyChunkToBytes(
+  module: FastdbModule,
+  chunk: { data: number; size: number }
+): Uint8Array {
+  return module.HEAPU8.slice(chunk.data, chunk.data + chunk.size);
+}
+
+function isFieldType(value: unknown): value is FieldTypeDef {
+  return typeof value === 'object' && value !== null && 'kind' in value && 'originType' in value;
+}
+
+function getFeatureFieldValue(feature: Feature, fieldName: string): unknown {
+  const cache = feature._cache;
+  if (cache && fieldName in cache) {
+    return cache[fieldName];
+  }
+  return (feature as unknown as Record<string, unknown>)[fieldName];
+}
+
+class ByteWriter {
+  private readonly chunks: Uint8Array[] = [];
+  private totalSize = 0;
+
+  writeU16(value: number): void {
+    const bytes = new Uint8Array(2);
+    new DataView(bytes.buffer).setUint16(0, value, true);
+    this.push(bytes);
+  }
+
+  writeU32(value: number): void {
+    const bytes = new Uint8Array(4);
+    new DataView(bytes.buffer).setUint32(0, value, true);
+    this.push(bytes);
+  }
+
+  writeI32(value: number): void {
+    const bytes = new Uint8Array(4);
+    new DataView(bytes.buffer).setInt32(0, value, true);
+    this.push(bytes);
+  }
+
+  writeF64(value: number): void {
+    const bytes = new Uint8Array(8);
+    new DataView(bytes.buffer).setFloat64(0, value, true);
+    this.push(bytes);
+  }
+
+  writeBytes(bytes: Uint8Array): void {
+    if (bytes.length === 0) {
+      return;
+    }
+    this.push(bytes);
+  }
+
+  finish(): Uint8Array {
+    const out = new Uint8Array(this.totalSize);
+    let offset = 0;
+    for (const chunk of this.chunks) {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return out;
+  }
+
+  private push(bytes: Uint8Array): void {
+    this.chunks.push(bytes);
+    this.totalSize += bytes.length;
+  }
+}
+
+class ByteReader {
+  private offset = 0;
+
+  constructor(private readonly bytes: Uint8Array) {}
+
+  readU16(): number {
+    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getUint16(
+      this.offset,
+      true
+    );
+    this.offset += 2;
+    return value;
+  }
+
+  readU32(): number {
+    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getUint32(
+      this.offset,
+      true
+    );
+    this.offset += 4;
+    return value;
+  }
+
+  readI32(): number {
+    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getInt32(
+      this.offset,
+      true
+    );
+    this.offset += 4;
+    return value;
+  }
+
+  readF64(): number {
+    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getFloat64(
+      this.offset,
+      true
+    );
+    this.offset += 8;
+    return value;
+  }
+
+  readBytes(size: number): Uint8Array {
+    const out = this.bytes.slice(this.offset, this.offset + size);
+    this.offset += size;
+    return out;
+  }
+}

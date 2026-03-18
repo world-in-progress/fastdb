@@ -27,7 +27,7 @@ export type ScalarFieldKind =
   | 'str'
   | 'wstr';
 
-export type FieldKind = ScalarFieldKind | 'ref' | 'bytes';
+export type FieldKind = ScalarFieldKind | 'ref' | 'bytes' | 'list';
 
 export interface FieldTypeDef<TKind extends FieldKind = FieldKind> {
   kind: TKind;
@@ -47,6 +47,15 @@ export interface FeatureClassLike {
 
 export interface RefFieldDef extends FieldTypeDef<'ref'> {
   target?: FeatureClassLike | (() => FeatureClassLike);
+}
+
+export type ListItemDef =
+  | FieldTypeDef<ScalarFieldKind>
+  | FeatureClassLike
+  | (() => FeatureClassLike);
+
+export interface ListFieldDef extends FieldTypeDef<'list'> {
+  item: ListItemDef;
 }
 
 function makeFieldType<TKind extends FieldKind>(
@@ -160,7 +169,12 @@ export const REF: RefFieldDef = Object.freeze({
   createDefault: () => null,
 });
 
-export type SchemaEntry = FieldTypeDef | RefFieldDef;
+const LIST = makeFieldType('list', 13, {
+  scalar: false,
+  createDefault: () => [],
+});
+
+export type SchemaEntry = FieldTypeDef | RefFieldDef | ListFieldDef;
 
 export function ref(target?: FeatureClassLike | (() => FeatureClassLike)): RefFieldDef {
   return Object.freeze({
@@ -169,8 +183,19 @@ export function ref(target?: FeatureClassLike | (() => FeatureClassLike)): RefFi
   });
 }
 
+export function listOf(item: ListItemDef): ListFieldDef {
+  return Object.freeze({
+    ...LIST,
+    item,
+  });
+}
+
 export function isRefField(entry: SchemaEntry): entry is RefFieldDef {
   return entry.kind === 'ref';
+}
+
+export function isListField(entry: SchemaEntry): entry is ListFieldDef {
+  return entry.kind === 'list';
 }
 
 export function isNumericField(entry: SchemaEntry): boolean {

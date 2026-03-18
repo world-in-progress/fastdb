@@ -13,6 +13,7 @@ namespace wx{
     typedef unsigned short  u16;
     typedef float           f32;
     typedef double          f64;
+    typedef unsigned long long u64;
     typedef u16             uchar_t;
 }
 
@@ -29,4 +30,3 @@ namespace wx{
         #define fastdb_api __attribute__((visibility("default")))
     #endif
 #endif
-

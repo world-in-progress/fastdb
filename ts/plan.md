@@ -6,7 +6,8 @@
 - P1：Embind 核心绑定已完成，并通过真实 WASM smoke test
 - P2：TypeScript 类型系统 + Feature 已完成，并通过纯 TS smoke test
 - P3：ORM + Table + 列访问 已完成，并通过 ORM roundtrip smoke test
-- Next：P4（FastSerializer）
+- P4：FastSerializer 已完成，并通过 TS smoke + TS/Python 双向互操作测试
+- Next：P5（Packaging）
 
 ## 目标
 
