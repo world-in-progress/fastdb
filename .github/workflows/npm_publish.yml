@@ -121,5 +121,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          PACKAGE_TGZ=$(ls dist/*.tgz)
-          npm publish "$PACKAGE_TGZ" --access public
+          PACKAGE_TGZ=$(find dist -maxdepth 1 -name '*.tgz' -print -quit)
+          test -n "$PACKAGE_TGZ"
+          npm publish "./$PACKAGE_TGZ" --access public
