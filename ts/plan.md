@@ -7,7 +7,8 @@
 - P2：TypeScript 类型系统 + Feature 已完成，并通过纯 TS smoke test
 - P3：ORM + Table + 列访问 已完成，并通过 ORM roundtrip smoke test
 - P4：FastSerializer 已完成，并通过 TS smoke + TS/Python 双向互操作测试
-- Next：P5（Packaging）
+- P5：Packaging 已完成，并补齐 `./tests/ts` 纯 TS 测试与打包 dry-run 校验
+- 当前阶段：P0-P5 全部完成
 
 ## 目标
 

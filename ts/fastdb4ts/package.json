@@ -3,8 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "description": "TypeScript bindings for fastdb running in the browser via WebAssembly.",
+  "sideEffects": false,
   "type": "module",
   "main": "./dist/index.js",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
@@ -14,13 +16,14 @@
   },
   "files": [
     "dist",
-    "src/wasm"
+    "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && mkdir -p dist/wasm && cp src/wasm/*.js src/wasm/*.d.ts dist/wasm/ && if ls src/wasm/*.wasm >/dev/null 2>&1; then cp src/wasm/*.wasm dist/wasm/; fi",
     "build:wasm": "bash ../build-wasm.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:serializer": "npm run build && node ../tests/test-serializer.mjs",
+    "test:ts": "npm run build && node --test ../../tests/ts/*.mjs",
+    "test:serializer": "npm run build && node --test ../../tests/ts/test_fast_serializer.mjs",
     "test:serializer:interop": "npm run build && node ../tests/test-serializer-interop.mjs"
   },
   "devDependencies": {
