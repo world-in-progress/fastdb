@@ -73,8 +73,13 @@ uv.lock
 
 # Build system files
 build/
+build-wasm/
+build-wasm-check/
 dist/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/
 *.egg
+
+# fastdb4ts generated artifacts
+ts/fastdb4ts/src/wasm/*.wasm
