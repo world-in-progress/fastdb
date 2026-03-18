@@ -1,209 +1,325 @@
 # fastdb Development Guide
 
-## Quick Start
+## Overview
 
-```bash
-# Setup development environment
-./py_utils.sh --setup
+fastdb is a high-performance columnar storage library with two language bindings that sit on top of a shared C++ core:
 
-# Build C++ core + Python bindings (required after C++/SWIG changes)
-./py_utils.sh --build
-
-# Run all tests
-./py_utils.sh --test
-
-# Clean build artifacts
-./py_utils.sh --clean
+```
+┌─────────────────────┐  ┌──────────────────────────┐
+│   fastdb4py         │  │   fastdb4ts               │
+│   (Python binding)  │  │   (TypeScript/WASM binding│
+│   pip install       │  │   npm install fastdb4ts)  │
+└────────┬────────────┘  └────────────┬─────────────┘
+         │ SWIG                        │ Emscripten/Embind
+         └──────────────┬─────────────┘
+                        │
+           ┌────────────▼────────────┐
+           │   C++ Core              │
+           │   fastcarto/fastdb/     │
+           │   wx namespace, pimpl   │
+           └─────────────────────────┘
 ```
 
-## Build & Test
+Both bindings share the same binary wire format, enabling seamless data exchange between Python (server) and TypeScript (browser).
 
-### Full Build
+---
+
+## C++ Core (`fastcarto/fastdb/`)
+
+The C++ core is the foundation. Neither binding modifies it for language-specific purposes.
+
+### Key classes (`wx` namespace)
+
+| C++ class | Role |
+|---|---|
+| `FastVectorDb` | Immutable read-only database |
+| `FastVectorDbBuild` | Write-phase builder for database |
+| `FastVectorDbLayer` | Immutable read-only table (layer) |
+| `FastVectorDbLayerBuild` | Write-phase builder for a table |
+| `FastVectorDbFeature` | Single row accessor |
+| `MemoryStream` | In-memory byte buffer |
+| `chunk_data_t` | Contiguous column data block |
+
+### Design patterns
+
+- **Pimpl pattern**: All public classes use opaque `Impl*` pointers for ABI stability. Never access `impl_` directly from bindings.
+- **Builder / immutable split**: Write via `*Build` classes, then call `post()` to get the immutable read-only counterpart.
+- **All classes in `wx` namespace**; public headers in `fastcarto/fastdb/include/`, implementation in `fastcarto/fastdb/src/`.
+- **C++17 required**; CMake >= 3.16.
+
+### Build (C++ only)
+
+The C++ core is never built standalone — it is always built as part of one of the two binding build flows below.
+
+### Modification workflow
+
+1. Edit `fastcarto/fastdb/src/` and `fastcarto/fastdb/include/`.
+2. Rebuild the binding that uses it (Python or WASM — see below).
+3. If the change affects `chunk_data_t` layout or any wire-format struct, update `fastdb-config.h` and verify both bindings still interoperate.
+
+> **Wire-format note**: structs used in the serialized buffer must use fixed-width types (`u32`, `u64`, etc.), not `size_t`. `size_t` is 8 bytes in native C++ but 4 bytes in WASM — using it in wire structs breaks cross-language compatibility.
+
+---
+
+## Python Binding (`python/fastdb4py/`)
+
+### Layer stack
+
+```
+python/fastdb4py/
+├── type.py          TypeVar aliases → OriginFieldType enum
+├── feature/
+│   ├── feature.py   Feature base class (__getattr__/__setattr__ dispatch)
+│   └── utils.py     parse_defns() / get_all_defns()
+├── orm/
+│   ├── __init__.py  ORM lifecycle (create/truncate/load/push/share/save/close)
+│   └── table.py     Table[T] + ColumnAccessor + StridedColumn
+├── serializer.py    FastSerializer (binary object graph serialization)
+└── core/            SWIG-generated native bindings — DO NOT EDIT MANUALLY
+```
+
+### Build & test
 
 ```bash
-# Using py_utils.sh (recommended)
-./py_utils.sh --build
+# Build C++ core + SWIG bindings
+./py_utils.sh --build          # or: uv pip install -e .
 
-# Or manually with uv
-uv pip install -e .
+# Run all Python tests
+uv run pytest
+
+# Single test file / function
+uv run pytest tests/python/test_column_way.py
+uv run pytest tests/python/test_column_way.py::test_basic_column_access
+
+# Benchmark
+uv run python tests/python/benchmark_comprehensive.py --quick
 ```
 
 Build requires: C++17 compiler, CMake >= 3.16, SWIG >= 4.0, NumPy.
 
-### Running Tests
+### Key patterns
+
+**Feature definition** — subclass `Feature` with TypeVar-aliased fields:
+```python
+from fastdb4py import Feature, F64, U32, STR
+
+class Point(Feature):
+    x: F64
+    y: F64
+    label: STR
+```
+
+**Two-mode Feature objects**:
+- Pure Python mode (`_origin is None`): reads/writes go to `_cache` dict.
+- DB-mapped mode (`_origin` set): reads/writes dispatch to C++ getters/setters via SWIG.
+- `Feature.fixed` property distinguishes modes.
+
+**Field dispatch**: `parse_defns()` introspects annotations to build `(OriginFieldType, field_index)` mapping stored in `_origin_hints` for O(1) lookup during `__getattr__`/`__setattr__`.
+
+**Zero-copy NumPy columns**: `table.column.x` returns a NumPy array backed by C++ memory via `__array_interface__` on `chunk_data_t`. `ColumnAccessor` dynamically creates accessors matching the Feature subclass fields.
+
+**Thread-safe caching**: Feature hints, field definitions, class schemas, and column accessors all use `WeakKeyDictionary` + `Lock`.
+
+**ORM lifecycle**:
+```python
+# Fixed-size (fastest)
+orm = ORM.truncate([TableDefn(Point, 1000)])
+tbl = orm.get(Point)
+
+# Dynamic append
+orm = ORM.create()
+orm.push(Point(x=1.0, y=2.0))
+orm._combine()
+
+# Shared memory IPC
+orm.share("my_db")          # publish to POSIX shared memory
+orm2 = ORM.load("my_db")   # zero-copy cross-process access
+orm.unlink("my_db")         # release segment
+```
+
+### SWIG interface
+
+- `fastcarto/fastdb/swig/fastdb4py.i` — single interface file, Python-only.
+- `python/fastdb4py/core/` — SWIG-generated output, never edit manually.
+- Renames C++ `FastVectorDb` → Python `WxDatabase` etc. for Pythonic naming.
+- NumPy zero-copy via `%array_interface` on `chunk_data_t`.
+
+### Testing
+
+Key test files in `tests/python/`:
+- `test_column_way.py` — ORM.truncate + columnar NumPy access
+- `test_shared_memory.py` — ORM create/push/share/load across processes
+- `test_truncate_block.py` — Truncate block operations
+- `test_fast_serializer.py` — FastSerializer (nested objects, cyclic refs, tree structures)
+
+### Performance optimization
+
+Tracked incrementally in `optimize/`. Each round: one logical change → rebuild → benchmark → write `optimize/oN/benchmark.md` with `## Changes` + `## Expected Improvement` sections + full output. Compare against previous round, update `plan.md`.
+
+Key targets: `orm/table.py` (ColumnAccessor), `feature/feature.py` (`__getattr__`/`__setattr__`), `orm/__init__.py` (lifecycle), `swig/fastdb4py.i` (requires recompile).
+
+---
+
+## TypeScript/WASM Binding (`ts/fastdb4ts/`)
+
+The TypeScript binding compiles the same C++ core to WebAssembly via Emscripten + Embind, then wraps it in a TypeScript ORM that mirrors the Python API. Targets browser environments only (no Node file I/O, no shared memory IPC).
+
+### Directory layout
+
+```
+ts/
+├── embind/
+│   ├── CMakeLists.txt      WASM-only CMake entry (fails if not Emscripten)
+│   └── fastdb4ts.cpp       All C++↔WASM glue (EMSCRIPTEN_BINDINGS)
+├── fastdb4ts/              npm package (published as fastdb4ts)
+│   ├── src/
+│   │   ├── types.ts        Field type constants (U8, F64, STR, …)
+│   │   ├── feature.ts      Feature base class + Proxy dispatch + defineSchema
+│   │   ├── orm.ts          ORM.truncate / create / fromBuffer / toBuffer
+│   │   ├── table.ts        Table<T> with get(i) and Symbol.iterator
+│   │   ├── column.ts       StridedColumn (.get/.set/.fill/.toArray)
+│   │   ├── serializer.ts   FastSerializer.dumps / loads
+│   │   ├── wasm-loader.ts  loadFastdbWasm() singleton promise
+│   │   └── wasm/           Emscripten output — DO NOT EDIT MANUALLY
+│   │       ├── fastdb4ts.js
+│   │       └── fastdb4ts.wasm
+│   ├── package.json        version: 0.0.1, publishConfig.access: public
+│   └── tsconfig.json
+├── tests/                  Node-based TS tests (tsx runner)
+│   ├── test-orm.ts
+│   ├── test-serializer.ts
+│   └── test-serializer-interop.ts
+└── build-wasm.sh           Emscripten WASM build script
+```
+
+### Build & test
 
 ```bash
-# All tests
-uv run pytest
+# 1. Build WASM (requires Emscripten emsdk activated)
+bash ts/build-wasm.sh
 
-# Single test file
-uv run pytest tests/python/test_column_way.py
+# 2. Build TypeScript
+npm --prefix ts/fastdb4ts run build
 
-# Single test function
-uv run pytest tests/python/test_column_way.py::test_basic_column_access
+# Run TypeScript unit tests
+npm --prefix ts/fastdb4ts run test:ts
 
-# With verbose output
-uv run pytest -v
+# Run serializer tests
+npm --prefix ts/fastdb4ts run test:serializer
+
+# Run cross-language interop tests (Python ↔ TS)
+npm --prefix ts/fastdb4ts run test:serializer:interop
 ```
 
-### Benchmarking
+### Key patterns
 
-```bash
-# Quick benchmark (all categories)
-uv run python tests/python/benchmark_comprehensive.py --quick
+**Schema definition** — static `defineSchema` field (no decorators required):
+```typescript
+import { Feature, defineSchema, F64, U32, STR } from 'fastdb4ts';
 
-# Full benchmark
-uv run python tests/python/benchmark_comprehensive.py
-
-# FastSerializer only
-uv run python tests/python/benchmark_fast_serializer.py
+class Point extends Feature {
+  static schema = defineSchema({ x: F64, y: F64, label: STR });
+  x!: number;
+  y!: number;
+  label!: string;
+}
 ```
 
-## Architecture
+**Feature Proxy dispatch**: `new Feature({…})` returns a `Proxy` (constructor calls `wrapFeature(this)` and returns it). All field access:
+- Pure-TS mode (`_origin === null`): reads/writes go to `_cache`.
+- DB-mapped mode (`_origin` set): reads/writes dispatch to WASM getters/setters.
 
-### Layer Stack (bottom-up)
-
-1. **C++ Core** (`fastcarto/fastdb/`) — Columnar storage engine with pimpl pattern. All classes in `wx` namespace use opaque `Impl*` pointers for ABI stability.
-
-2. **SWIG Bindings** (`fastcarto/fastdb/swig/fastdb4py.i`) — Python wrappers with NumPy C-API integration and zero-copy `__array_interface__`. Renames C++ classes for Pythonic API (e.g., `FastVectorDb` → `WxDatabase`).
-
-3. **Type System** (`python/fastdb4py/type.py`) — TypeVar aliases (`U8`, `U16`, `U32`, `I32`, `F32`, `F64`, `STR`, `WSTR`, `REF`, `BYTES`, `BOOL`) mapping to `OriginFieldType` enum values.
-
-4. **Feature** (`python/fastdb4py/feature/feature.py`) — Core ORM model. Users subclass `Feature` with type-annotated fields. `__getattr__`/`__setattr__` dispatch to C++ column storage when database-mapped (`_origin` set) or Python `_cache` dict otherwise.
-
-5. **ORM** (`python/fastdb4py/orm/__init__.py`) — Database lifecycle API: `create()`, `truncate()`, `load()`, `push()`, `get()`, `share()`, `save()`, `close()`.
-
-6. **FastSerializer** (`python/fastdb4py/serializer.py`) — Binary serialization for Feature object graphs. Supports nested types, cyclic references, and numeric list columns.
-
-### Key Design Patterns
-
-**Builder Pattern for Database Creation**
-- **Write phase**: `WxDatabaseBuild` / `WxLayerTableBuild` — define schema, add fields, push features
-- **Read phase**: After `post()` or `save()` + `load()`, produces immutable `WxDatabase` / `WxLayerTable`
-- `ORM.truncate()` pre-allocates fixed-size tables, then calls `_combine()` to serialize and reload as immutable
-
-**Zero-Copy NumPy Integration**
-- Column data exposed via `__array_interface__` on `chunk_data_t`
-- `table.column.x` returns NumPy array backed by C++ memory (zero-copy view)
-- `ColumnAccessor` (in `table.py`) dynamically creates accessors matching Feature subclass fields
-
-**Two-Mode Feature Objects**
-- `Feature.fixed` property distinguishes modes:
-  - Pure Python mode: `_origin is None`, reads/writes go to `_cache` dict
-  - Database-mapped mode: `_origin` set, reads/writes dispatch to C++ getters/setters via SWIG
-
-**Thread-Safe Caching**
-- Feature hints, field definitions, class schemas, column accessors all use `WeakKeyDictionary` + `Lock`
-- Avoids repeated introspection/allocation overhead while maintaining thread safety
-
-**Field Dispatch via Type Hints**
-- `parse_defns()` introspects field annotations (`F64`, `U32`, etc.) to build `(OriginFieldType, field_index)` mapping
-- Mapping stored in `_origin_hints` for O(1) lookup during `__getattr__`/`__setattr__`
-
-## Code Conventions
-
-### C++ (fastcarto/fastdb/)
-
-- **Pimpl pattern**: All public classes use opaque `Impl*` pointers (e.g., `class FastVectorDb { Impl* impl_; }`)
-- **Namespace**: All classes in `wx` namespace
-- **Header/source split**: Public headers in `include/`, implementation in `src/`
-- **CMake**: Build configuration in `CMakeLists.txt` (C++17 required)
-
-### SWIG Interface (fastcarto/fastdb/swig/)
-
-- **Main interface**: `fastdb4py.i` defines Python bindings
-- **NumPy integration**: Zero-copy `__array_interface__` on `chunk_data_t`
-- **Renaming**: C++ `FastVectorDb` → Python `WxDatabase` for consistency
-- **Auto-generated code**: `python/fastdb4py/core/` is generated by SWIG (do not edit manually)
-
-### Python (python/fastdb4py/)
-
-- **Type annotations**: All Feature fields MUST use TypeVar aliases (`F64`, `U32`, etc.), not Python primitives
-- **Feature subclassing**: Users define data models by subclassing `Feature` with annotated fields
-- **Cache allocation**: `_cache` dict allocated lazily on first write to avoid overhead for read-only db-mapped Features
-- **Schema caching**: Class-level schema cached in `_SCHEMA_ATTR` to avoid repeated introspection
-
-### Testing (tests/python/)
-
-- **Pytest**: All tests use pytest framework
-- **Key test files**:
-  - `test_column_way.py` — ORM.truncate + columnar NumPy access
-  - `test_shared_memory.py` — ORM create/push/share/load across processes
-  - `test_truncate_block.py` — Truncate block operations
-  - `test_fast_serializer.py` — FastSerializer (nested objects, cyclic refs, tree structures)
-- **Benchmarking**: `benchmark_comprehensive.py` (micro/meso/macro/serializer categories)
-
-## Common Workflows
-
-### Adding a New Field Type
-
-1. Add enum value to `OriginFieldType` in `type.py`
-2. Add C++ field handling in `fastcarto/fastdb/src/` implementation
-3. Update SWIG interface if new getter/setter needed
-4. Add TypeVar alias export in `python/fastdb4py/type.py`
-5. Update getter/setter dispatch tables in `feature.py` (`_SCALAR_GETTER`, `_NUMERIC_FIELD_TYPES`)
-6. Add tests in `tests/python/`
-
-### Modifying C++ Core
-
-1. Make changes in `fastcarto/fastdb/src/` and `include/`
-2. Rebuild: `./py_utils.sh --build` or `uv pip install -e .`
-3. Test: `uv run pytest`
-4. If SWIG interface changed, regenerated Python bindings will be in `python/fastdb4py/core/`
-
-### Performance Optimization
-
-This project tracks optimizations incrementally in `optimize/` directory:
-
-```
-optimize/
-├── o0/benchmark.md   # original baseline
-├── o1/benchmark.md   # after first optimization
-├── o2/benchmark.md   # after second optimization
-└── ...
+**StridedColumn API** — use `.get(i)` / `.set(i, v)` / `.fill(array)` / `.toArray()`. Array-index syntax (`col[i] = v`) does NOT work:
+```typescript
+const col = orm.table(Point).column.x;  // StridedColumn<Float64Array>
+col.set(0, 3.14);
+col.fill(new Float64Array([1, 2, 3]));
+const arr = col.toArray();  // copies to new Float64Array
 ```
 
-**Optimization workflow**:
-1. Make code changes (one logical optimization per round)
-2. Rebuild if C++/SWIG modified: `uv pip install -e .`
-3. Run benchmark: `uv run python tests/python/benchmark_comprehensive.py --quick`
-4. Create `optimize/oN/` folder (N = previous highest + 1)
-5. Write results to `optimize/oN/benchmark.md` with:
-   - `## Changes` section (files modified + explanation)
-   - `## Expected Improvement` section (target metric + predicted gain)
-   - Full benchmark output
-6. Compare against `optimize/o(N-1)/benchmark.md`
-7. Update `plan.md` with actual vs. expected results
+**ORM lifecycle**:
+```typescript
+// Fixed-size (fastest)
+const orm = await ORM.truncate([new TableDefn(Point, 1000)]);
+const tbl = orm.table(Point);
 
-**Key optimization targets**:
-- `python/fastdb4py/orm/table.py` — ColumnAccessor
-- `python/fastdb4py/feature/feature.py` — `__getattr__`/`__setattr__` dispatch
-- `python/fastdb4py/orm/__init__.py` — ORM lifecycle
-- `fastcarto/fastdb/swig/fastdb4py.i` — SWIG interface (requires recompile)
+// Dynamic append
+const orm2 = await ORM.create();
+orm2.push(new Point({ x: 1, y: 2 }));
+orm2.combine();
 
-## Shared Memory IPC
+// Round-trip buffer (e.g. received from Python backend)
+const buf = orm.toBuffer();
+const orm3 = await ORM.fromBuffer(buf);
+```
 
-`ORM.share(shm_name)` publishes database buffer to POSIX/Windows shared memory. Other processes call `ORM.load(shm_name)` for zero-copy access. Use `db.unlink()` to release segment when done.
+**FastSerializer** for complex object graphs with nested/cyclic refs:
+```typescript
+import { FastSerializer, listOf, ref } from 'fastdb4ts';
 
-## FastSerializer Protocol
+class Node extends Feature {
+  static schema = defineSchema({ val: F64, children: listOf(ref(Node)) });
+}
+const buf = FastSerializer.dumps(root);
+const loaded = FastSerializer.loads(buf, Node);
+```
 
-Hybrid storage strategy:
-- Scalar fields (`U8`–`F64`) → columnar storage
-- Complex fields (list/ref/bytes) → geometry-like raw blob
-- Numeric lists (`List[U32]`, `List[F64]`) → dedicated auxiliary layers
-- Object refs → encoded as `[layer_idx:u16][feature_idx:u32]`
-- Cyclic references → identity preserved on deserialization
+### Embind isolation rule
+
+All C++↔WASM bindings must live exclusively in `ts/embind/fastdb4ts.cpp`. The `fastcarto/` directory must NOT be modified to add TS-specific code. The embind CMake entry uses `add_subdirectory` to pull in `fastcarto/` as a static library without touching its sources.
+
+### WASM memory notes
+
+- Do NOT hold raw WASM typed-array views across async boundaries — WASM memory can grow and invalidate views.
+- `StridedColumn` reads `HEAPF64`/`HEAP32` on each `.get(i)` call; views are not cached.
+- Embind objects must call `.delete()` when done; the TS ORM wrappers manage lifetimes internally.
+
+---
+
+## FastSerializer Protocol (shared)
+
+The binary format is identical between Python and TypeScript, enabling direct cross-language data exchange.
+
+- Scalar fields (`U8`–`F64`) → columnar fastdb storage
+- Numeric lists (`List[U32]`, `List[F64]`) → dedicated auxiliary layers named `__fastser_list__|ClassName|FieldName|type`
+- Complex fields (nested lists, refs, bytes) → geometry-like raw blob
+- Object refs → encoded as `[layer_idx: u16][feature_idx: u32]`
+- Cyclic references → identity preserved via two-pass traversal (first pass assigns IDs, second pass writes)
+
+When modifying the serializer in either language, always verify the cross-language interop tests pass.
+
+---
+
+## CI / GitHub Actions
+
+`.github/workflows/tests.yml` uses `dorny/paths-filter@v3` to scope jobs:
+
+| Changed paths | Jobs that run |
+|---|---|
+| `fastcarto/` | Python tests |
+| `python/` | Python tests |
+| `ts/` | TypeScript tests |
+| `.github/workflows/` | All tests |
+
+A terminal aggregate job named `test` (with `if: always()`) satisfies the branch protection required status check regardless of which scoped jobs ran.
+
+**npm publish** (`.github/workflows/npm_publish.yml`): triggered by git tags matching `npm/v*`. Checks npm registry first (skips if version exists), builds WASM + TS, tests, packs, then publishes via npm OIDC Trusted Publishing (no `NPM_TOKEN` secret). Git tag is created after successful publish, not before. First publish of a new package name must be done manually.
+
+---
 
 ## Build System
 
-- **Python packaging**: `pyproject.toml` + `setup.py` (CMake integration via custom build_ext)
-- **CMake**: Builds C++ core + SWIG bindings (`fastcarto/CMakeLists.txt`, `fastcarto/fastdb/CMakeLists.txt`)
-- **SWIG output**: Generated files written to `python/fastdb4py/core/`
-- **Parallel builds**: Limited to 2 jobs by default to avoid OOM in constrained environments
-- **Platform handling**: macOS architecture flags (`ARCHFLAGS`), Windows x64 configuration in `setup.py`
+| Layer | Build tool | Output |
+|---|---|---|
+| C++ core | CMake (via `setup.py` or embind CMakeLists) | `.so` / `.a` / `.wasm` |
+| Python binding | `pyproject.toml` + `setup.py` → CMake + SWIG | `python/fastdb4py/core/` (auto-generated) |
+| WASM | `ts/build-wasm.sh` → `emcmake cmake ts/embind` | `ts/fastdb4ts/src/wasm/` (auto-generated) |
+| TypeScript | `npm run build` (tsc) | `ts/fastdb4ts/dist/` |
+
+- Python parallel builds limited to 2 jobs to avoid OOM.
+- macOS: `ARCHFLAGS` set in `setup.py`; Windows: x64 config.
+- UV cache at `.uv_cache` in project root for bind-mount hardlinking.
 
 ## Development Environment
 
-Supports DevContainer configuration (see `.devcontainer/devcontainer.example.json`). Requires Docker/Podman + VSCode DevContainer extension.
-
-UV cache directory set to `.uv_cache` in project root to enable hardlinking across bind mounts.
+Supports DevContainer (see `.devcontainer/devcontainer.example.json`). Requires Docker/Podman + VSCode DevContainer extension.
