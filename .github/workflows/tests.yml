@@ -95,3 +95,32 @@ jobs:
 
       - name: Run TypeScript tests
         run: npm run test:ts
+
+  test:
+    name: test
+    needs:
+      - detect_changes
+      - python_tests
+      - ts_tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate required test results
+        env:
+          PYTHON_RESULT: ${{ needs.python_tests.result }}
+          TS_RESULT: ${{ needs.ts_tests.result }}
+        run: |
+          echo "python_tests result: ${PYTHON_RESULT}"
+          echo "ts_tests result: ${TS_RESULT}"
+
+          if [ "${PYTHON_RESULT}" = "failure" ] || [ "${PYTHON_RESULT}" = "cancelled" ]; then
+            echo "python_tests did not succeed"
+            exit 1
+          fi
+
+          if [ "${TS_RESULT}" = "failure" ] || [ "${TS_RESULT}" = "cancelled" ]; then
+            echo "ts_tests did not succeed"
+            exit 1
+          fi
+
+          echo "All required test jobs completed successfully or were skipped by scope."
