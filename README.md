@@ -276,29 +276,109 @@ db.unlink()   # release shared memory segment when done
 
 ### Batch Scalar Access
 
-For db-mapped Features (e.g. from `table[i]` or `table.iter_reuse()`), you can read or write all scalar fields in a single C++ call instead of one SWIG call per field. This is especially useful in tight loops or when building custom row-processing kernels.
+For db-mapped Features (e.g. from `table[i]` or `table.iter_reuse()`), you can read or write all scalar fields in a single C++ call instead of one SWIG call per field. This is useful in tight loops or when building custom row-processing kernels.
+
+**Covered types:** `U8`, `U16`, `U32`, `I32`, `F32`, `F64`, `U8N`, `U16N`. Non-scalar fields (`STR`, `WSTR`, `REF`, `BYTES`) are automatically excluded — they are not present in the array and must still be accessed individually via attribute access.
+
+**Array format:** Always `dtype=float64`, regardless of the original field types. All covered types can round-trip through float64 without precision loss on read. On write, values are cast back to each field's native type by the C++ layer.
 
 ```python
 import numpy as np
 
-class Point(fx.Feature):
-    x: fx.F64
-    y: fx.F64
-    z: fx.F64
+class Particle(fx.Feature):
+    index: fx.I32   # scalar — position 0 in the array
+    name:  fx.STR   # non-scalar — excluded, use feat.name directly
+    mass:  fx.F32   # scalar — position 1
+    x:     fx.F64   # scalar — position 2
+    y:     fx.F64   # scalar — position 3
 
 # ... (db setup as above) ...
 feat = tbl[0]
 
-# Read all scalar fields into a float64 array (1 SWIG call)
-out = np.empty(3, dtype=np.float64)
-feat.read_all_scalars(out)   # fills out in-place; returns out
-# out[0] = x, out[1] = y, out[2] = z
+# Read: all scalar fields → float64 array (1 SWIG call)
+out = np.empty(4, dtype=np.float64)   # length = number of scalar fields
+feat.read_all_scalars(out)
+# out[0] = index (i32 → f64, exact)
+# out[1] = mass  (f32 → f64, exact)
+# out[2] = x     (f64, exact)
+# out[3] = y     (f64, exact)
 
-# Write all scalar fields from a float64 array (1 SWIG call)
-feat.write_all_scalars(np.array([1.0, 2.0, 3.0]))
+# Write: float64 array → all scalar fields (1 SWIG call)
+# Integer fields are truncated (not rounded): 1.9 → 1
+feat.write_all_scalars(np.array([5.0, 1.5, 3.14, 2.71]))
+# index = (i32)5.0 = 5, mass = (f32)1.5, x = 3.14, y = 2.71
+
+# feat.name must still be set via normal attribute access
+feat.name = "electron"
 ```
 
-Field order in the array follows the order they are declared in the Feature class.
+> **Write truncation:** On write, the C++ layer casts `double → native type` using C truncation semantics (toward zero, not rounding). For integer fields, always pass exact `.0` values. Passing `1.9` to an `I32` field will write `1`, not `2`.
+
+The array length and field order can be queried at runtime:
+
+```python
+n_scalars = len(feat._schema.scalar_field_ids_np)   # number of scalar fields
+```
+
+### FastSerializer
+
+`FastSerializer` serializes a `Feature` object graph to bytes and deserializes it back. It is designed for cases where you need to persist or transmit a complete object graph that includes nested Features, cyclic references, and heterogeneous list types — scenarios that go beyond what the ORM columnar tables cover directly.
+
+**Supported field content:**
+
+| Field type | Serialized as |
+|------------|---------------|
+| Scalar fields (`U8`–`F64`) | fastdb columns (columnar) |
+| `List[U32]` / `List[F64]` | dedicated columnar auxiliary layers |
+| `List[int]` / `List[float]` / `List[str]` | raw blob |
+| `List[Feature]` / ref fields | object ref encoding (`[layer_idx:u16][feature_idx:u32]`) |
+| Cyclic references | handled — identity is preserved on load |
+
+```python
+from fastdb4py import FastSerializer, Feature, I32, F64, STR
+from typing import List
+
+class Point(Feature):
+    x: F64
+    y: F64
+
+class Line(Feature):
+    id:     I32
+    label:  STR
+    points: List[Point]   # list of Feature refs
+
+# Build an object graph
+p1 = Point(x=0.0, y=0.0)
+p2 = Point(x=1.0, y=1.0)
+line = Line(id=42, label="edge", points=[p1, p2])
+
+# Serialize to bytes
+data: bytes = FastSerializer.dumps(line)
+
+# Deserialize
+line2 = FastSerializer.loads(data, Line)
+print(line2.label)           # "edge"
+print(line2.points[1].x)    # 1.0
+```
+
+Cyclic references are preserved:
+
+```python
+class Node(Feature):
+    val:  I32
+    next: 'Node'
+
+n1 = Node(val=1)
+n2 = Node(val=2)
+n1.next = n2
+n2.next = n1   # cycle: n1 → n2 → n1
+
+data  = FastSerializer.dumps(n1)
+check = FastSerializer.loads(data, Node)
+assert check.next.next is check   # identity preserved ✓
+```
+
+`FastSerializer` is significantly slower than the native ORM columnar path for large uniform datasets. For bulk numerical data, prefer `ORM.truncate` + columnar writes. Use `FastSerializer` when your data is naturally graph-shaped (trees, linked lists, meshes with shared vertices, etc.).
 
 ## Performance Notes
 
