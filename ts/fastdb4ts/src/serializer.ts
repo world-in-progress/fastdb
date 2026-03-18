@@ -722,48 +722,56 @@ class ByteWriter {
 
 class ByteReader {
   private offset = 0;
+  private readonly view: DataView;
 
-  constructor(private readonly bytes: Uint8Array) {}
+  constructor(private readonly bytes: Uint8Array) {
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+
+  private checkRead(size: number): void {
+    if (this.offset + size > this.bytes.byteLength) {
+      throw new FastdbRuntimeError(
+        `ByteReader: attempted to read ${size} byte(s) at offset ${this.offset}, ` +
+          `but buffer length is ${this.bytes.byteLength}. The buffer may be truncated or corrupted.`
+      );
+    }
+  }
 
   readU16(): number {
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getUint16(
-      this.offset,
-      true
-    );
+    this.checkRead(2);
+    const value = this.view.getUint16(this.offset, true);
     this.offset += 2;
     return value;
   }
 
   readU32(): number {
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getUint32(
-      this.offset,
-      true
-    );
+    this.checkRead(4);
+    const value = this.view.getUint32(this.offset, true);
     this.offset += 4;
     return value;
   }
 
   readI32(): number {
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getInt32(
-      this.offset,
-      true
-    );
+    this.checkRead(4);
+    const value = this.view.getInt32(this.offset, true);
     this.offset += 4;
     return value;
   }
 
   readF64(): number {
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getFloat64(
-      this.offset,
-      true
-    );
+    this.checkRead(8);
+    const value = this.view.getFloat64(this.offset, true);
     this.offset += 8;
     return value;
   }
 
   readBytes(size: number): Uint8Array {
+    this.checkRead(size);
     const out = this.bytes.slice(this.offset, this.offset + size);
     this.offset += size;
     return out;
   }
 }
+
+// Exported for unit testing only — not part of the public API.
+export { ByteReader, ByteWriter };
