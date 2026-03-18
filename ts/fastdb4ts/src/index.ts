@@ -6,6 +6,12 @@ export {
   wrapFeature,
 } from './feature.js';
 export {
+  ORM,
+  TableDefn,
+} from './orm.js';
+export { Table } from './table.js';
+export { StridedColumn } from './column.js';
+export {
   defineSchema,
   getClassSchema,
 } from './schema.js';

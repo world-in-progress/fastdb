@@ -155,14 +155,25 @@ export interface FastdbModuleFactory {
 }
 
 let modulePromise: Promise<FastdbModule> | null = null;
+let loadedModule: FastdbModule | null = null;
 
 export function initFastdb(): Promise<FastdbModule> {
   if (modulePromise === null) {
-    modulePromise = (FastdbWasm as unknown as FastdbModuleFactory)();
+    modulePromise = (FastdbWasm as unknown as FastdbModuleFactory)().then((module) => {
+      loadedModule = module;
+      return module;
+    });
   }
   return modulePromise;
 }
 
 export async function getFastdbModule(): Promise<FastdbModule> {
   return initFastdb();
+}
+
+export function getInitializedFastdbModule(): FastdbModule {
+  if (loadedModule === null) {
+    throw new Error('fastdb4ts has not been initialized. Call await initFastdb() first.');
+  }
+  return loadedModule;
 }

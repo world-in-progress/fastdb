@@ -5,7 +5,8 @@
 - P0：WASM 构建骨架已完成
 - P1：Embind 核心绑定已完成，并通过真实 WASM smoke test
 - P2：TypeScript 类型系统 + Feature 已完成，并通过纯 TS smoke test
-- Next：P3（ORM + Table + 列访问）
+- P3：ORM + Table + 列访问 已完成，并通过 ORM roundtrip smoke test
+- Next：P4（FastSerializer）
 
 ## 目标
 
