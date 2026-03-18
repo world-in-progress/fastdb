@@ -16,7 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.VERSION }}
-      exists: ${{ steps.check_tag.outputs.exists }}
+      published: ${{ steps.check_npm.outputs.published }}
+      tag_exists: ${{ steps.check_tag.outputs.exists }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -35,20 +36,31 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Detected fastdb4ts version: $VERSION"
 
-      - name: Check if npm tag exists
+      - name: Check if version is already published on npm
+        id: check_npm
+        run: |
+          if npm view "fastdb4ts@${{ steps.get_version.outputs.VERSION }}" version >/dev/null 2>&1; then
+            echo "fastdb4ts@${{ steps.get_version.outputs.VERSION }} is already published. Skipping build and publish."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fastdb4ts@${{ steps.get_version.outputs.VERSION }} is not published yet. Proceeding."
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if git tag exists
         id: check_tag
         run: |
           if git rev-parse "fastdb4ts-v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
-            echo "Tag fastdb4ts-v${{ steps.get_version.outputs.VERSION }} already exists. Skipping build and publish."
+            echo "Tag fastdb4ts-v${{ steps.get_version.outputs.VERSION }} already exists."
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Tag fastdb4ts-v${{ steps.get_version.outputs.VERSION }} does not exist. Proceeding."
+            echo "Tag fastdb4ts-v${{ steps.get_version.outputs.VERSION }} does not exist yet."
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
   build_package:
     needs: check_version
-    if: needs.check_version.outputs.exists == 'false'
+    if: needs.check_version.outputs.published == 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -90,7 +102,7 @@ jobs:
 
   publish:
     needs: [check_version, build_package]
-    if: needs.check_version.outputs.exists == 'false'
+    if: needs.check_version.outputs.published == 'false'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -103,13 +115,6 @@ jobs:
         with:
           name: fastdb4ts-package
           path: dist
-
-      - name: Create and push tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "fastdb4ts-v${{ needs.check_version.outputs.version }}" -m "fastdb4ts v${{ needs.check_version.outputs.version }}"
-          git push origin "fastdb4ts-v${{ needs.check_version.outputs.version }}"
 
       - name: Set up Node.js for npm publish
         uses: actions/setup-node@v4
@@ -124,3 +129,11 @@ jobs:
           PACKAGE_TGZ=$(find dist -maxdepth 1 -name '*.tgz' -print -quit)
           test -n "$PACKAGE_TGZ"
           npm publish "./$PACKAGE_TGZ" --access public
+
+      - name: Create and push tag
+        if: needs.check_version.outputs.tag_exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "fastdb4ts-v${{ needs.check_version.outputs.version }}" -m "fastdb4ts v${{ needs.check_version.outputs.version }}"
+          git push origin "fastdb4ts-v${{ needs.check_version.outputs.version }}"
