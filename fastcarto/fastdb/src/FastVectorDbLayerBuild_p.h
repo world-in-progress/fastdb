@@ -16,8 +16,8 @@ namespace wx{
         double  vmin;
         double  vmax;
 
-        size_t  size;
-        size_t  offset;
+        u64     size;
+        u64     offset;
     };
     
     struct layer_header_t
@@ -33,10 +33,10 @@ namespace wx{
         double  miny;
         double  maxx;
         double  maxy;
-        size_t  offset_table;
-        size_t  offset_strings;
-        size_t  offset_wstrings;
-        size_t  total_size;
+        u64     offset_table;
+        u64     offset_strings;
+        u64     offset_wstrings;
+        u64     total_size;
     };
     class FastVectorDbBuild;
     class FastVectorDbLayerBuild::Impl

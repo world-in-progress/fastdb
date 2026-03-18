@@ -26,7 +26,7 @@ else()
     set(BUILD_TYPE SHARED)
 endif(is_emscripten)
 
-add_library(${PROJECT_NAME} SHARED ${SOURCES})
+add_library(${PROJECT_NAME} ${BUILD_TYPE} ${SOURCES})
 target_link_libraries(${PROJECT_NAME} PRIVATE gaiageo Clipper2)
 
 get_target_property(swig_out_dir ${PROJECT_NAME} SWIG_OUTPUT_DIR)
@@ -144,23 +144,5 @@ if (NOT is_emscripten)
         )
     endif(USE_SWIG_GO)
 else()
-    message(STATUS "linking swig wrapper...") 
-     add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-     COMMAND emcc 
-            "-O2" 
-            "-s" "WASM=0" 
-            #"-s" "MODULARIZE=1" 
-            #"-s" EXPORT_NAME="'fastdb'"
-            #"-s" 'EXTRA_EXPORTED_RUNTIME_METHODS=["cwrap","_free","_malloc"]'
-            "-s" "ALLOW_MEMORY_GROWTH=1" 
-            "-s" "INITIAL_MEMORY=16777216" 
-            "-s" "TOTAL_MEMORY=16777216" 
-            "-s" "TOTAL_STACK=5242880" 
-            "-s" "ERROR_ON_UNDEFINED_SYMBOLS=0" 
-            "--post-js" "${swig_dir}/fastdb4em_i.js" 
-            "-I" ${CMAKE_CURRENT_SOURCE_DIR}/include
-            "$<TARGET_FILE:${PROJECT_NAME}>"    "${swig_dir}/fastdb4em.cxx"
-            "-o" "${script_dir}/fastdb4em.js"
-     COMMENT "emcc linking fastdb.js"
-     )
+    message(STATUS "Emscripten detected: build fastdb core only. WASM bindings are built separately from ts/embind.")
 endif()

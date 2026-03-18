@@ -1,0 +1,125 @@
+name: Publish fastdb4ts to npm
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "ts/fastdb4ts/package.json"
+
+permissions:
+  contents: write
+
+jobs:
+  check_version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.VERSION }}
+      exists: ${{ steps.check_tag.outputs.exists }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Get version from ts/fastdb4ts/package.json
+        id: get_version
+        run: |
+          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('ts/fastdb4ts/package.json', 'utf8')).version)")
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected fastdb4ts version: $VERSION"
+
+      - name: Check if npm tag exists
+        id: check_tag
+        run: |
+          if git rev-parse "fastdb4ts-v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
+            echo "Tag fastdb4ts-v${{ steps.get_version.outputs.VERSION }} already exists. Skipping build and publish."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag fastdb4ts-v${{ steps.get_version.outputs.VERSION }} does not exist. Proceeding."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build_package:
+    needs: check_version
+    if: needs.check_version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Emscripten
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          cd "$RUNNER_TEMP/emsdk"
+          ./emsdk install latest
+          ./emsdk activate latest
+          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Install fastdb4ts dependencies
+        run: npm install --prefix ts/fastdb4ts
+
+      - name: Build WASM module
+        run: bash ts/build-wasm.sh
+
+      - name: Run pure TS test suite
+        run: npm run test:ts
+
+      - name: Pack npm tarball
+        run: |
+          cd ts/fastdb4ts
+          npm pack
+
+      - name: Upload npm package artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: fastdb4ts-package
+          path: ts/fastdb4ts/*.tgz
+
+  publish:
+    needs: [check_version, build_package]
+    if: needs.check_version.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download npm package artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: fastdb4ts-package
+          path: dist
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "fastdb4ts-v${{ needs.check_version.outputs.version }}" -m "fastdb4ts v${{ needs.check_version.outputs.version }}"
+          git push origin "fastdb4ts-v${{ needs.check_version.outputs.version }}"
+
+      - name: Set up Node.js for npm publish
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          PACKAGE_TGZ=$(ls dist/*.tgz)
+          npm publish "$PACKAGE_TGZ" --access public

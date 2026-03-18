@@ -1,0 +1,44 @@
+{
+  "name": "fastdb4ts",
+  "version": "0.0.1",
+  "private": false,
+  "description": "TypeScript bindings for fastdb running in the browser via WebAssembly.",
+  "sideEffects": false,
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/world-in-progress/fastdb.git"
+  },
+  "homepage": "https://github.com/world-in-progress/fastdb/tree/main/ts/fastdb4ts",
+  "bugs": {
+    "url": "https://github.com/world-in-progress/fastdb/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && mkdir -p dist/wasm && cp src/wasm/*.js src/wasm/*.d.ts dist/wasm/ && if ls src/wasm/*.wasm >/dev/null 2>&1; then cp src/wasm/*.wasm dist/wasm/; fi",
+    "build:wasm": "bash ../build-wasm.sh",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:ts": "npm run build && node --test ../../tests/ts/*.mjs",
+    "test:serializer": "npm run build && node --test ../../tests/ts/test_fast_serializer.mjs",
+    "test:serializer:interop": "npm run build && node ../tests/test-serializer-interop.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  }
+}
