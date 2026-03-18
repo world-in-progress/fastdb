@@ -1,6 +1,6 @@
 {
   "name": "fastdb4ts",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": false,
   "description": "TypeScript bindings for fastdb running in the browser via WebAssembly.",
   "sideEffects": false,
