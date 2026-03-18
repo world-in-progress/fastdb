@@ -9,7 +9,46 @@ on:
       - main
 
 jobs:
-  test:
+  detect_changes:
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.filter.outputs.core }}
+      python: ${{ steps.filter.outputs.python }}
+      ts: ${{ steps.filter.outputs.ts }}
+      workflow: ${{ steps.filter.outputs.workflow }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            core:
+              - 'fastcarto/**'
+              - 'fastcarto/fastdb/**'
+              - 'fastcarto/CMakeLists.txt'
+              - 'fastcarto/fastdb/CMakeLists.txt'
+              - 'setup.py'
+              - 'pyproject.toml'
+              - 'MANIFEST.in'
+            python:
+              - 'python/**'
+              - 'tests/python/**'
+              - 'py_utils.sh'
+            ts:
+              - 'ts/**'
+              - 'tests/ts/**'
+              - 'package.json'
+            workflow:
+              - '.github/workflows/tests.yml'
+
+  python_tests:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.python == 'true' || needs.detect_changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -23,5 +62,36 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Run tests
-        run: uv run pytest
+      - name: Run Python tests
+        run: uv run pytest tests/python
+
+  ts_tests:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.ts == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Emscripten
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          cd "$RUNNER_TEMP/emsdk"
+          ./emsdk install latest
+          ./emsdk activate latest
+          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Install fastdb4ts dependencies
+        run: npm install --prefix ts/fastdb4ts
+
+      - name: Build WASM module
+        run: bash ts/build-wasm.sh
+
+      - name: Run TypeScript tests
+        run: npm run test:ts

@@ -1,13 +1,25 @@
 {
   "name": "fastdb4ts",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
   "description": "TypeScript bindings for fastdb running in the browser via WebAssembly.",
   "sideEffects": false,
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/world-in-progress/fastdb.git"
+  },
+  "homepage": "https://github.com/world-in-progress/fastdb/tree/main/ts/fastdb4ts",
+  "bugs": {
+    "url": "https://github.com/world-in-progress/fastdb/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
