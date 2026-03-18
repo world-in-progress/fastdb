@@ -1,5 +1,12 @@
 # fastdb4ts 实施方案
 
+## 当前进度
+
+- P0：WASM 构建骨架已完成
+- P1：Embind 核心绑定已完成，并通过真实 WASM smoke test
+- P2：TypeScript 类型系统 + Feature 已完成，并通过纯 TS smoke test
+- Next：P3（ORM + Table + 列访问）
+
 ## 目标
 
 在现有 `fastdb` C++ 内核与 `fastdb4py` Python 绑定基础上，设计并实现一套面向前端浏览器的 TypeScript 绑定：`fastdb4ts`。

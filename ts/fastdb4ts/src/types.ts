@@ -1,0 +1,182 @@
+export type TypedArrayInstance =
+  | Uint8Array
+  | Uint16Array
+  | Uint32Array
+  | Int32Array
+  | Float32Array
+  | Float64Array;
+
+export type TypedArrayConstructor =
+  | Uint8ArrayConstructor
+  | Uint16ArrayConstructor
+  | Uint32ArrayConstructor
+  | Int32ArrayConstructor
+  | Float32ArrayConstructor
+  | Float64ArrayConstructor;
+
+export type ScalarFieldKind =
+  | 'bool'
+  | 'u8'
+  | 'u16'
+  | 'u32'
+  | 'i32'
+  | 'u8n'
+  | 'u16n'
+  | 'f32'
+  | 'f64'
+  | 'str'
+  | 'wstr';
+
+export type FieldKind = ScalarFieldKind | 'ref' | 'bytes';
+
+export interface FieldTypeDef<TKind extends FieldKind = FieldKind> {
+  kind: TKind;
+  originType: number;
+  numeric: boolean;
+  scalar: boolean;
+  normalized: boolean;
+  createDefault(): unknown;
+  arrayCtor?: TypedArrayConstructor;
+}
+
+export interface FeatureClassLike {
+  new (): unknown;
+  name: string;
+  schema?: unknown;
+}
+
+export interface RefFieldDef extends FieldTypeDef<'ref'> {
+  target?: FeatureClassLike | (() => FeatureClassLike);
+}
+
+function makeFieldType<TKind extends FieldKind>(
+  kind: TKind,
+  originType: number,
+  options: {
+    numeric?: boolean;
+    scalar?: boolean;
+    normalized?: boolean;
+    arrayCtor?: TypedArrayConstructor;
+    createDefault: () => unknown;
+  }
+): FieldTypeDef<TKind> {
+  return Object.freeze({
+    kind,
+    originType,
+    numeric: options.numeric ?? false,
+    scalar: options.scalar ?? true,
+    normalized: options.normalized ?? false,
+    arrayCtor: options.arrayCtor,
+    createDefault: options.createDefault,
+  });
+}
+
+export const BOOL = makeFieldType('bool', 1, {
+  numeric: true,
+  scalar: true,
+  arrayCtor: Uint8Array,
+  createDefault: () => false,
+});
+
+export const U8 = makeFieldType('u8', 1, {
+  numeric: true,
+  scalar: true,
+  arrayCtor: Uint8Array,
+  createDefault: () => 0,
+});
+
+export const U16 = makeFieldType('u16', 2, {
+  numeric: true,
+  scalar: true,
+  arrayCtor: Uint16Array,
+  createDefault: () => 0,
+});
+
+export const U32 = makeFieldType('u32', 3, {
+  numeric: true,
+  scalar: true,
+  arrayCtor: Uint32Array,
+  createDefault: () => 0,
+});
+
+export const I32 = makeFieldType('i32', 4, {
+  numeric: true,
+  scalar: true,
+  arrayCtor: Int32Array,
+  createDefault: () => 0,
+});
+
+export const U8N = makeFieldType('u8n', 5, {
+  numeric: true,
+  scalar: true,
+  normalized: true,
+  arrayCtor: Uint8Array,
+  createDefault: () => 0,
+});
+
+export const U16N = makeFieldType('u16n', 6, {
+  numeric: true,
+  scalar: true,
+  normalized: true,
+  arrayCtor: Uint16Array,
+  createDefault: () => 0,
+});
+
+export const F32 = makeFieldType('f32', 7, {
+  numeric: true,
+  scalar: true,
+  arrayCtor: Float32Array,
+  createDefault: () => 0,
+});
+
+export const F64 = makeFieldType('f64', 8, {
+  numeric: true,
+  scalar: true,
+  arrayCtor: Float64Array,
+  createDefault: () => 0,
+});
+
+export const STR = makeFieldType('str', 9, {
+  scalar: true,
+  createDefault: () => '',
+});
+
+export const WSTR = makeFieldType('wstr', 10, {
+  scalar: true,
+  createDefault: () => '',
+});
+
+export const BYTES = makeFieldType('bytes', 12, {
+  scalar: false,
+  createDefault: () => new Uint8Array(0),
+});
+
+export const REF: RefFieldDef = Object.freeze({
+  kind: 'ref',
+  originType: 11,
+  numeric: false,
+  scalar: false,
+  normalized: false,
+  createDefault: () => null,
+});
+
+export type SchemaEntry = FieldTypeDef | RefFieldDef;
+
+export function ref(target?: FeatureClassLike | (() => FeatureClassLike)): RefFieldDef {
+  return Object.freeze({
+    ...REF,
+    target,
+  });
+}
+
+export function isRefField(entry: SchemaEntry): entry is RefFieldDef {
+  return entry.kind === 'ref';
+}
+
+export function isNumericField(entry: SchemaEntry): boolean {
+  return entry.numeric;
+}
+
+export function isScalarField(entry: SchemaEntry): boolean {
+  return entry.scalar;
+}
