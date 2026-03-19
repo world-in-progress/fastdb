@@ -407,7 +407,86 @@ Focused runs:
 ```bash
 uv run pytest tests/python/test_column_way.py
 uv run pytest tests/python/test_fast_serializer.py
+uv run pytest tests/python/test_codegen.py
 ```
+
+## CLI tools
+
+`fastdb4py` registers a `fdb` command-line tool through `[project.scripts]`.
+
+### `fdb codegen --ts` — Generate TypeScript Feature classes
+
+When working with both `fastdb4py` (Python) and `fastdb4ts` (TypeScript), you can use `fdb codegen` to automatically generate TypeScript `Feature` classes from your Python definitions. Python Feature classes serve as the single source of truth — similar to how `.proto` files work in Protocol Buffers, but without an intermediate format.
+
+```bash
+fdb codegen --ts ./features/ ./ts-features/
+```
+
+The tool:
+
+1. **Scans** all `.py` files in the input directory recursively
+2. **Discovers** all `Feature` subclasses (ignoring non-Feature code)
+3. **Analyzes** dependencies, detects cycles, and topologically sorts
+4. **Generates** one `.ts` file per `.py` file, preserving the directory structure
+
+#### Type mapping
+
+| Python | TypeScript schema | TypeScript type |
+|--------|------------------|-----------------|
+| `F64`, `float` | `F64` | `number` |
+| `I32`, `int` | `I32` | `number` |
+| `STR`, `str` | `STR` | `string` |
+| `BOOL`, `bool` | `BOOL` | `boolean` |
+| `BYTES` | `BYTES` | `Uint8Array` |
+| `OtherFeature` | `ref(OtherFeature)` | `OtherFeature \| null` |
+| `List[F64]` | `listOf(F64)` | `number[]` |
+| `List[OtherFeature]` | `listOf(ref(OtherFeature))` | `OtherFeature[]` |
+
+All 12 TypeVar field types (`U8`, `U16`, `U32`, `I32`, `U8N`, `U16N`, `F32`, `F64`, `STR`, `WSTR`, `BYTES`, `BOOL`) and 4 native Python types (`int`, `float`, `str`, `bool`) are supported.
+
+#### Cross-file references
+
+When a class in `scene.py` references a class defined in `geometry.py`, the generated `scene.ts` will include the appropriate relative import:
+
+```typescript
+import { Point } from './geometry.js';
+```
+
+#### Duplicate class names across files
+
+Each `.py` file is treated as an independent module. The same class name (e.g. `Point`) may appear in multiple files — all are generated in their respective `.ts` files without conflict. Within a single file, Python's last-definition-wins rule applies.
+
+#### Circular references
+
+Self-referential and mutually recursive types are detected automatically and use lazy refs:
+
+```python
+class Node(Feature):
+    val: I32
+    next: 'Node'  # forward reference
+```
+
+Generates:
+
+```typescript
+export class Node extends Feature {
+  static schema = defineSchema({
+    val: I32,
+    next: ref(() => Node),  // lazy ref for cycle
+  });
+  declare val: number;
+  declare next: Node | null;
+}
+```
+
+#### Error handling
+
+The tool is designed to be robust:
+
+- **Syntax errors** in a `.py` file are reported and skipped; other files are still processed
+- **Import errors** are similarly skipped with a warning
+- **Undeclared type references** produce a warning; the class is still generated
+- **Non-Feature classes** (plain classes, dataclasses, functions) are silently ignored
 
 ## Development notes
 

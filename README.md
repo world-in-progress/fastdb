@@ -17,6 +17,7 @@ This repository now contains three closely related layers:
 - **Ref-graph support** — Features can reference other Features across tables, forming typed object graphs
 - **Compact binary transport** — save/load databases as binary buffers or files
 - **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and serializer semantics
+- **Schema-driven codegen** — Python Feature classes serve as the single source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
 
 ## Documentation map
 
@@ -24,6 +25,7 @@ This repository now contains three closely related layers:
 - **TypeScript binding (`fastdb4ts`)**: see [`ts/README.md`](ts/README.md)
 - **C++ core (`fastcarto/fastdb`)**: see [`fastcarto/README.md`](fastcarto/README.md)
 - **TypeScript/WASM analysis docs**: see [`ts/analysis/`](ts/analysis/)
+- **Codegen CLI (`fdb codegen`)**: see [CLI tools](#cli-tools) below, or the full reference in [`python/README.md`](python/README.md)
 
 ## Changelog
 
@@ -32,15 +34,17 @@ For historical release notes, see the [GitHub Releases](https://github.com/world
 
 ## Installation
 
+### Python binding (fastdb4py)
+
 ```bash
 pip install fastdb4py
 ```
 
-Pre-compiled Python wheels are provided for major platforms. For TypeScript/WASM usage and repository-local development flows, see the binding-specific guides:
+### TypeScript binding (fastdb4ts)
 
-- [`python/README.md`](python/README.md)
-- [`ts/README.md`](ts/README.md)
-- [`fastcarto/README.md`](fastcarto/README.md)
+```bash
+npm install fastdb4ts
+```
 
 ## Quick start
 
@@ -52,6 +56,56 @@ For a minimal end-to-end example, start with:
 If you are working on native internals or storage layout, start with:
 
 - [`fastcarto/README.md`](fastcarto/README.md)
+
+## CLI tools
+
+`fastdb4py` ships a CLI named `fdb` for cross-language tooling. Currently it provides the `codegen` subcommand.
+
+### `fdb codegen` — Python → TypeScript schema generator
+
+Generate TypeScript `Feature` classes from a directory of Python feature definitions:
+
+```bash
+fdb codegen --ts ./python_features/ ./ts_features/
+```
+
+This mirrors the input directory structure, generating one `.ts` file per `.py` file. Each Python `Feature` subclass becomes a TypeScript class with `defineSchema(...)` and `declare` fields.
+
+Features:
+- All scalar types (`U8`–`F64`, `STR`, `WSTR`, `BYTES`, `BOOL`) and native Python types (`int`, `float`, `str`, `bool`) are mapped automatically
+- Feature references → `ref(ClassName)`, lists of Features → `listOf(ref(ClassName))`
+- Circular/self-referential types → lazy refs `ref(() => ClassName)` detected automatically
+- Cross-file dependencies → relative `import` statements in the generated TypeScript
+- Topological ordering ensures dependency classes are emitted before dependents
+- Same class name in different files is legal — each file is an independent module, all are generated
+
+Example input (`geometry.py`):
+
+```python
+from fastdb4py import Feature, F64, STR
+
+class Point(Feature):
+    x: F64
+    y: F64
+    label: STR
+```
+
+Generated output (`geometry.ts`):
+
+```typescript
+import { F64, Feature, STR, defineSchema } from 'fastdb4ts';
+
+export class Point extends Feature {
+  static schema = defineSchema({
+    x: F64,
+    y: F64,
+    label: STR,
+  });
+  declare x: number;
+  declare y: number;
+  declare label: string;
+}
+```
 
 ## Performance Notes
 
@@ -83,6 +137,7 @@ Common development commands from the repository root:
 ./py_utils.sh --test    # run Python unit tests
 bash ts/build-wasm.sh   # build the WebAssembly module for fastdb4ts
 npm run test:ts         # run root TypeScript tests
+fdb codegen --ts <input_dir> <output_dir>  # generate TypeScript schemas from Python features
 ```
 
 Build requirements depend on the layer you are working on:

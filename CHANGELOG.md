@@ -9,6 +9,12 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb4py -->
 ## fastdb4py (Python binding)
 
+### Added
+- `fdb codegen --ts <input_dir> <output_dir>` CLI command: auto-generates TypeScript `Feature` classes from Python Feature definitions, with full type mapping, cross-file import resolution, cycle detection (lazy refs), and topological ordering.
+
+### Fixed
+- `fdb codegen --ts` no longer warns or skips when the same class name (e.g. `Point`) appears in different `.py` files. Each file is treated as an independent module; all classes are generated in their respective `.ts` files.
+
 ### Historical releases (pre-CHANGELOG)
 
 - **2026-03-17 (Release 0.1.13)**: Added batch scalar field API (`read_all_scalars` / `write_all_scalars`) with up to 12× speedup over per-field access.

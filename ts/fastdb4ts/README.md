@@ -81,6 +81,8 @@ console.log(table.get(1).x); // 2.5
 
 Unlike `fastdb4py`, the TypeScript package uses explicit schema definitions rather than Python annotations.
 
+You can write these schemas by hand, or **auto-generate them** from Python Feature classes using the `fdb codegen` CLI (see [Generating schemas from Python](#generating-schemas-from-python) below).
+
 ```ts
 import {
   F64,
@@ -258,6 +260,24 @@ Serializer interop validation is also available:
 ```bash
 npm --prefix ts/fastdb4ts run test:serializer:interop
 ```
+
+## Generating schemas from Python
+
+If you define your canonical Feature classes in Python (`fastdb4py`), you can generate the equivalent TypeScript schemas automatically using the `fdb codegen` CLI:
+
+```bash
+pip install fastdb4py
+fdb codegen --ts ./python_features/ ./ts_features/
+```
+
+This generates one `.ts` file per `.py` file, with:
+
+- all field types mapped (`F64`, `STR`, `ref(...)`, `listOf(...)`, etc.)
+- cross-file imports resolved to relative paths
+- circular references using lazy refs `ref(() => ClassName)`
+- topological class ordering within each file
+
+See the [Python binding README](../../python/README.md) for full codegen documentation.
 
 ## Repository documentation
 

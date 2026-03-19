@@ -75,6 +75,10 @@ python/fastdb4py/
 │   ├── __init__.py  ORM lifecycle (create/truncate/load/push/share/save/close)
 │   └── table.py     Table[T] + ColumnAccessor + StridedColumn
 ├── serializer.py    FastSerializer (binary object graph serialization)
+├── cli.py           `fdb` CLI entry point
+├── codegen/
+│   ├── __init__.py  Exports run_codegen_ts
+│   └── ts_gen.py    Python→TypeScript code generator (CodegenContext, all phases)
 └── core/            SWIG-generated native bindings — DO NOT EDIT MANUALLY
 ```
 
@@ -90,6 +94,9 @@ uv run pytest
 # Single test file / function
 uv run pytest tests/python/test_column_way.py
 uv run pytest tests/python/test_column_way.py::test_basic_column_access
+
+# Build codegen CLI (no rebuild needed — pure Python)
+uv run fdb codegen --ts <input_dir> <output_dir>
 
 # Benchmark
 uv run python tests/python/benchmark_comprehensive.py --quick
@@ -151,6 +158,32 @@ Key test files in `tests/python/`:
 - `test_shared_memory.py` — ORM create/push/share/load across processes
 - `test_truncate_block.py` — Truncate block operations
 - `test_fast_serializer.py` — FastSerializer (nested objects, cyclic refs, tree structures)
+- `test_codegen.py` — Python→TypeScript codegen CLI (85 tests: discovery, dep graph, generation, edge cases)
+
+### Codegen CLI (`fdb codegen --ts`)
+
+`python/fastdb4py/cli.py` is the `fdb` entry point (registered via `[project.scripts]` in `pyproject.toml`). The `codegen` subcommand generates TypeScript Feature classes from Python:
+
+```bash
+fdb codegen --ts <input_dir> <output_dir>
+```
+
+**Pipeline** (all in `python/fastdb4py/codegen/ts_gen.py`):
+1. **Discovery** — `scan_py_files` → `load_module` → `discover_features` → `discover_all` returns `(file_to_classes, class_to_file, errors)`
+2. **Analysis** — `build_dep_graph` + `topological_sort` (cycle detection → lazy refs)
+3. **Generation** — `generate_class` + `generate_file` → one `.ts` per `.py`
+
+**`CodegenContext`** is the central state object (replaces the old flat `class_registry`):
+- `file_to_classes: Dict[Path, List[Type]]` — classes per source file
+- `class_to_file: Dict[Type, Path]` — reverse mapping
+- `resolve_ctx_for(cls)` — builds a name→class dict scoped to what `cls` can see (same-file siblings first, then module globals, then globally unique names)
+- `canonicalize(cls)` — maps imported class objects to their canonical counterparts via `inspect.getfile()` path matching; handles the module identity problem caused by dynamic loading under `_fdb_codegen.*` prefix
+
+**Duplicate-name semantics**:
+- Same class name in **different files** → both generated independently; no warning (each file is its own module)
+- Same class name **twice in one file** → last definition wins (Python semantics; `discover_features` naturally returns only the last one)
+
+**Do not modify** `python/fastdb4py/core/` — it is SWIG-generated output.
 
 ### Performance optimization
 
@@ -415,3 +448,13 @@ The next changelog entry should replace or follow that placeholder line.
 1. Add a new delimited block to `CHANGELOG.md` following the same `<!-- BEGIN:key -->` / `<!-- END:key -->` pattern.
 2. Create a new release workflow (`.github/workflows/release-<key>.yml`) triggering on the chosen tag prefix.
 3. No other files need to change.
+
+### README ↔ CHANGELOG rule
+
+**Whenever any `README.md` is updated, always analyze whether `CHANGELOG.md` also needs a corresponding entry.**
+
+- If the README change documents a new feature, bug fix, behaviour change, or removal that belongs to one of the tracked bindings (`fastdb4py`, `fastdb4ts`, `fastdb-core`), add a matching bullet under the correct subsection in `CHANGELOG.md` before finishing the task.
+- Use the subsection that matches the nature of the change (`### Added`, `### Fixed`, `### Changed`, `### Removed`, `### Performance`).
+- If the README update is purely cosmetic (e.g. fixing a typo, reformatting, reordering existing content with no semantic change), no CHANGELOG entry is needed.
+- If the change spans multiple bindings, add entries in each relevant section.
+- Apply the same rule in reverse: if `CHANGELOG.md` is updated for a code change, check whether the corresponding README also needs to be updated.
