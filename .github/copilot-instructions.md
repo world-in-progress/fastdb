@@ -323,3 +323,95 @@ A terminal aggregate job named `test` (with `if: always()`) satisfies the branch
 ## Development Environment
 
 Supports DevContainer (see `.devcontainer/devcontainer.example.json`). Requires Docker/Podman + VSCode DevContainer extension.
+
+---
+
+## Changelog
+
+### File location and purpose
+
+`CHANGELOG.md` at the repository root tracks **unreleased / in-progress** changes for each binding independently. It is **not** a historical archive — when a binding is released its section is automatically reset by the corresponding GitHub Actions workflow.
+
+### Section structure
+
+Each binding occupies an independently editable block delimited by HTML comment markers:
+
+```
+<!-- BEGIN:<key> -->
+## <heading>
+
+### <subsection>
+- entry
+
+<!-- END:<key> -->
+```
+
+| Binding | Key | Heading |
+|---|---|---|
+| Python | `fastdb4py` | `## fastdb4py (Python binding)` |
+| TypeScript/WASM | `fastdb4ts` | `## fastdb4ts (TypeScript/WASM binding)` |
+| C++ core | `fastdb-core` | `## fastdb C++ core` |
+
+The `<!-- BEGIN:key -->` and `<!-- END:key -->` delimiters **must not be altered** — the release workflows use them to extract and reset sections.
+
+### How to add a changelog entry
+
+When making a code change that belongs to one (or more) bindings, append a bullet to the appropriate subsection inside that binding's delimited block. Use one of the standard Keep-a-Changelog subsection names:
+
+- `### Added` — new feature or API
+- `### Fixed` — bug fix
+- `### Changed` — behaviour change or refactor
+- `### Removed` — removed feature or API
+- `### Performance` — measurable speedup
+
+Create the subsection heading if it does not already exist. Example:
+
+```markdown
+<!-- BEGIN:fastdb4py -->
+## fastdb4py (Python binding)
+
+### Fixed
+- Corrected `ORM.truncate()` size calculation for layers with >65 535 features.
+
+### Added
+- `Table.iter_reuse()` now accepts an optional `start` parameter.
+<!-- END:fastdb4py -->
+```
+
+If a change affects **multiple bindings** (e.g. a wire-format change in the C++ core that also requires a Python update), add entries in each relevant section.
+
+### Tag convention and release workflow
+
+Releases are independent per binding. Push a tag with the correct prefix to trigger the matching workflow:
+
+| Binding | Tag pattern | Example | Workflow file |
+|---|---|---|---|
+| Python | `py/v*` | `py/v0.1.14` | `.github/workflows/release-py.yml` |
+| TypeScript | `ts/v*` | `ts/v0.2.0` | `.github/workflows/release-ts.yml` |
+| C++ core | `core/v*` | `core/v1.0.0` | `.github/workflows/release-core.yml` |
+
+On tag push the workflow:
+1. Extracts the binding's section from `CHANGELOG.md` (everything between the `BEGIN`/`END` markers, exclusive).
+2. Creates a GitHub Release for the tag using that content as the release body.
+3. Resets the section body to the single placeholder line: `Wait and hope for the best...`
+4. Commits the cleared `CHANGELOG.md` back to the default branch.
+
+### Placeholder after reset
+
+After a release the section will look exactly like this (no bullet, no extra blank lines):
+
+```markdown
+<!-- BEGIN:fastdb4py -->
+## fastdb4py (Python binding)
+
+Wait and hope for the best...
+<!-- END:fastdb4py -->
+```
+
+The next changelog entry should replace or follow that placeholder line.
+
+### Adding a new binding in the future
+
+1. Add a new delimited block to `CHANGELOG.md` following the same `<!-- BEGIN:key -->` / `<!-- END:key -->` pattern.
+2. Create a new release workflow (`.github/workflows/release-<key>.yml`) triggering on the chosen tag prefix.
+3. No other files need to change.
