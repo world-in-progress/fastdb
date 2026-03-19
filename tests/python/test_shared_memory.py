@@ -1,4 +1,4 @@
-import uuid
+import secrets
 import fastdb4py
 from multiprocessing import Process, shared_memory
 
@@ -50,7 +50,9 @@ def verify_shared_data(shm_name: str):
             db.unlink()
 
 def test_shared_memory():
-    shm_name = f"fastdb_test_{uuid.uuid4().hex}"
+    # macOS POSIX shm name limit is 31 chars (PSHMNAMLEN in bsd/sys/posix_shm.h),
+    # much shorter than Linux (255). "fastdb_" (7) + 16 hex chars = 23 chars — safe on all platforms.
+    shm_name = f"fastdb_{secrets.token_hex(8)}"
     
     db = fastdb4py.ORM.create()
     

@@ -394,14 +394,18 @@ def _numeric_list_kind_from_hint(type_hint):
 
     if inner is U32:
         return "u32"
-    if inner is F64:
+    if inner is F64 or inner is float:
         return "f64"
+    if inner is int:
+        return "i32"
 
     if isinstance(inner, str):
         if inner == "U32":
             return "u32"
         if inner == "F64":
             return "f64"
+        if inner in ("I32", "int"):
+            return "i32"
 
     if hasattr(inner, '__forward_arg__'):
         arg = inner.__forward_arg__
@@ -409,6 +413,8 @@ def _numeric_list_kind_from_hint(type_hint):
             return "u32"
         if arg == "F64":
             return "f64"
+        if arg in ("I32", "int"):
+            return "i32"
 
     return None
 
@@ -439,7 +445,7 @@ def _parse_numeric_list_layer_name(layer_name):
         return None
 
     class_name, field_name, kind = parts
-    if kind not in ("u32", "f64"):
+    if kind not in ("u32", "f64", "i32"):
         return None
     return class_name, field_name, kind
 
@@ -457,6 +463,17 @@ def _write_numeric_list_chunk(aux_lb, owner_fid, values, kind):
                 raise ValueError(f"List[U32] item out of range: {iv}")
             normalized.append(iv)
         packed = struct.pack(f'<{len(normalized)}I', *normalized)
+    elif kind == "i32":
+        normalized = []
+        for value in values:
+            iv = int(value)
+            if iv < -0x80000000 or iv > 0x7FFFFFFF:
+                raise OverflowError(
+                    f"list[int] item {iv} out of i32 range [-2147483648, 2147483647]. "
+                    "Use List[U32] for large unsigned values or List[F64] for arbitrary integers."
+                )
+            normalized.append(iv)
+        packed = struct.pack(f'<{len(normalized)}i', *normalized)
     else:
         normalized = [float(value) for value in values]
         packed = struct.pack(f'<{len(normalized)}d', *normalized)
@@ -507,6 +524,12 @@ def _decode_numeric_list_chunk(chunk, kind):
         if count == 0:
             return []
         return list(struct.unpack_from(f'<{count}I', view, 0))
+
+    if kind == "i32":
+        count = chunk.size // 4
+        if count == 0:
+            return []
+        return list(struct.unpack_from(f'<{count}i', view, 0))
 
     count = chunk.size // 8
     if count == 0:

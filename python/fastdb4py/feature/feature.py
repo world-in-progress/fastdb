@@ -6,7 +6,7 @@ from .. import core
 from .base import BaseFeature
 from .utils import parse_defns
 from ._schema import ClassSchema, get_class_schema, _SCHEMA_ATTR
-from ..type import FIELD_TYPE_DEFAULTS, OriginFieldType
+from ..type import FIELD_TYPE_FACTORIES, OriginFieldType
 
 T = TypeVar('T', bound='Feature')
 
@@ -120,7 +120,10 @@ class Feature(BaseFeature):
                 self._get_cache()[name] = default_ref_feature
                 return default_ref_feature
 
-            default_value = FIELD_TYPE_DEFAULTS.get(ft, None)
+            # Use factory to produce a fresh default per field per instance.
+            # Mutable types (list, bytes) get new objects; scalars get CPython singletons.
+            factory = FIELD_TYPE_FACTORIES.get(ft)
+            default_value = factory() if factory is not None else None
             self._get_cache()[name] = default_value
             return default_value
 

@@ -37,6 +37,10 @@ class NumericColumnarLists extends Feature {
   static schema = defineSchema({ ids: listOf(U32), values: listOf(F64) });
 }
 
+class I32ColumnarLists extends Feature {
+  static schema = defineSchema({ counts: listOf(I32), mixed: listOf(I32) });
+}
+
 const p1 = new Point({ x: 1.0, y: 2.0 });
 const p2 = new Point({ x: 3.0, y: 4.0 });
 const line = new Line({ id: 100, points: [p1, p2] });
@@ -75,6 +79,20 @@ const numeric = new NumericColumnarLists({
 const numeric2 = FastSerializer.loads(FastSerializer.dumps(numeric), NumericColumnarLists);
 if (numeric2.ids[5] !== 4294967295 || numeric2.values[2] !== -3.25) {
   throw new Error('Columnar numeric-list roundtrip failed.');
+}
+
+const i32lists = new I32ColumnarLists({
+  counts: [-2147483648, 0, 42, 2147483647],
+  mixed: [-1, 100, -999],
+});
+const i32lists2 = FastSerializer.loads(FastSerializer.dumps(i32lists), I32ColumnarLists);
+if (
+  i32lists2.counts[0] !== -2147483648 ||
+  i32lists2.counts[3] !== 2147483647 ||
+  i32lists2.mixed[0] !== -1 ||
+  i32lists2.mixed[2] !== -999
+) {
+  throw new Error('I32 columnar list roundtrip failed.');
 }
 
 console.log('P4 serializer smoke test passed');

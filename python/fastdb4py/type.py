@@ -62,23 +62,32 @@ FIELD_TYPE_MAP = {
     BYTES:  OriginFieldType.bytes
 }
 
-FIELD_TYPE_DEFAULTS = {
-    OriginFieldType.u8:    0,
-    OriginFieldType.u16:   0,
-    OriginFieldType.u32:   0,
-    OriginFieldType.i32:   0,
-    OriginFieldType.u8n:   0,
-    OriginFieldType.u16n:  0,
-    OriginFieldType.f32:   0.0,
-    OriginFieldType.f64:   0.0,
-    OriginFieldType.str:   '',
-    OriginFieldType.wstr:  '',
-    OriginFieldType.ref:   None,
-    OriginFieldType.bytes: bytes()
+FIELD_TYPE_FACTORIES = {
+    OriginFieldType.u8:    int,
+    OriginFieldType.u16:   int,
+    OriginFieldType.u32:   int,
+    OriginFieldType.i32:   int,
+    OriginFieldType.u8n:   int,
+    OriginFieldType.u16n:  int,
+    OriginFieldType.f32:   float,
+    OriginFieldType.f64:   float,
+    OriginFieldType.str:   str,
+    OriginFieldType.wstr:  str,
+    OriginFieldType.bytes: bytes,
+    OriginFieldType.list:  list,
 }
 
 # Mapping from Python type annotations to OriginFieldType
 def get_origin_type(type_var: type) -> OriginFieldType:
     if get_origin(type_var) is list or type_var is list:
         return OriginFieldType.list
+    # Native Python built-in types map to their closest fastdb counterparts.
+    # Note: Python int is arbitrary precision; i32 is used as a temporary mapping
+    # (range ±2^31-1). A future i64 type is tracked in the project issue tracker.
+    if type_var is int:
+        return OriginFieldType.i32
+    if type_var is float:
+        return OriginFieldType.f64
+    if type_var is str:
+        return OriginFieldType.str
     return FIELD_TYPE_MAP.get(type_var, OriginFieldType.unknown)

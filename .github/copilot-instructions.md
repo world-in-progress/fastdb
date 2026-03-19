@@ -5,12 +5,12 @@
 fastdb is a high-performance columnar storage library with two language bindings that sit on top of a shared C++ core:
 
 ```
-┌─────────────────────┐  ┌──────────────────────────┐
+┌─────────────────────┐  ┌───────────────────────────┐
 │   fastdb4py         │  │   fastdb4ts               │
 │   (Python binding)  │  │   (TypeScript/WASM binding│
 │   pip install       │  │   npm install fastdb4ts)  │
-└────────┬────────────┘  └────────────┬─────────────┘
-         │ SWIG                        │ Emscripten/Embind
+└────────┬────────────┘  └────────────┬──────────────┘
+         │ SWIG                       │ Emscripten/Embind
          └──────────────┬─────────────┘
                         │
            ┌────────────▼────────────┐
