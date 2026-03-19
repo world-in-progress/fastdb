@@ -1,0 +1,62 @@
+name: Release fastdb4ts
+
+on:
+  push:
+    tags:
+      - 'ts/v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout default branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          SECTION=$(awk '/<!-- BEGIN:fastdb4ts -->/,/<!-- END:fastdb4ts -->/' CHANGELOG.md \
+            | sed '1d;$d')
+          echo "SECTION<<EOF" >> $GITHUB_OUTPUT
+          echo "$SECTION" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: fastdb4ts ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.SECTION }}
+
+      - name: Reset changelog section
+        run: |
+          python3 - <<'PYEOF'
+          import re, pathlib
+          path = pathlib.Path("CHANGELOG.md")
+          content = path.read_text()
+          placeholder = (
+              "## fastdb4ts (TypeScript/WASM binding)\n\n"
+              "Wait and hope for the best...\n"
+          )
+          content = re.sub(
+              r"(?<=<!-- BEGIN:fastdb4ts -->\n).*?(?=<!-- END:fastdb4ts -->)",
+              placeholder,
+              content,
+              flags=re.DOTALL
+          )
+          path.write_text(content)
+          PYEOF
+
+      - name: Commit and push cleared changelog
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore: reset fastdb4ts changelog after ${{ github.ref_name }} release"
+          git push
