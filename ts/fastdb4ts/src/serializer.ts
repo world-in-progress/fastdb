@@ -10,7 +10,7 @@ import { isListField, isRefField, type FeatureClassLike, type FieldTypeDef } fro
 
 const NUMERIC_LIST_LAYER_PREFIX = '__fastser_list__|';
 
-type NumericListKind = 'u32' | 'f64';
+type NumericListKind = 'u32' | 'f64' | 'i32';
 
 interface ObjectWrapper {
   obj: Feature;
@@ -366,6 +366,8 @@ function getSerializerSchema(ctor: FeatureClassLike): SerializerSchema {
         numericFieldKinds.set(field.name, 'u32');
       } else if (isFieldType(item) && item.kind === 'f64') {
         numericFieldKinds.set(field.name, 'f64');
+      } else if (isFieldType(item) && item.kind === 'i32') {
+        numericFieldKinds.set(field.name, 'i32');
       }
       dbFieldIndexBySchema.set(field.index, -1);
       continue;
@@ -543,6 +545,18 @@ function writeNumericListChunk(
         view.setUint32(index * 4, iv, true);
       });
       payload = new Uint8Array(view.buffer);
+    } else if (kind === 'i32') {
+      const view = new DataView(new ArrayBuffer(list.length * 4));
+      list.forEach((entry, index) => {
+        const iv = Math.trunc(Number(entry));
+        if (iv < -0x80000000 || iv > 0x7fffffff) {
+          throw new FastdbUsageError(
+            `list[int] item ${entry} out of i32 range [-2147483648, 2147483647].`
+          );
+        }
+        view.setInt32(index * 4, iv, true);
+      });
+      payload = new Uint8Array(view.buffer);
     } else {
       const view = new DataView(new ArrayBuffer(list.length * 8));
       list.forEach((entry, index) => {
@@ -594,9 +608,18 @@ function decodeNumericListChunk(chunk: Uint8Array, kind: NumericListKind): unkno
 
   const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
   const out: number[] = [];
-  const step = kind === 'u32' ? 4 : 8;
-  for (let offset = 0; offset < chunk.length; offset += step) {
-    out.push(kind === 'u32' ? view.getUint32(offset, true) : view.getFloat64(offset, true));
+  if (kind === 'u32') {
+    for (let offset = 0; offset < chunk.length; offset += 4) {
+      out.push(view.getUint32(offset, true));
+    }
+  } else if (kind === 'i32') {
+    for (let offset = 0; offset < chunk.length; offset += 4) {
+      out.push(view.getInt32(offset, true));
+    }
+  } else {
+    for (let offset = 0; offset < chunk.length; offset += 8) {
+      out.push(view.getFloat64(offset, true));
+    }
   }
   return out;
 }
@@ -616,7 +639,7 @@ function parseNumericListLayerName(
     return null;
   }
   const [className, fieldName, kind] = parts;
-  if (kind !== 'u32' && kind !== 'f64') {
+  if (kind !== 'u32' && kind !== 'f64' && kind !== 'i32') {
     return null;
   }
   return { className, fieldName, kind };
@@ -722,48 +745,56 @@ class ByteWriter {
 
 class ByteReader {
   private offset = 0;
+  private readonly view: DataView;
 
-  constructor(private readonly bytes: Uint8Array) {}
+  constructor(private readonly bytes: Uint8Array) {
+    this.view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+
+  private checkRead(size: number): void {
+    if (this.offset + size > this.bytes.byteLength) {
+      throw new FastdbRuntimeError(
+        `ByteReader: attempted to read ${size} byte(s) at offset ${this.offset}, ` +
+          `but buffer length is ${this.bytes.byteLength}. The buffer may be truncated or corrupted.`
+      );
+    }
+  }
 
   readU16(): number {
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getUint16(
-      this.offset,
-      true
-    );
+    this.checkRead(2);
+    const value = this.view.getUint16(this.offset, true);
     this.offset += 2;
     return value;
   }
 
   readU32(): number {
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getUint32(
-      this.offset,
-      true
-    );
+    this.checkRead(4);
+    const value = this.view.getUint32(this.offset, true);
     this.offset += 4;
     return value;
   }
 
   readI32(): number {
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getInt32(
-      this.offset,
-      true
-    );
+    this.checkRead(4);
+    const value = this.view.getInt32(this.offset, true);
     this.offset += 4;
     return value;
   }
 
   readF64(): number {
-    const value = new DataView(this.bytes.buffer, this.bytes.byteOffset, this.bytes.byteLength).getFloat64(
-      this.offset,
-      true
-    );
+    this.checkRead(8);
+    const value = this.view.getFloat64(this.offset, true);
     this.offset += 8;
     return value;
   }
 
   readBytes(size: number): Uint8Array {
+    this.checkRead(size);
     const out = this.bytes.slice(this.offset, this.offset + size);
     this.offset += size;
     return out;
   }
 }
+
+// Exported for unit testing only — not part of the public API.
+export { ByteReader, ByteWriter };

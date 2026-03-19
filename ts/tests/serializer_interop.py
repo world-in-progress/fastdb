@@ -11,6 +11,8 @@ from fastdb4py import F64, I32, U32, FastSerializer, Feature
 TMP_DIR = Path(__file__).resolve().parent / ".tmp"
 PY_TO_TS_PATH = TMP_DIR / "python-to-ts.bin"
 TS_TO_PY_PATH = TMP_DIR / "ts-to-python.bin"
+PY_I32_TO_TS_PATH = TMP_DIR / "python-i32-to-ts.bin"
+TS_I32_TO_PY_PATH = TMP_DIR / "ts-i32-to-py.bin"
 
 
 class Point(Feature):
@@ -33,11 +35,23 @@ class NumericColumnarLists(Feature):
     values: List[F64]
 
 
+# Uses Python's native list[int] annotation — must interop with TS listOf(I32)
+class NativeIntList(Feature):
+    counts: List[int]
+
+
 def write_python_fixture() -> None:
     TMP_DIR.mkdir(parents=True, exist_ok=True)
     obj = Line(id=42, points=[Point(x=1.5, y=2.5), Point(x=3.5, y=4.5)])
     PY_TO_TS_PATH.write_bytes(FastSerializer.dumps(obj))
     print(f"wrote {PY_TO_TS_PATH}")
+
+
+def write_python_i32_fixture() -> None:
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    obj = NativeIntList(counts=[-2147483648, 0, 42, 2147483647])
+    PY_I32_TO_TS_PATH.write_bytes(FastSerializer.dumps(obj))
+    print(f"wrote {PY_I32_TO_TS_PATH}")
 
 
 def verify_ts_fixture() -> None:
@@ -60,9 +74,19 @@ def verify_ts_fixture() -> None:
     print(f"verified {TS_TO_PY_PATH}")
 
 
+def verify_ts_i32_fixture() -> None:
+    obj = FastSerializer.loads(TS_I32_TO_PY_PATH.read_bytes(), NativeIntList)
+    assert obj.counts == [-2147483648, -1, 0, 42, 2147483647], f"Got: {obj.counts}"
+    print(f"verified {TS_I32_TO_PY_PATH}")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
-        print("usage: serializer_interop.py [write-python-fixture|verify-ts-fixture]", file=sys.stderr)
+        print(
+            "usage: serializer_interop.py [write-python-fixture|verify-ts-fixture|"
+            "write-python-i32-fixture|verify-ts-i32-fixture]",
+            file=sys.stderr,
+        )
         return 2
 
     command = sys.argv[1]
@@ -71,6 +95,12 @@ def main() -> int:
         return 0
     if command == "verify-ts-fixture":
         verify_ts_fixture()
+        return 0
+    if command == "write-python-i32-fixture":
+        write_python_i32_fixture()
+        return 0
+    if command == "verify-ts-i32-fixture":
+        verify_ts_i32_fixture()
         return 0
 
     print(f"unknown command: {command}", file=sys.stderr)

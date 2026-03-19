@@ -1,12 +1,15 @@
 [project]
 name = "fastdb4py"
-version = "0.1.13"
+version = "0.1.14"
 description = "FastCarto database bindings"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
 ]
+
+[project.scripts]
+fdb = "fastdb4py.cli:main"
 
 [build-system]
 requires = [

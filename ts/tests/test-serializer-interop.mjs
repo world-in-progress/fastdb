@@ -21,6 +21,8 @@ const repoRoot = path.resolve(testsDir, '../..');
 const tmpDir = path.join(testsDir, '.tmp');
 const pyToTsPath = path.join(tmpDir, 'python-to-ts.bin');
 const tsToPyPath = path.join(tmpDir, 'ts-to-python.bin');
+const pyI32ToTsPath = path.join(tmpDir, 'python-i32-to-ts.bin');
+const tsI32ToPyPath = path.join(tmpDir, 'ts-i32-to-py.bin');
 
 class Point extends Feature {
   static schema = defineSchema({ x: F64, y: F64 });
@@ -36,6 +38,10 @@ class RecursiveNode extends Feature {
 
 class NumericColumnarLists extends Feature {
   static schema = defineSchema({ ids: listOf(U32), values: listOf(F64) });
+}
+
+class NativeIntList extends Feature {
+  static schema = defineSchema({ counts: listOf(I32) });
 }
 
 function runUvPython(command) {
@@ -59,6 +65,19 @@ try {
     throw new Error('Python->TS serializer interop failed.');
   }
 
+  // i32 list interop: Python list[int] → TS listOf(I32)
+  runUvPython('write-python-i32-fixture');
+  const i32obj = FastSerializer.loads(fs.readFileSync(pyI32ToTsPath), NativeIntList);
+  if (
+    i32obj.counts.length !== 4 ||
+    i32obj.counts[0] !== -2147483648 ||
+    i32obj.counts[1] !== 0 ||
+    i32obj.counts[2] !== 42 ||
+    i32obj.counts[3] !== 2147483647
+  ) {
+    throw new Error(`Python list[int] -> TS listOf(I32) interop failed. Got: ${JSON.stringify(i32obj.counts)}`);
+  }
+
   const n1 = new RecursiveNode({ val: 7 });
   const n2 = new RecursiveNode({ val: 8 });
   n1.next = n2;
@@ -76,6 +95,12 @@ try {
   fs.writeFileSync(tsToPyPath, Buffer.concat([header, Buffer.from(cycleBytes), Buffer.from(numericBytes)]));
 
   runUvPython('verify-ts-fixture');
+
+  // i32 list interop: TS listOf(I32) → Python list[int]
+  const tsI32 = new NativeIntList({ counts: [-2147483648, -1, 0, 42, 2147483647] });
+  fs.writeFileSync(tsI32ToPyPath, Buffer.from(FastSerializer.dumps(tsI32)));
+  runUvPython('verify-ts-i32-fixture');
+
   console.log('P4 serializer interop test passed');
 } finally {
   fs.rmSync(tmpDir, { recursive: true, force: true });

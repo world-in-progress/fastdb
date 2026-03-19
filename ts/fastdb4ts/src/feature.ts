@@ -211,9 +211,10 @@ function writeMappedField(feature: Feature, def: SchemaFieldDefinition, value: u
     return;
   }
 
-  throw new FastdbUsageError(
-    `Direct writes to db-mapped field "${def.name}" of type "${entry.kind}" are not supported yet.`
-  );
+  // For str/wstr/bytes/list: WxFeatureHandle does not support writing these types back
+  // to the underlying WASM storage on an immutable database. Fall back to in-memory cache
+  // only — changes are not persisted across toBuffer() / fromBuffer() round-trips.
+  feature._getCache()[def.name] = value;
 }
 
 function writeRefField(
@@ -244,8 +245,9 @@ function writeRefField(
 
 function createDefaultValue(def: SchemaFieldDefinition): unknown {
   const entry = def.entry;
-  if (isRefField(entry) && def.target) {
-    return createFeature(def.target as FeatureClass);
+  if (isRefField(entry)) {
+    // Ref fields default to null to avoid infinite recursion for self-referential schemas.
+    return null;
   }
   return entry.createDefault();
 }

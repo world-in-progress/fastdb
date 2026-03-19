@@ -340,7 +340,13 @@ class ORM:
             self._origin = None
     
     def share(self, shm_name: str, close_after: bool = False):
-        """Share the database in shared memory."""
+        """
+        Share the database in shared memory.
+        
+        Note:
+            macOS enforces PSHMNAMLEN = 31 chars for POSIX shm names (bsd/sys/posix_shm.h), much shorter than Linux (255).
+            Keep names under 31 chars to stay cross-platform.
+        """
         if self._origin is None:
             raise RuntimeError('Database is empty, cannot share.')
         if isinstance(self._origin, core.WxDatabaseBuild):

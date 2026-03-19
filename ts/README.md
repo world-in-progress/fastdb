@@ -294,6 +294,17 @@ Examples of deliberate differences:
 
 The goal is semantic compatibility where it matters, especially in schema layout and `FastSerializer` protocol behavior.
 
+### Generating TypeScript schemas from Python
+
+If you define your Feature classes in Python and want to keep TypeScript schemas in sync automatically, use the `fdb codegen` CLI shipped with `fastdb4py`:
+
+```bash
+pip install fastdb4py  # or: uv pip install -e . from repo root
+fdb codegen --ts ./python_features/ ./ts_features/
+```
+
+This generates one `.ts` file per `.py` file, with cross-file imports, topological ordering, and automatic lazy-ref detection for circular references. See [`python/README.md`](../python/README.md) for full documentation.
+
 ## Contributor notes
 
 - keep Embind-only code isolated in `ts/embind/`

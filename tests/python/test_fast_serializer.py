@@ -45,6 +45,17 @@ class NumericColumnarLists(Feature):
     ids: List[U32]
     values: List[F64]
 
+# Native Python type annotation classes (no TypeVar aliases)
+class NativeScalars(Feature):
+    count: int
+    ratio: float
+    label: str
+
+class NativeLists(Feature):
+    ints: List[int]
+    floats: List[float]
+    names: List[str]
+
 class TestFastSerializer(unittest.TestCase):
     def test_simple_object(self):
         p = Point(x=1.0, y=2.0)
@@ -177,6 +188,41 @@ class TestFastSerializer(unittest.TestCase):
         self.assertAlmostEqual(payload2.values[2], -3.25)
         self.assertAlmostEqual(payload2.values[3], 1e-6)
         self.assertAlmostEqual(payload2.values[4], 1e6)
+
+    def test_native_scalar_types(self):
+        """Native Python int/float/str annotations round-trip correctly."""
+        obj = NativeScalars(count=42, ratio=3.14, label="hello")
+        data = FastSerializer.dumps(obj)
+        obj2 = FastSerializer.loads(data, NativeScalars)
+        self.assertEqual(obj2.count, 42)
+        self.assertAlmostEqual(obj2.ratio, 3.14)
+        self.assertEqual(obj2.label, "hello")
+
+    def test_native_list_types(self):
+        """List[int], List[float], List[str] with native annotations round-trip correctly."""
+        obj = NativeLists(
+            ints=[-2147483648, 0, 42, 2147483647],
+            floats=[1.5, -3.25, 0.0, 1e12],
+            names=["alpha", "beta", "你好"],
+        )
+        data = FastSerializer.dumps(obj)
+        obj2 = FastSerializer.loads(data, NativeLists)
+
+        self.assertEqual(obj2.ints, [-2147483648, 0, 42, 2147483647])
+        self.assertEqual(len(obj2.floats), 4)
+        self.assertAlmostEqual(obj2.floats[0], 1.5)
+        self.assertAlmostEqual(obj2.floats[1], -3.25)
+        self.assertEqual(obj2.names, ["alpha", "beta", "你好"])
+
+    def test_native_list_int_overflow(self):
+        """list[int] raises OverflowError for values outside i32 range."""
+        obj = NativeLists(ints=[2**31], floats=[], names=[])
+        with self.assertRaises(OverflowError):
+            FastSerializer.dumps(obj)
+
+        obj2 = NativeLists(ints=[-2**31 - 1], floats=[], names=[])
+        with self.assertRaises(OverflowError):
+            FastSerializer.dumps(obj2)
 
 if __name__ == '__main__':
     unittest.main()

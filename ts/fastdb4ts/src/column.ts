@@ -136,6 +136,10 @@ export class StridedColumn {
   }
 
   private getDataView(): DataView {
+    // Always access HEAPU8.buffer fresh: if WASM memory grows, Emscripten replaces
+    // module.HEAPU8 with a new typed array. The linear-memory addresses stored in
+    // basePtr remain valid (they are indices into the linear address space), but
+    // any previously captured ArrayBuffer reference becomes detached.
     return new DataView(this.module.HEAPU8.buffer);
   }
 }

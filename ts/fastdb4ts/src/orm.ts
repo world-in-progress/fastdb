@@ -31,6 +31,7 @@ export class ORM {
   private readonly module: FastdbModule;
   private origin: DatabaseOrigin;
   private readonly tableMap = new Map<string, Table<Feature>>();
+  private _closed = false;
 
   private constructor(origin: DatabaseOrigin, module: FastdbModule) {
     this.origin = origin;
@@ -42,15 +43,14 @@ export class ORM {
   }
 
   static create(): ORM {
-    const module = getInitializedFastdbModule();
+    const module = ORM.getModule();
     const origin = new module.WxDatabaseBuild();
     origin.begin('');
     return new ORM(origin, module);
   }
 
   static truncate(defns: TableDefn<Feature>[]): ORM {
-    const orm = ORM.create();
-    const build = orm.getBuildOrigin();
+    const orm = ORM.create();    const build = orm.getBuildOrigin();
     for (const defn of defns) {
       if (defn.capacity <= 0) {
         throw new FastdbUsageError('Table capacity must be positive.');
@@ -68,7 +68,7 @@ export class ORM {
   }
 
   static fromBuffer(data: Uint8Array | ArrayBuffer): ORM {
-    const module = getInitializedFastdbModule();
+    const module = ORM.getModule();
     const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
     const ptr = module._malloc(bytes.byteLength);
     try {
@@ -179,6 +179,24 @@ export class ORM {
     }
 
     throw new FastdbRuntimeError(`Table "${tableName}" not found.`);
+  }
+
+  /** Release WASM resources held by this ORM. Idempotent — safe to call multiple times. */
+  close(): void {
+    if (this._closed) return;
+    this._closed = true;
+    this.tableMap.clear();
+    this.origin.delete();
+  }
+
+  private static getModule(): FastdbModule {
+    try {
+      return getInitializedFastdbModule();
+    } catch {
+      throw new FastdbRuntimeError(
+        'fastdb4ts has not been initialized. Call `await initFastdb()` before creating an ORM.'
+      );
+    }
   }
 
   private getBuildOrigin(): WxDatabaseBuildHandle {

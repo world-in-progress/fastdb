@@ -17,6 +17,7 @@ This repository now contains three closely related layers:
 - **Ref-graph support** — Features can reference other Features across tables, forming typed object graphs
 - **Compact binary transport** — save/load databases as binary buffers or files
 - **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and serializer semantics
+- **Schema-driven codegen** — Python Feature classes serve as the single source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
 
 ## Documentation map
 
@@ -24,32 +25,26 @@ This repository now contains three closely related layers:
 - **TypeScript binding (`fastdb4ts`)**: see [`ts/README.md`](ts/README.md)
 - **C++ core (`fastcarto/fastdb`)**: see [`fastcarto/README.md`](fastcarto/README.md)
 - **TypeScript/WASM analysis docs**: see [`ts/analysis/`](ts/analysis/)
+- **Codegen CLI (`fdb codegen`)**: see [CLI tools](#cli-tools) below, or the full reference in [`python/README.md`](python/README.md)
 
-## What's new
+## Changelog
 
-- **2026-03-18 (Documentation refresh)**: Reorganized binding-specific documentation into dedicated subdirectory READMEs. The root README now focuses on project-level overview, while detailed Python, TypeScript/WASM, and C++ core documentation lives in `python/README.md`, `ts/README.md`, and `fastcarto/README.md`.
-- **2026-03-18 (fastdb4ts rollout)**: Added the `fastdb4ts` TypeScript/WebAssembly binding, including isolated Emscripten build infrastructure, Embind bridge layer, ORM/table/column APIs, graph serializer support, root-level TypeScript tests, npm packaging flow, and scoped CI for Python/TS/core changes.
-- **2026-03-17 (Release 0.1.13)**: Fixed two C++ correctness bugs in the batch field read/write API: (1) `getFieldsAsDoubles` now correctly handles U8/U16/U32/I32 fields (previously returned NAN); (2) `set_field_value_t` now correctly writes U16N normalized fields (missing `memcpy` caused silent data loss). Also added batch scalar field API (`read_all_scalars` / `write_all_scalars`) with up to 12× speedup over per-field access.
-- **2026-03-04 (Release 0.1.12)**: Fixed a critical issue where loading large database files (> 2GB) on Linux/Unix systems would fail to read the complete file, leading to missing tables or data corruption. The file reading logic has been improved to correctly handle partial reads for large files. (PR #23)
-- **2026-03-04 (Memory Overflow Improvement)**: Enhanced the `MemoryStream` implementation to handle large data sizes exceeding 4GB without causing size overflow in `chunk_data_t.size` (u32). This improvement allows for more robust handling of large datasets in memory. (PR #22)
-- **2026-02-28 (Release Improvement)**: Fix bugs related to build process in Windows. (PR #20)
-- **2025-12-31 (Bug Fix)**: Fixed an issue where shared memory segments were not being properly unregistered from the resource tracker upon closing, which could lead to resource leaks. (PR #17)
-- **2025-12-15 (Release Improvement)**: Enabled distribution of pre-compiled binary wheels for macOS (Intel/Apple Silicon) and Linux (x86_64/aarch64), eliminating the need for local compilation tools during installation. (PR #15)
-- **2025-12-10 (Bug Fix)**: Fixed the data type mapping for `U32` fields in Python bindings to ensure correct representation as unsigned 32-bit integers in NumPy arrays. (PR #13)
-- **2025-12-10 (Bug Fix)**: Fixed an out-of-bounds access issue in `FastVectorDbLayer::Impl::getFieldOffset()` when the field index is equal to the field count. (PR #12)
-- **2025-12-10 (Performance Improvement)**: Modified `ORM.truncate()` to support directly allocating features without initializing them for performance consideration. Note that this change may have side effects; please test thoroughly. (PR #11)
+See [CHANGELOG.md](CHANGELOG.md) for per-binding unreleased changes.  
+For historical release notes, see the [GitHub Releases](https://github.com/world-in-progress/fastdb/releases) page.
 
 ## Installation
+
+### Python binding (fastdb4py)
 
 ```bash
 pip install fastdb4py
 ```
 
-Pre-compiled Python wheels are provided for major platforms. For TypeScript/WASM usage and repository-local development flows, see the binding-specific guides:
+### TypeScript binding (fastdb4ts)
 
-- [`python/README.md`](python/README.md)
-- [`ts/README.md`](ts/README.md)
-- [`fastcarto/README.md`](fastcarto/README.md)
+```bash
+npm install fastdb4ts
+```
 
 ## Quick start
 
@@ -61,6 +56,56 @@ For a minimal end-to-end example, start with:
 If you are working on native internals or storage layout, start with:
 
 - [`fastcarto/README.md`](fastcarto/README.md)
+
+## CLI tools
+
+`fastdb4py` ships a CLI named `fdb` for cross-language tooling. Currently it provides the `codegen` subcommand.
+
+### `fdb codegen` — Python → TypeScript schema generator
+
+Generate TypeScript `Feature` classes from a directory of Python feature definitions:
+
+```bash
+fdb codegen --ts ./python_features/ ./ts_features/
+```
+
+This mirrors the input directory structure, generating one `.ts` file per `.py` file. Each Python `Feature` subclass becomes a TypeScript class with `defineSchema(...)` and `declare` fields.
+
+Features:
+- All scalar types (`U8`–`F64`, `STR`, `WSTR`, `BYTES`, `BOOL`) and native Python types (`int`, `float`, `str`, `bool`) are mapped automatically
+- Feature references → `ref(ClassName)`, lists of Features → `listOf(ref(ClassName))`
+- Circular/self-referential types → lazy refs `ref(() => ClassName)` detected automatically
+- Cross-file dependencies → relative `import` statements in the generated TypeScript
+- Topological ordering ensures dependency classes are emitted before dependents
+- Same class name in different files is legal — each file is an independent module, all are generated
+
+Example input (`geometry.py`):
+
+```python
+from fastdb4py import Feature, F64, STR
+
+class Point(Feature):
+    x: F64
+    y: F64
+    label: STR
+```
+
+Generated output (`geometry.ts`):
+
+```typescript
+import { F64, Feature, STR, defineSchema } from 'fastdb4ts';
+
+export class Point extends Feature {
+  static schema = defineSchema({
+    x: F64,
+    y: F64,
+    label: STR,
+  });
+  declare x: number;
+  declare y: number;
+  declare label: string;
+}
+```
 
 ## Performance Notes
 
@@ -92,6 +137,7 @@ Common development commands from the repository root:
 ./py_utils.sh --test    # run Python unit tests
 bash ts/build-wasm.sh   # build the WebAssembly module for fastdb4ts
 npm run test:ts         # run root TypeScript tests
+fdb codegen --ts <input_dir> <output_dir>  # generate TypeScript schemas from Python features
 ```
 
 Build requirements depend on the layer you are working on:
