@@ -30,6 +30,3 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
 python_files = ["test_*.py", "tests_*.py", "*_test.py"]
-
-[tool.cibuildwheel]
-free-threaded-support = true
