@@ -1,5 +1,6 @@
 import os
 import sys
+import sysconfig
 import subprocess
 import shutil
 from setuptools import setup, Extension, find_packages
@@ -30,6 +31,10 @@ class CMakeBuild(build_ext):
             '-DCMAKE_BUILD_TYPE=Release',
             '-DBUILD_TOOLS=OFF',
         ]
+
+        # Free-threaded Python (PEP 703): pass Py_GIL_DISABLED to C++ compilation
+        if sysconfig.get_config_var('Py_GIL_DISABLED'):
+            cmake_args.append('-DPy_GIL_DISABLED=1')
 
         if sys.platform == 'darwin':
             # Handle macOS architecture flags set by cibuildwheel (e.g. ARCHFLAGS="-arch x86_64")

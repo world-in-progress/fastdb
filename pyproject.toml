@@ -1,6 +1,6 @@
 [project]
 name = "fastdb4py"
-version = "0.1.14"
+version = "0.1.15"
 description = "FastCarto database bindings"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -17,7 +17,7 @@ requires = [
     "wheel",
     "numpy",
     "cmake>=3.16",
-    "swig>=4.0"
+    "swig>=4.4"
 ]
 build-backend = "setuptools.build_meta"
 
@@ -30,3 +30,6 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
 python_files = ["test_*.py", "tests_*.py", "*_test.py"]
+
+[tool.cibuildwheel]
+free-threaded-support = true

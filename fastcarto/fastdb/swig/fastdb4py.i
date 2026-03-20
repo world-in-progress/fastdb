@@ -9,6 +9,16 @@
 // Tell SWIG to ignore fastdb_api when parsing headers
 #define fastdb_api
 
+// Release the GIL for pure C++ operations that do not touch Python objects.
+// This benefits both standard Python (better multi-threaded throughput) and
+// free-threaded Python 3.13+ (PEP 703).
+%feature("threadallow") wx::FastVectorDb::load;
+%feature("threadallow") wx::FastVectorDbBuild::post;
+%feature("threadallow") wx::FastVectorDbBuild::save;
+%feature("threadallow") wx::FastVectorDbBuild::truncate;
+%feature("threadallow") wx::FastVectorDbFeature::getFieldsAsDoubles;
+%feature("threadallow") wx::FastVectorDbFeature::setFieldsFromDoubles;
+
 %include "typemaps.i"
 %include "cstring.i"
 %include "cpointer.i"
@@ -16,6 +26,8 @@
 %include "numpy.i"  // 包含 numpy.i 支持
 %init %{
     import_array(); // 初始化 NumPy C-API
+    // Free-threading support (PEP 703) is handled by SWIG 4.4+ via the -nogil flag.
+    // When built on free-threaded Python, SWIG automatically declares Py_MOD_GIL_NOT_USED.
 %}
 
 //%array_class(point2_t, LineString);
@@ -188,8 +200,10 @@
             return -1;
         }
         
-        // direct memory copy - fastest way
+        // direct memory copy with GIL released for better threading throughput
+        Py_BEGIN_ALLOW_THREADS
         memcpy(view.buf, $self->pdata, $self->size);
+        Py_END_ALLOW_THREADS
         
         PyBuffer_Release(&view);
         return 0;

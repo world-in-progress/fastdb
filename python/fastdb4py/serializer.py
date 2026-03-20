@@ -319,7 +319,7 @@ class _LoadContext:
 
             # Recover numeric lists from dedicated auxiliary layers (columnar fast-path)
             if numeric_kind is not None:
-                obj._get_cache()[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
+                obj._cache[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
                 continue
 
             # Recover complex types from Blob
@@ -328,7 +328,7 @@ class _LoadContext:
                     # Debug print
                     # print(f"DEBUG: Unpacking list field {fn} at offset {curr_blob_offset}")
                     val, new_offset = _unpack_list(blob_view, curr_blob_offset, hints.get(fn, Any), self)
-                    obj._get_cache()[fn] = val
+                    obj._cache[fn] = val
                     # print(f"DEBUG: New offset {new_offset}")
                     curr_blob_offset = new_offset
             elif ft == OriginFieldType.bytes:
@@ -336,7 +336,7 @@ class _LoadContext:
                     cnt = struct.unpack_from('<I', blob_view, curr_blob_offset)[0]
                     curr_blob_offset += 4
                     val = bytes(blob_view[curr_blob_offset:curr_blob_offset+cnt])
-                    obj._get_cache()[fn] = val
+                    obj._cache[fn] = val
                     curr_blob_offset += cnt
             elif ft == OriginFieldType.ref:
                 # Recover ref from Blob (better for cyclic refs and opacity handling)
@@ -347,9 +347,9 @@ class _LoadContext:
                         # Recursive fetch
                         # Get hint for ref type
                         ref_type = hints.get(fn, Feature)
-                        obj._get_cache()[fn] = self.get_object(l_idx_ref, f_idx_ref, ref_type)
+                        obj._cache[fn] = self.get_object(l_idx_ref, f_idx_ref, ref_type)
                     else:
-                        obj._get_cache()[fn] = None
+                        obj._cache[fn] = None
             else:
                 # Recover scalar from Column
                 db_idx = _get_db_field_index_for_load(cls, idx)
@@ -365,7 +365,7 @@ class _LoadContext:
                         val = feature_data.get_field_as_wstring(db_idx)
 
                     if val is not None:
-                        obj._get_cache()[fn] = val
+                        obj._cache[fn] = val
 
         return obj
 
@@ -685,10 +685,6 @@ def _discover_types(cls, type_map):
                  except: pass
 
 def _get_class_schema(cls):
-    schema = _CLASS_SCHEMA_CACHE.get(cls)
-    if schema is not None:
-        return schema
-
     with _CLASS_SCHEMA_CACHE_LOCK:
         schema = _CLASS_SCHEMA_CACHE.get(cls)
         if schema is not None:

@@ -44,7 +44,8 @@ if (NOT is_emscripten)
             OUTPUT ${SWIG_GENERATED_DIR}/fastdb4py_wrap.cxx 
                 ${SWIG_GENERATED_DIR}/fastdb4py.py
             COMMAND ${CMAKE_COMMAND} -E make_directory ${SWIG_GENERATED_DIR}
-            COMMAND swig -c++ -python 
+            COMMAND swig -c++ -python
+                    $<$<BOOL:${Py_GIL_DISABLED}>:-nogil>
                     -I${PROJECT_DIR}/include
                     -I${PROJECT_DIR}/swig
                     -outdir ${SWIG_GENERATED_DIR}

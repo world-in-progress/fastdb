@@ -125,6 +125,45 @@ export class Point extends Feature {
 - **Iterate and process all fields per row** → `table.iter_reuse()` + `feat.read_all_scalars()`
 - **Sparse random access** → `table[i].field`
 
+## Free-threaded Python (PEP 703)
+
+`fastdb4py` includes preliminary support for Python 3.13+ free-threaded builds (`python3.13t`).
+
+### Thread-safety guarantees
+
+| Component | Thread-safe? | Notes |
+|---|---|---|
+| Module-level caches (`get_class_schema`, serializer schema) | ✅ Yes | Protected by `threading.Lock`; safe under both GIL and free-threaded builds |
+| `ColumnAccessor` column cache (`table.column.x`) | ✅ Yes | Cold path (first access) is lock-protected; hot path (cache hit) is lock-free |
+| `Feature` instances | ❌ No | Instance-level `_cache` dict is not synchronized — use external locking or one instance per thread |
+| `ORM` / `Table` instances | ❌ No | Not designed for concurrent mutation — create separate ORM instances per thread, or synchronize externally |
+| SWIG C++ calls | ✅ Yes | Long-running pure C++ operations release the GIL via `%feature("threadallow")` |
+
+### Recommended patterns for multi-threaded code
+
+```python
+# ✅ Good: each thread owns its own ORM view
+def worker():
+    orm = ORM.truncate([TableDefn(Point, 1000)])
+    tbl = orm[Point][Point]
+    tbl.fill(x=np.arange(1000, dtype=np.float64))
+
+# ✅ Good: shared ORM with read-only access (after truncate/combine)
+shared_orm = ORM.truncate([TableDefn(Point, N)])
+# ... fill data ...
+# Multiple threads can safely read table.column.x concurrently
+
+# ⚠️ Caution: sharing Feature instances across threads
+lock = threading.Lock()
+feat = Point(x=1.0)
+with lock:           # external synchronization required
+    feat.x = 2.0
+```
+
+### Build configuration
+
+The CI tests against Python 3.13t (free-threaded) in addition to standard 3.12. The `setup.py` auto-detects `Py_GIL_DISABLED` and passes the flag to the C++ build.
+
 ## Development
 
 This project uses DevContainer for the development environment. See `.devcontainer/devcontainer.example.json` for configuration details. Requires Docker/Podman and the VSCode DevContainer extension.
