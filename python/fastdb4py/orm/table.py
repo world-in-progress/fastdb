@@ -1,7 +1,7 @@
 import numpy as np
 from threading import Lock
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, TypeVar, Generic, Type, Generator
+from typing import TypeVar, Generic, Type, Generator
 
 from .. import core
 from ..feature import Feature, get_all_defns
@@ -11,18 +11,7 @@ T = TypeVar('T', bound=Feature)
 _column_accessor_lock = Lock()
 
 
-class ColumnView(Generic[T]):
-    """Column accessor proxy: attribute access returns the full column as ``np.ndarray``.
-
-    Typed so that ``table.column.x`` is seen as ``np.ndarray`` by type checkers.
-    Field-name autocompletion is not available via static analysis (dynamic attributes),
-    but runtime ``__getattr__`` resolves any field defined on *T*.
-    """
-
-    def __getattr__(self, name: str) -> np.ndarray: ...
-
-
-def _create_column_accessor(feature_type: Type[T], table_origin) -> ColumnView[T]:
+def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
     """
     Create a column accessor that provides numpy array access with proper type hints.
 
@@ -99,7 +88,7 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> ColumnView[T
 class Table(Generic[T]):
     def __init__(self):
         self.feature_count: int = 0
-        self._column: ColumnView[T] | None = None
+        self._column: T | None = None
         self._feature_type: Type[T] | None = None
         self._db: core.WxDatabase | core.WxDatabaseBuild = None
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
@@ -143,12 +132,17 @@ class Table(Generic[T]):
         return self._origin.name()
     
     @property
-    def column(self) -> ColumnView[T]:
+    def column(self) -> T:
         """
         Get column accessor that provides numpy array access to fields.
         
-        Returns a proxy where accessing any field returns
-        the entire column as a numpy array instead of a single value.
+        Returns a proxy typed as ``T`` for field-name autocompletion.
+        At runtime, accessing any field (e.g. ``table.column.x``) returns
+        the entire column as a ``numpy.ndarray``, **not** a scalar.
+
+        Note: Python's type system cannot express "same fields as T but
+        all typed as np.ndarray", so the static type of each field shows
+        the scalar type (e.g. ``float``) rather than ``np.ndarray``.
         """
         if self._column is None:
             raise RuntimeError('Table has not been mapped with a feature type.')
