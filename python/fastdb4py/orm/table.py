@@ -136,8 +136,13 @@ class Table(Generic[T]):
         """
         Get column accessor that provides numpy array access to fields.
         
-        Returns a "fake" instance of T where accessing any field returns
-        the entire column as a numpy array instead of a single value.
+        Returns a proxy typed as ``T`` for field-name autocompletion.
+        At runtime, accessing any field (e.g. ``table.column.x``) returns
+        the entire column as a ``numpy.ndarray``, **not** a scalar.
+
+        Note: Python's type system cannot express "same fields as T but
+        all typed as np.ndarray", so the static type of each field shows
+        the scalar type (e.g. ``float``) rather than ``np.ndarray``.
         """
         if self._column is None:
             raise RuntimeError('Table has not been mapped with a feature type.')

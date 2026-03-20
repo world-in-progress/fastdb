@@ -34,11 +34,11 @@ jobs:
       - name: Check if tag exists
         id: check_tag
         run: |
-          if git rev-parse "v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
-            echo "Tag v${{ steps.get_version.outputs.VERSION }} already exists. Skipping build and publish."
+          if git rev-parse "py/v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
+            echo "Tag py/v${{ steps.get_version.outputs.VERSION }} already exists. Skipping build and publish."
             echo "exists=true" >> $GITHUB_OUTPUT
           else
-            echo "Tag v${{ steps.get_version.outputs.VERSION }} does not exist. Proceeding."
+            echo "Tag py/v${{ steps.get_version.outputs.VERSION }} does not exist. Proceeding."
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
@@ -67,8 +67,9 @@ jobs:
           CIBW_ARCHS_LINUX: x86_64 aarch64
           # Windows: Build only for AMD64 (64-bit), skip 32-bit (x86) to avoid build issues
           CIBW_ARCHS_WINDOWS: AMD64
-          # Skip PyPy and free-threaded Python (cp314t, etc.)
-          CIBW_SKIP: pp* *musllinux* cp*t-*
+          # Skip PyPy and musllinux
+          CIBW_SKIP: pp* *musllinux*
+          CIBW_FREE_THREADED_SUPPORT: true
           # Ensure cmake is available in the build environment
           CIBW_BEFORE_ALL_LINUX: "yum install -y cmake || apt-get install -y cmake || apk add cmake"
 
@@ -115,8 +116,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ needs.check_version.outputs.version }}" -m "Release v${{ needs.check_version.outputs.version }}"
-          git push origin "v${{ needs.check_version.outputs.version }}"
+          git tag -a "py/v${{ needs.check_version.outputs.version }}" -m "Release py/v${{ needs.check_version.outputs.version }}"
+          git push origin "py/v${{ needs.check_version.outputs.version }}"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

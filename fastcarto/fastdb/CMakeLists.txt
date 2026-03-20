@@ -59,6 +59,11 @@ if (NOT is_emscripten)
 
         set(Python3_FIND_VIRTUALENV FIRST)
         find_package(Python3 ${PYTHON_VERSION_STRING}  COMPONENTS Interpreter  Development NumPy)
+        # Fallback: use explicitly passed NumPy include dir when FindPython3 NumPy fails
+        # (common in isolated build environments, especially free-threaded Python)
+        if(NOT Python3_NumPy_INCLUDE_DIRS AND Python3_NumPy_INCLUDE_DIR)
+            set(Python3_NumPy_INCLUDE_DIRS ${Python3_NumPy_INCLUDE_DIR})
+        endif()
         include_directories(${Python3_INCLUDE_DIRS} )
         include_directories(${Python3_NumPy_INCLUDE_DIRS} )
         message(STATUS "building fastdb with swig python wrapper support!")

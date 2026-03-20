@@ -1,6 +1,6 @@
 from enum import unique, IntEnum
 from dataclasses import dataclass
-from typing import Dict, TypeVar, get_type_hints, get_origin, get_args
+from typing import TYPE_CHECKING, Dict, NewType, get_type_hints, get_origin, get_args
 
 # A map of the enum type used in the core fastdb library
 @unique
@@ -31,20 +31,42 @@ class OriginFieldDefinition:
     vmin: float = 0.0
     vmax: float = 1.0
 
-# TypeVars for Python side type annotations
-BOOL = TypeVar('BOOL', bound=bool)
-U8 = TypeVar('U8', bound=int)
-U16 = TypeVar('U16', bound=int)
-U32 = TypeVar('U32', bound=int)
-I32 = TypeVar('I32', bound=int)
-U8N = TypeVar('U8N', bound=int)
-U16N = TypeVar('U16N', bound=int)
-F32 = TypeVar('F32', bound=float)
-F64 = TypeVar('F64', bound=float)
-STR = TypeVar('STR', bound=str)
-WSTR = TypeVar('WSTR', bound=str)
-REF = TypeVar('REF', bound=object)
-BYTES = TypeVar('BYTES', bound=bytes)
+# Field type aliases for Python-side type annotations.
+#
+# TYPE_CHECKING branch: plain type aliases so that Pylance/Pyright accepts
+# literal assignments like `point.x = 1.0` without complaint.
+#
+# Runtime branch: NewType objects so each field type is a unique hashable
+# object, which FIELD_TYPE_MAP uses to distinguish e.g. F32 from F64.
+if TYPE_CHECKING:
+    from typing import TypeAlias
+    BOOL: TypeAlias = bool
+    U8:   TypeAlias = int
+    U16:  TypeAlias = int
+    U32:  TypeAlias = int
+    I32:  TypeAlias = int
+    U8N:  TypeAlias = int
+    U16N: TypeAlias = int
+    F32:  TypeAlias = float
+    F64:  TypeAlias = float
+    STR:  TypeAlias = str
+    WSTR: TypeAlias = str
+    REF:  TypeAlias = object
+    BYTES: TypeAlias = bytes
+else:
+    BOOL = NewType('BOOL', bool)
+    U8 = NewType('U8', int)
+    U16 = NewType('U16', int)
+    U32 = NewType('U32', int)
+    I32 = NewType('I32', int)
+    U8N = NewType('U8N', int)
+    U16N = NewType('U16N', int)
+    F32 = NewType('F32', float)
+    F64 = NewType('F64', float)
+    STR = NewType('STR', str)
+    WSTR = NewType('WSTR', str)
+    REF = NewType('REF', object)
+    BYTES = NewType('BYTES', bytes)
 
 FIELD_TYPE_MAP = {
     BOOL:   OriginFieldType.u8,
