@@ -27,6 +27,10 @@ dev = [
     "setuptools>=42",
 ]
 
+[tool.pyright]
+pythonPlatform = "All"
+extraPaths = ["python"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
 python_files = ["test_*.py", "tests_*.py", "*_test.py"]
