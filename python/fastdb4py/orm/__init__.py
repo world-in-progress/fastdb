@@ -8,7 +8,7 @@ from typing import List, TypeVar, Type, Any, Generic
 from multiprocessing import shared_memory, resource_tracker
 
 from .. import core
-from .table import Table
+from .table import Table, ColumnView
 from ..type import OriginFieldType
 from ..feature import Feature, get_all_defns
 
