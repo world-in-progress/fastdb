@@ -75,6 +75,18 @@ if (NOT is_emscripten)
         target_link_libraries(fastdb4py PRIVATE ${PROJECT_NAME})
         target_link_directories(fastdb4py PRIVATE ${Python3_LIBRARY_DIRS})
 
+        # Free-threaded Python: define Py_GIL_DISABLED so pyconfig.h's auto-link
+        # pragma resolves to the correct library name (e.g. python314t.lib)
+        if(Py_GIL_DISABLED)
+            target_compile_definitions(fastdb4py PRIVATE Py_GIL_DISABLED=1)
+        endif()
+
+        # On Windows, explicitly link the Python library instead of relying
+        # solely on pyconfig.h's #pragma comment(lib, ...) auto-link
+        if(WIN32)
+            target_link_libraries(fastdb4py PRIVATE ${Python3_LIBRARIES})
+        endif()
+
         target_link_options(fastdb4py
             PUBLIC
                 $<$<BOOL:${APPLE}>:-undefineddynamic_lookup>)
