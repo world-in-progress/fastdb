@@ -60,22 +60,26 @@ def get_class_schema(cls: Type) -> ClassSchema:
 
     Two-level cache:
     1. Class-level attribute (cls.__dict__.get): ~40-50 ns — no WeakRef overhead.
+       Safe under free-threaded Python because CPython protects type.__dict__
+       with a per-type lock.
     2. WeakKeyDictionary fallback: ~209 ns — used for metaclass-protected types that
-       rejected setattr, and kept in sync for GC safety.
+       rejected setattr.  All WeakKeyDictionary access is under _SCHEMA_LOCK
+       to be safe under free-threaded Python (PEP 703).
     """
     # Hot path: class owns the schema as a plain class attribute (~40-50 ns).
+    # cls.__dict__ access is safe under free-threaded CPython (per-type critical section).
     schema = cls.__dict__.get(_SCHEMA_ATTR)
     if schema is not None:
         return schema
 
-    # Warm fallback: WeakKeyDict for types that could not accept setattr.
-    schema = _SCHEMA_CACHE.get(cls)
-    if schema is not None:
-        return schema
-
     with _SCHEMA_LOCK:
-        # Re-check both under lock (double-checked locking).
-        schema = cls.__dict__.get(_SCHEMA_ATTR) or _SCHEMA_CACHE.get(cls)
+        # Re-check class attribute under lock (another thread may have populated it).
+        schema = cls.__dict__.get(_SCHEMA_ATTR)
+        if schema is not None:
+            return schema
+
+        # WeakKeyDict access is only done under lock for free-threading safety.
+        schema = _SCHEMA_CACHE.get(cls)
         if schema is not None:
             return schema
 

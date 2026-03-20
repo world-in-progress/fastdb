@@ -18,12 +18,8 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
     The ColumnAccessor class is cached inside ClassSchema.column_accessor_class,
     eliminating the separate WeakKeyDictionary (Cache 3).
     """
-    schema = get_class_schema(feature_type)
-    ColumnAccessorClass = schema.column_accessor_class
-    if ColumnAccessorClass is not None:
-        return ColumnAccessorClass(table_origin, feature_type)
-
     with _column_accessor_lock:
+        schema = get_class_schema(feature_type)
         ColumnAccessorClass = schema.column_accessor_class
         if ColumnAccessorClass is not None:
             return ColumnAccessorClass(table_origin, feature_type)
@@ -47,6 +43,7 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
                 object.__setattr__(self, '_table_origin', table_origin)
                 object.__setattr__(self, '_field_index_map', _field_index_map)
                 object.__setattr__(self, '_name_cache', {})
+                object.__setattr__(self, '_cache_lock', Lock())
 
             def __getattr__(self, name: str) -> np.ndarray:
                 """Override to return numpy array instead of single value"""
@@ -57,16 +54,22 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
                 if arr is not None:
                     return arr
 
-                # Cold path: validate field name, call SWIG, populate cache.
-                fmap = object.__getattribute__(self, '_field_index_map')
-                idx = fmap.get(name)
-                if idx is None:
-                    raise AttributeError(f'Field "{name}" not found in the table.')
+                # Cold path: validate field name, call SWIG, populate cache under lock.
+                cache_lock = object.__getattribute__(self, '_cache_lock')
+                with cache_lock:
+                    arr = name_cache.get(name)
+                    if arr is not None:
+                        return arr
 
-                table_origin = object.__getattribute__(self, '_table_origin')
-                arr = table_origin.get_column(idx).as_nparray()
-                name_cache[name] = arr
-                return arr
+                    fmap = object.__getattribute__(self, '_field_index_map')
+                    idx = fmap.get(name)
+                    if idx is None:
+                        raise AttributeError(f'Field "{name}" not found in the table.')
+
+                    table_origin = object.__getattribute__(self, '_table_origin')
+                    arr = table_origin.get_column(idx).as_nparray()
+                    name_cache[name] = arr
+                    return arr
             
             def __setattr__(self, name: str, value):
                 """Prevent setting attributes on column accessor"""

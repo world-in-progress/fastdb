@@ -37,9 +37,10 @@ _NUMERIC_FIELD_TYPES = frozenset((
 
 class Feature(BaseFeature):
     def __init__(self, **kwargs):
-        # _cache is lazily allocated on first write to avoid dict alloc overhead
-        # for db-mapped read-only Features (scalar reads go directly to SWIG).
-        self._cache: Dict[str, Any] | None = None
+        # _cache is eagerly allocated to avoid race conditions under free-threaded
+        # Python (PEP 703).  The cost (~50-100 ns for an empty dict) is negligible
+        # compared to the complexity of lazy-init synchronisation.
+        self._cache: Dict[str, Any] = {}
         # Origin feature mapped from fastdb layer (None means pure Python object).
         self._origin: core.WxFeature | None = None
         # Database handle used when the feature is mapped from fastdb.
@@ -56,24 +57,14 @@ class Feature(BaseFeature):
         self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = _schema.origin_hints
 
         # Constructor fast-path:
-        # Only allocate _cache when kwargs are actually provided.
         # kwargs are applied directly to avoid __setattr__ dispatch overhead.
         if kwargs:
-            cache: Dict[str, Any] = {}
+            cache: Dict[str, Any] = self._cache
             for key, value in kwargs.items():
                 if key.startswith('_'):
                     object.__setattr__(self, key, value)
                 else:
                     cache[key] = value
-            object.__setattr__(self, '_cache', cache)
-
-    def _get_cache(self) -> Dict[str, Any]:
-        """Return _cache, allocating it on first call."""
-        cache = self._cache
-        if cache is None:
-            cache = {}
-            object.__setattr__(self, '_cache', cache)
-        return cache
 
     @property
     def fixed(self) -> bool:
@@ -95,7 +86,7 @@ class Feature(BaseFeature):
     def __getattr__(self, name: str):
         # Cache-first access: serializer-populated values and dynamic fields live here.
         cache = self._cache
-        if cache is not None and name in cache:
+        if name in cache:
             return cache[name]
 
         # Resolve field metadata from parsed feature definitions.
@@ -117,14 +108,14 @@ class Feature(BaseFeature):
             if ft == OriginFieldType.ref:
                 ref_feature_type = self._schema.hints[name]
                 default_ref_feature = ref_feature_type()
-                self._get_cache()[name] = default_ref_feature
+                self._cache[name] = default_ref_feature
                 return default_ref_feature
 
             # Use factory to produce a fresh default per field per instance.
             # Mutable types (list, bytes) get new objects; scalars get CPython singletons.
             factory = FIELD_TYPE_FACTORIES.get(ft)
             default_value = factory() if factory is not None else None
-            self._get_cache()[name] = default_value
+            self._cache[name] = default_value
             return default_value
 
         # Case 2: mapped from database.
@@ -151,7 +142,7 @@ class Feature(BaseFeature):
 
             ref_feature_type = self._schema.hints.get(name, Feature)
             feature = ref_feature_type.map_from(self._db, ref_feature_origin)
-            self._get_cache()[name] = feature
+            self._cache[name] = feature
             return feature
 
         # Scalar field mapping via dispatch table (O(1) dict lookup).
@@ -172,14 +163,14 @@ class Feature(BaseFeature):
 
         # Unknown or non-fastdb-mapped fields are kept in local cache.
         if defn is None or defn[0] is OriginFieldType.unknown:
-            self._get_cache()[name] = value
+            self._cache[name] = value
             return
 
         ft, fid = defn
 
         # Pure Python object path: assign to cache only.
         if not self.fixed:
-            self._get_cache()[name] = value
+            self._cache[name] = value
             return
 
         # Database-mapped numeric fields are written directly to fastdb origin.
@@ -195,7 +186,7 @@ class Feature(BaseFeature):
         # - Always cache Python-side value for serializer compatibility.
         if ft == OriginFieldType.ref:
             if value is None:
-                self._get_cache()[name] = None
+                self._cache[name] = None
                 return
 
             ref_feature_type: Feature = self._schema.hints[name]
@@ -209,7 +200,7 @@ class Feature(BaseFeature):
             except Exception:
                 pass
 
-            self._get_cache()[name] = value
+            self._cache[name] = value
             return
 
         # Non-numeric writes are not supported by direct fastdb set_field API.
