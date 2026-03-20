@@ -36,6 +36,14 @@ class CMakeBuild(build_ext):
         if sysconfig.get_config_var('Py_GIL_DISABLED'):
             cmake_args.append('-DPy_GIL_DISABLED=1')
 
+        # Explicitly pass NumPy include dir — CMake's FindPython3 NumPy component
+        # can fail in isolated build environments (especially free-threaded Python)
+        try:
+            import numpy
+            cmake_args.append(f'-DPython3_NumPy_INCLUDE_DIR={numpy.get_include()}')
+        except ImportError:
+            pass
+
         if sys.platform == 'darwin':
             # Handle macOS architecture flags set by cibuildwheel (e.g. ARCHFLAGS="-arch x86_64")
             archflags = os.environ.get("ARCHFLAGS", "")
