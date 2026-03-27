@@ -15,8 +15,9 @@ This repository now contains three closely related layers:
 **Core design goals:**
 - **Zero-copy columnar access** — efficient field-oriented access for high-volume numerical workloads
 - **Ref-graph support** — Features can reference other Features across tables, forming typed object graphs
-- **Compact binary transport** — save/load databases as binary buffers or files
+- **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and serializer semantics
+- **Buffer-protocol serialization** — numpy arrays and numeric lists stored via dedicated columnar layers with `memcpy`-level performance
 - **Schema-driven codegen** — Python Feature classes serve as the single source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
 
 ## Documentation map
@@ -117,6 +118,7 @@ export class Point extends Feature {
 | `table.iter_reuse()` row access | **~350 ns/row** | Reuses Feature wrapper, no allocation |
 | `for feat in table` row access | **~1.2 µs/row** | Allocates Feature wrapper per row |
 | `feat.x` single field read (db-mapped) | **~420 ns** | 1 SWIG call |
+| `FastSerializer.dumps/loads` | **~70 µs** (complex graph) | 1.6× pickle dumps, 21× faster loads at N=10k |
 
 **Recommended patterns by use case:**
 

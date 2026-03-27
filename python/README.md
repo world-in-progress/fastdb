@@ -346,7 +346,7 @@ Supported scenarios include:
 - string lists
 - typed references
 - cyclic graphs
-- numeric-list fast paths through auxiliary columnar layers
+- **buffer-protocol fast paths** — numpy `ndarray` fields and numeric lists (`List[F64]`, `List[U32]`, `List[I32]`) are stored in dedicated `__fastser_buf__` layers via `memcpy`-level writes
 
 Example:
 
@@ -392,6 +392,65 @@ check = FastSerializer.loads(FastSerializer.dumps(n1), Node)
 assert check.next.next is check
 ```
 
+### Buffer-protocol optimized fields
+
+Numpy `ndarray` fields and simple numeric lists are stored via dedicated columnar `__fastser_buf__` layers, achieving `memcpy`-level serialization:
+
+```python
+import numpy as np
+from typing import List
+from fastdb4py import FastSerializer, Feature, F64, U32
+
+
+class PointCloud(Feature):
+    coords: np.ndarray   # stored as buffer layer (1 SWIG call, memcpy)
+    weights: List[F64]   # also stored as buffer layer
+    ids: List[U32]       # also stored as buffer layer
+
+
+cloud = PointCloud(
+    coords=np.random.rand(10000, 3),
+    weights=list(np.random.rand(10000)),
+    ids=list(range(10000)),
+)
+
+blob = FastSerializer.dumps(cloud)
+loaded = FastSerializer.loads(blob, PointCloud)
+# loaded.coords → numpy ndarray
+# loaded.weights → numpy ndarray (not Python list)
+# loaded.ids → numpy ndarray (not Python list)
+```
+
+> **Note**: Numeric lists (`List[F64]`, `List[U32]`, `List[I32]`) deserialized from buffer layers return `numpy.ndarray` instead of Python `list`. Use `.tolist()` if a Python list is needed.
+
+### Shared memory deserialization
+
+`FastSerializer.loads_shm` deserializes directly from a POSIX shared memory segment, avoiding an intermediate `bytes` copy:
+
+```python
+from multiprocessing import shared_memory
+from fastdb4py import FastSerializer, Feature, F64
+
+class Point(Feature):
+    x: F64
+    y: F64
+
+# Write serialized data into shared memory
+blob = FastSerializer.dumps(Point(x=1.0, y=2.0))
+shm = shared_memory.SharedMemory(name="my_data", create=True, size=len(blob))
+shm.buf[:len(blob)] = blob
+
+# In another process: read directly from shared memory
+result = FastSerializer.loads_shm("my_data", length=len(blob), offset=0, root_type=Point)
+print(result.x, result.y)  # 1.0 2.0
+
+# Clean up
+shm.close()
+shm.unlink()
+```
+
+All returned objects are fully detached from the shared memory segment (pure Python `_cache` mode). Numpy arrays are copied. The shared memory is closed immediately after deserialization.
+
 For large homogeneous numerical datasets, `ORM.truncate` plus columnar writes is still the preferred path. `FastSerializer` is aimed at trees, graphs, mesh-like structures, and mixed payloads.
 
 ## Running tests
@@ -407,6 +466,8 @@ Focused runs:
 ```bash
 uv run pytest tests/python/test_column_way.py
 uv run pytest tests/python/test_fast_serializer.py
+uv run pytest tests/python/test_fastser_buffer_layers.py
+uv run pytest tests/python/test_fastser_loads_shm.py
 uv run pytest tests/python/test_codegen.py
 ```
 

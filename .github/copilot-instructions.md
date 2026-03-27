@@ -70,11 +70,12 @@ python/fastdb4py/
 ├── type.py          TypeVar aliases → OriginFieldType enum
 ├── feature/
 │   ├── feature.py   Feature base class (__getattr__/__setattr__ dispatch)
+│   ├── _schema.py   Unified ClassSchema + WeakKeyDictionary caches
 │   └── utils.py     parse_defns() / get_all_defns()
 ├── orm/
 │   ├── __init__.py  ORM lifecycle (create/truncate/load/push/share/save/close)
 │   └── table.py     Table[T] + ColumnAccessor + StridedColumn
-├── serializer.py    FastSerializer (binary object graph serialization)
+├── serializer.py    FastSerializer (binary object graph serialization + shared memory loads)
 ├── cli.py           `fdb` CLI entry point
 ├── codegen/
 │   ├── __init__.py  Exports run_codegen_ts
@@ -144,6 +145,15 @@ orm2 = ORM.load("my_db")   # zero-copy cross-process access
 orm.unlink("my_db")         # release segment
 ```
 
+**FastSerializer shared memory deserialization**:
+```python
+# Deserialize directly from a POSIX shared memory segment (no intermediate copy)
+result = FastSerializer.loads_shm("shm_name", length, offset, RootType)
+```
+- Accepts any buffer that was previously written to shared memory (e.g., `FastSerializer.dumps()` output published via `ORM.share()` or `multiprocessing.shared_memory`)
+- Returns fully detached Python objects — all Features have `_origin=None`, numpy arrays are copies, safe to use after shared memory is closed
+- Lifecycle: opens shm → `load_xbuffer` → deserialize → detach features → close shm
+
 ### SWIG interface
 
 - `fastcarto/fastdb/swig/fastdb4py.i` — single interface file, Python-only.
@@ -158,6 +168,8 @@ Key test files in `tests/python/`:
 - `test_shared_memory.py` — ORM create/push/share/load across processes
 - `test_truncate_block.py` — Truncate block operations
 - `test_fast_serializer.py` — FastSerializer (nested objects, cyclic refs, tree structures)
+- `test_fastser_buffer_layers.py` — FastSerializer `__fastser_buf__` numpy ndarray serialization
+- `test_fastser_loads_shm.py` — FastSerializer shared memory deserialization (`loads_shm`)
 - `test_codegen.py` — Python→TypeScript codegen CLI (85 tests: discovery, dep graph, generation, edge cases)
 
 ### Codegen CLI (`fdb codegen --ts`)
@@ -190,6 +202,8 @@ fdb codegen --ts <input_dir> <output_dir>
 Tracked incrementally in `optimize/`. Each round: one logical change → rebuild → benchmark → write `optimize/oN/benchmark.md` with `## Changes` + `## Expected Improvement` sections + full output. Compare against previous round, update `plan.md`.
 
 Key targets: `orm/table.py` (ColumnAccessor), `feature/feature.py` (`__getattr__`/`__setattr__`), `orm/__init__.py` (lifecycle), `swig/fastdb4py.i` (requires recompile).
+
+Serializer optimization reports are in `docs/opt/`. The buffer-layer optimization (`__fastser_buf__`) achieved 54% end-to-end improvement with fdb/pickle ratio at 1.6× (dumps) and 21× faster loads at N=10000.
 
 ---
 
@@ -314,10 +328,27 @@ All C++↔WASM bindings must live exclusively in `ts/embind/fastdb4ts.cpp`. The 
 The binary format is identical between Python and TypeScript, enabling direct cross-language data exchange.
 
 - Scalar fields (`U8`–`F64`) → columnar fastdb storage
-- Numeric lists (`List[U32]`, `List[F64]`) → dedicated auxiliary layers named `__fastser_list__|ClassName|FieldName|type`
+- **Buffer-protocol types** (numpy ndarray, `List[F64]`, `List[U32]`, `List[I32]`) → dedicated `__fastser_buf__` layers with `memcpy`-level writes and `np.frombuffer` reads
 - Complex fields (nested lists, refs, bytes) → geometry-like raw blob
 - Object refs → encoded as `[layer_idx: u16][feature_idx: u32]`
 - Cyclic references → identity preserved via two-pass traversal (first pass assigns IDs, second pass writes)
+
+### Buffer layer protocol (`__fastser_buf__`)
+
+Large contiguous numeric data (numpy arrays and numeric lists) is separated from the main blob and stored in dedicated fastdb layers — similar to Ray's out-of-band buffer approach, but in pure fastdb format.
+
+**Layer naming**: `__fastser_buf__|{ClassName}|{FieldName}|{kind}|{shape_str}`
+
+**Buffer reference** (16 bytes fixed, stored in parent blob):
+```
+magic(0xBF) | ndim(1B) | db_layer_idx(2B) | dim[0](4B) | dim[1](4B) | dim[2](4B)
+```
+- `db_layer_idx` is the **absolute** database layer index (enables O(1) direct access on loads)
+- `0xFFFF` sentinel = empty/None list or array
+
+**Backward compatibility**: old `__fastser_list__` auxiliary layers are auto-detected via `uses_aux_numeric` flag. New data always uses `__fastser_buf__`.
+
+**Numeric lists return numpy arrays**: `List[F64]`, `List[U32]`, `List[I32]` fields loaded via buffer layers return `numpy.ndarray` instead of Python `list`.
 
 When modifying the serializer in either language, always verify the cross-language interop tests pass.
 
