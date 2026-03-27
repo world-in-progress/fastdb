@@ -533,37 +533,37 @@ function writeNumericListChunk(
   layer.addFeatureBegin();
   layer.setFieldInt(0, ownerFeatureId);
 
-  let payload = new Uint8Array(0);
-  if (list.length > 0) {
-    if (kind === 'u32') {
-      const view = new DataView(new ArrayBuffer(list.length * 4));
-      list.forEach((entry, index) => {
-        const iv = Number(entry);
-        if (!Number.isInteger(iv) || iv < 0 || iv > 0xffffffff) {
-          throw new FastdbUsageError(`List[U32] item out of range: ${entry}`);
-        }
-        view.setUint32(index * 4, iv, true);
-      });
-      payload = new Uint8Array(view.buffer);
-    } else if (kind === 'i32') {
-      const view = new DataView(new ArrayBuffer(list.length * 4));
-      list.forEach((entry, index) => {
-        const iv = Math.trunc(Number(entry));
-        if (iv < -0x80000000 || iv > 0x7fffffff) {
-          throw new FastdbUsageError(
-            `list[int] item ${entry} out of i32 range [-2147483648, 2147483647].`
-          );
-        }
-        view.setInt32(index * 4, iv, true);
-      });
-      payload = new Uint8Array(view.buffer);
-    } else {
-      const view = new DataView(new ArrayBuffer(list.length * 8));
-      list.forEach((entry, index) => {
-        view.setFloat64(index * 8, Number(entry), true);
-      });
-      payload = new Uint8Array(view.buffer);
+  let payload: Uint8Array;
+  if (list.length === 0) {
+    payload = new Uint8Array(0);
+  } else if (kind === 'u32') {
+    const typed = new Uint32Array(list.length);
+    for (let i = 0; i < list.length; i++) {
+      const iv = Number(list[i]);
+      if (!Number.isInteger(iv) || iv < 0 || iv > 0xffffffff) {
+        throw new FastdbUsageError(`List[U32] item out of range: ${list[i]}`);
+      }
+      typed[i] = iv;
     }
+    payload = new Uint8Array(typed.buffer);
+  } else if (kind === 'i32') {
+    const typed = new Int32Array(list.length);
+    for (let i = 0; i < list.length; i++) {
+      const iv = Math.trunc(Number(list[i]));
+      if (iv < -0x80000000 || iv > 0x7fffffff) {
+        throw new FastdbUsageError(
+          `list[int] item ${list[i]} out of i32 range [-2147483648, 2147483647].`
+        );
+      }
+      typed[i] = iv;
+    }
+    payload = new Uint8Array(typed.buffer);
+  } else {
+    const typed = new Float64Array(list.length);
+    for (let i = 0; i < list.length; i++) {
+      typed[i] = Number(list[i]);
+    }
+    payload = new Uint8Array(typed.buffer);
   }
 
   if (payload.length > 0) {
