@@ -73,11 +73,7 @@ export class FastSerializer {
       }
     }
 
-    const orderedObjects = [...ctx.objects].sort(
-      (left, right) => left.layerIdx - right.layerIdx || left.featureIdx - right.featureIdx
-    );
-
-    for (const wrapper of orderedObjects) {
+    for (const wrapper of ctx.objects) {
       const ctor = wrapper.obj.constructor as FeatureClass;
       const schema = getSerializerSchema(ctor);
       const layer = layerBuilders.get(wrapper.layerIdx);
