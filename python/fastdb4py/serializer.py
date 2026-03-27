@@ -384,6 +384,7 @@ class _LoadContext:
              blob_view = memoryview(blob_array)
 
         curr_blob_offset = 0
+        db_idx_map = schema["db_field_index_by_schema"]
         
         for idx, (fn, ft) in enumerate(defns):
             numeric_kind = numeric_field_kinds.get(fn) if ft == OriginFieldType.list else None
@@ -410,11 +411,8 @@ class _LoadContext:
             # Recover complex types from Blob
             if ft in (OriginFieldType.list, OriginFieldType.unknown):
                 if blob_view:
-                    # Debug print
-                    # print(f"DEBUG: Unpacking list field {fn} at offset {curr_blob_offset}")
                     val, new_offset = _unpack_list(blob_view, curr_blob_offset, hints.get(fn, Any), self)
                     obj._cache[fn] = val
-                    # print(f"DEBUG: New offset {new_offset}")
                     curr_blob_offset = new_offset
             elif ft == OriginFieldType.bytes:
                 if blob_view:
@@ -424,33 +422,26 @@ class _LoadContext:
                     obj._cache[fn] = val
                     curr_blob_offset += cnt
             elif ft == OriginFieldType.ref:
-                # Recover ref from Blob (better for cyclic refs and opacity handling)
                 if blob_view:
                     l_idx_ref, f_idx_ref = struct.unpack_from('<HI', blob_view, curr_blob_offset)
                     curr_blob_offset += 6
                     if l_idx_ref != 0xFFFF:
-                        # Recursive fetch
-                        # Get hint for ref type
                         ref_type = hints.get(fn, Feature)
                         obj._cache[fn] = self.get_object(l_idx_ref, f_idx_ref, ref_type)
                     else:
                         obj._cache[fn] = None
             else:
-                # Recover scalar from Column
-                db_idx = _get_db_field_index_for_load(cls, idx)
+                # Recover scalar from Column (use pre-fetched db_idx_map)
+                db_idx = db_idx_map.get(idx, -1)
                 if db_idx != -1:
-                    val = None
                     if ft in (OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32, OriginFieldType.i32):
-                        val = feature_data.get_field_as_int(db_idx)
+                        obj._cache[fn] = feature_data.get_field_as_int(db_idx)
                     elif ft in (OriginFieldType.f32, OriginFieldType.f64):
-                        val = feature_data.get_field_as_float(db_idx)
+                        obj._cache[fn] = feature_data.get_field_as_float(db_idx)
                     elif ft == OriginFieldType.str:
-                        val = feature_data.get_field_as_string(db_idx)
+                        obj._cache[fn] = feature_data.get_field_as_string(db_idx)
                     elif ft == OriginFieldType.wstr:
-                        val = feature_data.get_field_as_wstring(db_idx)
-
-                    if val is not None:
-                        obj._cache[fn] = val
+                        obj._cache[fn] = feature_data.get_field_as_wstring(db_idx)
 
         return obj
 
