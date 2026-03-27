@@ -693,53 +693,65 @@ function getFeatureFieldValue(feature: Feature, fieldName: string): unknown {
 }
 
 class ByteWriter {
-  private readonly chunks: Uint8Array[] = [];
-  private totalSize = 0;
+  private buf: ArrayBuffer;
+  private view: DataView;
+  private offset = 0;
+
+  constructor(initialCapacity = 256) {
+    this.buf = new ArrayBuffer(initialCapacity);
+    this.view = new DataView(this.buf);
+  }
 
   writeU16(value: number): void {
-    const bytes = new Uint8Array(2);
-    new DataView(bytes.buffer).setUint16(0, value, true);
-    this.push(bytes);
+    this.ensureCapacity(2);
+    this.view.setUint16(this.offset, value, true);
+    this.offset += 2;
   }
 
   writeU32(value: number): void {
-    const bytes = new Uint8Array(4);
-    new DataView(bytes.buffer).setUint32(0, value, true);
-    this.push(bytes);
+    this.ensureCapacity(4);
+    this.view.setUint32(this.offset, value, true);
+    this.offset += 4;
   }
 
   writeI32(value: number): void {
-    const bytes = new Uint8Array(4);
-    new DataView(bytes.buffer).setInt32(0, value, true);
-    this.push(bytes);
+    this.ensureCapacity(4);
+    this.view.setInt32(this.offset, value, true);
+    this.offset += 4;
   }
 
   writeF64(value: number): void {
-    const bytes = new Uint8Array(8);
-    new DataView(bytes.buffer).setFloat64(0, value, true);
-    this.push(bytes);
+    this.ensureCapacity(8);
+    this.view.setFloat64(this.offset, value, true);
+    this.offset += 8;
   }
 
   writeBytes(bytes: Uint8Array): void {
     if (bytes.length === 0) {
       return;
     }
-    this.push(bytes);
+    this.ensureCapacity(bytes.length);
+    new Uint8Array(this.buf).set(bytes, this.offset);
+    this.offset += bytes.length;
   }
 
   finish(): Uint8Array {
-    const out = new Uint8Array(this.totalSize);
-    let offset = 0;
-    for (const chunk of this.chunks) {
-      out.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return out;
+    return new Uint8Array(this.buf, 0, this.offset);
   }
 
-  private push(bytes: Uint8Array): void {
-    this.chunks.push(bytes);
-    this.totalSize += bytes.length;
+  private ensureCapacity(needed: number): void {
+    const required = this.offset + needed;
+    if (required <= this.buf.byteLength) {
+      return;
+    }
+    let newSize = this.buf.byteLength * 2;
+    while (newSize < required) {
+      newSize *= 2;
+    }
+    const newBuf = new ArrayBuffer(newSize);
+    new Uint8Array(newBuf).set(new Uint8Array(this.buf, 0, this.offset));
+    this.buf = newBuf;
+    this.view = new DataView(this.buf);
   }
 }
 
