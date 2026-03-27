@@ -10,8 +10,27 @@ from .type import OriginFieldType, U32, F64
 from . import core
 
 _NUMERIC_LIST_LAYER_PREFIX = "__fastser_list__|"
+_BUFFER_LAYER_PREFIX = "__fastser_buf__|"
+_BUFFER_REF_MAGIC = 0xBF
 _CLASS_SCHEMA_CACHE_LOCK = Lock()
 _CLASS_SCHEMA_CACHE: WeakKeyDictionary = WeakKeyDictionary()
+
+# Mapping from numpy dtype to fastdb field type and short kind string
+_NUMPY_DTYPE_TO_FDB = {
+    np.dtype('float64'): (OriginFieldType.f64, "f64"),
+    np.dtype('float32'): (OriginFieldType.f32, "f32"),
+    np.dtype('uint32'):  (OriginFieldType.u32, "u32"),
+    np.dtype('int32'):   (OriginFieldType.i32, "i32"),
+    np.dtype('uint16'):  (OriginFieldType.u16, "u16"),
+    np.dtype('uint8'):   (OriginFieldType.u8,  "u8"),
+}
+
+# Reverse mapping from kind string to numpy dtype
+_KIND_TO_NUMPY_DTYPE = {
+    "f64": np.dtype('<f8'), "f32": np.dtype('<f4'),
+    "u32": np.dtype('<u4'), "i32": np.dtype('<i4'),
+    "u16": np.dtype('<u2'), "u8":  np.dtype('<u1'),
+}
 
 # FastSerializer blob protocol (Mini spec)
 #
@@ -85,6 +104,45 @@ class FastSerializer:
                 aux_lb.set_geometry_type(0, core.cfDefault, False)
                 aux_lb.add_field("owner_fid", OriginFieldType.u32.value)
                 numeric_list_layers[(cls, field_name)] = (kind, aux_lb)
+
+        # Pre-scan for numpy array fields and create __fastser_buf__ layers
+        buf_layers = {}  # (id(array),) -> (layer_idx_offset, kind, shape)
+        buf_layer_builders = []
+        buf_array_cache = {}  # id(array) -> np.ndarray (keep reference alive)
+        _next_buf_idx = [0]
+
+        for obj_wrapper in ctx.objects:
+            obj = obj_wrapper.obj
+            schema = _get_class_schema(obj.__class__)
+            defns = schema["defns"]
+            for fn, ft in defns:
+                val = getattr(obj, fn)
+                if val is None:
+                    continue
+                if isinstance(val, np.ndarray) and val.dtype in _NUMPY_DTYPE_TO_FDB:
+                    arr_id = id(val)
+                    if arr_id in buf_layers:
+                        continue
+                    fdb_ft, kind = _NUMPY_DTYPE_TO_FDB[val.dtype]
+                    shape = val.shape
+                    shape_str = "x".join(str(s) for s in shape)
+                    layer_name = f"{_BUFFER_LAYER_PREFIX}{obj.__class__.__name__}|{fn}|{kind}|{shape_str}"
+                    buf_lb = db.create_layer_begin(layer_name)
+                    buf_lb.set_geometry_type(-1, core.cfDefault, False)  # gtNone
+                    buf_lb.add_field("v", fdb_ft.value)
+                    flat = np.ascontiguousarray(val).ravel()
+                    n = len(flat)
+                    # Write all elements as rows via geometry raw on a single feature
+                    # Store the entire flattened array as the geometry blob of one feature
+                    buf_lb.set_geometry_type(0, core.cfDefault, False)  # gtAny for raw blob
+                    buf_lb.add_feature_begin()
+                    buf_lb.set_geometry_raw(flat.tobytes())
+                    buf_lb.add_feature_end()
+                    idx = _next_buf_idx[0]
+                    _next_buf_idx[0] += 1
+                    buf_layers[arr_id] = (idx, kind, shape)
+                    buf_layer_builders.append(buf_lb)
+                    buf_array_cache[arr_id] = val
         
         # Write all objects ordered by layer
         sorted_objects = sorted(ctx.objects, key=lambda x: (x.layer_idx, x.feature_idx))
@@ -115,6 +173,12 @@ class FastSerializer:
             for idx, (fn, ft) in enumerate(defns):
                 val = getattr(obj, fn)
                 numeric_kind = numeric_field_kinds.get(fn) if ft == OriginFieldType.list else None
+
+                # Check for numpy ndarray → buffer layer reference
+                if isinstance(val, np.ndarray) and id(val) in buf_layers:
+                    buf_idx, buf_kind, buf_shape = buf_layers[id(val)]
+                    _pack_buffer_ref(blob_buffer, buf_idx, buf_shape)
+                    continue
                 
                 # Strategy: Scalar -> Column, Complex -> Blob
                 if ft == OriginFieldType.list and numeric_kind is not None:
@@ -268,6 +332,7 @@ class _LoadContext:
         self.obj_cache = {} # (layer_idx, feature_idx) -> obj
         self.type_map = {} # class_name -> Type
         self.numeric_list_values = _load_numeric_list_values(db)
+        self.buffer_layers = _load_buffer_layers(db)
 
     def get_object(self, l_idx, f_idx, expected_type):
         key = (l_idx, f_idx)
@@ -321,6 +386,20 @@ class _LoadContext:
             if numeric_kind is not None:
                 obj._cache[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
                 continue
+
+            # Check for buffer layer reference (only for blob-consuming field types)
+            if ft in (OriginFieldType.list, OriginFieldType.unknown, OriginFieldType.bytes, OriginFieldType.ref):
+                if blob_view and curr_blob_offset < len(blob_view):
+                    magic_byte = struct.unpack_from('B', blob_view, curr_blob_offset)[0]
+                    if magic_byte == _BUFFER_REF_MAGIC:
+                        result = _unpack_buffer_ref(blob_view, curr_blob_offset)
+                        if result is not None:
+                            buf_idx, shape, new_offset = result
+                            arr = self.buffer_layers.get(buf_idx)
+                            if arr is not None:
+                                obj._cache[fn] = arr
+                            curr_blob_offset = new_offset
+                            continue
 
             # Recover complex types from Blob
             if ft in (OriginFieldType.list, OriginFieldType.unknown):
@@ -377,6 +456,75 @@ def _pack_feature_ref(buffer, val, ctx):
             return
     # Null reference
     buffer.extend(struct.pack('<HI', 0xFFFF, 0xFFFFFFFF))
+
+# --- Buffer layer helpers ---
+
+def _pack_buffer_ref(buffer, buf_layer_idx, shape):
+    """Encode a buffer reference in the blob: magic(1) + layer(2) + ndim(1) + shape(3×4=12) = 16 bytes."""
+    ndim = len(shape)
+    dims = list(shape) + [0] * (3 - ndim)  # pad to 3 dims
+    buffer.extend(struct.pack('<BBHIII', _BUFFER_REF_MAGIC, ndim, buf_layer_idx, dims[0], dims[1], dims[2]))
+
+def _unpack_buffer_ref(view, offset):
+    """Decode buffer reference. Returns (buf_layer_idx, shape, new_offset) or None if not a buf ref."""
+    if offset + 16 > len(view):
+        return None
+    magic = struct.unpack_from('B', view, offset)[0]
+    if magic != _BUFFER_REF_MAGIC:
+        return None
+    ndim, layer_idx, d0, d1, d2 = struct.unpack_from('<BHIII', view, offset + 1)
+    dims = [d0, d1, d2][:ndim]
+    shape = tuple(dims)
+    return layer_idx, shape, offset + 16
+
+def _parse_buffer_layer_name(layer_name):
+    """Parse __fastser_buf__|ClassName|FieldName|kind|shape → (class_name, field_name, kind, shape) or None."""
+    if not isinstance(layer_name, str):
+        try:
+            layer_name = layer_name.decode('utf-8')
+        except Exception:
+            return None
+    if not layer_name.startswith(_BUFFER_LAYER_PREFIX):
+        return None
+    body = layer_name[len(_BUFFER_LAYER_PREFIX):]
+    parts = body.split('|', 3)
+    if len(parts) != 4:
+        return None
+    class_name, field_name, kind, shape_str = parts
+    if kind not in _KIND_TO_NUMPY_DTYPE:
+        return None
+    shape = tuple(int(s) for s in shape_str.split('x') if s)
+    return class_name, field_name, kind, shape
+
+def _load_buffer_layers(db):
+    """Pre-scan all __fastser_buf__ layers and return a dict mapping buffer_layer_index → numpy array."""
+    buf_data = {}
+    buf_idx = 0
+    for layer_idx in range(db.get_layer_count()):
+        layer = db.get_layer(layer_idx)
+        if layer is None:
+            continue
+        parsed = _parse_buffer_layer_name(layer.name())
+        if parsed is None:
+            continue
+        class_name, field_name, kind, shape = parsed
+        dtype = _KIND_TO_NUMPY_DTYPE[kind]
+        # Read the geometry blob from the first (only) feature
+        if layer.get_feature_count() > 0:
+            row = layer.tryGetFeature(0)
+            if row:
+                chunk = row.get_geometry_like_chunk()
+                if chunk.size > 0:
+                    addr = int(chunk.pdata) if hasattr(chunk.pdata, '__int__') else chunk.pdata
+                    if not isinstance(addr, int):
+                        addr = int(addr)
+                    BlobType = ctypes.c_ubyte * chunk.size
+                    blob_array = BlobType.from_address(addr)
+                    flat = np.frombuffer(blob_array, dtype=dtype).copy()  # copy to own memory
+                    arr = flat.reshape(shape)
+                    buf_data[buf_idx] = arr
+        buf_idx += 1
+    return buf_data
 
 def _numeric_list_kind_from_hint(type_hint):
     if type_hint is None:

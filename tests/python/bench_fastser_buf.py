@@ -35,6 +35,14 @@ class WithU32List(Feature):
     label: STR
     ids: List[U32]
 
+class WithNdArray(Feature):
+    label: STR
+    data: object  # numpy array, detected at runtime
+
+class WithNdArrayU32(Feature):
+    label: STR
+    data: object
+
 
 # --- Helpers ---
 
@@ -111,6 +119,36 @@ def run_benchmarks():
     results["scalar_dumps"] = t_dumps
     results["scalar_loads"] = t_loads
     print(f"  dumps={t_dumps:.1f} µs, loads={t_loads:.1f} µs, size={len(data_bytes)} bytes")
+
+    # 5. numpy ndarray F64 (__fastser_buf__ layer path)
+    print("\n=== numpy ndarray F64 (buffer layer) ===")
+    for n in SIZES:
+        arr = np.arange(n, dtype=np.float64) * 0.1
+        obj = WithNdArray(label="test", data=arr)
+        data_bytes = FastSerializer.dumps(obj)
+
+        t_dumps = bench(lambda: FastSerializer.dumps(obj))
+        t_loads = bench(lambda: FastSerializer.loads(data_bytes, WithNdArray))
+        results[f"ndarray_f64_dumps_{n}"] = t_dumps
+        results[f"ndarray_f64_loads_{n}"] = t_loads
+        # Verify correctness
+        loaded = FastSerializer.loads(data_bytes, WithNdArray)
+        assert isinstance(loaded.data, np.ndarray), f"Expected ndarray, got {type(loaded.data)}"
+        np.testing.assert_array_almost_equal(loaded.data, arr)
+        print(f"  N={n:>6}: dumps={t_dumps:>10.1f} µs, loads={t_loads:>10.1f} µs, size={len(data_bytes)} bytes")
+
+    # 6. numpy ndarray U32 (buffer layer)
+    print("\n=== numpy ndarray U32 (buffer layer) ===")
+    for n in SIZES:
+        arr = np.arange(n, dtype=np.uint32)
+        obj = WithNdArrayU32(label="test", data=arr)
+        data_bytes = FastSerializer.dumps(obj)
+
+        t_dumps = bench(lambda: FastSerializer.dumps(obj))
+        t_loads = bench(lambda: FastSerializer.loads(data_bytes, WithNdArrayU32))
+        results[f"ndarray_u32_dumps_{n}"] = t_dumps
+        results[f"ndarray_u32_loads_{n}"] = t_loads
+        print(f"  N={n:>6}: dumps={t_dumps:>10.1f} µs, loads={t_loads:>10.1f} µs, size={len(data_bytes)} bytes")
 
     # Compute aggregate metric: geometric mean of all dumps+loads times
     all_times = list(results.values())
