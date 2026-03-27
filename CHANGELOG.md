@@ -13,6 +13,12 @@ When a binding is released (tagged), its section is automatically copied to the 
 - `fdb codegen --ts <input_dir> <output_dir>` CLI command: auto-generates TypeScript `Feature` classes from Python Feature definitions, with full type mapping, cross-file import resolution, cycle detection (lazy refs), and topological ordering.
 - Free-threaded Python (PEP 703) support: module-level caches (`get_class_schema`, serializer schema, ColumnAccessor) are now safe under concurrent access; CI tests against Python 3.13t.
 - Thread-safety test suite (`test_free_threading.py`): 12 tests covering schema cache, serializer, ColumnAccessor, Feature instances, ORM lifecycle, and mixed-workload stress under concurrent threading.
+- `FastSerializer` numpy ndarray buffer layer support (`__fastser_buf__`): numpy arrays are now serialized via dedicated fastdb layers using `memcpy`-level writes and `np.frombuffer` loads, achieving 5–8× speedup over list-based paths for large arrays. Supports float64, float32, uint32, int32, uint16, uint8 dtypes and 1D/2D/3D shapes.
+
+### Performance
+- `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.
+- `FastSerializer` loads path: lazy initialization of auxiliary layer data, eliminated redundant schema lookups in scalar read path.
+- Overall `FastSerializer` geometric mean improvement: **32%** (44.26 → 30.09 µs across all test cases).
 
 ### Fixed
 - `fdb codegen --ts` no longer warns or skips when the same class name (e.g. `Point`) appears in different `.py` files. Each file is treated as an independent module; all classes are generated in their respective `.ts` files.
