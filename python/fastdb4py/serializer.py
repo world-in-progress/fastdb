@@ -456,27 +456,16 @@ def _write_numeric_list_chunk(aux_lb, owner_fid, values, kind):
     if not values:
         packed = b""
     elif kind == "u32":
-        normalized = []
-        for value in values:
-            iv = int(value)
-            if iv < 0 or iv > 0xFFFFFFFF:
-                raise ValueError(f"List[U32] item out of range: {iv}")
-            normalized.append(iv)
-        packed = struct.pack(f'<{len(normalized)}I', *normalized)
+        arr = np.array(values, dtype=np.uint32)
+        if np.any(arr > 0xFFFFFFFF) or np.any(arr < 0):
+            raise ValueError("List[U32] item out of range")
+        packed = arr.tobytes()
     elif kind == "i32":
-        normalized = []
-        for value in values:
-            iv = int(value)
-            if iv < -0x80000000 or iv > 0x7FFFFFFF:
-                raise OverflowError(
-                    f"list[int] item {iv} out of i32 range [-2147483648, 2147483647]. "
-                    "Use List[U32] for large unsigned values or List[F64] for arbitrary integers."
-                )
-            normalized.append(iv)
-        packed = struct.pack(f'<{len(normalized)}i', *normalized)
+        arr = np.array(values, dtype=np.int32)
+        packed = arr.tobytes()
     else:
-        normalized = [float(value) for value in values]
-        packed = struct.pack(f'<{len(normalized)}d', *normalized)
+        arr = np.array(values, dtype=np.float64)
+        packed = arr.tobytes()
 
     aux_lb.set_geometry_raw(packed)
     aux_lb.add_feature_end()
@@ -517,24 +506,12 @@ def _decode_numeric_list_chunk(chunk, kind):
 
     BlobType = ctypes.c_ubyte * chunk.size
     blob_array = BlobType.from_address(addr)
-    view = memoryview(blob_array)
 
     if kind == "u32":
-        count = chunk.size // 4
-        if count == 0:
-            return []
-        return list(struct.unpack_from(f'<{count}I', view, 0))
-
+        return np.frombuffer(blob_array, dtype=np.dtype('<u4')).tolist()
     if kind == "i32":
-        count = chunk.size // 4
-        if count == 0:
-            return []
-        return list(struct.unpack_from(f'<{count}i', view, 0))
-
-    count = chunk.size // 8
-    if count == 0:
-        return []
-    return list(struct.unpack_from(f'<{count}d', view, 0))
+        return np.frombuffer(blob_array, dtype=np.dtype('<i4')).tolist()
+    return np.frombuffer(blob_array, dtype=np.dtype('<f8')).tolist()
 
 def _pack_list(buffer, lst, type_hint, ctx):
     count = len(lst)
@@ -555,9 +532,9 @@ def _pack_list(buffer, lst, type_hint, ctx):
         elif isinstance(first, Feature): inner = Feature
 
     if inner == int:
-        buffer.extend(struct.pack(f'<{count}i', *lst))
+        buffer.extend(np.array(lst, dtype=np.dtype('<i4')).tobytes())
     elif inner == float:
-        buffer.extend(struct.pack(f'<{count}d', *lst))
+        buffer.extend(np.array(lst, dtype=np.dtype('<f8')).tobytes())
     elif inner == str:
         for item in lst:
             encoded = item.encode('utf-8')
@@ -587,14 +564,12 @@ def _unpack_list(view, offset, type_hint, ctx):
         return lst, offset
 
     if inner == int:
-        fmt = f'<{count}i'
-        sz = struct.calcsize(fmt)
-        lst = list(struct.unpack_from(fmt, view, offset))
+        sz = count * 4
+        lst = np.frombuffer(bytes(view[offset:offset + sz]), dtype=np.dtype('<i4')).tolist()
         offset += sz
     elif inner == float:
-        fmt = f'<{count}d'
-        sz = struct.calcsize(fmt)
-        lst = list(struct.unpack_from(fmt, view, offset))
+        sz = count * 8
+        lst = np.frombuffer(bytes(view[offset:offset + sz]), dtype=np.dtype('<f8')).tolist()
         offset += sz
     elif inner == str:
         for _ in range(count):
