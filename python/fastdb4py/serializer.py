@@ -260,6 +260,70 @@ class FastSerializer:
             
         return ctx.get_object(0, 0, root_type)
 
+    @staticmethod
+    def loads_shm(shm_name: str, length: int, offset: int, root_type: Type[Feature]) -> Feature:
+        """Deserialize a Feature from a named shared memory segment.
+
+        The database is loaded directly from the shared memory region at
+        ``[offset, offset+length)`` — no intermediate ``bytes`` copy.
+        After deserialization all field values live in Python-owned memory,
+        so the mapping is released before this method returns.
+
+        Args:
+            shm_name: OS name of the shared memory segment.
+            length:   Number of bytes that make up the serialized database.
+            offset:   Byte offset within the segment where the data starts.
+            root_type: The Feature subclass to deserialize as.
+
+        Returns:
+            The deserialized Feature, or ``None`` for empty databases.
+
+        Raises:
+            FileNotFoundError: If the shared memory segment does not exist.
+            ValueError:        If *offset + length* exceeds the segment size.
+        """
+        from multiprocessing import shared_memory as _shm_mod
+
+        shm = _shm_mod.SharedMemory(name=shm_name, create=False)
+        try:
+            if offset + length > shm.size:
+                raise ValueError(
+                    f"offset({offset}) + length({length}) = {offset + length} "
+                    f"exceeds shared memory size ({shm.size})"
+                )
+
+            # Create a memoryview slice and hand it to the C++ loader.
+            # load_xbuffer's SWIG typemap acquires/releases its own Py_buffer,
+            # so we can release *buf* immediately after the call.  The C++ db
+            # holds a raw pointer into the still-alive mmap (owned by *shm*).
+            buf = shm.buf[offset:offset + length]
+            db = core.WxDatabase.load_xbuffer(buf)
+            buf.release()
+
+            if db.get_layer_count() == 0:
+                return None
+
+            ctx = _LoadContext(db)
+            _discover_types(root_type, ctx.type_map)
+
+            root_layer = db.get_layer(0)
+            if root_layer.get_feature_count() == 0:
+                return None
+
+            result = ctx.get_object(0, 0, root_type)
+
+            # Detach every deserialized Feature from the C++ database.
+            # All field values already live in _cache (Python-owned) and
+            # buffer-layer numpy arrays used .copy(), so nothing references
+            # the shared memory region after this point.
+            for obj in ctx.obj_cache.values():
+                obj._origin = None
+                obj._db = None
+
+            return result
+        finally:
+            shm.close()
+
 # --- Internal Helpers ---
 
 class _DumpContext:

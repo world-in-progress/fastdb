@@ -14,6 +14,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - Free-threaded Python (PEP 703) support: module-level caches (`get_class_schema`, serializer schema, ColumnAccessor) are now safe under concurrent access; CI tests against Python 3.13t.
 - Thread-safety test suite (`test_free_threading.py`): 12 tests covering schema cache, serializer, ColumnAccessor, Feature instances, ORM lifecycle, and mixed-workload stress under concurrent threading.
 - `FastSerializer` numpy ndarray buffer layer support (`__fastser_buf__`): numpy arrays are now serialized via dedicated fastdb layers using `memcpy`-level writes and `np.frombuffer` loads, achieving 5–8× speedup over list-based paths for large arrays. Supports float64, float32, uint32, int32, uint16, uint8 dtypes and 1D/2D/3D shapes.
+- `FastSerializer.loads_shm(shm_name, length, offset, root_type)`: deserialize a Feature directly from a named shared memory segment without copying to an intermediate `bytes` object. Returns a fully detached Feature (pure Python mode) after closing the shared memory mapping.
 
 ### Performance
 - `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.
