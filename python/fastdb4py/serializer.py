@@ -32,6 +32,9 @@ _KIND_TO_NUMPY_DTYPE = {
     "u16": np.dtype('<u2'), "u8":  np.dtype('<u1'),
 }
 
+# Kind string to struct format character (for fast list→bytes conversion)
+_KIND_TO_STRUCT_CHAR = {"f64": "d", "f32": "f", "u32": "I", "i32": "i", "u16": "H", "u8": "B"}
+
 # FastSerializer blob protocol (Mini spec)
 #
 # The serializer uses a hybrid layout:
@@ -101,21 +104,18 @@ class FastSerializer:
         buf_array_cache = {}  # id(array) -> np.ndarray (keep alive)
         _next_buf_idx = [0]
 
-        def _make_buf_layer(cls_name, fn, arr):
-            fdb_ft, kind = _NUMPY_DTYPE_TO_FDB[arr.dtype]
-            shape = arr.shape
+        def _create_buf_layer(cls_name, fn, raw_bytes, kind, shape):
             shape_str = "x".join(str(s) for s in shape)
             layer_name = f"{_BUFFER_LAYER_PREFIX}{cls_name}|{fn}|{kind}|{shape_str}"
             buf_lb = db.create_layer_begin(layer_name)
             buf_lb.set_geometry_type(0, core.cfDefault, False)
             buf_lb.add_feature_begin()
-            buf_lb.set_geometry_raw(np.ascontiguousarray(arr).ravel().tobytes())
+            buf_lb.set_geometry_raw(raw_bytes)
             buf_lb.add_feature_end()
             idx = _next_buf_idx[0]
             _next_buf_idx[0] += 1
             info = (idx, kind, shape)
             buf_layer_builders.append(buf_lb)
-            buf_array_cache[id(arr)] = arr
             return info
 
         for obj_wrapper in ctx.objects:
@@ -131,16 +131,22 @@ class FastSerializer:
                 if isinstance(val, np.ndarray) and val.dtype in _NUMPY_DTYPE_TO_FDB:
                     arr_id = id(val)
                     if arr_id not in buf_layers:
-                        buf_layers[arr_id] = _make_buf_layer(obj.__class__.__name__, fn, val)
+                        fdb_ft, kind = _NUMPY_DTYPE_TO_FDB[val.dtype]
+                        raw = np.ascontiguousarray(val).ravel().tobytes()
+                        buf_layers[arr_id] = _create_buf_layer(obj.__class__.__name__, fn, raw, kind, val.shape)
+                        buf_array_cache[arr_id] = val
                     buf_field_refs[(id(obj), fn)] = buf_layers[arr_id]
-                # Numeric list (List[F64], List[U32], List[I32]) → convert and buffer
+                # Numeric list → struct.pack for fast list→bytes (skip numpy)
                 elif isinstance(val, list) and ft == OriginFieldType.list:
                     numeric_kind = numeric_field_kinds.get(fn)
                     if numeric_kind and len(val) > 0:
-                        dtype = _KIND_TO_NUMPY_DTYPE[numeric_kind]
-                        arr = np.array(val, dtype=dtype)
-                        info = _make_buf_layer(obj.__class__.__name__, fn, arr)
-                        buf_layers[id(arr)] = info
+                        fmt_char = _KIND_TO_STRUCT_CHAR[numeric_kind]
+                        try:
+                            raw = struct.pack(f'<{len(val)}{fmt_char}', *val)
+                        except struct.error as e:
+                            raise OverflowError(str(e)) from e
+                        shape = (len(val),)
+                        info = _create_buf_layer(obj.__class__.__name__, fn, raw, numeric_kind, shape)
                         buf_field_refs[(id(obj), fn)] = info
         
         # Write all objects ordered by layer
