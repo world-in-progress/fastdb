@@ -244,9 +244,10 @@ class DumpContext {
 }
 
 class LoadContext {
-  readonly objectCache = new Map<string, Feature>();
+  readonly objectCache = new Map<number, Feature>();
   readonly typeMap = new Map<string, FeatureClassLike>();
   readonly numericListValues: Map<string, unknown[]>;
+  private readonly layerNameCache = new Map<number, string>();
 
   constructor(
     private readonly db: ReturnType<typeof getInitializedFastdbModule>['WxDatabase'] extends never
@@ -258,14 +259,20 @@ class LoadContext {
   }
 
   getObject<T extends Feature>(layerIdx: number, featureIdx: number, expectedType: FeatureClass<T>): T {
-    const key = `${layerIdx}:${featureIdx}`;
+    // Numeric key avoids string allocation: layerIdx is always < 65536
+    const key = (layerIdx << 20) | featureIdx;
     const cached = this.objectCache.get(key);
     if (cached) {
       return cached as T;
     }
 
     const layer = this.db.getLayer(layerIdx);
-    const ctor = (this.typeMap.get(layer.name()) as FeatureClass<T> | undefined) ?? expectedType;
+    let layerName = this.layerNameCache.get(layerIdx);
+    if (layerName === undefined) {
+      layerName = layer.name();
+      this.layerNameCache.set(layerIdx, layerName);
+    }
+    const ctor = (this.typeMap.get(layerName) as FeatureClass<T> | undefined) ?? expectedType;
     const row = layer.tryGetFeatureAt(featureIdx);
     const obj = createFeature(ctor);
     this.objectCache.set(key, obj);
