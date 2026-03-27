@@ -94,55 +94,54 @@ class FastSerializer:
                                    OriginFieldType.str, OriginFieldType.wstr):
                      lb.add_field(field_name, origin_type.value)
 
-        # Create auxiliary layers for numeric lists (List[U32] / List[F64])
-        numeric_list_layers = {}
-        for cls in ctx.type_to_layer.keys():
-            schema = _get_class_schema(cls)
-            for field_name, kind in schema["numeric_fields"]:
-                aux_name = _make_numeric_list_layer_name(cls.__name__, field_name, kind)
-                aux_lb = db.create_layer_begin(aux_name)
-                aux_lb.set_geometry_type(0, core.cfDefault, False)
-                aux_lb.add_field("owner_fid", OriginFieldType.u32.value)
-                numeric_list_layers[(cls, field_name)] = (kind, aux_lb)
-
-        # Pre-scan for numpy array fields and create __fastser_buf__ layers
-        buf_layers = {}  # (id(array),) -> (layer_idx_offset, kind, shape)
+        # Pre-scan for buffer-eligible fields: numpy arrays AND numeric lists
+        buf_layers = {}  # id(array) -> (buf_idx, kind, shape) for ndarray dedup
+        buf_field_refs = {}  # (id(obj), fn) -> (buf_idx, kind, shape)
         buf_layer_builders = []
-        buf_array_cache = {}  # id(array) -> np.ndarray (keep reference alive)
+        buf_array_cache = {}  # id(array) -> np.ndarray (keep alive)
         _next_buf_idx = [0]
+
+        def _make_buf_layer(cls_name, fn, arr):
+            fdb_ft, kind = _NUMPY_DTYPE_TO_FDB[arr.dtype]
+            shape = arr.shape
+            shape_str = "x".join(str(s) for s in shape)
+            layer_name = f"{_BUFFER_LAYER_PREFIX}{cls_name}|{fn}|{kind}|{shape_str}"
+            buf_lb = db.create_layer_begin(layer_name)
+            buf_lb.set_geometry_type(0, core.cfDefault, False)
+            buf_lb.add_feature_begin()
+            buf_lb.set_geometry_raw(np.ascontiguousarray(arr).ravel().tobytes())
+            buf_lb.add_feature_end()
+            idx = _next_buf_idx[0]
+            _next_buf_idx[0] += 1
+            info = (idx, kind, shape)
+            buf_layer_builders.append(buf_lb)
+            buf_array_cache[id(arr)] = arr
+            return info
 
         for obj_wrapper in ctx.objects:
             obj = obj_wrapper.obj
             schema = _get_class_schema(obj.__class__)
             defns = schema["defns"]
+            numeric_field_kinds = schema["numeric_field_kinds"]
             for fn, ft in defns:
                 val = getattr(obj, fn)
                 if val is None:
                     continue
+                # numpy ndarray with supported dtype
                 if isinstance(val, np.ndarray) and val.dtype in _NUMPY_DTYPE_TO_FDB:
                     arr_id = id(val)
-                    if arr_id in buf_layers:
-                        continue
-                    fdb_ft, kind = _NUMPY_DTYPE_TO_FDB[val.dtype]
-                    shape = val.shape
-                    shape_str = "x".join(str(s) for s in shape)
-                    layer_name = f"{_BUFFER_LAYER_PREFIX}{obj.__class__.__name__}|{fn}|{kind}|{shape_str}"
-                    buf_lb = db.create_layer_begin(layer_name)
-                    buf_lb.set_geometry_type(-1, core.cfDefault, False)  # gtNone
-                    buf_lb.add_field("v", fdb_ft.value)
-                    flat = np.ascontiguousarray(val).ravel()
-                    n = len(flat)
-                    # Write all elements as rows via geometry raw on a single feature
-                    # Store the entire flattened array as the geometry blob of one feature
-                    buf_lb.set_geometry_type(0, core.cfDefault, False)  # gtAny for raw blob
-                    buf_lb.add_feature_begin()
-                    buf_lb.set_geometry_raw(flat.tobytes())
-                    buf_lb.add_feature_end()
-                    idx = _next_buf_idx[0]
-                    _next_buf_idx[0] += 1
-                    buf_layers[arr_id] = (idx, kind, shape)
-                    buf_layer_builders.append(buf_lb)
-                    buf_array_cache[arr_id] = val
+                    if arr_id not in buf_layers:
+                        buf_layers[arr_id] = _make_buf_layer(obj.__class__.__name__, fn, val)
+                    buf_field_refs[(id(obj), fn)] = buf_layers[arr_id]
+                # Numeric list (List[F64], List[U32], List[I32]) → convert and buffer
+                elif isinstance(val, list) and ft == OriginFieldType.list:
+                    numeric_kind = numeric_field_kinds.get(fn)
+                    if numeric_kind and len(val) > 0:
+                        dtype = _KIND_TO_NUMPY_DTYPE[numeric_kind]
+                        arr = np.array(val, dtype=dtype)
+                        info = _make_buf_layer(obj.__class__.__name__, fn, arr)
+                        buf_layers[id(arr)] = info
+                        buf_field_refs[(id(obj), fn)] = info
         
         # Write all objects ordered by layer
         # Skip sort for single-layer case (most common for simple Features)
@@ -170,7 +169,7 @@ class FastSerializer:
             defns = schema["defns"]
             hints = schema["hints"]
             numeric_field_kinds = schema["numeric_field_kinds"]
-            has_blob = schema["has_blob_fields"] or buf_layers
+            has_blob = schema["has_blob_fields"] or buf_field_refs
             
             # Only create blob buffer when needed
             blob_buffer = bytearray() if has_blob else None
@@ -179,18 +178,19 @@ class FastSerializer:
                 val = getattr(obj, fn)
                 numeric_kind = numeric_field_kinds.get(fn) if ft == OriginFieldType.list else None
 
-                # Check for numpy ndarray → buffer layer reference
-                if isinstance(val, np.ndarray) and id(val) in buf_layers:
-                    buf_idx, buf_kind, buf_shape = buf_layers[id(val)]
-                    _pack_buffer_ref(blob_buffer, buf_idx, buf_shape)
+                # Buffer layer reference (ndarray or numeric list)
+                buf_ref = buf_field_refs.get((id(obj), fn))
+                if buf_ref is not None:
+                    _pack_buffer_ref(blob_buffer, buf_ref[0], buf_ref[2])
+                    continue
+
+                # Empty or None numeric list → null buffer ref
+                if numeric_kind is not None:
+                    _pack_buffer_ref(blob_buffer, 0xFFFF, (0,))
                     continue
                 
                 # Strategy: Scalar -> Column, Complex -> Blob
-                if ft == OriginFieldType.list and numeric_kind is not None:
-                    if isinstance(val, list):
-                        _, aux_lb = numeric_list_layers[(obj.__class__, fn)]
-                        _write_numeric_list_chunk(aux_lb, obj_wrapper.feature_idx, val, numeric_kind)
-                elif ft in (OriginFieldType.list, OriginFieldType.unknown):
+                if ft in (OriginFieldType.list, OriginFieldType.unknown):
                     if isinstance(val, list):
                         _pack_list(blob_buffer, val, hints.get(fn, Any), ctx)
                     elif isinstance(val, Feature):
@@ -327,6 +327,19 @@ class _LoadContext:
         self.type_map = {} # class_name -> Type
         self._numeric_list_values = None
         self._buffer_layers = None
+        self._uses_aux_numeric = None
+
+    @property
+    def uses_aux_numeric(self):
+        """Check if database uses old-style __fastser_list__ auxiliary layers."""
+        if self._uses_aux_numeric is None:
+            self._uses_aux_numeric = False
+            for i in range(self.db.get_layer_count()):
+                name = str(self.db.get_layer(i).name())
+                if name.startswith(_NUMERIC_LIST_LAYER_PREFIX):
+                    self._uses_aux_numeric = True
+                    break
+        return self._uses_aux_numeric
 
     @property
     def numeric_list_values(self):
@@ -389,9 +402,33 @@ class _LoadContext:
         for idx, (fn, ft) in enumerate(defns):
             numeric_kind = numeric_field_kinds.get(fn) if ft == OriginFieldType.list else None
 
-            # Recover numeric lists from dedicated auxiliary layers (columnar fast-path)
+            # Numeric list fields (List[F64], List[U32], List[I32])
             if numeric_kind is not None:
-                obj._cache[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
+                if self.uses_aux_numeric:
+                    # Old format: load from __fastser_list__ auxiliary layers
+                    obj._cache[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
+                else:
+                    # New format: read buffer ref from blob
+                    if blob_view and curr_blob_offset < len(blob_view):
+                        magic_byte = struct.unpack_from('B', blob_view, curr_blob_offset)[0]
+                        if magic_byte == _BUFFER_REF_MAGIC:
+                            result = _unpack_buffer_ref(blob_view, curr_blob_offset)
+                            if result is not None:
+                                buf_idx, shape, new_offset = result
+                                if buf_idx == 0xFFFF:
+                                    # Null ref → empty array
+                                    dtype = _KIND_TO_NUMPY_DTYPE.get(numeric_kind, np.dtype('<f8'))
+                                    obj._cache[fn] = np.array([], dtype=dtype)
+                                else:
+                                    arr = self.buffer_layers.get(buf_idx)
+                                    obj._cache[fn] = arr if arr is not None else np.array([], dtype=_KIND_TO_NUMPY_DTYPE.get(numeric_kind, np.dtype('<f8')))
+                                curr_blob_offset = new_offset
+                            else:
+                                obj._cache[fn] = []
+                        else:
+                            obj._cache[fn] = []
+                    else:
+                        obj._cache[fn] = []
                 continue
 
             # Check for buffer layer reference (only for blob-consuming field types)

@@ -222,9 +222,9 @@ class TestBufferLayerMixed(unittest.TestCase):
         data = FastSerializer.dumps(obj)
         loaded = FastSerializer.loads(data, MixedListArray)
 
-        self.assertEqual(loaded.ids, [1, 2, 3, 4, 5])
+        np.testing.assert_array_equal(loaded.ids, [1, 2, 3, 4, 5])
         self.assertEqual(len(loaded.values), 3)
-        self.assertAlmostEqual(loaded.values[0], 0.1)
+        self.assertAlmostEqual(float(loaded.values[0]), 0.1)
         np.testing.assert_array_almost_equal(loaded.extra, extra)
 
 

@@ -1,5 +1,6 @@
 import unittest
 import struct
+import numpy as np
 from typing import List, Optional
 from fastdb4py import FastSerializer, Feature, I32, U32, F64, STR, REF
 
@@ -90,7 +91,7 @@ class TestFastSerializer(unittest.TestCase):
         self.assertEqual(u2.name, "Alice")
         self.assertEqual(u2.age, 30)
         self.assertEqual(len(u2.scores), 3)
-        self.assertAlmostEqual(u2.scores[0], 90.5)
+        self.assertAlmostEqual(float(u2.scores[0]), 90.5)
 
     def test_cyclic_reference(self):
         print("Running test_cyclic_reference...")
@@ -147,7 +148,7 @@ class TestFastSerializer(unittest.TestCase):
         data = FastSerializer.dumps(payload)
         payload2 = FastSerializer.loads(data, MultiListPayload)
 
-        self.assertEqual(payload2.ints, [1, 2, 3, 5, 8])
+        np.testing.assert_array_equal(payload2.ints, [1, 2, 3, 5, 8])
         self.assertEqual(payload2.names, ["alpha", "beta", "你好", "emoji🙂"])
         self.assertEqual(len(payload2.points), 2)
         self.assertAlmostEqual(payload2.points[0].x, 10.0)
@@ -181,13 +182,13 @@ class TestFastSerializer(unittest.TestCase):
         data = FastSerializer.dumps(payload)
         payload2 = FastSerializer.loads(data, NumericColumnarLists)
 
-        self.assertEqual(payload2.ids, [0, 1, 2, 1024, 65535, 4294967295])
+        np.testing.assert_array_equal(payload2.ids, [0, 1, 2, 1024, 65535, 4294967295])
         self.assertEqual(len(payload2.values), 5)
-        self.assertAlmostEqual(payload2.values[0], 0.0)
-        self.assertAlmostEqual(payload2.values[1], 1.5)
-        self.assertAlmostEqual(payload2.values[2], -3.25)
-        self.assertAlmostEqual(payload2.values[3], 1e-6)
-        self.assertAlmostEqual(payload2.values[4], 1e6)
+        self.assertAlmostEqual(float(payload2.values[0]), 0.0)
+        self.assertAlmostEqual(float(payload2.values[1]), 1.5)
+        self.assertAlmostEqual(float(payload2.values[2]), -3.25)
+        self.assertAlmostEqual(float(payload2.values[3]), 1e-6)
+        self.assertAlmostEqual(float(payload2.values[4]), 1e6)
 
     def test_native_scalar_types(self):
         """Native Python int/float/str annotations round-trip correctly."""
@@ -208,10 +209,10 @@ class TestFastSerializer(unittest.TestCase):
         data = FastSerializer.dumps(obj)
         obj2 = FastSerializer.loads(data, NativeLists)
 
-        self.assertEqual(obj2.ints, [-2147483648, 0, 42, 2147483647])
+        np.testing.assert_array_equal(obj2.ints, [-2147483648, 0, 42, 2147483647])
         self.assertEqual(len(obj2.floats), 4)
-        self.assertAlmostEqual(obj2.floats[0], 1.5)
-        self.assertAlmostEqual(obj2.floats[1], -3.25)
+        self.assertAlmostEqual(float(obj2.floats[0]), 1.5)
+        self.assertAlmostEqual(float(obj2.floats[1]), -3.25)
         self.assertEqual(obj2.names, ["alpha", "beta", "你好"])
 
     def test_native_list_int_overflow(self):
