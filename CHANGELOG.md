@@ -54,6 +54,15 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb4ts -->
 ## fastdb4ts (TypeScript/WASM binding)
 
+### Performance
+- `FastSerializer` dumps: TypedArray bulk write for numeric lists replaces per-element DataView calls (~15% speedup).
+- `FastSerializer` dumps: pre-allocated `ByteWriter` with `ArrayBuffer` + `DataView` replaces chunked `Uint8Array[]` concatenation.
+- `FastSerializer` dumps: removed unnecessary `O(n log n)` object sort — registration order already correct.
+- `FastSerializer` dumps/loads: module-level `TextEncoder`/`TextDecoder` reuse eliminates repeated constructor overhead (~7% speedup).
+- `FastSerializer` dumps: `register()` now uses pre-computed `refTraversalFields`, skipping non-ref fields during graph traversal.
+- `FastSerializer` loads: numeric `objectCache` key `(layerIdx << 20 | featureIdx)` replaces string concatenation; `layer.name()` results cached.
+- Cumulative `FastSerializer` improvement: **~25%** (99.02 → ~74.50 µs geometric mean on PointCloud benchmark with STR + U32 + F64 + listOf(F64) + listOf(U32) + listOf(STR)).
+
 ### Historical releases (pre-CHANGELOG)
 
 - **2026-03-18 (fastdb4ts rollout)**: Added the `fastdb4ts` TypeScript/WebAssembly binding, including isolated Emscripten build infrastructure, Embind bridge layer, ORM/table/column APIs, graph serializer support, root-level TypeScript tests, npm packaging flow, and scoped CI for Python/TS/core changes.

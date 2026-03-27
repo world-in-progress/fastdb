@@ -118,7 +118,8 @@ export class Point extends Feature {
 | `table.iter_reuse()` row access | **~350 ns/row** | Reuses Feature wrapper, no allocation |
 | `for feat in table` row access | **~1.2 µs/row** | Allocates Feature wrapper per row |
 | `feat.x` single field read (db-mapped) | **~420 ns** | 1 SWIG call |
-| `FastSerializer.dumps/loads` | **~70 µs** (complex graph) | 1.6× pickle dumps, 21× faster loads at N=10k |
+| `FastSerializer.dumps/loads` (Python) | **~70 µs** (complex graph) | 1.6× pickle dumps, 21× faster loads at N=10k |
+| `FastSerializer.dumps/loads` (TypeScript) | **~75 µs** (complex graph) | ~25% faster than unoptimized; TypedArray bulk writes + pre-allocated ByteWriter |
 
 **Recommended patterns by use case:**
 

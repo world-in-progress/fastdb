@@ -230,7 +230,7 @@ ts/
 │   │   └── wasm/           Emscripten output — DO NOT EDIT MANUALLY
 │   │       ├── fastdb4ts.js
 │   │       └── fastdb4ts.wasm
-│   ├── package.json        version: 0.0.1, publishConfig.access: public
+│   ├── package.json        version: 0.0.2, publishConfig.access: public
 │   └── tsconfig.json
 ├── tests/                  Node-based TS tests (tsx runner)
 │   ├── test-orm.ts
@@ -256,6 +256,9 @@ npm --prefix ts/fastdb4ts run test:serializer
 
 # Run cross-language interop tests (Python ↔ TS)
 npm --prefix ts/fastdb4ts run test:serializer:interop
+
+# Run serializer benchmark
+npm --prefix ts/fastdb4ts run bench:serializer
 ```
 
 ### Key patterns
@@ -310,6 +313,18 @@ class Node extends Feature {
 const buf = FastSerializer.dumps(root);
 const loaded = FastSerializer.loads(buf, Node);
 ```
+
+### FastSerializer performance notes
+
+The TS serializer includes several V8-specific optimizations:
+
+- **TypedArray bulk write**: Numeric list dumps use `new Float64Array(n)` + `.buffer` instead of per-element `DataView.setFloat64()`.
+- **Pre-allocated ByteWriter**: Single `ArrayBuffer` + `DataView` replaces chunked `Uint8Array[]` concatenation.
+- **Module-level TextEncoder/TextDecoder**: Avoids repeated constructor overhead.
+- **Pre-computed refTraversalFields**: `register()` skips non-ref fields during graph traversal.
+- **Numeric objectCache key**: `(layerIdx << 20) | featureIdx` avoids string allocation in loads.
+
+**V8 performance caveat**: `Array.from(TypedArray)` is slower than a DataView per-element loop in V8. Do NOT use TypedArray views for reading numeric data back into JS arrays — stick with DataView loops.
 
 ### Embind isolation rule
 
@@ -367,7 +382,9 @@ When modifying the serializer in either language, always verify the cross-langua
 
 A terminal aggregate job named `test` (with `if: always()`) satisfies the branch protection required status check regardless of which scoped jobs ran.
 
-**npm publish** (`.github/workflows/npm_publish.yml`): triggered by git tags matching `npm/v*`. Checks npm registry first (skips if version exists), builds WASM + TS, tests, packs, then publishes via npm OIDC Trusted Publishing (no `NPM_TOKEN` secret). Git tag is created after successful publish, not before. First publish of a new package name must be done manually.
+**npm publish** (`.github/workflows/npm_publish.yml`): triggered on push to `main` when `ts/fastdb4ts/package.json` changes (or `workflow_dispatch`). Checks npm registry first (skips if version exists), builds WASM + TS, tests, packs, then publishes via npm OIDC Trusted Publishing (no `NPM_TOKEN` secret). Creates a `ts/v{version}` git tag after successful publish, which in turn triggers `release-ts.yml` to create a GitHub Release.
+
+**PyPI publish** (`.github/workflows/pypi_publish.yml`): triggered on push to `main` when `pyproject.toml` changes (or `workflow_dispatch`). Builds cross-platform wheels via `cibuildwheel`, publishes to PyPI, then creates a `py/v{version}` git tag, which in turn triggers `release-py.yml` to create a GitHub Release.
 
 ---
 
