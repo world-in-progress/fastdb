@@ -9,6 +9,8 @@ import { getInitializedFastdbModule, type FastdbModule, type WxLayerTableBuildHa
 import { isListField, isRefField, type FeatureClassLike, type FieldTypeDef } from './types.js';
 
 const NUMERIC_LIST_LAYER_PREFIX = '__fastser_list__|';
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
 
 type NumericListKind = 'u32' | 'f64' | 'i32';
 
@@ -456,7 +458,7 @@ function packList(writer: ByteWriter, field: SchemaFieldDefinition, value: unkno
       case 'str':
       case 'wstr':
         for (const entry of list) {
-          const bytes = new TextEncoder().encode(String(entry));
+          const bytes = TEXT_ENCODER.encode(String(entry));
           writer.writeU32(bytes.length);
           writer.writeBytes(bytes);
         }
@@ -504,7 +506,7 @@ function unpackList(reader: ByteReader, field: SchemaFieldDefinition, ctx: LoadC
       case 'str':
       case 'wstr':
         for (let i = 0; i < count; i += 1) {
-          out.push(new TextDecoder().decode(reader.readBytes(reader.readU32())));
+          out.push(TEXT_DECODER.decode(reader.readBytes(reader.readU32())));
         }
         return out;
       default:
