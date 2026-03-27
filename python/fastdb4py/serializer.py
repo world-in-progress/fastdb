@@ -807,7 +807,19 @@ def _unpack_list(view, offset, type_hint, ctx):
 def _get_db_field_index_for_load(cls, schema_idx):
     return _get_class_schema(cls)["db_field_index_by_schema"].get(schema_idx, -1)
 
+_DISCOVER_TYPES_CACHE: WeakKeyDictionary = WeakKeyDictionary()
+
 def _discover_types(cls, type_map):
+    # Use cached result if available
+    cached = _DISCOVER_TYPES_CACHE.get(cls)
+    if cached is not None:
+        type_map.update(cached)
+        return
+    
+    _discover_types_impl(cls, type_map)
+    _DISCOVER_TYPES_CACHE[cls] = dict(type_map)
+
+def _discover_types_impl(cls, type_map):
     if cls.__name__ in type_map:
         return
     type_map[cls.__name__] = cls
@@ -832,7 +844,7 @@ def _discover_types(cls, type_map):
         else:
             try:
                 if issubclass(base, Feature):
-                     _discover_types(base, type_map)
+                     _discover_types_impl(base, type_map)
             except: pass
         
         if origin is list and args:
@@ -845,7 +857,7 @@ def _discover_types(cls, type_map):
              else:
                  try:
                      if issubclass(inner, Feature):
-                         _discover_types(inner, type_map)
+                         _discover_types_impl(inner, type_map)
                  except: pass
 
 def _get_class_schema(cls):
