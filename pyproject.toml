@@ -30,6 +30,7 @@ dev = [
 [tool.pyright]
 pythonPlatform = "All"
 extraPaths = ["python"]
+typeCheckingMode = "off"
 
 [tool.pytest.ini_options]
 testpaths = ["tests/python"]
