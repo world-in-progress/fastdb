@@ -145,12 +145,16 @@ class FastSerializer:
                     buf_array_cache[arr_id] = val
         
         # Write all objects ordered by layer
-        sorted_objects = sorted(ctx.objects, key=lambda x: (x.layer_idx, x.feature_idx))
+        # Skip sort for single-layer case (most common for simple Features)
+        if len(ctx.type_to_layer) <= 1:
+            write_order = ctx.objects
+        else:
+            write_order = sorted(ctx.objects, key=lambda x: (x.layer_idx, x.feature_idx))
         
         current_layer_idx = -1
         current_lb = None
         
-        for obj_wrapper in sorted_objects:
+        for obj_wrapper in write_order:
             obj = obj_wrapper.obj
             l_idx = obj_wrapper.layer_idx
             
@@ -162,13 +166,14 @@ class FastSerializer:
             lb = current_lb
             lb.add_feature_begin()
             
-            # Prepare Blob for storing non-scalar data
-            blob_buffer = bytearray()
-            
             schema = _get_class_schema(obj.__class__)
             defns = schema["defns"]
             hints = schema["hints"]
             numeric_field_kinds = schema["numeric_field_kinds"]
+            has_blob = schema["has_blob_fields"] or buf_layers
+            
+            # Only create blob buffer when needed
+            blob_buffer = bytearray() if has_blob else None
             
             for idx, (fn, ft) in enumerate(defns):
                 val = getattr(obj, fn)
@@ -189,29 +194,19 @@ class FastSerializer:
                     if isinstance(val, list):
                         _pack_list(blob_buffer, val, hints.get(fn, Any), ctx)
                     elif isinstance(val, Feature):
-                        # Treat single feature as list of 1 element for unknown fields
-                        # This allows forward compatibility if fields become lists
-                        # Or simply to store it.
-                        _pack_feature_ref(blob_buffer, val, ctx) 
-                        # Wait, pack_feature_ref writes 6 bytes.
-                        # But unpack_list expects <I> count first.
-                        # So we must wrap in list structure: count=1 + ref
                         temp_buf = bytearray()
                         temp_buf.extend(struct.pack('<I', 1))
                         _pack_feature_ref(temp_buf, val, ctx)
                         blob_buffer.extend(temp_buf)
                     else:
-                        # For unknown type or None, write empty list marker as placeholder
                         blob_buffer.extend(struct.pack('<I', 0)) 
                 elif ft == OriginFieldType.bytes:
-                     # Bytes: [Length:u32][Bytes...]
                      if isinstance(val, (bytes, bytearray)):
                          blob_buffer.extend(struct.pack('<I', len(val)))
                          blob_buffer.extend(val)
                      else:
                          blob_buffer.extend(struct.pack('<I', 0))
                 elif ft == OriginFieldType.ref:
-                    # Feature Ref: [LayerIdx:u16][FeatureIdx:u32]
                     _pack_feature_ref(blob_buffer, val, ctx)
                 else:
                     # Scalar type: write to column
@@ -221,7 +216,6 @@ class FastSerializer:
                             lb.set_field_cstring(db_idx, val)
                         elif ft == OriginFieldType.wstr:
                             lb.set_field_wstring(db_idx, val)
-                        # Numeric
                         elif ft in (OriginFieldType.u8, OriginFieldType.u8n):
                              lb.set_field(db_idx, int(val))
                         else:
@@ -331,8 +325,20 @@ class _LoadContext:
         self.db = db
         self.obj_cache = {} # (layer_idx, feature_idx) -> obj
         self.type_map = {} # class_name -> Type
-        self.numeric_list_values = _load_numeric_list_values(db)
-        self.buffer_layers = _load_buffer_layers(db)
+        self._numeric_list_values = None
+        self._buffer_layers = None
+
+    @property
+    def numeric_list_values(self):
+        if self._numeric_list_values is None:
+            self._numeric_list_values = _load_numeric_list_values(self.db)
+        return self._numeric_list_values
+
+    @property
+    def buffer_layers(self):
+        if self._buffer_layers is None:
+            self._buffer_layers = _load_buffer_layers(self.db)
+        return self._buffer_layers
 
     def get_object(self, l_idx, f_idx, expected_type):
         key = (l_idx, f_idx)
@@ -844,12 +850,18 @@ def _get_class_schema(cls):
             else:
                 db_field_index_by_schema[i] = -1
 
+        has_blob_fields = any(
+            ft in (OriginFieldType.list, OriginFieldType.unknown, OriginFieldType.bytes, OriginFieldType.ref)
+            for _, ft in defns
+        )
+
         schema = {
             "hints": hints,
             "defns": defns,
             "numeric_field_kinds": numeric_field_kinds,
             "numeric_fields": numeric_fields,
             "db_field_index_by_schema": db_field_index_by_schema,
+            "has_blob_fields": has_blob_fields,
         }
         _CLASS_SCHEMA_CACHE[cls] = schema
         return schema
