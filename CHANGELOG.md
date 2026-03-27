@@ -19,6 +19,11 @@ When a binding is released (tagged), its section is automatically copied to the 
 - `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.
 - `FastSerializer` loads path: lazy initialization of auxiliary layer data, eliminated redundant schema lookups in scalar read path.
 - Overall `FastSerializer` geometric mean improvement: **32%** (44.26 → 30.09 µs across all test cases).
+- `FastSerializer` numeric lists (`List[F64]`, `List[U32]`, `List[I32]`) now route through dedicated `__fastser_buf__` buffer layers using `struct.pack` for dumps and `np.frombuffer` for loads, achieving ~39% speedup for complex Features.
+- `FastSerializer` type discovery (`_discover_types`) is now cached per root type, eliminating redundant type-hint traversal on repeated `loads()` calls.
+- `FastSerializer` buffer layer references now store absolute database layer indices, enabling O(1) direct layer access on loads (eliminates full layer scan).
+- `FastSerializer.dumps()` pre-computes `ref_traversal_fields` per class schema, skipping scalar/numeric-list fields during `register()` traversal.
+- Cumulative `FastSerializer` improvement on complex PointCloud benchmark: **54%** (153.93 → 70.01 µs geo-mean); loads at N=10000 is now **21× faster than pickle**.
 
 ### Fixed
 - `fdb codegen --ts` no longer warns or skips when the same class name (e.g. `Point`) appears in different `.py` files. Each file is treated as an independent module; all classes are generated in their respective `.ts` files.
