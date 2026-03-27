@@ -24,6 +24,7 @@ interface SerializerSchema {
   readonly fieldList: readonly SchemaFieldDefinition[];
   readonly numericFieldKinds: ReadonlyMap<string, NumericListKind>;
   readonly dbFieldIndexBySchema: ReadonlyMap<number, number>;
+  readonly refTraversalFields: readonly SchemaFieldDefinition[];
 }
 
 const SERIALIZER_SCHEMA_CACHE = new WeakMap<FeatureClassLike, SerializerSchema>();
@@ -214,7 +215,7 @@ class DumpContext {
     this.objects.push({ obj, layerIdx, featureIdx });
 
     const schema = getSerializerSchema(ctor);
-    for (const field of schema.fieldList) {
+    for (const field of schema.refTraversalFields) {
       const value = getFeatureFieldValue(obj, field.name);
       if (value === null || value === undefined) {
         continue;
@@ -227,18 +228,12 @@ class DumpContext {
         continue;
       }
 
-      if (!isListField(field.entry) || !Array.isArray(value) || value.length === 0) {
-        continue;
-      }
-
-      const item = resolveListItem(field.entry);
-      if (isFieldType(item)) {
-        continue;
-      }
-
-      for (const nested of value) {
-        if (nested instanceof Feature) {
-          this.register(nested);
+      // Must be list-of-Feature
+      if (Array.isArray(value)) {
+        for (const nested of value) {
+          if (nested instanceof Feature) {
+            this.register(nested);
+          }
         }
       }
     }
@@ -384,10 +379,24 @@ function getSerializerSchema(ctor: FeatureClassLike): SerializerSchema {
     dbFieldIndex += 1;
   }
 
+  // Pre-compute fields that need traversal during register() — only ref fields and list-of-Feature fields
+  const refTraversalFields: SchemaFieldDefinition[] = [];
+  for (const field of classSchema.fieldList) {
+    if (isRefField(field.entry)) {
+      refTraversalFields.push(field);
+    } else if (isListField(field.entry)) {
+      const item = resolveListItem(field.entry);
+      if (!isFieldType(item)) {
+        refTraversalFields.push(field);
+      }
+    }
+  }
+
   const schema: SerializerSchema = {
     fieldList: classSchema.fieldList,
     numericFieldKinds,
     dbFieldIndexBySchema,
+    refTraversalFields,
   };
   SERIALIZER_SCHEMA_CACHE.set(ctor, schema);
   return schema;
