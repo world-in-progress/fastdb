@@ -290,20 +290,20 @@ class _DumpContext:
         self.obj_to_id[id(obj)] = (l_idx, f_idx)
         self.objects.append(_ObjectWrapper(obj, l_idx, f_idx))
         
-        # Recursive registration
-        hints = self.get_hints(cls)
-        defns = _get_class_schema(cls)["defns"]
-        for fn, _ in defns:
-            type_hint = hints.get(fn)
+        # Only traverse fields that might contain Feature refs
+        schema = _get_class_schema(cls)
+        ref_fields = schema["ref_traversal_fields"]
+        if not ref_fields:
+            return
+        
+        for fn, type_hint, kind in ref_fields:
             val = getattr(obj, fn)
-            
             if val is None:
                 continue
 
-            if isinstance(val, Feature):
+            if kind == "ref" and isinstance(val, Feature):
                 self.register(val)
             elif isinstance(val, list):
-                # Check hint
                 args = get_args(type_hint) if type_hint else None
                 inner = args[0] if args else None
                 
@@ -311,11 +311,12 @@ class _DumpContext:
                      for item in val:
                          if isinstance(item, Feature):
                              self.register(item)
-                # Fallback check content
                 elif val and isinstance(val[0], Feature):
                      for item in val:
                          if isinstance(item, Feature):
                              self.register(item)
+            elif isinstance(val, Feature):
+                self.register(val)
 
     def get_ref(self, obj):
         return self.obj_to_id.get(id(obj))
@@ -889,6 +890,16 @@ def _get_class_schema(cls):
             for _, ft in defns
         )
 
+        # Pre-compute fields that might contain Feature refs (for fast registration)
+        ref_traversal_fields = []
+        for fn, ft in defns:
+            if ft == OriginFieldType.ref:
+                ref_traversal_fields.append((fn, hints.get(fn), "ref"))
+            elif ft in (OriginFieldType.list, OriginFieldType.unknown):
+                # Skip numeric lists (List[F64], List[U32], List[I32]) - they never contain Features
+                if fn not in numeric_field_kinds:
+                    ref_traversal_fields.append((fn, hints.get(fn), "list_or_unknown"))
+
         schema = {
             "hints": hints,
             "defns": defns,
@@ -896,6 +907,7 @@ def _get_class_schema(cls):
             "numeric_fields": numeric_fields,
             "db_field_index_by_schema": db_field_index_by_schema,
             "has_blob_fields": has_blob_fields,
+            "ref_traversal_fields": ref_traversal_fields,
         }
         _CLASS_SCHEMA_CACHE[cls] = schema
         return schema
