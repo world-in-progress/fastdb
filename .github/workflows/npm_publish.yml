@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  workflows: write
 
 jobs:
   check_version:
