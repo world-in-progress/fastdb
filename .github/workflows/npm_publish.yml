@@ -51,11 +51,11 @@ jobs:
       - name: Check if git tag exists
         id: check_tag
         run: |
-          if git rev-parse "fastdb4ts-v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
-            echo "Tag fastdb4ts-v${{ steps.get_version.outputs.VERSION }} already exists."
+          if git rev-parse "ts/v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
+            echo "Tag ts/v${{ steps.get_version.outputs.VERSION }} already exists."
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Tag fastdb4ts-v${{ steps.get_version.outputs.VERSION }} does not exist yet."
+            echo "Tag ts/v${{ steps.get_version.outputs.VERSION }} does not exist yet."
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -134,5 +134,5 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "fastdb4ts-v${{ needs.check_version.outputs.version }}" -m "fastdb4ts v${{ needs.check_version.outputs.version }}"
-          git push origin "fastdb4ts-v${{ needs.check_version.outputs.version }}"
+          git tag -a "ts/v${{ needs.check_version.outputs.version }}" -m "fastdb4ts v${{ needs.check_version.outputs.version }}"
+          git push origin "ts/v${{ needs.check_version.outputs.version }}"

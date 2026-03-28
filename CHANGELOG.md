@@ -13,6 +13,18 @@ When a binding is released (tagged), its section is automatically copied to the 
 - `fdb codegen --ts <input_dir> <output_dir>` CLI command: auto-generates TypeScript `Feature` classes from Python Feature definitions, with full type mapping, cross-file import resolution, cycle detection (lazy refs), and topological ordering.
 - Free-threaded Python (PEP 703) support: module-level caches (`get_class_schema`, serializer schema, ColumnAccessor) are now safe under concurrent access; CI tests against Python 3.13t.
 - Thread-safety test suite (`test_free_threading.py`): 12 tests covering schema cache, serializer, ColumnAccessor, Feature instances, ORM lifecycle, and mixed-workload stress under concurrent threading.
+- `FastSerializer` numpy ndarray buffer layer support (`__fastser_buf__`): numpy arrays are now serialized via dedicated fastdb layers using `memcpy`-level writes and `np.frombuffer` loads, achieving 5–8× speedup over list-based paths for large arrays. Supports float64, float32, uint32, int32, uint16, uint8 dtypes and 1D/2D/3D shapes.
+- `FastSerializer.loads_shm(shm_name, length, offset, root_type)`: deserialize a Feature directly from a named shared memory segment without copying to an intermediate `bytes` object. Returns a fully detached Feature (pure Python mode) after closing the shared memory mapping.
+
+### Performance
+- `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.
+- `FastSerializer` loads path: lazy initialization of auxiliary layer data, eliminated redundant schema lookups in scalar read path.
+- Overall `FastSerializer` geometric mean improvement: **32%** (44.26 → 30.09 µs across all test cases).
+- `FastSerializer` numeric lists (`List[F64]`, `List[U32]`, `List[I32]`) now route through dedicated `__fastser_buf__` buffer layers using `struct.pack` for dumps and `np.frombuffer` for loads, achieving ~39% speedup for complex Features.
+- `FastSerializer` type discovery (`_discover_types`) is now cached per root type, eliminating redundant type-hint traversal on repeated `loads()` calls.
+- `FastSerializer` buffer layer references now store absolute database layer indices, enabling O(1) direct layer access on loads (eliminates full layer scan).
+- `FastSerializer.dumps()` pre-computes `ref_traversal_fields` per class schema, skipping scalar/numeric-list fields during `register()` traversal.
+- Cumulative `FastSerializer` improvement on complex PointCloud benchmark: **54%** (153.93 → 70.01 µs geo-mean); loads at N=10000 is now **21× faster than pickle**.
 
 ### Fixed
 - `fdb codegen --ts` no longer warns or skips when the same class name (e.g. `Point`) appears in different `.py` files. Each file is treated as an independent module; all classes are generated in their respective `.ts` files.
@@ -41,6 +53,15 @@ When a binding is released (tagged), its section is automatically copied to the 
 
 <!-- BEGIN:fastdb4ts -->
 ## fastdb4ts (TypeScript/WASM binding)
+
+### Performance
+- `FastSerializer` dumps: TypedArray bulk write for numeric lists replaces per-element DataView calls (~15% speedup).
+- `FastSerializer` dumps: pre-allocated `ByteWriter` with `ArrayBuffer` + `DataView` replaces chunked `Uint8Array[]` concatenation.
+- `FastSerializer` dumps: removed unnecessary `O(n log n)` object sort — registration order already correct.
+- `FastSerializer` dumps/loads: module-level `TextEncoder`/`TextDecoder` reuse eliminates repeated constructor overhead (~7% speedup).
+- `FastSerializer` dumps: `register()` now uses pre-computed `refTraversalFields`, skipping non-ref fields during graph traversal.
+- `FastSerializer` loads: numeric `objectCache` key `(layerIdx << 20 | featureIdx)` replaces string concatenation; `layer.name()` results cached.
+- Cumulative `FastSerializer` improvement: **~25%** (99.02 → ~74.50 µs geometric mean on PointCloud benchmark with STR + U32 + F64 + listOf(F64) + listOf(U32) + listOf(STR)).
 
 ### Historical releases (pre-CHANGELOG)
 

@@ -9,6 +9,8 @@ import { getInitializedFastdbModule, type FastdbModule, type WxLayerTableBuildHa
 import { isListField, isRefField, type FeatureClassLike, type FieldTypeDef } from './types.js';
 
 const NUMERIC_LIST_LAYER_PREFIX = '__fastser_list__|';
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
 
 type NumericListKind = 'u32' | 'f64' | 'i32';
 
@@ -22,6 +24,7 @@ interface SerializerSchema {
   readonly fieldList: readonly SchemaFieldDefinition[];
   readonly numericFieldKinds: ReadonlyMap<string, NumericListKind>;
   readonly dbFieldIndexBySchema: ReadonlyMap<number, number>;
+  readonly refTraversalFields: readonly SchemaFieldDefinition[];
 }
 
 const SERIALIZER_SCHEMA_CACHE = new WeakMap<FeatureClassLike, SerializerSchema>();
@@ -70,11 +73,7 @@ export class FastSerializer {
       }
     }
 
-    const orderedObjects = [...ctx.objects].sort(
-      (left, right) => left.layerIdx - right.layerIdx || left.featureIdx - right.featureIdx
-    );
-
-    for (const wrapper of orderedObjects) {
+    for (const wrapper of ctx.objects) {
       const ctor = wrapper.obj.constructor as FeatureClass;
       const schema = getSerializerSchema(ctor);
       const layer = layerBuilders.get(wrapper.layerIdx);
@@ -212,7 +211,7 @@ class DumpContext {
     this.objects.push({ obj, layerIdx, featureIdx });
 
     const schema = getSerializerSchema(ctor);
-    for (const field of schema.fieldList) {
+    for (const field of schema.refTraversalFields) {
       const value = getFeatureFieldValue(obj, field.name);
       if (value === null || value === undefined) {
         continue;
@@ -225,18 +224,12 @@ class DumpContext {
         continue;
       }
 
-      if (!isListField(field.entry) || !Array.isArray(value) || value.length === 0) {
-        continue;
-      }
-
-      const item = resolveListItem(field.entry);
-      if (isFieldType(item)) {
-        continue;
-      }
-
-      for (const nested of value) {
-        if (nested instanceof Feature) {
-          this.register(nested);
+      // Must be list-of-Feature
+      if (Array.isArray(value)) {
+        for (const nested of value) {
+          if (nested instanceof Feature) {
+            this.register(nested);
+          }
         }
       }
     }
@@ -251,9 +244,10 @@ class DumpContext {
 }
 
 class LoadContext {
-  readonly objectCache = new Map<string, Feature>();
+  readonly objectCache = new Map<number, Feature>();
   readonly typeMap = new Map<string, FeatureClassLike>();
   readonly numericListValues: Map<string, unknown[]>;
+  private readonly layerNameCache = new Map<number, string>();
 
   constructor(
     private readonly db: ReturnType<typeof getInitializedFastdbModule>['WxDatabase'] extends never
@@ -265,14 +259,20 @@ class LoadContext {
   }
 
   getObject<T extends Feature>(layerIdx: number, featureIdx: number, expectedType: FeatureClass<T>): T {
-    const key = `${layerIdx}:${featureIdx}`;
+    // Numeric key avoids string allocation: layerIdx is always < 65536
+    const key = (layerIdx << 20) | featureIdx;
     const cached = this.objectCache.get(key);
     if (cached) {
       return cached as T;
     }
 
     const layer = this.db.getLayer(layerIdx);
-    const ctor = (this.typeMap.get(layer.name()) as FeatureClass<T> | undefined) ?? expectedType;
+    let layerName = this.layerNameCache.get(layerIdx);
+    if (layerName === undefined) {
+      layerName = layer.name();
+      this.layerNameCache.set(layerIdx, layerName);
+    }
+    const ctor = (this.typeMap.get(layerName) as FeatureClass<T> | undefined) ?? expectedType;
     const row = layer.tryGetFeatureAt(featureIdx);
     const obj = createFeature(ctor);
     this.objectCache.set(key, obj);
@@ -382,10 +382,24 @@ function getSerializerSchema(ctor: FeatureClassLike): SerializerSchema {
     dbFieldIndex += 1;
   }
 
+  // Pre-compute fields that need traversal during register() — only ref fields and list-of-Feature fields
+  const refTraversalFields: SchemaFieldDefinition[] = [];
+  for (const field of classSchema.fieldList) {
+    if (isRefField(field.entry)) {
+      refTraversalFields.push(field);
+    } else if (isListField(field.entry)) {
+      const item = resolveListItem(field.entry);
+      if (!isFieldType(item)) {
+        refTraversalFields.push(field);
+      }
+    }
+  }
+
   const schema: SerializerSchema = {
     fieldList: classSchema.fieldList,
     numericFieldKinds,
     dbFieldIndexBySchema,
+    refTraversalFields,
   };
   SERIALIZER_SCHEMA_CACHE.set(ctor, schema);
   return schema;
@@ -456,7 +470,7 @@ function packList(writer: ByteWriter, field: SchemaFieldDefinition, value: unkno
       case 'str':
       case 'wstr':
         for (const entry of list) {
-          const bytes = new TextEncoder().encode(String(entry));
+          const bytes = TEXT_ENCODER.encode(String(entry));
           writer.writeU32(bytes.length);
           writer.writeBytes(bytes);
         }
@@ -504,7 +518,7 @@ function unpackList(reader: ByteReader, field: SchemaFieldDefinition, ctx: LoadC
       case 'str':
       case 'wstr':
         for (let i = 0; i < count; i += 1) {
-          out.push(new TextDecoder().decode(reader.readBytes(reader.readU32())));
+          out.push(TEXT_DECODER.decode(reader.readBytes(reader.readU32())));
         }
         return out;
       default:
@@ -533,37 +547,37 @@ function writeNumericListChunk(
   layer.addFeatureBegin();
   layer.setFieldInt(0, ownerFeatureId);
 
-  let payload = new Uint8Array(0);
-  if (list.length > 0) {
-    if (kind === 'u32') {
-      const view = new DataView(new ArrayBuffer(list.length * 4));
-      list.forEach((entry, index) => {
-        const iv = Number(entry);
-        if (!Number.isInteger(iv) || iv < 0 || iv > 0xffffffff) {
-          throw new FastdbUsageError(`List[U32] item out of range: ${entry}`);
-        }
-        view.setUint32(index * 4, iv, true);
-      });
-      payload = new Uint8Array(view.buffer);
-    } else if (kind === 'i32') {
-      const view = new DataView(new ArrayBuffer(list.length * 4));
-      list.forEach((entry, index) => {
-        const iv = Math.trunc(Number(entry));
-        if (iv < -0x80000000 || iv > 0x7fffffff) {
-          throw new FastdbUsageError(
-            `list[int] item ${entry} out of i32 range [-2147483648, 2147483647].`
-          );
-        }
-        view.setInt32(index * 4, iv, true);
-      });
-      payload = new Uint8Array(view.buffer);
-    } else {
-      const view = new DataView(new ArrayBuffer(list.length * 8));
-      list.forEach((entry, index) => {
-        view.setFloat64(index * 8, Number(entry), true);
-      });
-      payload = new Uint8Array(view.buffer);
+  let payload: Uint8Array;
+  if (list.length === 0) {
+    payload = new Uint8Array(0);
+  } else if (kind === 'u32') {
+    const typed = new Uint32Array(list.length);
+    for (let i = 0; i < list.length; i++) {
+      const iv = Number(list[i]);
+      if (!Number.isInteger(iv) || iv < 0 || iv > 0xffffffff) {
+        throw new FastdbUsageError(`List[U32] item out of range: ${list[i]}`);
+      }
+      typed[i] = iv;
     }
+    payload = new Uint8Array(typed.buffer);
+  } else if (kind === 'i32') {
+    const typed = new Int32Array(list.length);
+    for (let i = 0; i < list.length; i++) {
+      const iv = Math.trunc(Number(list[i]));
+      if (iv < -0x80000000 || iv > 0x7fffffff) {
+        throw new FastdbUsageError(
+          `list[int] item ${list[i]} out of i32 range [-2147483648, 2147483647].`
+        );
+      }
+      typed[i] = iv;
+    }
+    payload = new Uint8Array(typed.buffer);
+  } else {
+    const typed = new Float64Array(list.length);
+    for (let i = 0; i < list.length; i++) {
+      typed[i] = Number(list[i]);
+    }
+    payload = new Uint8Array(typed.buffer);
   }
 
   if (payload.length > 0) {
@@ -693,53 +707,65 @@ function getFeatureFieldValue(feature: Feature, fieldName: string): unknown {
 }
 
 class ByteWriter {
-  private readonly chunks: Uint8Array[] = [];
-  private totalSize = 0;
+  private buf: ArrayBuffer;
+  private view: DataView;
+  private offset = 0;
+
+  constructor(initialCapacity = 256) {
+    this.buf = new ArrayBuffer(initialCapacity);
+    this.view = new DataView(this.buf);
+  }
 
   writeU16(value: number): void {
-    const bytes = new Uint8Array(2);
-    new DataView(bytes.buffer).setUint16(0, value, true);
-    this.push(bytes);
+    this.ensureCapacity(2);
+    this.view.setUint16(this.offset, value, true);
+    this.offset += 2;
   }
 
   writeU32(value: number): void {
-    const bytes = new Uint8Array(4);
-    new DataView(bytes.buffer).setUint32(0, value, true);
-    this.push(bytes);
+    this.ensureCapacity(4);
+    this.view.setUint32(this.offset, value, true);
+    this.offset += 4;
   }
 
   writeI32(value: number): void {
-    const bytes = new Uint8Array(4);
-    new DataView(bytes.buffer).setInt32(0, value, true);
-    this.push(bytes);
+    this.ensureCapacity(4);
+    this.view.setInt32(this.offset, value, true);
+    this.offset += 4;
   }
 
   writeF64(value: number): void {
-    const bytes = new Uint8Array(8);
-    new DataView(bytes.buffer).setFloat64(0, value, true);
-    this.push(bytes);
+    this.ensureCapacity(8);
+    this.view.setFloat64(this.offset, value, true);
+    this.offset += 8;
   }
 
   writeBytes(bytes: Uint8Array): void {
     if (bytes.length === 0) {
       return;
     }
-    this.push(bytes);
+    this.ensureCapacity(bytes.length);
+    new Uint8Array(this.buf).set(bytes, this.offset);
+    this.offset += bytes.length;
   }
 
   finish(): Uint8Array {
-    const out = new Uint8Array(this.totalSize);
-    let offset = 0;
-    for (const chunk of this.chunks) {
-      out.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return out;
+    return new Uint8Array(this.buf, 0, this.offset);
   }
 
-  private push(bytes: Uint8Array): void {
-    this.chunks.push(bytes);
-    this.totalSize += bytes.length;
+  private ensureCapacity(needed: number): void {
+    const required = this.offset + needed;
+    if (required <= this.buf.byteLength) {
+      return;
+    }
+    let newSize = this.buf.byteLength * 2;
+    while (newSize < required) {
+      newSize *= 2;
+    }
+    const newBuf = new ArrayBuffer(newSize);
+    new Uint8Array(newBuf).set(new Uint8Array(this.buf, 0, this.offset));
+    this.buf = newBuf;
+    this.view = new DataView(this.buf);
   }
 }
 

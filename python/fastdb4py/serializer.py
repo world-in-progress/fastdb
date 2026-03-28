@@ -10,8 +10,30 @@ from .type import OriginFieldType, U32, F64
 from . import core
 
 _NUMERIC_LIST_LAYER_PREFIX = "__fastser_list__|"
+_BUFFER_LAYER_PREFIX = "__fastser_buf__|"
+_BUFFER_REF_MAGIC = 0xBF
 _CLASS_SCHEMA_CACHE_LOCK = Lock()
 _CLASS_SCHEMA_CACHE: WeakKeyDictionary = WeakKeyDictionary()
+
+# Mapping from numpy dtype to fastdb field type and short kind string
+_NUMPY_DTYPE_TO_FDB = {
+    np.dtype('float64'): (OriginFieldType.f64, "f64"),
+    np.dtype('float32'): (OriginFieldType.f32, "f32"),
+    np.dtype('uint32'):  (OriginFieldType.u32, "u32"),
+    np.dtype('int32'):   (OriginFieldType.i32, "i32"),
+    np.dtype('uint16'):  (OriginFieldType.u16, "u16"),
+    np.dtype('uint8'):   (OriginFieldType.u8,  "u8"),
+}
+
+# Reverse mapping from kind string to numpy dtype
+_KIND_TO_NUMPY_DTYPE = {
+    "f64": np.dtype('<f8'), "f32": np.dtype('<f4'),
+    "u32": np.dtype('<u4'), "i32": np.dtype('<i4'),
+    "u16": np.dtype('<u2'), "u8":  np.dtype('<u1'),
+}
+
+# Kind string to struct format character (for fast list→bytes conversion)
+_KIND_TO_STRUCT_CHAR = {"f64": "d", "f32": "f", "u32": "I", "i32": "i", "u16": "H", "u8": "B"}
 
 # FastSerializer blob protocol (Mini spec)
 #
@@ -75,24 +97,70 @@ class FastSerializer:
                                    OriginFieldType.str, OriginFieldType.wstr):
                      lb.add_field(field_name, origin_type.value)
 
-        # Create auxiliary layers for numeric lists (List[U32] / List[F64])
-        numeric_list_layers = {}
-        for cls in ctx.type_to_layer.keys():
-            schema = _get_class_schema(cls)
-            for field_name, kind in schema["numeric_fields"]:
-                aux_name = _make_numeric_list_layer_name(cls.__name__, field_name, kind)
-                aux_lb = db.create_layer_begin(aux_name)
-                aux_lb.set_geometry_type(0, core.cfDefault, False)
-                aux_lb.add_field("owner_fid", OriginFieldType.u32.value)
-                numeric_list_layers[(cls, field_name)] = (kind, aux_lb)
+        # Pre-scan for buffer-eligible fields: numpy arrays AND numeric lists
+        buf_layers = {}  # id(array) -> (db_layer_idx, kind, shape) for ndarray dedup
+        buf_field_refs = {}  # (id(obj), fn) -> (db_layer_idx, kind, shape)
+        buf_layer_builders = []
+        buf_array_cache = {}  # id(array) -> np.ndarray (keep alive)
+        _num_regular_layers = len(ctx.type_to_layer)
+        _next_buf_offset = [0]
+
+        def _create_buf_layer(cls_name, fn, raw_bytes, kind, shape):
+            shape_str = "x".join(str(s) for s in shape)
+            layer_name = f"{_BUFFER_LAYER_PREFIX}{cls_name}|{fn}|{kind}|{shape_str}"
+            buf_lb = db.create_layer_begin(layer_name)
+            buf_lb.set_geometry_type(0, core.cfDefault, False)
+            buf_lb.add_feature_begin()
+            buf_lb.set_geometry_raw(raw_bytes)
+            buf_lb.add_feature_end()
+            db_layer_idx = _num_regular_layers + _next_buf_offset[0]
+            _next_buf_offset[0] += 1
+            info = (db_layer_idx, kind, shape)
+            buf_layer_builders.append(buf_lb)
+            return info
+
+        for obj_wrapper in ctx.objects:
+            obj = obj_wrapper.obj
+            schema = _get_class_schema(obj.__class__)
+            defns = schema["defns"]
+            numeric_field_kinds = schema["numeric_field_kinds"]
+            for fn, ft in defns:
+                val = getattr(obj, fn)
+                if val is None:
+                    continue
+                # numpy ndarray with supported dtype
+                if isinstance(val, np.ndarray) and val.dtype in _NUMPY_DTYPE_TO_FDB:
+                    arr_id = id(val)
+                    if arr_id not in buf_layers:
+                        fdb_ft, kind = _NUMPY_DTYPE_TO_FDB[val.dtype]
+                        raw = np.ascontiguousarray(val).ravel().tobytes()
+                        buf_layers[arr_id] = _create_buf_layer(obj.__class__.__name__, fn, raw, kind, val.shape)
+                        buf_array_cache[arr_id] = val
+                    buf_field_refs[(id(obj), fn)] = buf_layers[arr_id]
+                # Numeric list → struct.pack for fast list→bytes (skip numpy)
+                elif isinstance(val, list) and ft == OriginFieldType.list:
+                    numeric_kind = numeric_field_kinds.get(fn)
+                    if numeric_kind and len(val) > 0:
+                        fmt_char = _KIND_TO_STRUCT_CHAR[numeric_kind]
+                        try:
+                            raw = struct.pack(f'<{len(val)}{fmt_char}', *val)
+                        except struct.error as e:
+                            raise OverflowError(str(e)) from e
+                        shape = (len(val),)
+                        info = _create_buf_layer(obj.__class__.__name__, fn, raw, numeric_kind, shape)
+                        buf_field_refs[(id(obj), fn)] = info
         
         # Write all objects ordered by layer
-        sorted_objects = sorted(ctx.objects, key=lambda x: (x.layer_idx, x.feature_idx))
+        # Skip sort for single-layer case (most common for simple Features)
+        if len(ctx.type_to_layer) <= 1:
+            write_order = ctx.objects
+        else:
+            write_order = sorted(ctx.objects, key=lambda x: (x.layer_idx, x.feature_idx))
         
         current_layer_idx = -1
         current_lb = None
         
-        for obj_wrapper in sorted_objects:
+        for obj_wrapper in write_order:
             obj = obj_wrapper.obj
             l_idx = obj_wrapper.layer_idx
             
@@ -104,50 +172,48 @@ class FastSerializer:
             lb = current_lb
             lb.add_feature_begin()
             
-            # Prepare Blob for storing non-scalar data
-            blob_buffer = bytearray()
-            
             schema = _get_class_schema(obj.__class__)
             defns = schema["defns"]
             hints = schema["hints"]
             numeric_field_kinds = schema["numeric_field_kinds"]
+            has_blob = schema["has_blob_fields"] or buf_field_refs
+            
+            # Only create blob buffer when needed
+            blob_buffer = bytearray() if has_blob else None
             
             for idx, (fn, ft) in enumerate(defns):
                 val = getattr(obj, fn)
                 numeric_kind = numeric_field_kinds.get(fn) if ft == OriginFieldType.list else None
+
+                # Buffer layer reference (ndarray or numeric list)
+                buf_ref = buf_field_refs.get((id(obj), fn))
+                if buf_ref is not None:
+                    _pack_buffer_ref(blob_buffer, buf_ref[0], buf_ref[2])
+                    continue
+
+                # Empty or None numeric list → null buffer ref
+                if numeric_kind is not None:
+                    _pack_buffer_ref(blob_buffer, 0xFFFF, (0,))
+                    continue
                 
                 # Strategy: Scalar -> Column, Complex -> Blob
-                if ft == OriginFieldType.list and numeric_kind is not None:
-                    if isinstance(val, list):
-                        _, aux_lb = numeric_list_layers[(obj.__class__, fn)]
-                        _write_numeric_list_chunk(aux_lb, obj_wrapper.feature_idx, val, numeric_kind)
-                elif ft in (OriginFieldType.list, OriginFieldType.unknown):
+                if ft in (OriginFieldType.list, OriginFieldType.unknown):
                     if isinstance(val, list):
                         _pack_list(blob_buffer, val, hints.get(fn, Any), ctx)
                     elif isinstance(val, Feature):
-                        # Treat single feature as list of 1 element for unknown fields
-                        # This allows forward compatibility if fields become lists
-                        # Or simply to store it.
-                        _pack_feature_ref(blob_buffer, val, ctx) 
-                        # Wait, pack_feature_ref writes 6 bytes.
-                        # But unpack_list expects <I> count first.
-                        # So we must wrap in list structure: count=1 + ref
                         temp_buf = bytearray()
                         temp_buf.extend(struct.pack('<I', 1))
                         _pack_feature_ref(temp_buf, val, ctx)
                         blob_buffer.extend(temp_buf)
                     else:
-                        # For unknown type or None, write empty list marker as placeholder
                         blob_buffer.extend(struct.pack('<I', 0)) 
                 elif ft == OriginFieldType.bytes:
-                     # Bytes: [Length:u32][Bytes...]
                      if isinstance(val, (bytes, bytearray)):
                          blob_buffer.extend(struct.pack('<I', len(val)))
                          blob_buffer.extend(val)
                      else:
                          blob_buffer.extend(struct.pack('<I', 0))
                 elif ft == OriginFieldType.ref:
-                    # Feature Ref: [LayerIdx:u16][FeatureIdx:u32]
                     _pack_feature_ref(blob_buffer, val, ctx)
                 else:
                     # Scalar type: write to column
@@ -157,7 +223,6 @@ class FastSerializer:
                             lb.set_field_cstring(db_idx, val)
                         elif ft == OriginFieldType.wstr:
                             lb.set_field_wstring(db_idx, val)
-                        # Numeric
                         elif ft in (OriginFieldType.u8, OriginFieldType.u8n):
                              lb.set_field(db_idx, int(val))
                         else:
@@ -195,6 +260,70 @@ class FastSerializer:
             
         return ctx.get_object(0, 0, root_type)
 
+    @staticmethod
+    def loads_shm(shm_name: str, length: int, offset: int, root_type: Type[Feature]) -> Feature:
+        """Deserialize a Feature from a named shared memory segment.
+
+        The database is loaded directly from the shared memory region at
+        ``[offset, offset+length)`` — no intermediate ``bytes`` copy.
+        After deserialization all field values live in Python-owned memory,
+        so the mapping is released before this method returns.
+
+        Args:
+            shm_name: OS name of the shared memory segment.
+            length:   Number of bytes that make up the serialized database.
+            offset:   Byte offset within the segment where the data starts.
+            root_type: The Feature subclass to deserialize as.
+
+        Returns:
+            The deserialized Feature, or ``None`` for empty databases.
+
+        Raises:
+            FileNotFoundError: If the shared memory segment does not exist.
+            ValueError:        If *offset + length* exceeds the segment size.
+        """
+        from multiprocessing import shared_memory as _shm_mod
+
+        shm = _shm_mod.SharedMemory(name=shm_name, create=False)
+        try:
+            if offset + length > shm.size:
+                raise ValueError(
+                    f"offset({offset}) + length({length}) = {offset + length} "
+                    f"exceeds shared memory size ({shm.size})"
+                )
+
+            # Create a memoryview slice and hand it to the C++ loader.
+            # load_xbuffer's SWIG typemap acquires/releases its own Py_buffer,
+            # so we can release *buf* immediately after the call.  The C++ db
+            # holds a raw pointer into the still-alive mmap (owned by *shm*).
+            buf = shm.buf[offset:offset + length]
+            db = core.WxDatabase.load_xbuffer(buf)
+            buf.release()
+
+            if db.get_layer_count() == 0:
+                return None
+
+            ctx = _LoadContext(db)
+            _discover_types(root_type, ctx.type_map)
+
+            root_layer = db.get_layer(0)
+            if root_layer.get_feature_count() == 0:
+                return None
+
+            result = ctx.get_object(0, 0, root_type)
+
+            # Detach every deserialized Feature from the C++ database.
+            # All field values already live in _cache (Python-owned) and
+            # buffer-layer numpy arrays used .copy(), so nothing references
+            # the shared memory region after this point.
+            for obj in ctx.obj_cache.values():
+                obj._origin = None
+                obj._db = None
+
+            return result
+        finally:
+            shm.close()
+
 # --- Internal Helpers ---
 
 class _DumpContext:
@@ -226,20 +355,20 @@ class _DumpContext:
         self.obj_to_id[id(obj)] = (l_idx, f_idx)
         self.objects.append(_ObjectWrapper(obj, l_idx, f_idx))
         
-        # Recursive registration
-        hints = self.get_hints(cls)
-        defns = _get_class_schema(cls)["defns"]
-        for fn, _ in defns:
-            type_hint = hints.get(fn)
+        # Only traverse fields that might contain Feature refs
+        schema = _get_class_schema(cls)
+        ref_fields = schema["ref_traversal_fields"]
+        if not ref_fields:
+            return
+        
+        for fn, type_hint, kind in ref_fields:
             val = getattr(obj, fn)
-            
             if val is None:
                 continue
 
-            if isinstance(val, Feature):
+            if kind == "ref" and isinstance(val, Feature):
                 self.register(val)
             elif isinstance(val, list):
-                # Check hint
                 args = get_args(type_hint) if type_hint else None
                 inner = args[0] if args else None
                 
@@ -247,11 +376,12 @@ class _DumpContext:
                      for item in val:
                          if isinstance(item, Feature):
                              self.register(item)
-                # Fallback check content
                 elif val and isinstance(val[0], Feature):
                      for item in val:
                          if isinstance(item, Feature):
                              self.register(item)
+            elif isinstance(val, Feature):
+                self.register(val)
 
     def get_ref(self, obj):
         return self.obj_to_id.get(id(obj))
@@ -267,7 +397,43 @@ class _LoadContext:
         self.db = db
         self.obj_cache = {} # (layer_idx, feature_idx) -> obj
         self.type_map = {} # class_name -> Type
-        self.numeric_list_values = _load_numeric_list_values(db)
+        self._numeric_list_values = None
+        self._uses_aux_numeric = None
+
+    @property
+    def uses_aux_numeric(self):
+        """Check if database uses old-style __fastser_list__ auxiliary layers."""
+        if self._uses_aux_numeric is None:
+            self._uses_aux_numeric = False
+            for i in range(self.db.get_layer_count()):
+                name = str(self.db.get_layer(i).name())
+                if name.startswith(_NUMERIC_LIST_LAYER_PREFIX):
+                    self._uses_aux_numeric = True
+                    break
+        return self._uses_aux_numeric
+
+    @property
+    def numeric_list_values(self):
+        if self._numeric_list_values is None:
+            self._numeric_list_values = _load_numeric_list_values(self.db)
+        return self._numeric_list_values
+
+    def _read_buffer_layer(self, db_layer_idx, kind):
+        """Directly read a buffer layer by its absolute database layer index."""
+        layer = self.db.get_layer(db_layer_idx)
+        if layer is None or layer.get_feature_count() == 0:
+            return None
+        row = layer.tryGetFeature(0)
+        if not row:
+            return None
+        chunk = row.get_geometry_like_chunk()
+        if chunk.size == 0:
+            return None
+        dtype = _KIND_TO_NUMPY_DTYPE[kind]
+        addr = int(chunk.pdata)
+        BlobType = ctypes.c_ubyte * chunk.size
+        blob_array = BlobType.from_address(addr)
+        return np.frombuffer(blob_array, dtype=dtype).copy()
 
     def get_object(self, l_idx, f_idx, expected_type):
         key = (l_idx, f_idx)
@@ -313,23 +479,67 @@ class _LoadContext:
              blob_view = memoryview(blob_array)
 
         curr_blob_offset = 0
+        db_idx_map = schema["db_field_index_by_schema"]
         
         for idx, (fn, ft) in enumerate(defns):
             numeric_kind = numeric_field_kinds.get(fn) if ft == OriginFieldType.list else None
 
-            # Recover numeric lists from dedicated auxiliary layers (columnar fast-path)
+            # Numeric list fields (List[F64], List[U32], List[I32])
             if numeric_kind is not None:
-                obj._cache[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
+                if self.uses_aux_numeric:
+                    # Old format: load from __fastser_list__ auxiliary layers
+                    obj._cache[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
+                else:
+                    # New format: read buffer ref from blob → direct layer access
+                    if blob_view and curr_blob_offset < len(blob_view):
+                        magic_byte = struct.unpack_from('B', blob_view, curr_blob_offset)[0]
+                        if magic_byte == _BUFFER_REF_MAGIC:
+                            result = _unpack_buffer_ref(blob_view, curr_blob_offset)
+                            if result is not None:
+                                db_layer_idx, shape, new_offset = result
+                                if db_layer_idx == 0xFFFF:
+                                    dtype = _KIND_TO_NUMPY_DTYPE.get(numeric_kind, np.dtype('<f8'))
+                                    obj._cache[fn] = np.array([], dtype=dtype)
+                                else:
+                                    flat = self._read_buffer_layer(db_layer_idx, numeric_kind)
+                                    if flat is not None:
+                                        obj._cache[fn] = flat.reshape(shape) if shape else flat
+                                    else:
+                                        obj._cache[fn] = np.array([], dtype=_KIND_TO_NUMPY_DTYPE.get(numeric_kind, np.dtype('<f8')))
+                                curr_blob_offset = new_offset
+                            else:
+                                obj._cache[fn] = []
+                        else:
+                            obj._cache[fn] = []
+                    else:
+                        obj._cache[fn] = []
                 continue
+
+            # Check for buffer layer reference (only for blob-consuming field types)
+            if ft in (OriginFieldType.list, OriginFieldType.unknown, OriginFieldType.bytes, OriginFieldType.ref):
+                if blob_view and curr_blob_offset < len(blob_view):
+                    magic_byte = struct.unpack_from('B', blob_view, curr_blob_offset)[0]
+                    if magic_byte == _BUFFER_REF_MAGIC:
+                        result = _unpack_buffer_ref(blob_view, curr_blob_offset)
+                        if result is not None:
+                            db_layer_idx, shape, new_offset = result
+                            if db_layer_idx != 0xFFFF:
+                                # Extract kind from layer name
+                                layer = self.db.get_layer(db_layer_idx)
+                                parsed = _parse_buffer_layer_name(layer.name()) if layer else None
+                                if parsed:
+                                    kind = parsed[2]
+                                    flat = self._read_buffer_layer(db_layer_idx, kind)
+                                    if flat is not None:
+                                        obj._cache[fn] = flat.reshape(shape) if shape else flat
+                            curr_blob_offset = new_offset
+                            continue
 
             # Recover complex types from Blob
             if ft in (OriginFieldType.list, OriginFieldType.unknown):
                 if blob_view:
-                    # Debug print
-                    # print(f"DEBUG: Unpacking list field {fn} at offset {curr_blob_offset}")
                     val, new_offset = _unpack_list(blob_view, curr_blob_offset, hints.get(fn, Any), self)
                     obj._cache[fn] = val
-                    # print(f"DEBUG: New offset {new_offset}")
                     curr_blob_offset = new_offset
             elif ft == OriginFieldType.bytes:
                 if blob_view:
@@ -339,33 +549,26 @@ class _LoadContext:
                     obj._cache[fn] = val
                     curr_blob_offset += cnt
             elif ft == OriginFieldType.ref:
-                # Recover ref from Blob (better for cyclic refs and opacity handling)
                 if blob_view:
                     l_idx_ref, f_idx_ref = struct.unpack_from('<HI', blob_view, curr_blob_offset)
                     curr_blob_offset += 6
                     if l_idx_ref != 0xFFFF:
-                        # Recursive fetch
-                        # Get hint for ref type
                         ref_type = hints.get(fn, Feature)
                         obj._cache[fn] = self.get_object(l_idx_ref, f_idx_ref, ref_type)
                     else:
                         obj._cache[fn] = None
             else:
-                # Recover scalar from Column
-                db_idx = _get_db_field_index_for_load(cls, idx)
+                # Recover scalar from Column (use pre-fetched db_idx_map)
+                db_idx = db_idx_map.get(idx, -1)
                 if db_idx != -1:
-                    val = None
                     if ft in (OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32, OriginFieldType.i32):
-                        val = feature_data.get_field_as_int(db_idx)
+                        obj._cache[fn] = feature_data.get_field_as_int(db_idx)
                     elif ft in (OriginFieldType.f32, OriginFieldType.f64):
-                        val = feature_data.get_field_as_float(db_idx)
+                        obj._cache[fn] = feature_data.get_field_as_float(db_idx)
                     elif ft == OriginFieldType.str:
-                        val = feature_data.get_field_as_string(db_idx)
+                        obj._cache[fn] = feature_data.get_field_as_string(db_idx)
                     elif ft == OriginFieldType.wstr:
-                        val = feature_data.get_field_as_wstring(db_idx)
-
-                    if val is not None:
-                        obj._cache[fn] = val
+                        obj._cache[fn] = feature_data.get_field_as_wstring(db_idx)
 
         return obj
 
@@ -377,6 +580,45 @@ def _pack_feature_ref(buffer, val, ctx):
             return
     # Null reference
     buffer.extend(struct.pack('<HI', 0xFFFF, 0xFFFFFFFF))
+
+# --- Buffer layer helpers ---
+
+def _pack_buffer_ref(buffer, buf_layer_idx, shape):
+    """Encode a buffer reference in the blob: magic(1) + layer(2) + ndim(1) + shape(3×4=12) = 16 bytes."""
+    ndim = len(shape)
+    dims = list(shape) + [0] * (3 - ndim)  # pad to 3 dims
+    buffer.extend(struct.pack('<BBHIII', _BUFFER_REF_MAGIC, ndim, buf_layer_idx, dims[0], dims[1], dims[2]))
+
+def _unpack_buffer_ref(view, offset):
+    """Decode buffer reference. Returns (buf_layer_idx, shape, new_offset) or None if not a buf ref."""
+    if offset + 16 > len(view):
+        return None
+    magic = struct.unpack_from('B', view, offset)[0]
+    if magic != _BUFFER_REF_MAGIC:
+        return None
+    ndim, layer_idx, d0, d1, d2 = struct.unpack_from('<BHIII', view, offset + 1)
+    dims = [d0, d1, d2][:ndim]
+    shape = tuple(dims)
+    return layer_idx, shape, offset + 16
+
+def _parse_buffer_layer_name(layer_name):
+    """Parse __fastser_buf__|ClassName|FieldName|kind|shape → (class_name, field_name, kind, shape) or None."""
+    if not isinstance(layer_name, str):
+        try:
+            layer_name = layer_name.decode('utf-8')
+        except Exception:
+            return None
+    if not layer_name.startswith(_BUFFER_LAYER_PREFIX):
+        return None
+    body = layer_name[len(_BUFFER_LAYER_PREFIX):]
+    parts = body.split('|', 3)
+    if len(parts) != 4:
+        return None
+    class_name, field_name, kind, shape_str = parts
+    if kind not in _KIND_TO_NUMPY_DTYPE:
+        return None
+    shape = tuple(int(s) for s in shape_str.split('x') if s)
+    return class_name, field_name, kind, shape
 
 def _numeric_list_kind_from_hint(type_hint):
     if type_hint is None:
@@ -456,27 +698,16 @@ def _write_numeric_list_chunk(aux_lb, owner_fid, values, kind):
     if not values:
         packed = b""
     elif kind == "u32":
-        normalized = []
-        for value in values:
-            iv = int(value)
-            if iv < 0 or iv > 0xFFFFFFFF:
-                raise ValueError(f"List[U32] item out of range: {iv}")
-            normalized.append(iv)
-        packed = struct.pack(f'<{len(normalized)}I', *normalized)
+        arr = np.array(values, dtype=np.uint32)
+        if np.any(arr > 0xFFFFFFFF) or np.any(arr < 0):
+            raise ValueError("List[U32] item out of range")
+        packed = arr.tobytes()
     elif kind == "i32":
-        normalized = []
-        for value in values:
-            iv = int(value)
-            if iv < -0x80000000 or iv > 0x7FFFFFFF:
-                raise OverflowError(
-                    f"list[int] item {iv} out of i32 range [-2147483648, 2147483647]. "
-                    "Use List[U32] for large unsigned values or List[F64] for arbitrary integers."
-                )
-            normalized.append(iv)
-        packed = struct.pack(f'<{len(normalized)}i', *normalized)
+        arr = np.array(values, dtype=np.int32)
+        packed = arr.tobytes()
     else:
-        normalized = [float(value) for value in values]
-        packed = struct.pack(f'<{len(normalized)}d', *normalized)
+        arr = np.array(values, dtype=np.float64)
+        packed = arr.tobytes()
 
     aux_lb.set_geometry_raw(packed)
     aux_lb.add_feature_end()
@@ -517,24 +748,12 @@ def _decode_numeric_list_chunk(chunk, kind):
 
     BlobType = ctypes.c_ubyte * chunk.size
     blob_array = BlobType.from_address(addr)
-    view = memoryview(blob_array)
 
     if kind == "u32":
-        count = chunk.size // 4
-        if count == 0:
-            return []
-        return list(struct.unpack_from(f'<{count}I', view, 0))
-
+        return np.frombuffer(blob_array, dtype=np.dtype('<u4')).tolist()
     if kind == "i32":
-        count = chunk.size // 4
-        if count == 0:
-            return []
-        return list(struct.unpack_from(f'<{count}i', view, 0))
-
-    count = chunk.size // 8
-    if count == 0:
-        return []
-    return list(struct.unpack_from(f'<{count}d', view, 0))
+        return np.frombuffer(blob_array, dtype=np.dtype('<i4')).tolist()
+    return np.frombuffer(blob_array, dtype=np.dtype('<f8')).tolist()
 
 def _pack_list(buffer, lst, type_hint, ctx):
     count = len(lst)
@@ -555,9 +774,9 @@ def _pack_list(buffer, lst, type_hint, ctx):
         elif isinstance(first, Feature): inner = Feature
 
     if inner == int:
-        buffer.extend(struct.pack(f'<{count}i', *lst))
+        buffer.extend(np.array(lst, dtype=np.dtype('<i4')).tobytes())
     elif inner == float:
-        buffer.extend(struct.pack(f'<{count}d', *lst))
+        buffer.extend(np.array(lst, dtype=np.dtype('<f8')).tobytes())
     elif inner == str:
         for item in lst:
             encoded = item.encode('utf-8')
@@ -587,14 +806,12 @@ def _unpack_list(view, offset, type_hint, ctx):
         return lst, offset
 
     if inner == int:
-        fmt = f'<{count}i'
-        sz = struct.calcsize(fmt)
-        lst = list(struct.unpack_from(fmt, view, offset))
+        sz = count * 4
+        lst = np.frombuffer(bytes(view[offset:offset + sz]), dtype=np.dtype('<i4')).tolist()
         offset += sz
     elif inner == float:
-        fmt = f'<{count}d'
-        sz = struct.calcsize(fmt)
-        lst = list(struct.unpack_from(fmt, view, offset))
+        sz = count * 8
+        lst = np.frombuffer(bytes(view[offset:offset + sz]), dtype=np.dtype('<f8')).tolist()
         offset += sz
     elif inner == str:
         for _ in range(count):
@@ -643,7 +860,19 @@ def _unpack_list(view, offset, type_hint, ctx):
 def _get_db_field_index_for_load(cls, schema_idx):
     return _get_class_schema(cls)["db_field_index_by_schema"].get(schema_idx, -1)
 
+_DISCOVER_TYPES_CACHE: WeakKeyDictionary = WeakKeyDictionary()
+
 def _discover_types(cls, type_map):
+    # Use cached result if available
+    cached = _DISCOVER_TYPES_CACHE.get(cls)
+    if cached is not None:
+        type_map.update(cached)
+        return
+    
+    _discover_types_impl(cls, type_map)
+    _DISCOVER_TYPES_CACHE[cls] = dict(type_map)
+
+def _discover_types_impl(cls, type_map):
     if cls.__name__ in type_map:
         return
     type_map[cls.__name__] = cls
@@ -668,7 +897,7 @@ def _discover_types(cls, type_map):
         else:
             try:
                 if issubclass(base, Feature):
-                     _discover_types(base, type_map)
+                     _discover_types_impl(base, type_map)
             except: pass
         
         if origin is list and args:
@@ -681,7 +910,7 @@ def _discover_types(cls, type_map):
              else:
                  try:
                      if issubclass(inner, Feature):
-                         _discover_types(inner, type_map)
+                         _discover_types_impl(inner, type_map)
                  except: pass
 
 def _get_class_schema(cls):
@@ -721,12 +950,29 @@ def _get_class_schema(cls):
             else:
                 db_field_index_by_schema[i] = -1
 
+        has_blob_fields = any(
+            ft in (OriginFieldType.list, OriginFieldType.unknown, OriginFieldType.bytes, OriginFieldType.ref)
+            for _, ft in defns
+        )
+
+        # Pre-compute fields that might contain Feature refs (for fast registration)
+        ref_traversal_fields = []
+        for fn, ft in defns:
+            if ft == OriginFieldType.ref:
+                ref_traversal_fields.append((fn, hints.get(fn), "ref"))
+            elif ft in (OriginFieldType.list, OriginFieldType.unknown):
+                # Skip numeric lists (List[F64], List[U32], List[I32]) - they never contain Features
+                if fn not in numeric_field_kinds:
+                    ref_traversal_fields.append((fn, hints.get(fn), "list_or_unknown"))
+
         schema = {
             "hints": hints,
             "defns": defns,
             "numeric_field_kinds": numeric_field_kinds,
             "numeric_fields": numeric_fields,
             "db_field_index_by_schema": db_field_index_by_schema,
+            "has_blob_fields": has_blob_fields,
+            "ref_traversal_fields": ref_traversal_fields,
         }
         _CLASS_SCHEMA_CACHE[cls] = schema
         return schema
