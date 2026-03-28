@@ -121,13 +121,15 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: "22.14.0"
-          registry-url: "https://registry.npmjs.org"
+
+      - name: Ensure latest npm (OIDC requires npm >= 11.5.1)
+        run: npm install -g npm@latest
 
       - name: Publish to npm
         run: |
           PACKAGE_TGZ=$(find dist -maxdepth 1 -name '*.tgz' -print -quit)
           test -n "$PACKAGE_TGZ"
-          npm publish "./$PACKAGE_TGZ" --access public
+          npm publish "./$PACKAGE_TGZ" --provenance --access public
 
       - name: Create and push tag
         if: needs.check_version.outputs.tag_exists == 'false'
