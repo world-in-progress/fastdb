@@ -193,7 +193,12 @@ class Feature(BaseFeature):
             object.__setattr__(self, name, value)
             return
 
-        # Resolve field metadata from parsed feature definitions.
+        # Pure Python mode: skip hints lookup entirely — just cache the value.
+        if self._origin is None:
+            self._cache[name] = value
+            return
+
+        # Database-mapped path: resolve field metadata.
         defn = self._origin_hints.get(name)
 
         # Unknown or non-fastdb-mapped fields are kept in local cache.
@@ -202,11 +207,6 @@ class Feature(BaseFeature):
             return
 
         ft, fid = defn
-
-        # Pure Python object path: assign to cache only.
-        if self._origin is None:
-            self._cache[name] = value
-            return
 
         # Database-mapped numeric fields are written directly to fastdb origin.
         # frozenset membership test is O(1) vs tuple's O(n) scan.
