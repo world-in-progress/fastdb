@@ -86,7 +86,12 @@ def get_class_schema(cls: Type) -> ClassSchema:
         if schema is not None:
             return schema
 
-        hints = get_type_hints(cls)
+        try:
+            hints = get_type_hints(cls)
+        except NameError:
+            # Forward references that cannot be resolved (e.g. locally defined classes).
+            # Fall back to raw annotations so the schema is still usable.
+            hints = dict(getattr(cls, '__annotations__', {}))
 
         # Build origin_hints: field_name → (OriginFieldType, field_index)
         # This is what parse_defns() used to compute (Cache 2).
