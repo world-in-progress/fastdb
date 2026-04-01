@@ -388,6 +388,10 @@ namespace wx
         // Batch field access: read/write multiple scalar fields in one call.
         void                    getFieldsAsDoubles(const u32* field_ids, int n_fields, double* out);
         void                    setFieldsFromDoubles(const u32* field_ids, const double* values, int n_fields);
+        // List column access (zero-copy view into database memory)
+        chunk_data_t            getFieldAsListView(u32 ix);
+        u32                     getFieldListSize(u32 ix);
+        FastVectorDbFeatureRef* getFieldListRefAt(u32 ix, u32 list_idx);
     private:
         Impl*  impl;
         friend class FastVectorDbLayer::Impl;

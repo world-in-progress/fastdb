@@ -47,6 +47,9 @@ namespace wx
         FastVectorDbFeatureRef* 
                         getFieldAsFeatureRef_internal(u32 ifeature,u32 ix);
         chunk_data_t    getGeometryLikeChunk_internal(u32 ifeature);
+        chunk_data_t    getFieldAsListView_internal(u32 ifeature, u32 ix);
+        u32             getFieldListSize_internal(u32 ifeature, u32 ix);
+        FastVectorDbFeatureRef* getFieldListRefAt_internal(u32 ifeature, u32 ix, u32 list_idx);
 
         void            setField_internal(u32 ifeature,u32 ix,double value);
         void            setField_internal(u32 ifeature,u32 ix,int    value);
@@ -108,6 +111,13 @@ namespace wx
         vector<point2_t>        points;//a variant for return temp points
         vector<FastVectorDbFeature*>    m_feature_cache;
         vector<u8*>             m_geometry_ptr_map;
+        struct ListFieldData {
+            u32   field_id;
+            u32   elem_size;
+            u64   total_elements;
+            u8*   data_ptr;    // points directly into the database memory buffer
+        };
+        vector<ListFieldData>   m_list_fields;
         friend class FastVectorDbFeature;
         friend class FastVectorDb::Impl;
     };

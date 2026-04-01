@@ -45,6 +45,18 @@ namespace wx
             m_wstring_table.push_back((const uchar_t *)ptr);
             ptr += (ustring_len((const uchar_t *)ptr) + 1) * sizeof(uchar_t);
         }
+        // parse list data section (n_list_fields > 0 only in databases built with list support)
+        if (m_header->n_list_fields > 0) {
+            for (u16 li = 0; li < m_header->n_list_fields; li++) {
+                ListFieldData lfd;
+                lfd.field_id       = *(u32*)ptr; ptr += 4;
+                lfd.elem_size      = *(u32*)ptr; ptr += 4;
+                lfd.total_elements = *(u64*)ptr; ptr += 8;
+                lfd.data_ptr       = const_cast<u8*>(ptr);
+                ptr += lfd.total_elements * lfd.elem_size;
+                m_list_fields.push_back(lfd);
+            }
+        }
     }
     FastVectorDbLayer::Impl::~Impl() {
         if(m_feature_cache.size())
@@ -653,6 +665,58 @@ namespace wx
         return impl->getFeatureByteSize();
     }
 
+    // ---- List column read helpers ----
+    chunk_data_t FastVectorDbLayer::Impl::getFieldAsListView_internal(u32 ifeature, u32 ix)
+    {
+        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+            return {0, nullptr};
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftList)
+            return {0, nullptr};
+        const u8* row_ptr = m_table_data_ptr0 + m_table_line_size * ifeature + fd->offset;
+        u32 start = *(u32*)row_ptr;
+        u32 cnt   = *(u32*)(row_ptr + 4);
+        if (cnt == 0)
+            return {0, nullptr};
+        // find matching list field data by field_id
+        for (auto& lfd : m_list_fields) {
+            if (lfd.field_id == ix) {
+                return {(size_t)(cnt * lfd.elem_size), lfd.data_ptr + start * lfd.elem_size};
+            }
+        }
+        return {0, nullptr};
+    }
+
+    u32 FastVectorDbLayer::Impl::getFieldListSize_internal(u32 ifeature, u32 ix)
+    {
+        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+            return 0;
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftList)
+            return 0;
+        const u8* row_ptr = m_table_data_ptr0 + m_table_line_size * ifeature + fd->offset;
+        return *(u32*)(row_ptr + 4);
+    }
+
+    FastVectorDbFeatureRef* FastVectorDbLayer::Impl::getFieldListRefAt_internal(u32 ifeature, u32 ix, u32 list_idx)
+    {
+        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+            return nullptr;
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftList)
+            return nullptr;
+        const u8* row_ptr = m_table_data_ptr0 + m_table_line_size * ifeature + fd->offset;
+        u32 start = *(u32*)row_ptr;
+        u32 cnt   = *(u32*)(row_ptr + 4);
+        if (list_idx >= cnt)
+            return nullptr;
+        for (auto& lfd : m_list_fields) {
+            if (lfd.field_id == ix) {
+                return (FastVectorDbFeatureRef*)(lfd.data_ptr + (start + list_idx) * lfd.elem_size);
+            }
+        }
+        return nullptr;
+    }
     FastVectorDbFeature::~FastVectorDbFeature()
     {
         delete impl;
@@ -733,5 +797,17 @@ namespace wx
         u8* buf = (u8*)li->getFeatureAddress(impl->ifeature);
         for (int i = 0; i < n_fields; i++)
             set_field_value_t(buf, li->m_field_descs[field_ids[i]], values[i]);
+    }
+    chunk_data_t FastVectorDbFeature::getFieldAsListView(u32 ix)
+    {
+        return impl->layer->impl->getFieldAsListView_internal(impl->ifeature, ix);
+    }
+    u32 FastVectorDbFeature::getFieldListSize(u32 ix)
+    {
+        return impl->layer->impl->getFieldListSize_internal(impl->ifeature, ix);
+    }
+    FastVectorDbFeatureRef* FastVectorDbFeature::getFieldListRefAt(u32 ix, u32 list_idx)
+    {
+        return impl->layer->impl->getFieldListRefAt_internal(impl->ifeature, ix, list_idx);
     }
 }
