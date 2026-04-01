@@ -569,22 +569,23 @@ string table:%s\n",
         m_list_fields.push_back(lfd);
     }
 
-    void FastVectorDbLayerBuild::Impl::set_field_list_numeric(int field_id, const void* data, u32 count)
+    void FastVectorDbLayerBuild::Impl::set_field_list_numeric(int field_id, const void* data, u32 nbytes)
     {
         for (auto& lfd : m_list_fields) {
             if (lfd.field_id != field_id) continue;
             u32 start = (u32)(lfd.data.size() / lfd.elem_size);
+            u32 count = (lfd.elem_size > 0) ? nbytes / lfd.elem_size : 0;
             memcpy(m_current_line_buffer.data() + m_field_descs[field_id].offset,     &start, 4);
             memcpy(m_current_line_buffer.data() + m_field_descs[field_id].offset + 4, &count, 4);
             const u8* src = (const u8*)data;
-            lfd.data.insert(lfd.data.end(), src, src + (size_t)count * lfd.elem_size);
+            lfd.data.insert(lfd.data.end(), src, src + nbytes);
             return;
         }
     }
 
     void FastVectorDbLayerBuild::Impl::set_field_list_refs(int field_id, const FastVectorDbFeatureRef* refs, u32 count)
     {
-        set_field_list_numeric(field_id, refs, count);
+        set_field_list_numeric(field_id, refs, count * (u32)sizeof(FastVectorDbFeatureRef));
     }
 
     void FastVectorDbLayerBuild::Impl::update_feature_ref(u32 feat_idx, int field_id, const FastVectorDbFeatureRef* ref)

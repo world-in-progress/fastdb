@@ -169,7 +169,7 @@ namespace wx
         void addFeatureEnd();
         // List column build API
         void add_list_field(const char* name, unsigned element_type);
-        void set_field_list_numeric(unsigned field_id, const void* data, unsigned count);
+        void set_field_list_numeric(unsigned field_id, const void* data, unsigned nbytes);
         void set_field_list_refs(unsigned field_id, const FastVectorDbFeatureRef* refs, unsigned count);
         void update_feature_ref(unsigned feat_idx, unsigned field_id, const FastVectorDbFeatureRef* ref);
         void update_list_ref_at(unsigned feat_idx, unsigned field_id, unsigned list_idx, const FastVectorDbFeatureRef* ref);

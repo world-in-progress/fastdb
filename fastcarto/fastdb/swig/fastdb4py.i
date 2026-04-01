@@ -63,6 +63,20 @@
     }
 }
 
+// Typemap for set_field_list_numeric: accepts any buffer object; nbytes = byte length of buffer
+%typemap(in) (const void* data, unsigned nbytes) (Py_buffer view) {
+    if (PyObject_GetBuffer($input, &view, PyBUF_SIMPLE) < 0) {
+        SWIG_exception_fail(SWIG_TypeError, "Expected a buffer (bytes, bytearray, memoryview, ndarray)");
+    }
+    $1 = view.buf;
+    $2 = (unsigned)(view.len);
+}
+%typemap(freearg) (const void* data, unsigned nbytes) {
+    if (view$argnum.obj) {
+        PyBuffer_Release(&view$argnum);
+    }
+}
+
 // Exception handling for copy_to_buffer
 %typemap(out) int copy_to_buffer {
     if ($1 < 0) {
@@ -138,6 +152,15 @@
 %rename(get_address)            getAddress;
 %rename(get_field_offset)       getFieldOffset;
 %rename(get_feature_byte_size)  getFeatureByteSize;;
+
+%rename(add_list_field)         add_list_field;
+%rename(set_field_list_numeric) set_field_list_numeric;
+%rename(set_field_list_refs)    set_field_list_refs;
+%rename(update_feature_ref)     update_feature_ref;
+%rename(update_list_ref_at)     update_list_ref_at;
+%rename(get_field_as_list_view) getFieldAsListView;
+%rename(get_field_list_size)    getFieldListSize;
+%rename(get_field_list_ref_at)  getFieldListRefAt;
 
 %extend wx::chunk_data_t {
     PyObject *as_array(PyObject* npType) {
