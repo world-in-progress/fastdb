@@ -1,6 +1,7 @@
 import tempfile
 import platform
 import warnings
+import array as _array_module
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field as dc_field
@@ -11,6 +12,8 @@ from .. import core
 from .table import Table
 from ..type import OriginFieldType, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE, get_list_element_type
 from ..feature import Feature, get_all_defns
+
+_array_array = _array_module.array
 
 T = TypeVar('T', bound=Feature)
 
@@ -344,9 +347,9 @@ class ORM:
                 t.set_field_cstring(idx, v)
         for idx, fn in schema.bytes_plan:
             t.set_geometry_raw(cache.get(fn) or b'')
-        for idx, fn, dtype in schema.list_plan:
+        for idx, fn, typecode in schema.list_plan:
             items = cache.get(fn) or []
-            t.set_field_list_numeric(idx, np.asarray(items, dtype=dtype).tobytes())
+            t.set_field_list_numeric(idx, _array_array(typecode, items).tobytes())
         t.add_feature_end()
         feat_idx = t_obj.feature_count  # before incrementing = 0-based index of just-added feature
         t_obj.feature_count += 1

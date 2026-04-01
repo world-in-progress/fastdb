@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Tuple, Type, get_type_hints
 
 import numpy as _np
 
-from ..type import OriginFieldType, get_origin_type, get_list_element_type, LIST_ELEM_DTYPE, LIST_ELEM_CPP_TYPE
+from ..type import OriginFieldType, get_origin_type, get_list_element_type, LIST_ELEM_DTYPE, LIST_ELEM_CPP_TYPE, LIST_ELEM_ARRAY_TYPECODE
 from .base import BaseFeature
 
 # Scalar field types that can be read/written via get_fields_as_doubles / set_fields_from_doubles.
@@ -86,8 +86,8 @@ class ClassSchema:
                 _byt.append((i, fn))
             elif ft == OriginFieldType.list:
                 et = self.list_element_types.get(fn)
-                dtype = LIST_ELEM_DTYPE.get(et, 'float64')
-                _lst.append((i, fn, dtype))
+                typecode = LIST_ELEM_ARRAY_TYPECODE.get(et, 'd')
+                _lst.append((i, fn, typecode))
         self.numeric_plan = _num
         self.str_plan = _str
         self.bytes_plan = _byt
