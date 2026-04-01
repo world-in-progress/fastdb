@@ -9,7 +9,7 @@ from multiprocessing import shared_memory, resource_tracker
 
 from .. import core
 from .table import Table
-from ..type import OriginFieldType
+from ..type import OriginFieldType, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE, get_list_element_type
 from ..feature import Feature, get_all_defns
 
 T = TypeVar('T', bound=Feature)
@@ -324,7 +324,6 @@ class ORM:
             new_table = Table.map_from(feat_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
             for fn, ft in defns:
                 if ft == OriginFieldType.list:
-                    from ..type import LIST_ELEM_CPP_TYPE
                     cpp_elem = LIST_ELEM_CPP_TYPE.get(list_elem_types.get(fn), 8)
                     new_table._origin.add_list_field(fn, cpp_elem)
                 else:
@@ -348,7 +347,6 @@ class ORM:
                 t.set_geometry_raw(value or b'')
             elif ft == OriginFieldType.list:
                 items = value or []
-                from ..type import LIST_ELEM_DTYPE
                 dtype = LIST_ELEM_DTYPE.get(list_elem_types.get(fn), 'float64')
                 t.set_field_list_numeric(idx, np.asarray(items, dtype=dtype).tobytes())
         t.add_feature_end()
@@ -369,7 +367,6 @@ class ORM:
     def _push_graph(self, root_feature, *, table_name='', feature_name='', is_ref=False):
         """Push a feature graph (with list fields / cycles) using _GraphCollector."""
         import struct
-        from ..type import get_list_element_type, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE
         from ..feature._schema import get_class_schema
         from ._graph import _GraphCollector
 
