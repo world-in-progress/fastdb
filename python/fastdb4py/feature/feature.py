@@ -204,7 +204,7 @@ class Feature(BaseFeature):
         ft, fid = defn
 
         # Pure Python object path: assign to cache only.
-        if not self.fixed:
+        if self._origin is None:
             self._cache[name] = value
             return
 
