@@ -293,7 +293,49 @@ class ORM:
                 if is_ref:
                     return ref
             return
+        # Slow path: features without list fields
+        return self._push_slow(feature, table_name, feature_name=feature_name, is_ref=is_ref)
 
+    def push_many(self, features: list, table_name: str = '') -> None:
+        """Push multiple features of the same type efficiently in one call.
+
+        Hoists schema lookup, table lookup, and mutability check outside the inner loop.
+        All features must be the same Feature subclass with no ref fields (simple list path).
+        Falls back to push() per-feature for ref features.
+        """
+        if not self._is_mutable or not features:
+            return
+        feature_type = features[0].__class__
+        schema = get_class_schema(feature_type)
+        push_fn = schema.push_fn
+        feat_table_name = table_name if table_name else feature_type.__name__
+        t_obj: Table = self._table_map.get(feat_table_name)
+        if t_obj is None:
+            # Create table (same logic as push() fast path)
+            new_table = Table.map_from(feature_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
+            list_elem_types = schema.list_element_types
+            for fn, ft in schema.ordered_defns:
+                if ft == OriginFieldType.list:
+                    cpp_elem = LIST_ELEM_CPP_TYPE.get(list_elem_types.get(fn), 8)
+                    new_table._origin.add_list_field(fn, cpp_elem)
+                else:
+                    new_table._origin.add_field(fn, ft.value)
+            self._table_map[feat_table_name] = new_table
+            t_obj = new_table
+        if schema.has_ref_fields:
+            for feature in features:
+                self._push_graph(feature, table_name=feat_table_name)
+            return
+        t_origin = t_obj._origin
+        fc = t_obj.feature_count
+        for feature in features:
+            push_fn(feature._cache, t_origin)
+            fc += 1
+        t_obj.feature_count = fc
+
+    def _push_slow(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
+        """Slow path push for features without list fields (no push_fn available)."""
+        feature_type = feature.__class__
         defns = get_all_defns(feature_type)
 
         # Try to get table
