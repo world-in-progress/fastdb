@@ -542,7 +542,74 @@ string table:%s\n",
     {
         //a dummy function for future use
     }
-    
+
+    // Element sizes indexed by FieldTypeEnum value
+    static const u32 kListElemSizes[] = {
+        0,                                  // 0 unused
+        1, 2, 4, 4,                         // u8=1, u16=2, u32=3, i32=4
+        1, 2,                               // u8n=5, u16n=6
+        4, 8,                               // f32=7, f64=8
+        0, 0,                               // str=9, wstr=10 (unsupported)
+        sizeof(FastVectorDbFeatureRef),     // ref=11
+    };
+
+    void FastVectorDbLayerBuild::Impl::add_list_field(const char* name, u16 element_type)
+    {
+        // addField returns 1-based count; field_id = count - 1
+        int fid = addField(name, ftList, 0, 0) - 1;
+        m_field_descs.back().element_type = element_type;
+
+        u32 esz = (element_type < (u16)(sizeof(kListElemSizes)/sizeof(kListElemSizes[0])))
+                  ? kListElemSizes[element_type] : 0;
+        assert(esz > 0 && "unsupported list element type");
+
+        ListFieldBuildData lfd;
+        lfd.field_id  = fid;
+        lfd.elem_size = esz;
+        m_list_fields.push_back(lfd);
+    }
+
+    void FastVectorDbLayerBuild::Impl::set_field_list_numeric(int field_id, const void* data, u32 count)
+    {
+        for (auto& lfd : m_list_fields) {
+            if (lfd.field_id != field_id) continue;
+            u32 start = (u32)(lfd.data.size() / lfd.elem_size);
+            memcpy(m_current_line_buffer.data() + m_field_descs[field_id].offset,     &start, 4);
+            memcpy(m_current_line_buffer.data() + m_field_descs[field_id].offset + 4, &count, 4);
+            const u8* src = (const u8*)data;
+            lfd.data.insert(lfd.data.end(), src, src + (size_t)count * lfd.elem_size);
+            return;
+        }
+    }
+
+    void FastVectorDbLayerBuild::Impl::set_field_list_refs(int field_id, const FastVectorDbFeatureRef* refs, u32 count)
+    {
+        set_field_list_numeric(field_id, refs, count);
+    }
+
+    void FastVectorDbLayerBuild::Impl::update_feature_ref(u32 feat_idx, int field_id, const FastVectorDbFeatureRef* ref)
+    {
+        assert(field_id >= 0 && field_id < (int)m_field_descs.size());
+        const field_desc_ex_t& fd = m_field_descs[field_id];
+        assert(fd.type == ftFeatureRef);
+        u8* row = m_table_buffer.data() + feat_idx * m_table_line_size;
+        memcpy(row + fd.offset, ref, sizeof(FastVectorDbFeatureRef));
+    }
+
+    void FastVectorDbLayerBuild::Impl::update_list_ref_at(u32 feat_idx, int field_id, u32 list_idx, const FastVectorDbFeatureRef* ref)
+    {
+        for (auto& lfd : m_list_fields) {
+            if (lfd.field_id != field_id) continue;
+            const u8* row = m_table_buffer.data() + feat_idx * m_table_line_size;
+            u32 start;
+            memcpy(&start, row + m_field_descs[field_id].offset, 4);
+            u32 abs_idx = start + list_idx;
+            assert((u64)abs_idx * lfd.elem_size + lfd.elem_size <= lfd.data.size());
+            memcpy(lfd.data.data() + (u64)abs_idx * lfd.elem_size, ref, sizeof(FastVectorDbFeatureRef));
+            return;
+        }
+    }
+
     void FastVectorDbLayerBuild::Impl::addFeatureEnd()
     {
         m_table_buffer.insert(m_table_buffer.end(), m_current_line_buffer.begin(), m_current_line_buffer.end());
@@ -564,12 +631,18 @@ string table:%s\n",
     }
     size_t FastVectorDbLayerBuild::Impl::get_total_size()
     {
+        size_t list_section_size = 0;
+        for (const auto& lfd : m_list_fields) {
+            list_section_size += sizeof(u32) + sizeof(u32) + sizeof(u64); // field_index + elem_size + total_elements
+            list_section_size += lfd.data.size();
+        }
         return sizeof(layer_header_t) +
                m_field_descs.size() * sizeof(field_desc_ex_t) +
                m_geometries_buffer.size() +
                m_table_buffer.size() +
                sizeof(u32) + m_string_total_size +
-               sizeof(u32) + m_wstring_total_size;
+               sizeof(u32) + m_wstring_total_size +
+               list_section_size;
     }
 
     void FastVectorDbLayerBuild::Impl::write(WriteStream *stream)
@@ -587,6 +660,7 @@ string table:%s\n",
         lh.maxy = m_maxy;
         lh.aabbox_enable=m_aabbox_enable;
         lh.string_table_u32=m_string_table_u32;
+        lh.n_list_fields = (u16)m_list_fields.size();
         lh.offset_table = /*sizeof(lh) + m_field_descs.size() * sizeof(field_desc_t) +*/ m_geometries_buffer.size();
         lh.offset_strings = lh.offset_table + m_table_buffer.size();
         lh.offset_wstrings = lh.offset_strings + sizeof(u32) + m_string_total_size;
@@ -627,6 +701,17 @@ string table:%s\n",
             {
                 stream->write((void *)pwstr->c_str(), (pwstr->size() + 1) * 2);
             }
+        }
+        // List data section
+        for (const auto& lfd : m_list_fields) {
+            u32 field_index  = (u32)lfd.field_id;
+            u32 elem_size    = lfd.elem_size;
+            u64 total_elems  = (u64)(lfd.elem_size > 0 ? lfd.data.size() / lfd.elem_size : 0);
+            stream->write(&field_index, sizeof(field_index));
+            stream->write(&elem_size,   sizeof(elem_size));
+            stream->write(&total_elems, sizeof(total_elems));
+            if (!lfd.data.empty())
+                stream->write((void*)lfd.data.data(), lfd.data.size());
         }
     }
 
@@ -703,5 +788,15 @@ string table:%s\n",
         {
             impl->freeFeatureRef(ref);
         }
+        void FastVectorDbLayerBuild::add_list_field(const char* name, unsigned element_type)
+        { impl->add_list_field(name, (u16)element_type); }
+        void FastVectorDbLayerBuild::set_field_list_numeric(unsigned fid, const void* data, unsigned count)
+        { impl->set_field_list_numeric((int)fid, data, (u32)count); }
+        void FastVectorDbLayerBuild::set_field_list_refs(unsigned fid, const FastVectorDbFeatureRef* refs, unsigned count)
+        { impl->set_field_list_refs((int)fid, refs, (u32)count); }
+        void FastVectorDbLayerBuild::update_feature_ref(unsigned feat_idx, unsigned fid, const FastVectorDbFeatureRef* ref)
+        { impl->update_feature_ref((u32)feat_idx, (int)fid, ref); }
+        void FastVectorDbLayerBuild::update_list_ref_at(unsigned feat_idx, unsigned fid, unsigned list_idx, const FastVectorDbFeatureRef* ref)
+        { impl->update_list_ref_at((u32)feat_idx, (int)fid, (u32)list_idx, ref); }
 
 }

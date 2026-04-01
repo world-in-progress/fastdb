@@ -64,6 +64,12 @@ namespace wx{
         void   setField(unsigned ix,const FastVectorDbFeatureRef* ref);
         FastVectorDbFeatureRef* createFeatureRef(u32 ix);
         void   freeFeatureRef(FastVectorDbFeatureRef* ref);
+        // List column build API
+        void   add_list_field(const char* name, u16 element_type);
+        void   set_field_list_numeric(int field_id, const void* data, u32 count);
+        void   set_field_list_refs(int field_id, const FastVectorDbFeatureRef* refs, u32 count);
+        void   update_feature_ref(u32 feat_idx, int field_id, const FastVectorDbFeatureRef* ref);
+        void   update_list_ref_at(u32 feat_idx, int field_id, u32 list_idx, const FastVectorDbFeatureRef* ref);
         void   addFeatureEnd();
         void   post();
         size_t get_total_size();
@@ -124,6 +130,13 @@ namespace wx{
         double m_maxy;
         u32    m_index_in_db;
         vector<FastVectorDbFeatureRef*> m_created_feature_refs;
+
+        struct ListFieldBuildData {
+            int        field_id;
+            u32        elem_size;
+            vector<u8> data;      // accumulated element bytes for all features
+        };
+        vector<ListFieldBuildData> m_list_fields;
 
         template <class coord_type>
         friend bool build_geometry_buffer_from_buffer(vector<u8> &buffer, FastVectorDbLayerBuild::Impl &build, const char *data, size_t size, GeometryLikeFormat inputFormat, GeometryLikeEnum declType);
