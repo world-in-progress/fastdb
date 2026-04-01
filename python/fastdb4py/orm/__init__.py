@@ -316,13 +316,12 @@ class ORM:
         """Fast path for Features with only scalar + numeric-list fields (no ref fields, no DFS needed)."""
         feat_type = type(feature)
         feat_table_name = table_name if table_name else feat_type.__name__
-        defns = schema.ordered_defns
-        list_elem_types = schema.list_element_types
 
         t_obj: Table = self._table_map.get(feat_table_name)
         if t_obj is None:
             new_table = Table.map_from(feat_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
-            for fn, ft in defns:
+            list_elem_types = schema.list_element_types
+            for fn, ft in schema.ordered_defns:
                 if ft == OriginFieldType.list:
                     cpp_elem = LIST_ELEM_CPP_TYPE.get(list_elem_types.get(fn), 8)
                     new_table._origin.add_list_field(fn, cpp_elem)
@@ -334,21 +333,20 @@ class ORM:
         t = t_obj._origin
         t.add_feature_begin()
         cache = feature._cache
-        for idx, (fn, ft) in enumerate(defns):
-            value = cache.get(fn)
-            if ft in (OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32,
-                      OriginFieldType.i32, OriginFieldType.f32, OriginFieldType.f64):
-                t.set_field(idx, value if value is not None else 0)
-            elif ft == OriginFieldType.str:
-                t.set_field_cstring(idx, value or '')
-            elif ft == OriginFieldType.wstr:
-                t.set_field_wstring(idx, value or '')
-            elif ft == OriginFieldType.bytes:
-                t.set_geometry_raw(value or b'')
-            elif ft == OriginFieldType.list:
-                items = value or []
-                dtype = LIST_ELEM_DTYPE.get(list_elem_types.get(fn), 'float64')
-                t.set_field_list_numeric(idx, np.asarray(items, dtype=dtype).tobytes())
+        for idx, fn in schema.numeric_plan:
+            v = cache.get(fn)
+            t.set_field(idx, v if v is not None else 0)
+        for idx, fn, is_wide in schema.str_plan:
+            v = cache.get(fn) or ''
+            if is_wide:
+                t.set_field_wstring(idx, v)
+            else:
+                t.set_field_cstring(idx, v)
+        for idx, fn in schema.bytes_plan:
+            t.set_geometry_raw(cache.get(fn) or b'')
+        for idx, fn, dtype in schema.list_plan:
+            items = cache.get(fn) or []
+            t.set_field_list_numeric(idx, np.asarray(items, dtype=dtype).tobytes())
         t.add_feature_end()
         feat_idx = t_obj.feature_count  # before incrementing = 0-based index of just-added feature
         t_obj.feature_count += 1

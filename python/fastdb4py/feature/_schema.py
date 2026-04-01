@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Tuple, Type, get_type_hints
 
 import numpy as _np
 
-from ..type import OriginFieldType, get_origin_type, get_list_element_type
+from ..type import OriginFieldType, get_origin_type, get_list_element_type, LIST_ELEM_DTYPE, LIST_ELEM_CPP_TYPE
 from .base import BaseFeature
 
 # Scalar field types that can be read/written via get_fields_as_doubles / set_fields_from_doubles.
@@ -39,6 +39,10 @@ class ClassSchema:
         'scalar_field_ids_np',   # numpy uint32 array of scalar field indices (for batch API)
         'list_element_types',    # Dict[str, OriginFieldType] — list field name → element type
         'has_ref_fields',        # bool — True if any field is ref or list-of-ref (needs DFS)
+        'numeric_plan',          # List[(idx, fn)] for numeric scalar fields (set_field)
+        'str_plan',              # List[(idx, fn, bool)] for str fields (bool=is_wide)
+        'bytes_plan',            # List[(idx, fn)] for bytes fields
+        'list_plan',             # List[(idx, fn, dtype_str)] for list fields
     )
 
     def __init__(
@@ -61,6 +65,33 @@ class ClassSchema:
             any(ft == OriginFieldType.ref for _, ft in ordered_defns) or
             any(et == OriginFieldType.ref for et in self.list_element_types.values())
         )
+        # Pre-split write plans to eliminate per-field if/elif in hot push path
+        _numeric_types = frozenset((
+            OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32,
+            OriginFieldType.i32, OriginFieldType.f32, OriginFieldType.f64,
+            OriginFieldType.u8n, OriginFieldType.u16n,
+        ))
+        _num = []
+        _str = []
+        _byt = []
+        _lst = []
+        for i, (fn, ft) in enumerate(ordered_defns):
+            if ft in _numeric_types:
+                _num.append((i, fn))
+            elif ft == OriginFieldType.str:
+                _str.append((i, fn, False))
+            elif ft == OriginFieldType.wstr:
+                _str.append((i, fn, True))
+            elif ft == OriginFieldType.bytes:
+                _byt.append((i, fn))
+            elif ft == OriginFieldType.list:
+                et = self.list_element_types.get(fn)
+                dtype = LIST_ELEM_DTYPE.get(et, 'float64')
+                _lst.append((i, fn, dtype))
+        self.numeric_plan = _num
+        self.str_plan = _str
+        self.bytes_plan = _byt
+        self.list_plan = _lst
 
 
 def get_class_schema(cls: Type) -> ClassSchema:
