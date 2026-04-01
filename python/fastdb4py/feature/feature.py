@@ -145,6 +145,31 @@ class Feature(BaseFeature):
             self._cache[name] = feature
             return feature
 
+        if ft == OriginFieldType.list:
+            from .ref_list import FeatureRefList
+            elem_type = self._schema.list_element_types.get(name)
+            if elem_type == OriginFieldType.ref:
+                hint = self._schema.hints.get(name)
+                args = getattr(hint, '__args__', None)
+                ref_cls = args[0] if args else Feature
+                if isinstance(ref_cls, str):
+                    ref_cls = Feature  # forward ref not yet resolved
+                result = FeatureRefList(self._origin, fid, ref_cls, self._db)
+            else:
+                _LIST_ELEM_DTYPE = {
+                    OriginFieldType.u8:  np.uint8,
+                    OriginFieldType.u16: np.uint16,
+                    OriginFieldType.u32: np.uint32,
+                    OriginFieldType.i32: np.int32,
+                    OriginFieldType.f32: np.float32,
+                    OriginFieldType.f64: np.float64,
+                }
+                dtype = _LIST_ELEM_DTYPE.get(elem_type, np.float64)
+                chunk = self._origin.get_field_as_list_view(fid)
+                result = np.frombuffer(bytes(chunk), dtype=dtype)
+            self._cache[name] = result
+            return result
+
         # Scalar field mapping via dispatch table (O(1) dict lookup).
         getter = _SCALAR_GETTER.get(ft)
         if getter is not None:
