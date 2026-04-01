@@ -15,6 +15,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - Thread-safety test suite (`test_free_threading.py`): 12 tests covering schema cache, serializer, ColumnAccessor, Feature instances, ORM lifecycle, and mixed-workload stress under concurrent threading.
 - `FastSerializer` numpy ndarray buffer layer support (`__fastser_buf__`): numpy arrays are now serialized via dedicated fastdb layers using `memcpy`-level writes and `np.frombuffer` loads, achieving 5–8× speedup over list-based paths for large arrays. Supports float64, float32, uint32, int32, uint16, uint8 dtypes and 1D/2D/3D shapes.
 - `FastSerializer.loads_shm(shm_name, length, offset, root_type)`: deserialize a Feature directly from a named shared memory segment without copying to an intermediate `bytes` object. Returns a fully detached Feature (pure Python mode) after closing the shared memory mapping.
+- **Native list columns**: `List[F64]`, `List[U32]`, `List[I32]`, `List[F32]`, `List[U8]`, `List[U16]`, and `List[SomeFeature]` are now first-class column types in the ORM. Features with list fields are stored directly in shared-memory ORM layers — no `FastSerializer` needed. Accessing `feature.my_list` returns a zero-copy NumPy array (numeric) or a lazy `FeatureRefList` (refs) backed by C++ memory. Cyclic object graphs are supported via two-pass DFS writing and back-edge patching.
 
 ### Performance
 - `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.
@@ -73,9 +74,13 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb-core -->
 ## fastdb C++ core
 
+### Added
+- **Native list column support**: `ftList=12` field type with backwards-compatible wire format. New public API on `FastVectorDbLayerBuild`: `add_list_field(name, element_type)`, `set_field_list_numeric(idx, data, nbytes)`, `set_field_list_refs(idx, refs, count)`, `update_feature_ref(feature_idx, field_idx, ref)`, `update_list_ref_at(feature_idx, field_idx, list_idx, ref)`. New public API on `FastVectorDbFeature`: `getFieldAsListView(idx)`, `getFieldListSize(idx)`, `getFieldListRefAt(idx, list_idx)`. Wire format: `element_type` field added in 2 previously-unused padding bytes of `field_desc_ex_t`; `n_list_fields` in `layer_header_t`; list data section appended after wstrings in each layer binary. Fully backwards-compatible — old databases with zero-filled padding read as no list data.
+
 ### Changed
 - SWIG interface (`fastdb4py.i`): added `%feature("threadallow")` for pure C++ operations and `Py_BEGIN_ALLOW_THREADS` around `copy_to_buffer` memcpy, improving multi-threaded throughput and preparing for free-threaded Python.
 - CMakeLists.txt: SWIG invocation now conditionally passes `-nogil` flag when `Py_GIL_DISABLED` is set, leveraging SWIG 4.4+ native free-threading support.
+- `FastVectorDbFeatureRef` struct moved from private header (`FastVectorDbBuild_p.h`) to public header (`fastdb.h`) so SWIG and external consumers can access `ilayer`, `ifeature`, `ifeatureH` fields directly.
 
 ### Historical releases (pre-CHANGELOG)
 

@@ -3,7 +3,7 @@ import platform
 import warnings
 import numpy as np
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dc_field
 from typing import List, TypeVar, Type, Any, Generic
 from multiprocessing import shared_memory, resource_tracker
 
@@ -19,6 +19,8 @@ class TableDefn:
     feature_type: Type[Feature]
     feature_capacity: int
     name: str = ''
+    list_capacities: dict = dc_field(default_factory=dict)
+    # list_capacities = {'field_name': total_element_count} for truncate mode
 
 class TableBuilder(Generic[T]):
     def __init__(self, feature_type: Type[T], orm: 'ORM'):
@@ -112,7 +114,17 @@ class ORM:
                 # Define table
                 for f_defn in f_defns:
                     field_name, origin_type = f_defn
-                    new_table._origin.add_field(field_name, origin_type.value)
+                    if origin_type == OriginFieldType.list:
+                        from ..feature._schema import get_class_schema
+                        from ..type import get_list_element_type, LIST_ELEM_CPP_TYPE
+                        hints = get_class_schema(feature_type).hints
+                        hint = hints.get(field_name)
+                        from ..type import get_list_element_type
+                        elem_ot = get_list_element_type(hint) if hint is not None else None
+                        cpp_elem = LIST_ELEM_CPP_TYPE.get(elem_ot, 8)  # default f64=8
+                        new_table._origin.add_list_field(field_name, cpp_elem)
+                    else:
+                        new_table._origin.add_field(field_name, origin_type.value)
                 
                 # Add to table map
                 orm._table_map[table_name] = new_table
@@ -230,6 +242,13 @@ class ORM:
         feature_type = feature.__class__
         defns = get_all_defns(feature_type)
         
+        # Route to graph-based push if feature has list fields (or skip graph for simple case)
+        from ..feature._schema import get_class_schema
+        schema = get_class_schema(feature_type)
+        if schema.list_element_types:
+            return self._push_graph(feature, table_name=table_name,
+                                     feature_name=feature_name, is_ref=is_ref)
+
         # Try to get table
         table_name = table_name if table_name else feature_type.__name__
         table: Table[T] = self._table_map.get(table_name, None)
@@ -287,6 +306,124 @@ class ORM:
                 nl.set_field_cstring(0, feature_name)
                 nl.set_field(1, ref)
                 nl.add_feature_end()
+
+    def _push_graph(self, root_feature, *, table_name='', feature_name='', is_ref=False):
+        """Push a feature graph (with list fields / cycles) using _GraphCollector."""
+        import struct
+        from ..type import get_list_element_type, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE
+        from ..feature._schema import get_class_schema
+        from ._graph import _GraphCollector
+
+        gc = _GraphCollector()
+        gc.collect(root_feature)
+
+        # id(feat) → WxFeatureRef created after writing
+        built_refs: dict = {}
+
+        for feat in gc.order:
+            feat_type = type(feat)
+            defns = get_all_defns(feat_type)
+            feat_table_name = feat_type.__name__
+            feat_schema = get_class_schema(feat_type)
+            back_edge_fields = {f for (fid2, f) in gc.back_edges if fid2 == id(feat)}
+
+            t_obj: Table = self._table_map.get(feat_table_name)
+            if t_obj is None:
+                new_table = Table.map_from(feat_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
+                for fn, ft in defns:
+                    if ft == OriginFieldType.list:
+                        hint = feat_schema.hints.get(fn)
+                        elem_ot = get_list_element_type(hint) if hint is not None else None
+                        cpp_elem = LIST_ELEM_CPP_TYPE.get(elem_ot, 8)
+                        new_table._origin.add_list_field(fn, cpp_elem)
+                    else:
+                        new_table._origin.add_field(fn, ft.value)
+                self._table_map[feat_table_name] = new_table
+                t_obj = new_table
+
+            with Table.push2(t_obj) as t:
+                for idx, (fn, ft) in enumerate(defns):
+                    value = feat._cache.get(fn)
+                    if ft in (OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32,
+                              OriginFieldType.i32, OriginFieldType.f32, OriginFieldType.f64):
+                        t.set_field(idx, value if value is not None else 0)
+                    elif ft == OriginFieldType.str:
+                        t.set_field_cstring(idx, value or '')
+                    elif ft == OriginFieldType.wstr:
+                        t.set_field_wstring(idx, value or '')
+                    elif ft == OriginFieldType.bytes:
+                        t.set_geometry_raw(value or b'')
+                    elif ft == OriginFieldType.ref:
+                        if fn not in back_edge_fields and value is not None:
+                            ref = built_refs.get(id(value))
+                            if ref is not None:
+                                t.set_field(idx, ref)
+                    elif ft == OriginFieldType.list:
+                        items = value or []
+                        elem_ot = feat_schema.list_element_types.get(fn)
+                        if elem_ot == OriginFieldType.ref:
+                            # Write refs (or zero placeholder for back-edges) so list length is correct
+                            parts = []
+                            _zero_ref = b'\x00\x00\x00\x00\x00'  # 5-byte null ref placeholder
+                            for child in items:
+                                ref = built_refs.get(id(child))
+                                if ref is not None:
+                                    parts.append(struct.pack('<HBH', ref.ilayer, ref.ifeature, ref.ifeatureH))
+                                else:
+                                    parts.append(_zero_ref)  # back-edge or unresolved; patched later
+                            if parts:
+                                buf = b''.join(parts)
+                                t.set_field_list_numeric(idx, buf)
+                        else:
+                            dtype = LIST_ELEM_DTYPE.get(elem_ot, 'float64')
+                            arr = np.asarray(items, dtype=dtype)
+                            t.set_field_list_numeric(idx, arr.tobytes())
+
+            feat_idx = t_obj.feature_count - 1
+            ref = t_obj._origin.create_feature_ref(feat_idx)
+            built_refs[id(feat)] = ref
+
+        # Patch back-edges
+        for feat_id, field_name in gc.back_edges:
+            feat = next((f for f in gc.order if id(f) == feat_id), None)
+            if feat is None:
+                continue
+            feat_type = type(feat)
+            defns = get_all_defns(feat_type)
+            field_idx = next((i for i, (fn, _) in enumerate(defns) if fn == field_name), None)
+            if field_idx is None:
+                continue
+            feat_table_name = feat_type.__name__
+            t_obj = self._table_map.get(feat_table_name)
+            if t_obj is None:
+                continue
+            _, feat_local_idx = gc.id_map[feat_id]
+            ft = dict(defns).get(field_name)
+            val = feat._cache.get(field_name)
+            if ft == OriginFieldType.ref and val is not None:
+                target_ref = built_refs.get(id(val))
+                if target_ref:
+                    t_obj._origin.update_feature_ref(feat_local_idx, field_idx, target_ref)
+            elif ft == OriginFieldType.list and val:
+                for li, child in enumerate(val):
+                    child_ref = built_refs.get(id(child))
+                    if child_ref:
+                        t_obj._origin.update_list_ref_at(feat_local_idx, field_idx, li, child_ref)
+
+        # Register named feature (root only)
+        root_table_name = type(root_feature).__name__
+        t_obj = self._table_map.get(root_table_name)
+        if t_obj is not None and (is_ref or feature_name):
+            feat_idx = t_obj.feature_count - 1
+            ref = t_obj._origin.create_feature_ref(feat_idx)
+            if feature_name:
+                nl = self._named_table
+                nl.add_feature_begin()
+                nl.set_field_cstring(0, feature_name)
+                nl.set_field(1, ref)
+                nl.add_feature_end()
+            if is_ref:
+                return ref
     
     def get(self, feature_type: Type[T], name: str) -> T | None:
         """Get feature by name from the database."""

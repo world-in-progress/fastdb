@@ -90,7 +90,36 @@ namespace wx
     class  FastVectorDb;
     class  FastVectorDbLayer;
     class  FastVectorDbFeature;
-    struct FastVectorDbFeatureRef;
+#ifdef _WIN32
+#pragma pack(push, 1)
+#endif
+    struct
+#if !defined(_WIN32) && !defined(SWIG)
+    __attribute__((packed))
+#endif
+    FastVectorDbFeatureRef {
+        u16 ilayer;
+        u8  ifeature;
+        u16 ifeatureH;
+        static FastVectorDbFeatureRef make(u32 ilayer_, u32 ifeature_) {
+            FastVectorDbFeatureRef ref;
+            ref.ilayer    = (u16)ilayer_;
+            ref.ifeature  = ifeature_ & 0xFF;
+            ref.ifeatureH = (u16)((ifeature_ >> 8) & 0xFFFF);
+            return ref;
+        }
+        static FastVectorDbFeatureRef* make_ref(u32 ilayer_, u32 ifeature_) {
+            FastVectorDbFeatureRef* ret = new FastVectorDbFeatureRef();
+            *ret = make(ilayer_, ifeature_);
+            return ret;
+        }
+        static u32 decodeIFeature(FastVectorDbFeatureRef* ref) {
+            return (u32)ref->ifeature | (((u32)ref->ifeatureH) << 8);
+        }
+    };
+#ifdef _WIN32
+#pragma pack(pop)
+#endif
 
     class fastdb_api FastVectorDbBuild
     {

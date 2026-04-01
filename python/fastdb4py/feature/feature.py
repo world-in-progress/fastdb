@@ -147,13 +147,23 @@ class Feature(BaseFeature):
 
         if ft == OriginFieldType.list:
             from .ref_list import FeatureRefList
+            import typing
             elem_type = self._schema.list_element_types.get(name)
             if elem_type == OriginFieldType.ref:
                 hint = self._schema.hints.get(name)
                 args = getattr(hint, '__args__', None)
                 ref_cls = args[0] if args else Feature
-                if isinstance(ref_cls, str):
-                    ref_cls = Feature  # forward ref not yet resolved
+                # Resolve ForwardRef or string to actual class
+                if isinstance(ref_cls, (str, typing.ForwardRef)):
+                    fwd_name = ref_cls if isinstance(ref_cls, str) else ref_cls.__forward_arg__
+                    # Self-referential: check parent class name first
+                    parent_cls = type(self)
+                    if fwd_name == parent_cls.__name__:
+                        ref_cls = parent_cls
+                    else:
+                        import sys
+                        mod = sys.modules.get(parent_cls.__module__, None)
+                        ref_cls = getattr(mod, fwd_name, Feature) if mod else Feature
                 result = FeatureRefList(self._origin, fid, ref_cls, self._db)
             else:
                 _LIST_ELEM_DTYPE = {
@@ -166,7 +176,7 @@ class Feature(BaseFeature):
                 }
                 dtype = _LIST_ELEM_DTYPE.get(elem_type, np.float64)
                 chunk = self._origin.get_field_as_list_view(fid)
-                result = np.frombuffer(bytes(chunk), dtype=dtype)
+                result = chunk.as_array(dtype)
             self._cache[name] = result
             return result
 

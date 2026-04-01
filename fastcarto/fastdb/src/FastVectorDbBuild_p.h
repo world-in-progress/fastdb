@@ -52,42 +52,8 @@ struct
         point2_x16_t maxEdge;
     };
 
-#ifdef _MSC_VER
-    #pragma pack(push, 1)
-#endif
-    struct 
-#ifndef _MSC_VER
-    __attribute__((packed))
-#endif 
-    FastVectorDbFeatureRef
-    {
-       u16 ilayer;
-       u8  ifeature;
-       u16 ifeatureH; 
-       static FastVectorDbFeatureRef make(u32 ilayer, u32 ifeature)
-       {
-          FastVectorDbFeatureRef ref;
-          ref.ilayer = ilayer;
-          ref.ifeature = ifeature & 0xFF;           // low 8 bits
-          ref.ifeatureH= (ifeature >> 8) & 0xFFFF;  // high 16 bits
-          return ref;
-       }
-        static FastVectorDbFeatureRef* make_ref(u32 ilayer, u32 ifeature)
-       {
-          FastVectorDbFeatureRef* ret = new FastVectorDbFeatureRef();
-          *ret = make(ilayer, ifeature);
-          return ret;
-       }
-       static u32 decodeIFeature(FastVectorDbFeatureRef* ref)
-       {
-          u32 ifeature = ref->ifeature | (((u32)ref->ifeatureH) << 8);
-          return ifeature;
-       }
-    };
-
-#ifdef _MSC_VER
-    #pragma pack(pop)
-#endif
+    // FastVectorDbFeatureRef is now fully defined in fastdb.h (public header).
+    // No redefinition needed here.
 
     class MemoryStream::Impl
     {
