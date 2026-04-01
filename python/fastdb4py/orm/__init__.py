@@ -240,15 +240,11 @@ class ORM:
 
     def push(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
         """Push the given feature to the database."""
-        # Check if is synchronizable
         if not self._is_mutable:
             if self._origin is None:
                 warnings.warn('Database has not connected to fastdb, not supporting push operation.', UserWarning)
             else:
                 warnings.warn('Database has fixed scale, not supporting push operation.', UserWarning)
-            return
-        if not isinstance(feature, Feature):
-            warnings.warn('Provided feature is not an instance of Feature.', UserWarning)
             return
         
         feature_type = feature.__class__
