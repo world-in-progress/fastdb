@@ -1,6 +1,7 @@
 from threading import Lock
 from weakref import WeakKeyDictionary
 from typing import Dict, Any, List, Tuple, Type, get_type_hints
+import struct as _struct
 
 import numpy as _np
 
@@ -101,13 +102,13 @@ def _compile_push_fn(numeric_plan, str_plan, bytes_plan, list_plan):
     """Generate and compile a specialized per-class push function.
 
     The compiled function signature is:
-        push_fn(cache, t, _gsp) -> None
+        push_fn(cache, t) -> None
 
-    Where _gsp = _get_struct_pack_method(typecode, n) returns a pre-compiled
-    struct.Struct.pack bound method, which is 4× faster than struct.pack for
-    small n and 2.5× faster for large n.
+    For list fields, uses per-field int-keyed dicts (baked into exec namespace)
+    for fast struct.Struct pack-method lookup (avoids function call overhead and
+    tuple key creation compared to the _get_struct_pack_method approach).
     """
-    lines = ['def _push(cache, t, _gsp):']
+    lines = ['def _push(cache, t):']
     lines.append('    t.add_feature_begin()')
     for idx, fn in numeric_plan:
         lines.append(f'    _v = cache.get({fn!r})')
@@ -120,13 +121,16 @@ def _compile_push_fn(numeric_plan, str_plan, bytes_plan, list_plan):
             lines.append(f'    t.set_field_cstring({idx}, _v)')
     for idx, fn in bytes_plan:
         lines.append(f'    t.set_geometry_raw(cache.get({fn!r}) or b"")')
-    for idx, fn, typecode in list_plan:
+    for i, (idx, fn, typecode) in enumerate(list_plan):
+        gv = f'_gsp{i}'  # per-field pack-method cache dict (int key → bound method)
         lines.append(f'    _items = cache.get({fn!r}) or []')
         lines.append(f'    _n = len(_items)')
-        lines.append(f'    t.set_field_list_numeric({idx}, _gsp({typecode!r}, _n)(*_items))')
+        lines.append(f'    t.set_field_list_numeric({idx}, ({gv}[_n] if _n in {gv} else {gv}.setdefault(_n, _SS(str(_n)+{typecode!r}).pack))(*_items))')
     lines.append('    t.add_feature_end()')
     src = '\n'.join(lines)
-    ns = {}
+    ns: dict = {f'_gsp{i}': {} for i in range(len(list_plan))}
+    if list_plan:
+        ns['_SS'] = _struct.Struct
     exec(compile(src, '<push_fn>', 'exec'), ns)
     return ns['_push']
 

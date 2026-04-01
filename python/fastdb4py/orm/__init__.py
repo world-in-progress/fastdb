@@ -279,7 +279,7 @@ class ORM:
                         new_table._origin.add_field(fn, ft.value)
                 self._table_map[feat_table_name] = new_table
                 t_obj = new_table
-            schema.push_fn(feature._cache, t_obj._origin, _get_struct_pack_method)
+            schema.push_fn(feature._cache, t_obj._origin)
             feat_idx = t_obj.feature_count
             t_obj.feature_count += 1
             if is_ref or feature_name:
@@ -372,7 +372,7 @@ class ORM:
             self._table_map[feat_table_name] = new_table
             t_obj = new_table
 
-        schema.push_fn(feature._cache, t_obj._origin, _get_struct_pack_method)
+        schema.push_fn(feature._cache, t_obj._origin)
         feat_idx = t_obj.feature_count  # before incrementing = 0-based index of just-added feature
         t_obj.feature_count += 1
 
