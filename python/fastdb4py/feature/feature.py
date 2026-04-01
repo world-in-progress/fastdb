@@ -37,24 +37,20 @@ _NUMERIC_FIELD_TYPES = frozenset((
 
 class Feature(BaseFeature):
     def __init__(self, **kwargs):
-        # _cache is eagerly allocated to avoid race conditions under free-threaded
-        # Python (PEP 703).  The cost (~50-100 ns for an empty dict) is negligible
-        # compared to the complexity of lazy-init synchronisation.
-        self._cache: Dict[str, Any] = {}
-        # Origin feature mapped from fastdb layer (None means pure Python object).
-        self._origin: core.WxFeature | None = None
-        # Database handle used when the feature is mapped from fastdb.
-        self._db: core.WxDatabase | core.WxDatabaseBuild | None = None
+        # Use object.__setattr__ directly to bypass Feature.__setattr__ dispatch
+        # for the 5 private instance attrs — saves ~5 Python function calls per
+        # Feature instantiation.
+        _sa = object.__setattr__
+        _sa(self, '_cache', {})
+        _sa(self, '_origin', None)
+        _sa(self, '_db', None)
         # Class-attr lookup (~40 ns) beats WeakKeyDict (~209 ns). Falls back to
         # get_class_schema() only on the very first instantiation of this class.
         _schema: ClassSchema = (
             type(self).__dict__.get(_SCHEMA_ATTR) or get_class_schema(type(self))
         )
-        # Store schema ref for cold-path access (ref/unknown fields).
-        self._schema: ClassSchema = _schema
-        # Parsed fastdb field definitions: name -> (field_type, field_index).
-        # Kept as instance attr so hot-path __getattr__/__setattr__ avoids extra lookup.
-        self._origin_hints: Dict[str, tuple[OriginFieldType, int]] = _schema.origin_hints
+        _sa(self, '_schema', _schema)
+        _sa(self, '_origin_hints', _schema.origin_hints)
 
         # Constructor fast-path:
         # kwargs are applied directly to avoid __setattr__ dispatch overhead.
@@ -62,7 +58,7 @@ class Feature(BaseFeature):
             cache: Dict[str, Any] = self._cache
             for key, value in kwargs.items():
                 if key.startswith('_'):
-                    object.__setattr__(self, key, value)
+                    _sa(self, key, value)
                 else:
                     cache[key] = value
 
