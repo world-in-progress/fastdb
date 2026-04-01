@@ -13,6 +13,7 @@ namespace wx{
     {
         char    name[16];
         u16     type;
+        u16     element_type;  // element type for ftList columns; 0 for non-list
         double  vmin;
         double  vmax;
 
@@ -29,6 +30,7 @@ namespace wx{
         u16     coord_format;
         bool    aabbox_enable;
         bool    string_table_u32;
+        u16     n_list_fields;   // number of list columns with a list data section; 0 for old databases
         double  minx;
         double  miny;
         double  maxx;
@@ -38,6 +40,8 @@ namespace wx{
         u64     offset_wstrings;
         u64     total_size;
     };
+    static_assert(sizeof(field_desc_ex_t) == 56, "field_desc_ex_t size changed — wire format broken");
+    static_assert(sizeof(layer_header_t)  == 144, "layer_header_t size changed — wire format broken");
     class FastVectorDbBuild;
     class FastVectorDbLayerBuild::Impl
     {

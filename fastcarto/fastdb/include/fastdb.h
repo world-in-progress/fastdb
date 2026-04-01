@@ -37,7 +37,8 @@ namespace wx
         ftSTR,
         ftWSTR,
         ftFeatureRef,
-        ftREF=ftFeatureRef
+        ftREF=ftFeatureRef,
+        ftList = 12
     };
     enum GeometryLikeFormat
     {

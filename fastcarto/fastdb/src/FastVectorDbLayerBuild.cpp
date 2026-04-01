@@ -70,6 +70,8 @@ namespace wx
             return m_string_table_u32?4:2;
         case ftFeatureRef:
             return sizeof(FastVectorDbFeatureRef);
+        case ftList:
+            return 8;  // {start: u32, count: u32} stored in the feature row
         }
         assert(false);
         return 0;
