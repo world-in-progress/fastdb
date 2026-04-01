@@ -12,6 +12,7 @@ from .. import core
 from .table import Table
 from ..type import OriginFieldType, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE, get_list_element_type
 from ..feature import Feature, get_all_defns
+from ..feature._schema import get_class_schema
 
 # Pre-built struct format cache: (typecode, n) → format string
 # Avoids f-string allocation on every list encode
@@ -127,11 +128,8 @@ class ORM:
                 for f_defn in f_defns:
                     field_name, origin_type = f_defn
                     if origin_type == OriginFieldType.list:
-                        from ..feature._schema import get_class_schema
-                        from ..type import get_list_element_type, LIST_ELEM_CPP_TYPE
                         hints = get_class_schema(feature_type).hints
                         hint = hints.get(field_name)
-                        from ..type import get_list_element_type
                         elem_ot = get_list_element_type(hint) if hint is not None else None
                         cpp_elem = LIST_ELEM_CPP_TYPE.get(elem_ot, 8)  # default f64=8
                         new_table._origin.add_list_field(field_name, cpp_elem)
@@ -254,7 +252,6 @@ class ORM:
         feature_type = feature.__class__
         
         # Route to graph-based push if feature has list fields (or skip graph for simple case)
-        from ..feature._schema import get_class_schema
         schema = get_class_schema(feature_type)
         if schema.list_element_types:
             if schema.has_ref_fields:
@@ -360,7 +357,6 @@ class ORM:
     def _push_graph(self, root_feature, *, table_name='', feature_name='', is_ref=False):
         """Push a feature graph (with list fields / cycles) using _GraphCollector."""
         import struct
-        from ..feature._schema import get_class_schema
         from ._graph import _GraphCollector
 
         gc = _GraphCollector()
