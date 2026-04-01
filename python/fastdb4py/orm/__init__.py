@@ -257,9 +257,34 @@ class ORM:
             if schema.has_ref_fields:
                 return self._push_graph(feature, table_name=table_name,
                                          feature_name=feature_name, is_ref=is_ref)
-            else:
-                return self._push_simple_list(feature, schema, table_name=table_name,
-                                               feature_name=feature_name, is_ref=is_ref)
+            # Fast path: inline simple list push (no DFS, no method call overhead)
+            feat_table_name = table_name if table_name else feature_type.__name__
+            t_obj: Table = self._table_map.get(feat_table_name)
+            if t_obj is None:
+                new_table = Table.map_from(feature_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
+                list_elem_types = schema.list_element_types
+                for fn, ft in schema.ordered_defns:
+                    if ft == OriginFieldType.list:
+                        cpp_elem = LIST_ELEM_CPP_TYPE.get(list_elem_types.get(fn), 8)
+                        new_table._origin.add_list_field(fn, cpp_elem)
+                    else:
+                        new_table._origin.add_field(fn, ft.value)
+                self._table_map[feat_table_name] = new_table
+                t_obj = new_table
+            schema.push_fn(feature._cache, t_obj._origin, _struct.pack, _get_struct_fmt)
+            feat_idx = t_obj.feature_count
+            t_obj.feature_count += 1
+            if is_ref or feature_name:
+                ref = t_obj._origin.create_feature_ref(feat_idx)
+                if feature_name:
+                    nl = self._named_table
+                    nl.add_feature_begin()
+                    nl.set_field_cstring(0, feature_name)
+                    nl.set_field(1, ref)
+                    nl.add_feature_end()
+                if is_ref:
+                    return ref
+            return
 
         defns = get_all_defns(feature_type)
 
