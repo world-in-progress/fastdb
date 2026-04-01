@@ -342,25 +342,7 @@ class ORM:
             self._table_map[feat_table_name] = new_table
             t_obj = new_table
 
-        t = t_obj._origin
-        t.add_feature_begin()
-        cache = feature._cache
-        for idx, fn in schema.numeric_plan:
-            v = cache.get(fn)
-            t.set_field(idx, v if v is not None else 0)
-        for idx, fn, is_wide in schema.str_plan:
-            v = cache.get(fn) or ''
-            if is_wide:
-                t.set_field_wstring(idx, v)
-            else:
-                t.set_field_cstring(idx, v)
-        for idx, fn in schema.bytes_plan:
-            t.set_geometry_raw(cache.get(fn) or b'')
-        for idx, fn, typecode in schema.list_plan:
-            items = cache.get(fn) or []
-            n = len(items)
-            t.set_field_list_numeric(idx, _struct.pack(_get_struct_fmt(typecode, n), *items))
-        t.add_feature_end()
+        schema.push_fn(feature._cache, t_obj._origin, _struct.pack, _get_struct_fmt)
         feat_idx = t_obj.feature_count  # before incrementing = 0-based index of just-added feature
         t_obj.feature_count += 1
 

@@ -42,7 +42,8 @@ class ClassSchema:
         'numeric_plan',          # List[(idx, fn)] for numeric scalar fields (set_field)
         'str_plan',              # List[(idx, fn, bool)] for str fields (bool=is_wide)
         'bytes_plan',            # List[(idx, fn)] for bytes fields
-        'list_plan',             # List[(idx, fn, dtype_str)] for list fields
+        'list_plan',             # List[(idx, fn, typecode)] for list fields
+        'push_fn',               # Compiled per-class push function (avoids loops/conditionals)
     )
 
     def __init__(
@@ -92,6 +93,41 @@ class ClassSchema:
         self.str_plan = _str
         self.bytes_plan = _byt
         self.list_plan = _lst
+        # Generate a specialized push function for this class to avoid loops/conditionals
+        self.push_fn = _compile_push_fn(_num, _str, _byt, _lst)
+
+
+def _compile_push_fn(numeric_plan, str_plan, bytes_plan, list_plan):
+    """Generate and compile a specialized per-class push function.
+
+    The compiled function signature is:
+        push_fn(cache, t, _struct_pack, _get_struct_fmt) -> None
+
+    Avoids per-field if/elif dispatch and loop overhead in the hot push path.
+    """
+    import struct as _s
+    lines = ['def _push(cache, t, _struct_pack, _get_struct_fmt):']
+    lines.append('    t.add_feature_begin()')
+    for idx, fn in numeric_plan:
+        lines.append(f'    _v = cache.get({fn!r})')
+        lines.append(f'    t.set_field({idx}, _v if _v is not None else 0)')
+    for idx, fn, is_wide in str_plan:
+        lines.append(f'    _v = cache.get({fn!r}) or ""')
+        if is_wide:
+            lines.append(f'    t.set_field_wstring({idx}, _v)')
+        else:
+            lines.append(f'    t.set_field_cstring({idx}, _v)')
+    for idx, fn in bytes_plan:
+        lines.append(f'    t.set_geometry_raw(cache.get({fn!r}) or b"")')
+    for idx, fn, typecode in list_plan:
+        lines.append(f'    _items = cache.get({fn!r}) or []')
+        lines.append(f'    _n = len(_items)')
+        lines.append(f'    t.set_field_list_numeric({idx}, _struct_pack(_get_struct_fmt({typecode!r}, _n), *_items))')
+    lines.append('    t.add_feature_end()')
+    src = '\n'.join(lines)
+    ns = {}
+    exec(compile(src, '<push_fn>', 'exec'), ns)
+    return ns['_push']
 
 
 def get_class_schema(cls: Type) -> ClassSchema:
