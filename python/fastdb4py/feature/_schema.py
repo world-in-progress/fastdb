@@ -4,7 +4,7 @@ from typing import Dict, Any, List, Tuple, Type, get_type_hints
 
 import numpy as _np
 
-from ..type import OriginFieldType, get_origin_type
+from ..type import OriginFieldType, get_origin_type, get_list_element_type
 from .base import BaseFeature
 
 # Scalar field types that can be read/written via get_fields_as_doubles / set_fields_from_doubles.
@@ -37,6 +37,7 @@ class ClassSchema:
         'field_index_map',       # Dict[str, int] — name → column position for ColumnAccessor
         'column_accessor_class', # Dynamically-created ColumnAccessor class, or None
         'scalar_field_ids_np',   # numpy uint32 array of scalar field indices (for batch API)
+        'list_element_types',    # Dict[str, OriginFieldType] — list field name → element type
     )
 
     def __init__(
@@ -46,6 +47,7 @@ class ClassSchema:
         ordered_defns: List[Tuple[str, OriginFieldType]],
         field_index_map: Dict[str, int],
         scalar_field_ids_np,
+        list_element_types: Dict[str, 'OriginFieldType'] = None,
     ):
         self.hints = hints
         self.origin_hints = origin_hints
@@ -53,6 +55,7 @@ class ClassSchema:
         self.field_index_map = field_index_map
         self.column_accessor_class = None  # lazily populated by table.py
         self.scalar_field_ids_np = scalar_field_ids_np
+        self.list_element_types = list_element_types if list_element_types is not None else {}
 
 
 def get_class_schema(cls: Type) -> ClassSchema:
@@ -115,7 +118,14 @@ def get_class_schema(cls: Type) -> ClassSchema:
         scalar_ids = [idx for _, (ft, idx) in origin_hints.items() if ft in _SCALAR_ORIGIN_TYPES]
         scalar_field_ids_np = _np.array(scalar_ids, dtype=_np.uint32)
 
-        schema = ClassSchema(hints, origin_hints, ordered_defns, field_index_map, scalar_field_ids_np)
+        # list_element_types: field_name → element OriginFieldType for List[X] fields
+        list_element_types = {
+            name: get_list_element_type(hint)
+            for name, hint in hints.items()
+            if not name.startswith('_') and get_list_element_type(hint) != OriginFieldType.unknown
+        }
+
+        schema = ClassSchema(hints, origin_hints, ordered_defns, field_index_map, scalar_field_ids_np, list_element_types)
 
         # Primary cache: store directly on the class — O(1) dict lookup next time.
         try:

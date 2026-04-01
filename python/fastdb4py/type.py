@@ -113,3 +113,59 @@ def get_origin_type(type_var: type) -> OriginFieldType:
     if type_var is str:
         return OriginFieldType.str
     return FIELD_TYPE_MAP.get(type_var, OriginFieldType.unknown)
+
+# Mapping of list element OriginFieldType → C++ element_type enum value for add_list_field.
+# C++ ftFeatureRef = 11, numeric types match C++ FieldTypeEnum values.
+LIST_ELEM_CPP_TYPE = {
+    OriginFieldType.u8:  1,
+    OriginFieldType.u16: 2,
+    OriginFieldType.u32: 3,
+    OriginFieldType.i32: 4,
+    OriginFieldType.f32: 7,
+    OriginFieldType.f64: 8,
+    OriginFieldType.ref: 11,
+}
+
+# numpy dtype strings for numeric list element types
+LIST_ELEM_DTYPE = {
+    OriginFieldType.u8:  'uint8',
+    OriginFieldType.u16: 'uint16',
+    OriginFieldType.u32: 'uint32',
+    OriginFieldType.i32: 'int32',
+    OriginFieldType.f32: 'float32',
+    OriginFieldType.f64: 'float64',
+}
+
+def get_list_element_type(annotation) -> OriginFieldType:
+    """Return the OriginFieldType of the element type inside a List[X] annotation.
+
+    Returns OriginFieldType.ref for List[SomeFeature] or List['ForwardRef'].
+    Returns the scalar OriginFieldType for List[F64] etc.
+    Returns OriginFieldType.unknown if not a List or element type is unrecognised.
+    """
+    import typing
+    origin = get_origin(annotation)
+    if origin is not list:
+        return OriginFieldType.unknown
+    args = get_args(annotation)
+    if not args:
+        return OriginFieldType.unknown
+    elem = args[0]
+    # Forward references and Feature subclasses → ref
+    if isinstance(elem, str):
+        return OriginFieldType.ref
+    if isinstance(elem, typing.ForwardRef):
+        return OriginFieldType.ref
+    # Check scalar map first
+    scalar = FIELD_TYPE_MAP.get(elem, OriginFieldType.unknown)
+    if scalar != OriginFieldType.unknown:
+        return scalar
+    # Native built-in scalars
+    if elem is float:
+        return OriginFieldType.f64
+    if elem is int:
+        return OriginFieldType.i32
+    # Assume any remaining class is a Feature subclass → ref
+    if isinstance(elem, type):
+        return OriginFieldType.ref
+    return OriginFieldType.unknown
