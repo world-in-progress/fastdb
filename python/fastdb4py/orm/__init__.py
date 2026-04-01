@@ -1,7 +1,7 @@
 import tempfile
 import platform
 import warnings
-import array as _array_module
+import struct as _struct
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field as dc_field
@@ -13,7 +13,16 @@ from .table import Table
 from ..type import OriginFieldType, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE, get_list_element_type
 from ..feature import Feature, get_all_defns
 
-_array_array = _array_module.array
+# Pre-built struct format cache: (typecode, n) → format string
+# Avoids f-string allocation on every list encode
+_struct_fmt_cache: dict = {}
+
+def _get_struct_fmt(typecode: str, n: int) -> str:
+    key = (typecode, n)
+    fmt = _struct_fmt_cache.get(key)
+    if fmt is None:
+        _struct_fmt_cache[key] = fmt = f'{n}{typecode}'
+    return fmt
 
 T = TypeVar('T', bound=Feature)
 
@@ -349,7 +358,8 @@ class ORM:
             t.set_geometry_raw(cache.get(fn) or b'')
         for idx, fn, typecode in schema.list_plan:
             items = cache.get(fn) or []
-            t.set_field_list_numeric(idx, _array_array(typecode, items).tobytes())
+            n = len(items)
+            t.set_field_list_numeric(idx, _struct.pack(_get_struct_fmt(typecode, n), *items))
         t.add_feature_end()
         feat_idx = t_obj.feature_count  # before incrementing = 0-based index of just-added feature
         t_obj.feature_count += 1
