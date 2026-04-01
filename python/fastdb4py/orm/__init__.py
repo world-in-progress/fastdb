@@ -240,14 +240,19 @@ class ORM:
             return
         
         feature_type = feature.__class__
-        defns = get_all_defns(feature_type)
         
         # Route to graph-based push if feature has list fields (or skip graph for simple case)
         from ..feature._schema import get_class_schema
         schema = get_class_schema(feature_type)
         if schema.list_element_types:
-            return self._push_graph(feature, table_name=table_name,
-                                     feature_name=feature_name, is_ref=is_ref)
+            if schema.has_ref_fields:
+                return self._push_graph(feature, table_name=table_name,
+                                         feature_name=feature_name, is_ref=is_ref)
+            else:
+                return self._push_simple_list(feature, schema, table_name=table_name,
+                                               feature_name=feature_name, is_ref=is_ref)
+
+        defns = get_all_defns(feature_type)
 
         # Try to get table
         table_name = table_name if table_name else feature_type.__name__
@@ -306,6 +311,60 @@ class ORM:
                 nl.set_field_cstring(0, feature_name)
                 nl.set_field(1, ref)
                 nl.add_feature_end()
+
+    def _push_simple_list(self, feature, schema, *, table_name='', feature_name='', is_ref=False):
+        """Fast path for Features with only scalar + numeric-list fields (no ref fields, no DFS needed)."""
+        feat_type = type(feature)
+        feat_table_name = table_name if table_name else feat_type.__name__
+        defns = schema.ordered_defns
+        list_elem_types = schema.list_element_types
+
+        t_obj: Table = self._table_map.get(feat_table_name)
+        if t_obj is None:
+            new_table = Table.map_from(feat_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
+            for fn, ft in defns:
+                if ft == OriginFieldType.list:
+                    from ..type import LIST_ELEM_CPP_TYPE
+                    cpp_elem = LIST_ELEM_CPP_TYPE.get(list_elem_types.get(fn), 8)
+                    new_table._origin.add_list_field(fn, cpp_elem)
+                else:
+                    new_table._origin.add_field(fn, ft.value)
+            self._table_map[feat_table_name] = new_table
+            t_obj = new_table
+
+        t = t_obj._origin
+        t.add_feature_begin()
+        cache = feature._cache
+        for idx, (fn, ft) in enumerate(defns):
+            value = cache.get(fn)
+            if ft in (OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32,
+                      OriginFieldType.i32, OriginFieldType.f32, OriginFieldType.f64):
+                t.set_field(idx, value if value is not None else 0)
+            elif ft == OriginFieldType.str:
+                t.set_field_cstring(idx, value or '')
+            elif ft == OriginFieldType.wstr:
+                t.set_field_wstring(idx, value or '')
+            elif ft == OriginFieldType.bytes:
+                t.set_geometry_raw(value or b'')
+            elif ft == OriginFieldType.list:
+                items = value or []
+                from ..type import LIST_ELEM_DTYPE
+                dtype = LIST_ELEM_DTYPE.get(list_elem_types.get(fn), 'float64')
+                t.set_field_list_numeric(idx, np.asarray(items, dtype=dtype).tobytes())
+        t.add_feature_end()
+        feat_idx = t_obj.feature_count  # before incrementing = 0-based index of just-added feature
+        t_obj.feature_count += 1
+
+        if is_ref or feature_name:
+            ref = t_obj._origin.create_feature_ref(feat_idx)
+            if feature_name:
+                nl = self._named_table
+                nl.add_feature_begin()
+                nl.set_field_cstring(0, feature_name)
+                nl.set_field(1, ref)
+                nl.add_feature_end()
+            if is_ref:
+                return ref
 
     def _push_graph(self, root_feature, *, table_name='', feature_name='', is_ref=False):
         """Push a feature graph (with list fields / cycles) using _GraphCollector."""

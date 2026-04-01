@@ -38,6 +38,7 @@ class ClassSchema:
         'column_accessor_class', # Dynamically-created ColumnAccessor class, or None
         'scalar_field_ids_np',   # numpy uint32 array of scalar field indices (for batch API)
         'list_element_types',    # Dict[str, OriginFieldType] — list field name → element type
+        'has_ref_fields',        # bool — True if any field is ref or list-of-ref (needs DFS)
     )
 
     def __init__(
@@ -56,6 +57,10 @@ class ClassSchema:
         self.column_accessor_class = None  # lazily populated by table.py
         self.scalar_field_ids_np = scalar_field_ids_np
         self.list_element_types = list_element_types if list_element_types is not None else {}
+        self.has_ref_fields = (
+            any(ft == OriginFieldType.ref for _, ft in ordered_defns) or
+            any(et == OriginFieldType.ref for et in self.list_element_types.values())
+        )
 
 
 def get_class_schema(cls: Type) -> ClassSchema:
