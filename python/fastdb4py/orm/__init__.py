@@ -68,6 +68,7 @@ class ORM:
         self._table_map: dict[str, Table | TableBuilder] = {}
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._named_table: core.WxLayerTable | core.WxLayerTableBuild | None = None
+        self._is_mutable: bool = False  # True only when origin is WxDatabaseBuild (push is allowed)
 
     @property
     def fixed(self) -> bool:
@@ -77,6 +78,7 @@ class ORM:
     def create() -> 'ORM':
         orm = ORM()
         orm._origin = core.WxDatabaseBuild()
+        orm._is_mutable = True
         
         # Create default name table
         nt = _get_default_table_build(orm._origin, '_name_')
@@ -239,11 +241,11 @@ class ORM:
     def push(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
         """Push the given feature to the database."""
         # Check if is synchronizable
-        if self._origin is None:
-            warnings.warn('Database has not connected to fastdb, not supporting push operation.', UserWarning)
-            return
-        if self.fixed:
-            warnings.warn('Database has fixed scale, not supporting push operation.', UserWarning)
+        if not self._is_mutable:
+            if self._origin is None:
+                warnings.warn('Database has not connected to fastdb, not supporting push operation.', UserWarning)
+            else:
+                warnings.warn('Database has fixed scale, not supporting push operation.', UserWarning)
             return
         if not isinstance(feature, Feature):
             warnings.warn('Provided feature is not an instance of Feature.', UserWarning)
