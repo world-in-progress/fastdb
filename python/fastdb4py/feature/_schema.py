@@ -134,6 +134,52 @@ def _compile_push_fn(numeric_plan, str_plan, bytes_plan, list_plan):
     return ns['_push']
 
 
+def make_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj):
+    """Generate a per-(class, table) inlined push+dispatch function.
+
+    Pre-binds C++ SWIG methods as closure default args, eliminating LOAD_ATTR
+    overhead per push call (~25-40ns × 7 method lookups saved per record).
+    The function also increments t_obj.feature_count, replacing the previous
+    3-level call chain: push() → dispatch() → push_fn() → SWIG.
+
+    This is used exclusively in the push() fast path. push_many() continues to
+    use push_fn (which takes (cache, t_origin)) for its tight inner loop.
+    """
+    t_origin = t_obj._origin
+    # Pre-bind SWIG methods once — captured as closure cell values.
+    ab = t_origin.add_feature_begin
+    ae = t_origin.add_feature_end
+    sf = t_origin.set_field
+    sfc = t_origin.set_field_cstring
+
+    lines = ['def _dispatch(cache, _ab=ab, _ae=ae, _sf=sf, _sfc=sfc, _t=t_obj, _SS=None):']
+    lines.append('    _ab()')
+    for idx, fn in numeric_plan:
+        lines.append(f'    _sf({idx}, cache.get({fn!r}) or 0)')
+    for idx, fn, is_wide in str_plan:
+        if is_wide:
+            lines.append(f'    _t._origin.set_field_wstring({idx}, cache.get({fn!r}) or "")')
+        else:
+            lines.append(f'    _sfc({idx}, cache.get({fn!r}) or "")')
+    for idx, fn in bytes_plan:
+        lines.append(f'    _t._origin.set_geometry_raw(cache.get({fn!r}) or b"")')
+    for i, (idx, fn, typecode) in enumerate(list_plan):
+        gv = f'_gsp{i}'
+        lines.append(f'    _items = cache.get({fn!r}) or []')
+        lines.append(f'    _n = len(_items)')
+        lines.append(f'    _t._origin.set_field_list_numeric({idx}, ({gv}[_n] if _n in {gv} else {gv}.setdefault(_n, _SS(str(_n)+{typecode!r}).pack))(*_items))')
+    lines.append('    _ae()')
+    lines.append('    _t.feature_count += 1')
+    src = '\n'.join(lines)
+    ns: dict = {
+        'ab': ab, 'ae': ae, 'sf': sf, 'sfc': sfc, 't_obj': t_obj,
+        **{f'_gsp{i}': {} for i in range(len(list_plan))},
+    }
+    if list_plan:
+        ns['_SS'] = _struct.Struct
+    exec(compile(src, '<inlined_dispatch>', 'exec'), ns)
+    return ns['_dispatch']
+
 def get_class_schema(cls: Type) -> ClassSchema:
     """Return the ClassSchema for the given Feature subclass, computing it on first call.
 

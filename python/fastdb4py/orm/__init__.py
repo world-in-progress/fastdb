@@ -12,7 +12,7 @@ from .. import core
 from .table import Table
 from ..type import OriginFieldType, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE, get_list_element_type
 from ..feature import Feature, get_all_defns
-from ..feature._schema import get_class_schema
+from ..feature._schema import get_class_schema, make_inlined_dispatch
 
 # Pre-compiled struct.Struct pack-method cache: (typecode, n) → bound .pack method
 # struct.Struct.pack is 4× faster than struct.pack for small/medium n (avoids fmt-string lookup overhead)
@@ -304,15 +304,12 @@ class ORM:
                 nl.add_feature_end()
             if is_ref:
                 return ref
-        # Cache a dispatch closure for this type (common case: no table_name/feature_name/is_ref)
+        # Cache an inlined dispatch for this type (common case: no table_name/feature_name/is_ref).
+        # Pre-binds C++ SWIG methods to eliminate LOAD_ATTR overhead per hot-path push.
         if not (table_name or feature_name or is_ref) and not schema.has_ref_fields:
-            _push_fn = schema.push_fn
-            _t_origin = t_obj._origin
-            _t_obj = t_obj
-            def _dispatch(cache, _pf=_push_fn, _to=_t_origin, _t=_t_obj):
-                _pf(cache, _to)
-                _t.feature_count += 1
-            self._push_dispatch[feature_type] = _dispatch
+            self._push_dispatch[feature_type] = make_inlined_dispatch(
+                schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj
+            )
         return
 
     def push_many(self, features: list, table_name: str = '') -> None:
