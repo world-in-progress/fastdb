@@ -7,6 +7,15 @@ import numpy as _np
 
 from ..type import OriginFieldType, get_origin_type, get_list_element_type, LIST_ELEM_DTYPE, LIST_ELEM_CPP_TYPE, LIST_ELEM_ARRAY_TYPECODE
 from .base import BaseFeature
+# Import C extension functions for direct SWIG call (bypasses Python wrapper overhead ~200ns/call)
+from ..core import _fastdb4py as _fdb_c
+_c_add_begin  = _fdb_c.WxLayerTableBuild_add_feature_begin
+_c_add_end    = _fdb_c.WxLayerTableBuild_add_feature_end
+_c_set_field  = _fdb_c.WxLayerTableBuild_set_field
+_c_set_cstr   = _fdb_c.WxLayerTableBuild_set_field_cstring
+_c_set_wstr   = _fdb_c.WxLayerTableBuild_set_field_wstring
+_c_set_raw    = _fdb_c.WxLayerTableBuild_set_geometry_raw
+_c_set_list   = _fdb_c.WxLayerTableBuild_set_field_list_numeric
 
 # Scalar field types that can be read/written via get_fields_as_doubles / set_fields_from_doubles.
 _SCALAR_ORIGIN_TYPES = frozenset((
@@ -137,8 +146,8 @@ def _compile_push_fn(numeric_plan, str_plan, bytes_plan, list_plan):
 def make_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj):
     """Generate a per-(class, table) inlined push+dispatch function.
 
-    Pre-binds C++ SWIG methods as closure default args, eliminating LOAD_ATTR
-    overhead per push call (~25-40ns × 7 method lookups saved per record).
+    Pre-binds C extension functions directly (bypasses Python wrapper overhead ~200ns/call).
+    Also eliminates LOAD_ATTR overhead per push call.
     The function also increments t_obj.feature_count, replacing the previous
     3-level call chain: push() → dispatch() → push_fn() → SWIG.
 
@@ -146,33 +155,31 @@ def make_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj):
     use push_fn (which takes (cache, t_origin)) for its tight inner loop.
     """
     t_origin = t_obj._origin
-    # Pre-bind SWIG methods once — captured as closure cell values.
-    ab = t_origin.add_feature_begin
-    ae = t_origin.add_feature_end
-    sf = t_origin.set_field
-    sfc = t_origin.set_field_cstring
 
-    lines = ['def _dispatch(cache, _ab=ab, _ae=ae, _sf=sf, _sfc=sfc, _t=t_obj, _SS=None):']
-    lines.append('    _ab()')
+    lines = ['def _dispatch(cache, _ab=_c_ab, _ae=_c_ae, _sf=_c_sf, _sfc=_c_sfc, _to=to, _t=t_obj, _SS=None):']
+    lines.append('    _ab(_to)')
     for idx, fn in numeric_plan:
-        lines.append(f'    _sf({idx}, cache.get({fn!r}) or 0)')
+        lines.append(f'    _sf(_to, {idx}, cache.get({fn!r}) or 0)')
     for idx, fn, is_wide in str_plan:
         if is_wide:
-            lines.append(f'    _t._origin.set_field_wstring({idx}, cache.get({fn!r}) or "")')
+            lines.append(f'    _c_wstr(_to, {idx}, cache.get({fn!r}) or "")')
         else:
-            lines.append(f'    _sfc({idx}, cache.get({fn!r}) or "")')
+            lines.append(f'    _sfc(_to, {idx}, cache.get({fn!r}) or "")')
     for idx, fn in bytes_plan:
-        lines.append(f'    _t._origin.set_geometry_raw(cache.get({fn!r}) or b"")')
+        lines.append(f'    _c_raw(_to, cache.get({fn!r}) or b"")')
     for i, (idx, fn, typecode) in enumerate(list_plan):
         gv = f'_gsp{i}'
         lines.append(f'    _items = cache.get({fn!r}) or []')
         lines.append(f'    _n = len(_items)')
-        lines.append(f'    _t._origin.set_field_list_numeric({idx}, ({gv}[_n] if _n in {gv} else {gv}.setdefault(_n, _SS(str(_n)+{typecode!r}).pack))(*_items))')
-    lines.append('    _ae()')
+        lines.append(f'    _c_list(_to, {idx}, ({gv}[_n] if _n in {gv} else {gv}.setdefault(_n, _SS(str(_n)+{typecode!r}).pack))(*_items))')
+    lines.append('    _ae(_to)')
     lines.append('    _t.feature_count += 1')
     src = '\n'.join(lines)
     ns: dict = {
-        'ab': ab, 'ae': ae, 'sf': sf, 'sfc': sfc, 't_obj': t_obj,
+        '_c_ab': _c_add_begin, '_c_ae': _c_add_end,
+        '_c_sf': _c_set_field, '_c_sfc': _c_set_cstr,
+        '_c_wstr': _c_set_wstr, '_c_raw': _c_set_raw, '_c_list': _c_set_list,
+        'to': t_origin, 't_obj': t_obj,
         **{f'_gsp{i}': {} for i in range(len(list_plan))},
     }
     if list_plan:
