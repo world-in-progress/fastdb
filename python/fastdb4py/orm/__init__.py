@@ -79,6 +79,7 @@ class ORM:
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._named_table: core.WxLayerTable | core.WxLayerTableBuild | None = None
         self._is_mutable: bool = False  # True only when origin is WxDatabaseBuild (push is allowed)
+        self._push_dispatch: dict = {}  # per-class fast push closure (no table_name/feature_name/is_ref)
 
     @property
     def fixed(self) -> bool:
@@ -256,9 +257,21 @@ class ORM:
             else:
                 warnings.warn('Database has fixed scale, not supporting push operation.', UserWarning)
             return
-        
+
+        # Ultra-fast common path: same type repeated, no table_name/feature_name/is_ref
+        if not (table_name or feature_name or is_ref):
+            feature_type = feature.__class__
+            dispatch_fn = self._push_dispatch.get(feature_type)
+            if dispatch_fn is not None:
+                dispatch_fn(feature._cache)
+                return
+
+        return self._push_full(feature, table_name, feature_name=feature_name, is_ref=is_ref)
+
+    def _push_full(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
+        """Full push implementation with schema lookup, table creation, and ref handling."""
         feature_type = feature.__class__
-        
+
         # Route to graph-based push only for ref features; all others use compiled push_fn
         schema = get_class_schema(feature_type)
         if schema.has_ref_fields:
@@ -291,6 +304,15 @@ class ORM:
                 nl.add_feature_end()
             if is_ref:
                 return ref
+        # Cache a dispatch closure for this type (common case: no table_name/feature_name/is_ref)
+        if not (table_name or feature_name or is_ref) and not schema.has_ref_fields:
+            _push_fn = schema.push_fn
+            _t_origin = t_obj._origin
+            _t_obj = t_obj
+            def _dispatch(cache, _pf=_push_fn, _to=_t_origin, _t=_t_obj):
+                _pf(cache, _to)
+                _t.feature_count += 1
+            self._push_dispatch[feature_type] = _dispatch
         return
 
     def push_many(self, features: list, table_name: str = '') -> None:
