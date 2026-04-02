@@ -5,6 +5,7 @@ from threading import Lock
 from weakref import WeakKeyDictionary
 from typing import Type, List, Dict, Any, Tuple, get_origin, get_args
 from .feature import Feature, get_all_defns
+from .feature.feature import _origin_s as _feat_origin_s, _db_s as _feat_db_s
 from .feature._schema import get_class_schema as _get_unified_schema
 from .type import OriginFieldType, U32, F64
 from . import core
@@ -317,8 +318,8 @@ class FastSerializer:
             # buffer-layer numpy arrays used .copy(), so nothing references
             # the shared memory region after this point.
             for obj in ctx.obj_cache.values():
-                obj._origin = None
-                obj._db = None
+                _feat_origin_s.__set__(obj, None)
+                _feat_db_s.__set__(obj, None)
 
             return result
         finally:
@@ -457,8 +458,8 @@ class _LoadContext:
         self.obj_cache[key] = obj # Cache to solve cyclic references
         
         # Fill data
-        obj._origin = feature_data
-        obj._db = self.db
+        _feat_origin_s.__set__(obj, feature_data)
+        _feat_db_s.__set__(obj, self.db)
         
         schema = _get_class_schema(cls)
         defns = schema["defns"]

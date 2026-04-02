@@ -61,8 +61,8 @@ class Feature(BaseFeature):
         origin: core.WxFeature | None = None
     ) -> T:
         feature = cls()
-        feature._db = db
-        feature._origin = origin
+        _db_s.__set__(feature, db)
+        _origin_s.__set__(feature, origin)
         return feature
 
     def __getattr__(self, name: str):
@@ -191,13 +191,10 @@ class Feature(BaseFeature):
         return None
 
     def __setattr__(self, name: str, value):
-        # Internal runtime attributes bypass field mapping.
-        # name[0] check (~15ns) is faster than name.startswith('_') (~35ns).
-        if name[0] == '_':
-            object.__setattr__(self, name, value)
-            return
-
-        # Pure Python mode: skip hints lookup entirely — just cache the value.
+        # Pure Python mode: direct cache write (fastest path).
+        # Internal slot writes (_origin, _cache, etc.) must use slot descriptors
+        # directly (feature.py module-level _origin_s, _db_s, etc.) or
+        # object.__setattr__ — NOT this method.
         if self._origin is None:
             self._cache[name] = value
             return
