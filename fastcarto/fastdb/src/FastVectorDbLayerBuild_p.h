@@ -106,9 +106,9 @@ namespace wx{
     private:
         vector<u8>       m_table_buffer;
         vector<u8>       m_geometries_buffer;
-        vector<string*>       m_string_table;
+        vector<const string*>       m_string_table;
         unordered_map<string,int>  m_string_map;
-        vector<wstring*>      m_wstring_table;
+        vector<const wstring*>      m_wstring_table;
         unordered_map<wstring,int> m_wstring_map;
         size_t           m_string_total_size;
         size_t           m_wstring_total_size;
