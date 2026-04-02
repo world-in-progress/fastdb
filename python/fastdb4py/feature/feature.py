@@ -36,6 +36,11 @@ _NUMERIC_FIELD_TYPES = frozenset((
 ))
 
 class Feature(BaseFeature):
+    # Slot descriptors for the 5 private instance attrs: ~15ns access vs ~25ns __dict__.
+    # Subclasses that don't define __slots__ get __dict__ (Python default), so user
+    # field writes via __setattr__ → _cache still work; no API change.
+    __slots__ = ('_cache', '_origin', '_db', '_schema', '_origin_hints')
+
     def __init__(self, **kwargs):
         # Use object.__setattr__ directly to bypass Feature.__setattr__ dispatch
         # for the 5 private instance attrs — saves ~5 Python function calls per

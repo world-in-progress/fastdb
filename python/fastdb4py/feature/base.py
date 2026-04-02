@@ -1,4 +1,4 @@
 from abc import ABCMeta
 
 class BaseFeature(metaclass=ABCMeta):
-    pass
+    __slots__ = ()
