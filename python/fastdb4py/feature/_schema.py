@@ -16,6 +16,7 @@ _c_set_cstr   = _fdb_c.WxLayerTableBuild_set_field_cstring
 _c_set_wstr   = _fdb_c.WxLayerTableBuild_set_field_wstring
 _c_set_raw    = _fdb_c.WxLayerTableBuild_set_geometry_raw
 _c_set_list   = _fdb_c.WxLayerTableBuild_set_field_list_numeric
+_c_push_dict  = _fdb_c.WxLayerTableBuild_push_from_dict
 
 # Scalar field types that can be read/written via get_fields_as_doubles / set_fields_from_doubles.
 _SCALAR_ORIGIN_TYPES = frozenset((
@@ -54,6 +55,10 @@ class ClassSchema:
         'bytes_plan',            # List[(idx, fn)] for bytes fields
         'list_plan',             # List[(idx, fn, typecode)] for list fields
         'push_fn',               # Compiled per-class push function (avoids loops/conditionals)
+        'pfd_num_names',         # List[str] numeric field names for push_from_dict
+        'pfd_num_ids',           # numpy uint32 array of numeric field IDs for push_from_dict
+        'pfd_str_names',         # List[str] string field names for push_from_dict
+        'pfd_str_ids',           # numpy uint32 array of string field IDs for push_from_dict
     )
 
     def __init__(
@@ -103,6 +108,11 @@ class ClassSchema:
         self.str_plan = _str
         self.bytes_plan = _byt
         self.list_plan = _lst
+        # Pre-build push_from_dict helper lists/arrays (used by make_inlined_dispatch)
+        self.pfd_num_names = [fn for _, fn in _num]
+        self.pfd_num_ids = _np.array([idx for idx, _ in _num], dtype=_np.uint32)
+        self.pfd_str_names = [fn for _, fn, _ in _str]
+        self.pfd_str_ids = _np.array([idx for idx, _, _ in _str], dtype=_np.uint32)
         # Generate a specialized push function for this class to avoid loops/conditionals
         self.push_fn = _compile_push_fn(_num, _str, _byt, _lst)
 
@@ -149,19 +159,45 @@ def _compile_push_fn(numeric_plan, str_plan, bytes_plan, list_plan):
     return ns['_push']
 
 
-def make_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj):
+def make_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj,
+                          pfd_num_names=None, pfd_num_ids=None,
+                          pfd_str_names=None, pfd_str_ids=None):
     """Generate a per-(class, table) inlined push+dispatch function.
 
-    Pre-binds C extension functions directly (bypasses Python wrapper overhead ~200ns/call).
-    Also eliminates LOAD_ATTR overhead per push call.
-    The function also increments t_obj.feature_count, replacing the previous
-    3-level call chain: push() → dispatch() → push_fn() → SWIG.
+    For simple features (numeric + cstring str only, no bytes/list/wstr):
+    uses push_from_dict which eliminates per-field SWIG overhead in one C call.
+
+    For complex features (wstr, bytes, list): falls back to per-field C extension calls.
 
     This is used exclusively in the push() fast path. push_many() continues to
     use push_fn (which takes (cache, t_origin)) for its tight inner loop.
     """
     t_origin = t_obj._origin
 
+    # Fast path: use push_from_dict (1 Python→C call) for simple numeric+cstring features
+    use_pfd = (
+        not bytes_plan and not list_plan and
+        all(not is_wide for _, _, is_wide in str_plan) and
+        pfd_num_names is not None
+    )
+
+    if use_pfd:
+        src = (
+            'def _dispatch(cache, _pfd=_c_pfd, _to=to, _t=t_obj, '
+            '_nn=_nn, _ni=_ni, _sn=_sn, _si=_si):\n'
+            '    _pfd(_to, cache, _nn, _ni, _sn, _si)\n'
+            '    _t.feature_count += 1\n'
+        )
+        ns = {
+            '_c_pfd': _c_push_dict,
+            'to': t_origin, 't_obj': t_obj,
+            '_nn': pfd_num_names, '_ni': pfd_num_ids,
+            '_sn': pfd_str_names, '_si': pfd_str_ids,
+        }
+        exec(compile(src, '<inlined_dispatch>', 'exec'), ns)
+        return ns['_dispatch']
+
+    # Fallback: per-field C extension calls
     lines = ['def _dispatch(cache, _ab=_c_ab, _ae=_c_ae, _sf=_c_sf, _sfc=_c_sfc, _to=to, _t=t_obj, _SS=None):']
     lines.append('    _ab(_to)')
     for idx, fn in numeric_plan:

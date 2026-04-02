@@ -293,6 +293,45 @@
     %}
 }
 
+%extend wx::FastVectorDbLayerBuild {
+    // Push one complete feature from a Python cache dict in a single Python→C transition.
+    // Pre-computed schema data (num_names, num_ids, str_names, str_ids) must be passed as
+    // pre-built Python list objects and numpy uint32 arrays (computed once at schema build time).
+    // This eliminates per-field SWIG wrapper overhead (~150ns × N_fields per feature).
+    void push_from_dict(PyObject* py_dict,
+                        PyObject* py_num_names, PyObject* py_num_ids,
+                        PyObject* py_str_names, PyObject* py_str_ids) {
+        int n_num = (int)PyList_GET_SIZE(py_num_names);
+        int n_str = (int)PyList_GET_SIZE(py_str_names);
+        const u32* num_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_num_ids);
+        const u32* str_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_str_ids);
+        self->addFeatureBegin();
+        for (int i = 0; i < n_num; i++) {
+            PyObject* name = PyList_GET_ITEM(py_num_names, i);
+            PyObject* val = PyDict_GetItem(py_dict, name);
+            double v;
+            if (!val || val == Py_None) {
+                v = 0.0;
+            } else if (PyFloat_Check(val)) {
+                v = PyFloat_AS_DOUBLE(val);
+            } else {
+                v = PyFloat_AsDouble(val);
+            }
+            self->setField(num_ids[i], v);
+        }
+        for (int i = 0; i < n_str; i++) {
+            PyObject* name = PyList_GET_ITEM(py_str_names, i);
+            PyObject* val = PyDict_GetItem(py_dict, name);
+            if (val && val != Py_None) {
+                self->setField_cstring(str_ids[i], PyUnicode_AsUTF8(val));
+            } else {
+                self->setField_cstring(str_ids[i], "");
+            }
+        }
+        self->addFeatureEnd();
+    }
+}
+
 %extend wx::FastVectorDbFeature {
     // Batch-read: read multiple scalar fields into a freshly allocated numpy float64 array.
     PyObject* get_fields_as_doubles(PyObject* py_field_ids) {

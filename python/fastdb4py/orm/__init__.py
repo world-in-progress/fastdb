@@ -308,7 +308,8 @@ class ORM:
         # Pre-binds C++ SWIG methods to eliminate LOAD_ATTR overhead per hot-path push.
         if not (table_name or feature_name or is_ref) and not schema.has_ref_fields:
             self._push_dispatch[feature_type] = make_inlined_dispatch(
-                schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj
+                schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj,
+                schema.pfd_num_names, schema.pfd_num_ids, schema.pfd_str_names, schema.pfd_str_ids,
             )
         return
 
