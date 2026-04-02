@@ -314,6 +314,8 @@
                 v = 0.0;
             } else if (PyFloat_Check(val)) {
                 v = PyFloat_AS_DOUBLE(val);
+            } else if (PyLong_Check(val)) {
+                v = PyLong_AsDouble(val);
             } else {
                 v = PyFloat_AsDouble(val);
             }

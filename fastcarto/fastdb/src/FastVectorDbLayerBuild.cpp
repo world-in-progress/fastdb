@@ -10,6 +10,8 @@ namespace wx
         m_feature_count = 0;
         m_string_total_size = 0;
         m_wstring_total_size = 0;
+        m_string_map.reserve(1024);
+        m_wstring_map.reserve(64);
         m_minx=m_miny=-1e10;
         m_maxx=m_maxy= 1e10;
         m_geometry_type = gtAny;
