@@ -333,6 +333,47 @@
         self->addFeatureEnd();
     }
 
+    // Variant with feature-count increment: args reordered so cache is LAST to enable
+    // functools.partial(push_from_dict_fc, self, nn, ni, sn, si, fc_arr)(cache).
+    // fc_arr is a 1-element numpy int64 array; incremented in C to avoid Python attr overhead.
+    void push_from_dict_fc(PyObject* py_num_names, PyObject* py_num_ids,
+                           PyObject* py_str_names, PyObject* py_str_ids,
+                           PyObject* py_fc_arr, PyObject* py_dict) {
+        int n_num = (int)PyList_GET_SIZE(py_num_names);
+        int n_str = (int)PyList_GET_SIZE(py_str_names);
+        const u32* num_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_num_ids);
+        const u32* str_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_str_ids);
+        self->addFeatureBegin();
+        for (int i = 0; i < n_num; i++) {
+            PyObject* name = PyList_GET_ITEM(py_num_names, i);
+            PyObject* val = PyDict_GetItem(py_dict, name);
+            double v;
+            if (!val || val == Py_None) {
+                v = 0.0;
+            } else if (PyFloat_Check(val)) {
+                v = PyFloat_AS_DOUBLE(val);
+            } else if (PyLong_Check(val)) {
+                v = PyLong_AsDouble(val);
+            } else {
+                v = PyFloat_AsDouble(val);
+            }
+            self->setField(num_ids[i], v);
+        }
+        for (int i = 0; i < n_str; i++) {
+            PyObject* name = PyList_GET_ITEM(py_str_names, i);
+            PyObject* val = PyDict_GetItem(py_dict, name);
+            if (val && val != Py_None) {
+                self->setField_cstring(str_ids[i], PyUnicode_AsUTF8(val));
+            } else {
+                self->setField_cstring(str_ids[i], "");
+            }
+        }
+        self->addFeatureEnd();
+        /* increment feature counter stored in numpy int64 array (avoids Python attr overhead) */
+        int64_t* fc_ptr = (int64_t*)PyArray_DATA((PyArrayObject*)py_fc_arr);
+        (*fc_ptr)++;
+    }
+
 }
 
 %extend wx::FastVectorDbFeature {

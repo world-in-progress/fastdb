@@ -2,6 +2,7 @@ from threading import Lock
 from weakref import WeakKeyDictionary
 from typing import Dict, Any, List, Tuple, Type, get_type_hints
 import struct as _struct
+import functools as _ft
 
 import numpy as _np
 
@@ -17,6 +18,7 @@ _c_set_wstr   = _fdb_c.WxLayerTableBuild_set_field_wstring
 _c_set_raw    = _fdb_c.WxLayerTableBuild_set_geometry_raw
 _c_set_list   = _fdb_c.WxLayerTableBuild_set_field_list_numeric
 _c_push_dict  = _fdb_c.WxLayerTableBuild_push_from_dict
+_c_pfd_fc     = _fdb_c.WxLayerTableBuild_push_from_dict_fc
 
 # Scalar field types that can be read/written via get_fields_as_doubles / set_fields_from_doubles.
 _SCALAR_ORIGIN_TYPES = frozenset((
@@ -182,20 +184,12 @@ def make_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj,
     )
 
     if use_pfd:
-        src = (
-            'def _dispatch(cache, _pfd=_c_pfd, _to=to, _t=t_obj, '
-            '_nn=_nn, _ni=_ni, _sn=_sn, _si=_si):\n'
-            '    _pfd(_to, cache, _nn, _ni, _sn, _si)\n'
-            '    _t.feature_count += 1\n'
-        )
-        ns = {
-            '_c_pfd': _c_push_dict,
-            'to': t_origin, 't_obj': t_obj,
-            '_nn': pfd_num_names, '_ni': pfd_num_ids,
-            '_sn': pfd_str_names, '_si': pfd_str_ids,
-        }
-        exec(compile(src, '<inlined_dispatch>', 'exec'), ns)
-        return ns['_dispatch']
+        # Use functools.partial to avoid a Python frame: dispatch_fn(cache) calls C directly.
+        # push_from_dict_fc has cache as last arg so partial can pre-fill all other args.
+        return _ft.partial(_c_pfd_fc, t_origin,
+                           pfd_num_names, pfd_num_ids,
+                           pfd_str_names, pfd_str_ids,
+                           t_obj._fc)
 
     # Fallback: per-field C extension calls
     lines = ['def _dispatch(cache, _ab=_c_ab, _ae=_c_ae, _sf=_c_sf, _sfc=_c_sfc, _to=to, _t=t_obj, _SS=None):']

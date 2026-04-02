@@ -87,11 +87,19 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
 
 class Table(Generic[T]):
     def __init__(self):
-        self.feature_count: int = 0
+        self._fc: np.ndarray = np.zeros(1, dtype=np.int64)
         self._column: T | None = None
         self._feature_type: Type[T] | None = None
         self._db: core.WxDatabase | core.WxDatabaseBuild = None
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
+
+    @property
+    def feature_count(self) -> int:
+        return int(self._fc[0])
+
+    @feature_count.setter
+    def feature_count(self, value: int) -> None:
+        self._fc[0] = value
     
     def __len__(self) -> int:
         return self._origin.get_feature_count()
