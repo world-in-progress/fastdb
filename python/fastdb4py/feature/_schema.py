@@ -117,26 +117,32 @@ def _compile_push_fn(numeric_plan, str_plan, bytes_plan, list_plan):
     for fast struct.Struct pack-method lookup (avoids function call overhead and
     tuple key creation compared to the _get_struct_pack_method approach).
     """
-    lines = ['def _push(cache, t):']
-    lines.append('    t.add_feature_begin()')
+    lines = ['def _push(cache, t, _ab=_c_add_begin, _ae=_c_add_end, _sf=_c_set_field, _sfc=_c_set_cstr, _sfw=_c_set_wstr, _sr=_c_set_raw, _sl=_c_set_list):']
+    lines.append('    _ab(t)')
     for idx, fn in numeric_plan:
-        # Inline: combine cache.get + fallback into a single expression (saves 1 local + 1 ternary)
-        lines.append(f'    t.set_field({idx}, cache.get({fn!r}) or 0)')
+        lines.append(f'    _sf(t, {idx}, cache.get({fn!r}) or 0)')
     for idx, fn, is_wide in str_plan:
         if is_wide:
-            lines.append(f'    t.set_field_wstring({idx}, cache.get({fn!r}) or "")')
+            lines.append(f'    _sfw(t, {idx}, cache.get({fn!r}) or "")')
         else:
-            lines.append(f'    t.set_field_cstring({idx}, cache.get({fn!r}) or "")')
+            lines.append(f'    _sfc(t, {idx}, cache.get({fn!r}) or "")')
     for idx, fn in bytes_plan:
-        lines.append(f'    t.set_geometry_raw(cache.get({fn!r}) or b"")')
+        lines.append(f'    _sr(t, cache.get({fn!r}) or b"")')
     for i, (idx, fn, typecode) in enumerate(list_plan):
-        gv = f'_gsp{i}'  # per-field pack-method cache dict (int key → bound method)
+        gv = f'_gsp{i}'
         lines.append(f'    _items = cache.get({fn!r}) or []')
         lines.append(f'    _n = len(_items)')
-        lines.append(f'    t.set_field_list_numeric({idx}, ({gv}[_n] if _n in {gv} else {gv}.setdefault(_n, _SS(str(_n)+{typecode!r}).pack))(*_items))')
-    lines.append('    t.add_feature_end()')
+        lines.append(f'    _sl(t, {idx}, ({gv}[_n] if _n in {gv} else {gv}.setdefault(_n, _SS(str(_n)+{typecode!r}).pack))(*_items))')
+    lines.append('    _ae(t)')
     src = '\n'.join(lines)
     ns: dict = {f'_gsp{i}': {} for i in range(len(list_plan))}
+    ns['_c_add_begin'] = _c_add_begin
+    ns['_c_add_end'] = _c_add_end
+    ns['_c_set_field'] = _c_set_field
+    ns['_c_set_cstr'] = _c_set_cstr
+    ns['_c_set_wstr'] = _c_set_wstr
+    ns['_c_set_raw'] = _c_set_raw
+    ns['_c_set_list'] = _c_set_list
     if list_plan:
         ns['_SS'] = _struct.Struct
     exec(compile(src, '<push_fn>', 'exec'), ns)
