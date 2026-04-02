@@ -111,14 +111,13 @@ def _compile_push_fn(numeric_plan, str_plan, bytes_plan, list_plan):
     lines = ['def _push(cache, t):']
     lines.append('    t.add_feature_begin()')
     for idx, fn in numeric_plan:
-        lines.append(f'    _v = cache.get({fn!r})')
-        lines.append(f'    t.set_field({idx}, _v if _v is not None else 0)')
+        # Inline: combine cache.get + fallback into a single expression (saves 1 local + 1 ternary)
+        lines.append(f'    t.set_field({idx}, cache.get({fn!r}) or 0)')
     for idx, fn, is_wide in str_plan:
-        lines.append(f'    _v = cache.get({fn!r}) or ""')
         if is_wide:
-            lines.append(f'    t.set_field_wstring({idx}, _v)')
+            lines.append(f'    t.set_field_wstring({idx}, cache.get({fn!r}) or "")')
         else:
-            lines.append(f'    t.set_field_cstring({idx}, _v)')
+            lines.append(f'    t.set_field_cstring({idx}, cache.get({fn!r}) or "")')
     for idx, fn in bytes_plan:
         lines.append(f'    t.set_geometry_raw(cache.get({fn!r}) or b"")')
     for i, (idx, fn, typecode) in enumerate(list_plan):
