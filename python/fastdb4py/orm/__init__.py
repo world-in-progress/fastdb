@@ -251,20 +251,18 @@ class ORM:
 
     def push(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
         """Push the given feature to the database."""
+        # Ultra-fast common path: dispatch cache hit means mutable ORM + simple feature
+        dispatch_fn = self._push_dispatch.get(feature.__class__)
+        if dispatch_fn is not None:
+            dispatch_fn(feature._cache)
+            return
+
         if not self._is_mutable:
             if self._origin is None:
                 warnings.warn('Database has not connected to fastdb, not supporting push operation.', UserWarning)
             else:
                 warnings.warn('Database has fixed scale, not supporting push operation.', UserWarning)
             return
-
-        # Ultra-fast common path: same type repeated, no table_name/feature_name/is_ref
-        if not (table_name or feature_name or is_ref):
-            feature_type = feature.__class__
-            dispatch_fn = self._push_dispatch.get(feature_type)
-            if dispatch_fn is not None:
-                dispatch_fn(feature._cache)
-                return
 
         return self._push_full(feature, table_name, feature_name=feature_name, is_ref=is_ref)
 
