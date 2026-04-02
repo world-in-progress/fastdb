@@ -42,28 +42,11 @@ class Feature(BaseFeature):
     __slots__ = ('_cache', '_origin', '_db', '_schema', '_origin_hints')
 
     def __init__(self, **kwargs):
-        # Use slot descriptor __set__ directly — 1.22× faster than object.__setattr__
-        # for slot-backed attrs (avoids MRO scan in object.__setattr__).
-        _cache_s.__set__(self, {})
+        # Use kwargs dict directly as _cache — avoids empty-dict allocation and copy loop.
+        # _origin is eagerly set to None so __setattr__ can read it without __getattr__.
+        # All other private slots (_db, _schema, _origin_hints) are lazily initialised.
+        _cache_s.__set__(self, kwargs)
         _origin_s.__set__(self, None)
-        _db_s.__set__(self, None)
-        # Class-attr lookup (~40 ns) beats WeakKeyDict (~209 ns). Falls back to
-        # get_class_schema() only on the very first instantiation of this class.
-        _schema: ClassSchema = (
-            type(self).__dict__.get(_SCHEMA_ATTR) or get_class_schema(type(self))
-        )
-        _schema_s.__set__(self, _schema)
-        _hints_s.__set__(self, _schema.origin_hints)
-
-        # Constructor fast-path:
-        # kwargs are applied directly to avoid __setattr__ dispatch overhead.
-        if kwargs:
-            cache: Dict[str, Any] = self._cache
-            for key, value in kwargs.items():
-                if key[0] == '_':
-                    object.__setattr__(self, key, value)
-                else:
-                    cache[key] = value
 
     @property
     def fixed(self) -> bool:
@@ -83,6 +66,27 @@ class Feature(BaseFeature):
         return feature
 
     def __getattr__(self, name: str):
+        # Lazy-init guard: private slots not set in __init__ return safe defaults.
+        # This fires only on the first access of each unset slot — thereafter the slot
+        # holds a real value so CPython finds it via the type descriptor directly.
+        if name[0] == '_':
+            if name == '_origin':
+                _origin_s.__set__(self, None)
+                return None
+            if name == '_db':
+                _db_s.__set__(self, None)
+                return None
+            if name == '_schema':
+                s = type(self).__dict__.get(_SCHEMA_ATTR) or get_class_schema(type(self))
+                _schema_s.__set__(self, s)
+                return s
+            if name == '_origin_hints':
+                s = type(self).__dict__.get(_SCHEMA_ATTR) or get_class_schema(type(self))
+                h = s.origin_hints
+                _hints_s.__set__(self, h)
+                return h
+            raise AttributeError(name)
+
         # Cache-first access: serializer-populated values and dynamic fields live here.
         cache = self._cache
         if name in cache:
