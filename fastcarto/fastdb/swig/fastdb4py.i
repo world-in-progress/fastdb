@@ -330,6 +330,7 @@
         }
         self->addFeatureEnd();
     }
+
 }
 
 %extend wx::FastVectorDbFeature {
