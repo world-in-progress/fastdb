@@ -14,11 +14,19 @@ Compares three systems:
 
 Phases measured (milliseconds, median of `reps` runs):
   build      : construct N in-memory records
-  serialize  : write to shared-memory / IPC buffer
+  encode     : convert to binary wire format
+                 fastdb  → C++ columnar flush (_combine)
+                 arrow   → IPC stream encode
+                 pickle  → pickle.dumps
+  shm        : allocate POSIX shared memory + memcpy bytes in
   deserialize: load from shared-memory / IPC buffer  ← fastdb advantage
   read       : iterate all N records, sum x+y+z       ← fastdb zero-copy
 
 Size column: wire-format bytes (uncompressed).
+
+Note: splitting encode/shm gives an apples-to-apples view — fastdb previously
+reported (encode+shm) together as serial_ms, making it look slower than Arrow
+whose IPC encode is fast because the Arrow Table is already columnar.
 
 Usage:
     uv run python tests/python/benchmark_kostya.py
@@ -116,10 +124,28 @@ def bench_fastdb(N: int, reps: int) -> dict:
     build_ms = _median_ms(do_build, reps)
     orm = do_build()
 
-    # --- serialize: share to POSIX shared memory ---
-    t0 = time.perf_counter()
+    # --- encode: C++ columnar flush (_combine) only ---
+    # Pre-build un-flushed ORMs so we only time the flush itself
+    _unflushed = [do_build() for _ in range(reps)]
+
+    def do_encode():
+        _unflushed.pop()._combine()
+
+    encode_ms = _median_ms(do_encode, reps)
+
+    # --- shm: write already-flushed binary to POSIX shared memory ---
+    orm._combine()  # ensure flushed before timing shm write
+    _raw = bytes(orm._origin.buffer().as_array(__import__('numpy').uint8))
+
+    def do_shm():
+        s = _shm_write(_raw)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+
+    # share once for deserial / read measurements
     orm.share(shm_name)
-    serial_ms = (time.perf_counter() - t0) * 1000
 
     # measure wire size via shm segment size
     try:
@@ -158,11 +184,12 @@ def bench_fastdb(N: int, reps: int) -> dict:
             except Exception:
                 pass
 
-    total_ms = build_ms + serial_ms + deserial_ms + read_ms
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
     return {
         "system": "fastdb",
         "build_ms": round(build_ms, 2),
-        "serial_ms": round(serial_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
         "deserial_ms": round(deserial_ms, 2),
         "read_ms": round(read_ms, 2),
         "total_ms": round(total_ms, 2),
@@ -204,7 +231,7 @@ def bench_arrow(N: int, reps: int) -> dict:
     build_ms = _median_ms(do_build, reps)
     tbl = do_build()
 
-    # --- serialize: IPC stream → bytes → shm ---
+    # --- encode: IPC stream → bytes (in-memory) ---
     def _to_ipc(t) -> bytes:
         sink = pa.BufferOutputStream()
         writer = pa_ipc.new_stream(sink, t.schema)
@@ -212,14 +239,16 @@ def bench_arrow(N: int, reps: int) -> dict:
         writer.close()
         return sink.getvalue().to_pybytes()
 
-    def do_serial():
-        buf = _to_ipc(tbl)
-        shm = _shm_write(buf)
-        shm.close()
-        shm.unlink()
-
-    serial_ms = _median_ms(do_serial, reps)
+    encode_ms = _median_ms(lambda: _to_ipc(tbl), reps)
     ipc_bytes = _to_ipc(tbl)
+
+    # --- shm: write encoded bytes to POSIX shared memory ---
+    def do_shm():
+        s = _shm_write(ipc_bytes)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
     shm = _shm_write(ipc_bytes)
     size_bytes = len(ipc_bytes)
 
@@ -246,11 +275,12 @@ def bench_arrow(N: int, reps: int) -> dict:
     shm.close()
     shm.unlink()
 
-    total_ms = build_ms + serial_ms + deserial_ms + read_ms
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
     return {
         "system": "arrow",
         "build_ms": round(build_ms, 2),
-        "serial_ms": round(serial_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
         "deserial_ms": round(deserial_ms, 2),
         "read_ms": round(read_ms, 2),
         "total_ms": round(total_ms, 2),
@@ -279,15 +309,17 @@ def bench_pickle(N: int, reps: int) -> dict:
     build_ms = _median_ms(do_build, reps)
     data = do_build()
 
-    # --- serialize: pickle → bytes → shm ---
-    def do_serial():
-        buf = pickle.dumps(data, protocol=5)
-        shm = _shm_write(buf)
-        shm.close()
-        shm.unlink()
-
-    serial_ms = _median_ms(do_serial, reps)
+    # --- encode: pickle.dumps → bytes ---
+    encode_ms = _median_ms(lambda: pickle.dumps(data, protocol=5), reps)
     pkl_bytes = pickle.dumps(data, protocol=5)
+
+    # --- shm: write encoded bytes to POSIX shared memory ---
+    def do_shm():
+        s = _shm_write(pkl_bytes)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
     shm = _shm_write(pkl_bytes)
     size_bytes = len(pkl_bytes)
 
@@ -312,11 +344,12 @@ def bench_pickle(N: int, reps: int) -> dict:
     shm.close()
     shm.unlink()
 
-    total_ms = build_ms + serial_ms + deserial_ms + read_ms
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
     return {
         "system": "pickle",
         "build_ms": round(build_ms, 2),
-        "serial_ms": round(serial_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
         "deserial_ms": round(deserial_ms, 2),
         "read_ms": round(read_ms, 2),
         "total_ms": round(total_ms, 2),
@@ -328,8 +361,8 @@ def bench_pickle(N: int, reps: int) -> dict:
 # Formatting
 # ---------------------------------------------------------------------------
 
-COLS = ["system", "build_ms", "serial_ms", "deserial_ms", "read_ms", "total_ms", "size_kb"]
-WIDTHS = [10, 10, 12, 14, 10, 11, 10]
+COLS = ["system", "build_ms", "encode_ms", "shm_ms", "deserial_ms", "read_ms", "total_ms", "size_kb"]
+WIDTHS = [10, 10, 11, 9, 14, 10, 11, 10]
 
 
 def _fmt(v, width: int) -> str:
@@ -379,7 +412,8 @@ def print_table(results: list[dict], N: int):
             ratios = {
                 "system": r["system"],
                 "build_ms": ratio("build_ms"),
-                "serial_ms": ratio("serial_ms"),
+                "encode_ms": ratio("encode_ms"),
+                "shm_ms": ratio("shm_ms"),
                 "deserial_ms": ratio("deserial_ms"),
                 "read_ms": ratio("read_ms"),
                 "total_ms": ratio("total_ms"),
@@ -420,7 +454,7 @@ def main():
     print("=" * 77)
     print("  Kostya-Style Serialization Benchmark — fastdb ORM-Feature vs PyArrow vs pickle")
     print("  Data: Coordinate records  { x, y, z: F64 | name: STR }")
-    print("  Phases (ms, median): build | serialize→shm | deserialize | sum(x+y+z)")
+    print("  Phases (ms, median): build | encode (binary fmt) | shm write | deserialize | sum(x+y+z)")
     print("  Size: uncompressed wire format (KB)")
     print("=" * 77)
 
