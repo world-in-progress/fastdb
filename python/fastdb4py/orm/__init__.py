@@ -12,7 +12,11 @@ from .. import core
 from .table import Table
 from ..type import OriginFieldType, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE, get_list_element_type
 from ..feature import Feature, get_all_defns
-from ..feature._schema import get_class_schema, make_inlined_dispatch
+from ..feature._schema import get_class_schema, make_inlined_dispatch, make_batch_inlined_dispatch
+
+# Batch size for internal push buffering: 1024 cache dicts are accumulated before
+# a single C call processes them all, eliminating per-feature Python→C bridge overhead.
+_PUSH_BATCH_SIZE = 1024
 
 # Pre-compiled struct.Struct pack-method cache: (typecode, n) → bound .pack method
 # struct.Struct.pack is 4× faster than struct.pack for small/medium n (avoids fmt-string lookup overhead)
@@ -79,7 +83,7 @@ class ORM:
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._named_table: core.WxLayerTable | core.WxLayerTableBuild | None = None
         self._is_mutable: bool = False  # True only when origin is WxDatabaseBuild (push is allowed)
-        self._push_dispatch: dict = {}  # per-class fast push closure (no table_name/feature_name/is_ref)
+        self._push_dispatch: dict = {}  # per-class: [batch_fn_or_None, single_fn, buffer_list]
 
     @property
     def fixed(self) -> bool:
@@ -176,7 +180,10 @@ class ORM:
         if isinstance(self._origin, core.WxDatabase):
             warnings.warn('Database has been combined, no need to combine again.', UserWarning)
             return
-        
+
+        # Flush any remaining features buffered in the batch push buffers.
+        self._flush_push_batches()
+
         # Use memory stream to combine directly
         memory_stream = core.WxMemoryStream()
         self._origin.post(memory_stream)
@@ -251,10 +258,21 @@ class ORM:
 
     def push(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
         """Push the given feature to the database."""
-        # Ultra-fast common path: dispatch cache hit means mutable ORM + simple feature
-        dispatch_fn = self._push_dispatch.get(feature.__class__)
-        if dispatch_fn is not None:
-            dispatch_fn(feature._cache)
+        # Ultra-fast common path: dispatch cache hit means mutable ORM + simple feature.
+        # slot = [batch_fn_or_None, single_fn, buffer_list]
+        slot = self._push_dispatch.get(feature.__class__)
+        if slot is not None:
+            batch_fn = slot[0]
+            if batch_fn is not None:
+                # Batch path: accumulate cache dicts, flush every _PUSH_BATCH_SIZE features.
+                buf = slot[2]
+                buf.append(feature._cache)
+                if len(buf) == _PUSH_BATCH_SIZE:
+                    batch_fn(buf)
+                    del buf[:]
+            else:
+                # Fallback single-call path (complex features: bytes/list/wstr).
+                slot[1](feature._cache)
             return
 
         if not self._is_mutable:
@@ -265,6 +283,23 @@ class ORM:
             return
 
         return self._push_full(feature, table_name, feature_name=feature_name, is_ref=is_ref)
+
+    def _flush_push_batches(self):
+        """Flush all pending push batch buffers to the C++ layer.
+
+        Must be called before _combine() / post() to ensure no features are lost.
+        """
+        for slot in self._push_dispatch.values():
+            buf = slot[2]
+            if buf:
+                batch_fn = slot[0]
+                if batch_fn is not None:
+                    batch_fn(buf)
+                else:
+                    single_fn = slot[1]
+                    for cache in buf:
+                        single_fn(cache)
+                del buf[:]
 
     def _push_full(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
         """Full push implementation with schema lookup, table creation, and ref handling."""
@@ -304,11 +339,17 @@ class ORM:
                 return ref
         # Cache an inlined dispatch for this type (common case: no table_name/feature_name/is_ref).
         # Pre-binds C++ SWIG methods to eliminate LOAD_ATTR overhead per hot-path push.
+        # slot format: [batch_fn_or_None, single_fn, buffer_list]
         if not (table_name or feature_name or is_ref) and not schema.has_ref_fields:
-            self._push_dispatch[feature_type] = make_inlined_dispatch(
+            single_fn = make_inlined_dispatch(
                 schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj,
                 schema.pfd_num_names, schema.pfd_num_ids, schema.pfd_str_names, schema.pfd_str_ids,
             )
+            batch_fn = make_batch_inlined_dispatch(
+                schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj,
+                schema.pfd_num_names, schema.pfd_num_ids, schema.pfd_str_names, schema.pfd_str_ids,
+            )
+            self._push_dispatch[feature_type] = [batch_fn, single_fn, []]
         return
 
     def push_many(self, features: list, table_name: str = '') -> None:

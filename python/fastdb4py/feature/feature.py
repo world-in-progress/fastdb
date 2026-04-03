@@ -43,10 +43,9 @@ class Feature(BaseFeature):
 
     def __init__(self, **kwargs):
         # Use kwargs dict directly as _cache — avoids empty-dict allocation and copy loop.
-        # _origin is eagerly set to None so __setattr__ can read it without __getattr__.
-        # All other private slots (_db, _schema, _origin_hints) are lazily initialised.
+        # All private slots (_origin, _db, _schema, _origin_hints) are lazily initialised
+        # on first access via __getattr__ — avoids 1-2 slot writes per Feature creation.
         _cache_s.__set__(self, kwargs)
-        _origin_s.__set__(self, None)
 
     @property
     def fixed(self) -> bool:

@@ -19,6 +19,8 @@ _c_set_raw    = _fdb_c.WxLayerTableBuild_set_geometry_raw
 _c_set_list   = _fdb_c.WxLayerTableBuild_set_field_list_numeric
 _c_push_dict  = _fdb_c.WxLayerTableBuild_push_from_dict
 _c_pfd_fc     = _fdb_c.WxLayerTableBuild_push_from_dict_fc
+# Batch variant: processes a list of cache dicts in one C call (registered after SWIG rebuild)
+_c_pmfd_fc    = getattr(_fdb_c, 'WxLayerTableBuild_push_many_from_dicts_fc', None)
 
 # Scalar field types that can be read/written via get_fields_as_doubles / set_fields_from_doubles.
 _SCALAR_ORIGIN_TYPES = frozenset((
@@ -222,6 +224,31 @@ def make_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj,
         ns['_SS'] = _struct.Struct
     exec(compile(src, '<inlined_dispatch>', 'exec'), ns)
     return ns['_dispatch']
+
+def make_batch_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj,
+                                 pfd_num_names=None, pfd_num_ids=None,
+                                 pfd_str_names=None, pfd_str_ids=None):
+    """Like make_inlined_dispatch but returns a function that accepts a LIST of cache dicts.
+
+    Only available for simple features (no bytes/list/wstr) and only when
+    push_many_from_dicts_fc is present in the C extension.
+
+    Returns None if the batch path is unavailable (falls back to single dispatch).
+    """
+    if _c_pmfd_fc is None:
+        return None
+    use_pfd = (
+        not bytes_plan and not list_plan and
+        all(not is_wide for _, _, is_wide in str_plan) and
+        pfd_num_names is not None
+    )
+    if not use_pfd:
+        return None
+    return _ft.partial(_c_pmfd_fc, t_obj._origin,
+                        pfd_num_names, pfd_num_ids,
+                        pfd_str_names, pfd_str_ids,
+                        t_obj._fc)
+
 
 def get_class_schema(cls: Type) -> ClassSchema:
     """Return the ClassSchema for the given Feature subclass, computing it on first call.
