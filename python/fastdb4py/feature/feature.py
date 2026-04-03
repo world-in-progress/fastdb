@@ -60,9 +60,14 @@ class Feature(BaseFeature):
         db: core.WxDatabase | core.WxDatabaseBuild,
         origin: core.WxFeature | None = None
     ) -> T:
-        feature = cls()
-        _db_s.__set__(feature, db)
+        # Use the DB variant of this class so __setattr__ dispatches through origin.
+        # object.__new__ bypasses __init__ (and its **kwargs dict overhead); slots are
+        # set explicitly below.
+        db_cls = _get_db_cls(cls)
+        feature = object.__new__(db_cls)
+        _cache_s.__set__(feature, {})
         _origin_s.__set__(feature, origin)
+        _db_s.__set__(feature, db)
         return feature
 
     def __getattr__(self, name: str):
@@ -159,13 +164,16 @@ class Feature(BaseFeature):
                 # Resolve ForwardRef or string to actual class
                 if isinstance(ref_cls, (str, typing.ForwardRef)):
                     fwd_name = ref_cls if isinstance(ref_cls, str) else ref_cls.__forward_arg__
-                    # Self-referential: check parent class name first
-                    parent_cls = type(self)
-                    if fwd_name == parent_cls.__name__:
-                        ref_cls = parent_cls
+                    # Self-referential: walk MRO to handle DB-variant classes (_XyzDB)
+                    # whose __name__ differs from the original user class name.
+                    ref_cls = Feature  # fallback
+                    for base in type(self).__mro__:
+                        if base.__name__ == fwd_name:
+                            ref_cls = base
+                            break
                     else:
                         import sys
-                        mod = sys.modules.get(parent_cls.__module__, None)
+                        mod = sys.modules.get(type(self).__module__, None)
                         ref_cls = getattr(mod, fwd_name, Feature) if mod else Feature
                 result = FeatureRefList(self._origin, fid, ref_cls, self._db)
             else:
@@ -191,14 +199,16 @@ class Feature(BaseFeature):
         return None
 
     def __setattr__(self, name: str, value):
-        # Pure Python mode: direct cache write (fastest path).
-        # Internal slot writes (_origin, _cache, etc.) must use slot descriptors
-        # directly (feature.py module-level _origin_s, _db_s, etc.) or
-        # object.__setattr__ — NOT this method.
-        if self._origin is None:
-            self._cache[name] = value
-            return
+        # Pure Python mode: direct cache write, no origin check.
+        # Internal slot writes must use module-level slot descriptors (e.g. _origin_s.__set__)
+        # or object.__setattr__ — NOT this method.
+        # DB-mapped features use _FeatureDBMixin.__setattr__ (class is swapped in map_from).
+        self._cache[name] = value
 
+    def _db_setattr(self, name: str, value):
+        """Full DB-mapped __setattr__ logic; used by _FeatureDBMixin.__setattr__."""
+        # This function is called via the module-level _feature_db_setattr to avoid
+        # bound method creation overhead in the DB-mapped hot path.
         # Database-mapped path: resolve field metadata.
         defn = self._origin_hints.get(name)
 
@@ -278,3 +288,45 @@ _origin_s = Feature.__dict__['_origin']
 _db_s = Feature.__dict__['_db']
 _schema_s = Feature.__dict__['_schema']
 _hints_s = Feature.__dict__['_origin_hints']
+
+# Module-level function for DB-mapped __setattr__ — avoids bound-method creation
+# overhead when called from _FeatureDBMixin.__setattr__.
+def _feature_db_setattr(self, name: str, value):
+    Feature._db_setattr(self, name, value)
+
+
+# -------------------------------------------------------------------
+# _FeatureDBMixin: installed on DB-mapped feature instances via
+# __class__ swap in map_from(). Provides full DB-aware __setattr__.
+# -------------------------------------------------------------------
+class _FeatureDBMixin:
+    """Mixin that overrides __setattr__ with DB-aware dispatch.
+
+    Instances of user Feature subclasses have their __class__ set to
+    a dynamically-created subclass that includes this mixin, so the
+    pure-Python Feature.__setattr__ (fast, cache-only) is bypassed.
+    """
+    __slots__ = ()
+
+    def __setattr__(self, name: str, value):
+        _feature_db_setattr(self, name, value)
+
+
+# Per-class cache: maps user Feature subclass → its _FeatureDB variant.
+_DB_CLS_CACHE: dict = {}
+
+
+def _get_db_cls(cls):
+    """Return (or create) the DB-mapped variant of a Feature subclass."""
+    db_cls = _DB_CLS_CACHE.get(cls)
+    if db_cls is None:
+        db_cls = type(f'_{cls.__name__}DB', (_FeatureDBMixin, cls), {'__slots__': ()})
+        # Copy parent schema to the DB class so schema/hint lookups in __getattr__
+        # and _db_setattr resolve field definitions correctly.
+        parent_schema = cls.__dict__.get(_SCHEMA_ATTR) or get_class_schema(cls)
+        try:
+            setattr(db_cls, _SCHEMA_ATTR, parent_schema)
+        except (TypeError, AttributeError):
+            pass
+        _DB_CLS_CACHE[cls] = db_cls
+    return db_cls
