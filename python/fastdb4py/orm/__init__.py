@@ -83,7 +83,14 @@ class ORM:
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._named_table: core.WxLayerTable | core.WxLayerTableBuild | None = None
         self._is_mutable: bool = False  # True only when origin is WxDatabaseBuild (push is allowed)
-        self._push_dispatch: dict = {}  # per-class: [batch_fn_or_None, single_fn, buffer_list]
+        # Per-class push dispatch:
+        #   _push_buf[cls]  = list of feature.__dict__ objects awaiting C flush
+        #   _push_batch_fn[cls] = batch C function (partial) for flushing
+        #   _push_dispatch[cls] = single-call C function (for complex features)
+        # Only one of _push_batch_fn or _push_dispatch is set per class.
+        self._push_buf: dict = {}       # cls -> buf_list (batchable types)
+        self._push_batch_fn: dict = {}  # cls -> batch_fn (batchable types)
+        self._push_dispatch: dict = {}  # cls -> single_fn (complex types)
 
     @property
     def fixed(self) -> bool:
@@ -258,21 +265,18 @@ class ORM:
 
     def push(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
         """Push the given feature to the database."""
-        # Ultra-fast common path: dispatch cache hit means mutable ORM + simple feature.
-        # slot = [batch_fn_or_None, single_fn, buffer_list]
-        slot = self._push_dispatch.get(feature.__class__)
-        if slot is not None:
-            batch_fn = slot[0]
-            if batch_fn is not None:
-                # Batch path: accumulate cache dicts, flush every _PUSH_BATCH_SIZE features.
-                buf = slot[2]
-                buf.append(feature.__dict__)
-                if len(buf) == _PUSH_BATCH_SIZE:
-                    batch_fn(buf)
-                    del buf[:]
-            else:
-                # Fallback single-call path (complex features: bytes/list/wstr).
-                slot[1](feature.__dict__)
+        # Ultra-fast common path for batchable features: accumulate dict refs in a
+        # per-class buffer; no flush until _combine() — eliminates the len() check.
+        cls = feature.__class__
+        buf = self._push_buf.get(cls)
+        if buf is not None:
+            buf.append(feature.__dict__)
+            return
+
+        # Fallback for complex features (bytes / list / wstr) already primed.
+        single_fn = self._push_dispatch.get(cls)
+        if single_fn is not None:
+            single_fn(feature.__dict__)
             return
 
         if not self._is_mutable:
@@ -289,17 +293,10 @@ class ORM:
 
         Must be called before _combine() / post() to ensure no features are lost.
         """
-        for slot in self._push_dispatch.values():
-            buf = slot[2]
+        for cls, buf in self._push_buf.items():
             if buf:
-                batch_fn = slot[0]
-                if batch_fn is not None:
-                    batch_fn(buf)
-                else:
-                    single_fn = slot[1]
-                    for cache in buf:
-                        single_fn(cache)
-                del buf[:]
+                self._push_batch_fn[cls](buf)
+                buf.clear()
 
     def _push_full(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
         """Full push implementation with schema lookup, table creation, and ref handling."""
@@ -339,7 +336,6 @@ class ORM:
                 return ref
         # Cache an inlined dispatch for this type (common case: no table_name/feature_name/is_ref).
         # Pre-binds C++ SWIG methods to eliminate LOAD_ATTR overhead per hot-path push.
-        # slot format: [batch_fn_or_None, single_fn, buffer_list]
         if not (table_name or feature_name or is_ref) and not schema.has_ref_fields:
             single_fn = make_inlined_dispatch(
                 schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj,
@@ -349,8 +345,13 @@ class ORM:
                 schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj,
                 schema.pfd_num_names, schema.pfd_num_ids, schema.pfd_str_names, schema.pfd_str_ids,
             )
-            self._push_dispatch[feature_type] = [batch_fn, single_fn, []]
-        return
+            if batch_fn is not None:
+                # Batchable: accumulate dicts, flush all at _combine()
+                self._push_buf[feature_type] = []
+                self._push_batch_fn[feature_type] = batch_fn
+            else:
+                # Complex feature: single-call path
+                self._push_dispatch[feature_type] = single_fn
 
     def push_many(self, features: list, table_name: str = '') -> None:
         """Push multiple features of the same type efficiently in one call.
