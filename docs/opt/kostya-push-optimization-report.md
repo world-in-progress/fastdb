@@ -21,14 +21,18 @@
 
 | 系统 | total_ms | build_ms | encode_ms | shm_ms | deserial_ms |
 |------|----------|----------|-----------|--------|-------------|
-| **fastdb** | **91.7** | 70.3 | 20.1 | 0.4 | 0.6 |
-| PyArrow | 25.3 | 24.0 | 0.5 | 0.5 | 0.2 |
-| pickle | 109.5 | 47.8 | 26.9 | 0.7 | 26.4 |
+| **fastdb** | **92.3** | 70.5 | 20.7 | 0.4 | 0.5 |
+| **fdb-trunc\*** | **2.0** | **1.3** | 0.0† | 0.4 | 0.1 |
+| PyArrow | 25.0 | 23.5 | 0.7 | 0.5 | 0.2 |
+| pickle | 107.1 | 47.7 | 25.3 | 0.7 | 26.0 |
+
+† fdb-trunc* 的 encode 在 `ORM.truncate()` 调用中完成，计入 build_ms。
 
 **核心优势：**
-- fastdb encode（C++ flush）比 pickle.dumps **快 25%**（20ms vs 27ms）
+- **fdb-trunc\***（已知 N + 纯数值字段）比 PyArrow 快 **12.5×**，total 仅 2.0ms
+- fastdb encode（C++ flush）比 pickle.dumps **快 18%**（20.7ms vs 25.3ms）
 - shm 写入三者相当（0.4–0.7ms），无差异  
-- 反序列化仅需 0.6ms（pickle 的 2.3%），适合进程间共享内存零拷贝场景
+- 反序列化仅需 0.5ms（pickle 的 1.9%），适合进程间共享内存零拷贝场景
 
 ---
 
@@ -36,7 +40,7 @@
 
 1. [环境与方法论](#1-环境与方法论)
 2. [测试数据结构](#2-测试数据结构)
-3. [三方对比基准结果](#3-三方对比基准结果)
+3. [四方对比基准结果](#3-四方对比基准结果)
 4. [优化过程总览](#4-优化过程总览)
 5. [第一阶段：Python 层分发优化（Exps 1–12）](#5-第一阶段python-层分发优化exps-112)
 6. [第二阶段：C 扩展突破（Exp 13）](#6-第二阶段c-扩展突破exp-13)
@@ -89,6 +93,13 @@ class Coord(Feature):
     y      : F64   # 64-bit 浮点
     z      : F64   # 64-bit 浮点
     name   : STR   # 字符串（50,000 个不同值循环）
+
+class CoordNum(Feature):
+    """仅含数值字段的变体，用于 ORM.truncate 基准路径。"""
+    row_id : U32
+    x      : F64
+    y      : F64
+    z      : F64
 ```
 
 **STR 上限说明：** fastdb 字符串表使用 `u16` 索引，单 layer 最多 65,535 个不同字符串。
@@ -113,46 +124,52 @@ orm.push(feature)
 
 ---
 
-## 3. 三方对比基准结果
+## 3. 四方对比基准结果
 
-> 环境：N reps=5，macOS Apple Silicon，Python 3.14t  
+> 环境：N reps=3，macOS Apple Silicon，Python 3.14t  
 > 阶段定义：**build**（Python 构造对象）| **encode**（转为二进制格式）| **shm**（写入 POSIX 共享内存）| **deserial**（从 shm 加载）| **read**（遍历求和）
+> 
+> **fdb-trunc\*** = `ORM.truncate([TableDefn(CoordNum, N)])` + 4 次 NumPy 列式切片赋值  
+> （无 STR 字段；encode 在 `ORM.truncate()` 内部完成，计入 build_ms，encode_ms = 0）
 
 ### 阶段对应关系
 
-| 阶段 | fastdb | PyArrow | pickle |
-|------|--------|---------|--------|
-| **encode** | C++ columnar flush（`_combine()`） | IPC stream encode | `pickle.dumps()` |
-| **shm** | `memcpy` bytes → shm | `memcpy` bytes → shm | `memcpy` bytes → shm |
+| 阶段 | fastdb | fdb-trunc* | PyArrow | pickle |
+|------|--------|------------|---------|--------|
+| **encode** | C++ columnar flush（`_combine()`） | 含于 build（truncate 内部） | IPC stream encode | `pickle.dumps()` |
+| **shm** | `memcpy` bytes → shm | `memcpy` bytes → shm | `memcpy` bytes → shm | `memcpy` bytes → shm |
 
 > 注：旧版 benchmark 将 encode+shm 合并为 `serial_ms`，导致 fastdb 看起来比实际慢。
 > 拆分后三者的 shm 阶段完全等价。
 
-### 3.1 原始数据（ms，中位数）
+### 3.1 原始数据（ms，中位数，reps=3）
 
 #### N = 10,000
 
 | 系统 | build_ms | encode_ms | shm_ms | deserial_ms | read_ms | total_ms | size_kb |
 |------|----------|-----------|--------|-------------|---------|----------|---------|
-| **fastdb** | 7.3 | 2.3 | 0.1 | 0.2 | 0.1 | 9.9 | 416 |
-| PyArrow | 2.5 | 0.1 | 0.1 | 0.1 | 0.1 | 2.9 | 421 |
-| pickle | 4.7 | 1.8 | 0.1 | 2.7 | 0.8 | 10.1 | 566 |
+| **fastdb** | 7.2 | 2.2 | 0.2 | 0.2 | 0.1 | 9.8 | 416 |
+| **fdb-trunc\*** | **0.4** | 0.0 | 0.1 | 0.1 | 0.1 | **0.6** | 288 |
+| PyArrow | 2.6 | 0.1 | 0.1 | 0.1 | 0.1 | 3.0 | 421 |
+| pickle | 4.5 | 1.9 | 0.1 | 2.7 | 0.8 | 10.0 | 566 |
 
 #### N = 100,000
 
 | 系统 | build_ms | encode_ms | shm_ms | deserial_ms | read_ms | total_ms | size_kb |
 |------|----------|-----------|--------|-------------|---------|----------|---------|
-| **fastdb** | 70.3 | 20.1 | 0.4 | 0.6 | 0.2 | 91.7 | 3,520 |
-| PyArrow | 24.0 | 0.5 | 0.5 | 0.2 | 0.1 | 25.3 | 4,200 |
-| pickle | 47.8 | 26.9 | 0.7 | 26.4 | 7.7 | 109.5 | 5,732 |
+| **fastdb** | 70.5 | 20.7 | 0.4 | 0.5 | 0.2 | 92.3 | 3,520 |
+| **fdb-trunc\*** | **1.3** | 0.0 | 0.4 | 0.1 | 0.2 | **2.0** | 2,736 |
+| PyArrow | 23.5 | 0.7 | 0.5 | 0.2 | 0.1 | 25.0 | 4,200 |
+| pickle | 47.7 | 25.3 | 0.7 | 26.0 | 7.5 | 107.1 | 5,732 |
 
 #### N = 1,000,000
 
 | 系统 | build_ms | encode_ms | shm_ms | deserial_ms | read_ms | total_ms | size_kb |
 |------|----------|-----------|--------|-------------|---------|----------|---------|
-| **fastdb** | 767.4 | 189.5 | 3.7 | 0.6 | 2.4 | 963.5 | 29,888 |
-| PyArrow | 237.0 | 10.6 | 4.3 | 1.0 | 0.6 | 253.5 | 41,993 |
-| pickle | 548.4 | 436.8 | 6.0 | 349.5 | 76.7 | 1,417.3 | 58,476 |
+| **fastdb** | 749.4 | 182.2 | 3.0 | 0.6 | 2.7 | 937.9 | 29,888 |
+| **fdb-trunc\*** | **10.8** | 0.0 | 2.6 | 0.1 | 2.1 | **15.7** | 27,360 |
+| PyArrow | 233.2 | 12.3 | 3.6 | 0.9 | 0.6 | 250.7 | 41,993 |
+| pickle | 527.8 | 406.0 | 5.7 | 349.0 | 74.2 | 1,362.7 | 58,476 |
 
 ### 3.2 相对比率（以 pickle 为基准，< 1.0 表示更快/更小）
 
@@ -160,31 +177,38 @@ orm.push(feature)
 
 | 系统 | build | **encode** | shm | deserial | read | total | size |
 |------|-------|-----------|-----|----------|------|-------|------|
-| **fastdb** | 1.47× | **0.75×** | 0.57× | **0.02×** | **0.03×** | **0.84×** | 0.61× |
-| PyArrow | 0.50× | **0.02×** | 0.71× | 0.01× | 0.01× | 0.23× | 0.73× |
+| **fastdb** | 1.48× | **0.82×** | 0.57× | **0.02×** | **0.03×** | **0.86×** | 0.61× |
+| **fdb-trunc\*** | **0.03×** | 0.00× | 0.57× | **0.004×** | **0.03×** | **0.02×** | 0.48× |
+| PyArrow | 0.49× | **0.03×** | 0.71× | 0.01× | 0.01× | 0.23× | 0.73× |
 
-> **关键洞察：** fastdb 的 encode（C++ flush）比 pickle.dumps 快 25%（0.75×）。  
-> shm 写入三者相当（0.4–0.7ms）。fastdb 之所以 total 落后，完全来自 **build 阶段**（Python OOP 开销）。
+> **关键洞察：**
+> - `fdb-trunc*` build（1.3ms）是 pickle build 的 **3%**，PyArrow build 的 **5.5%**
+> - `fdb-trunc*` total（2.0ms）比 PyArrow（25.0ms）快 **12.5×**，比 pickle（107ms）快 **53×**
+> - fastdb 的 encode（C++ flush）比 pickle.dumps 快 18%（0.82×）
+> - shm 写入三者相当（0.4–0.7ms）
 
 #### N = 1,000,000
 
 | 系统 | build | encode | shm | deserial | read | total | size |
 |------|-------|--------|-----|----------|------|-------|------|
-| **fastdb** | 1.40× | **0.43×** | 0.62× | **0.002×** | **0.03×** | **0.68×** | 0.51× |
-| PyArrow | 0.43× | 0.02× | 0.72× | 0.003× | 0.01× | 0.18× | 0.72× |
+| **fastdb** | 1.42× | **0.45×** | 0.53× | **0.002×** | **0.04×** | **0.69×** | 0.51× |
+| **fdb-trunc\*** | **0.02×** | 0.00× | 0.46× | **0.0003×** | **0.03×** | **0.01×** | 0.47× |
+| PyArrow | 0.44× | 0.03× | 0.63× | 0.003× | 0.01× | 0.18× | 0.72× |
 
 ### 3.3 设计定位对比
 
-| 维度 | fastdb | PyArrow | pickle |
-|------|--------|---------|--------|
-| **build 方式** | Python OOP（每条记录一个对象） | 批量 numpy array | Python list of dicts |
-| **encode 方式** | C++ 列式 flush（~20ms/100K）| IPC encode（~0.5ms/100K）| `pickle.dumps`（~27ms/100K）|
-| **shm 写入** | memcpy ~0.4ms | memcpy ~0.5ms | memcpy ~0.7ms |
-| **反序列化** | **~0.6ms（mmap 直接映射）** | ~0.2ms（IPC decode） | ~26ms（深拷贝）|
-| **读取模式** | 零拷贝 NumPy 列 | Arrow Array（零拷贝） | Python 对象列表 |
-| **进程间共享** | ✅ POSIX shm 零拷贝 | ❌ 需重新序列化 | ❌ 需反序列化 |
-| **内存占用** | 紧凑（~30 KB/万条） | 中等（~42 KB/万条） | 大（~58 KB/万条）|
-| **最适场景** | IPC / 多进程数据共享 | 单进程批量分析 | 通用 Python 对象持久化 |
+| 维度 | fastdb | fdb-trunc* | PyArrow | pickle |
+|------|--------|------------|---------|--------|
+| **build 方式** | Python OOP（每条记录一个对象） | `ORM.truncate` + numpy 列赋值 | 批量 numpy array | Python list of dicts |
+| **encode 方式** | C++ 列式 flush（~20ms/100K）| 含于 build（truncate 内部）| IPC encode（~0.7ms/100K）| `pickle.dumps`（~25ms/100K）|
+| **shm 写入** | memcpy ~0.4ms | memcpy ~0.4ms | memcpy ~0.5ms | memcpy ~0.7ms |
+| **反序列化** | **~0.5ms（mmap 直接映射）** | **~0.1ms** | ~0.2ms（IPC decode） | ~26ms（深拷贝）|
+| **读取模式** | 零拷贝 NumPy 列 | 零拷贝 NumPy 列 | Arrow Array（零拷贝） | Python 对象列表 |
+| **进程间共享** | ✅ POSIX shm 零拷贝 | ✅ POSIX shm 零拷贝 | ❌ 需重新序列化 | ❌ 需反序列化 |
+| **内存占用** | 紧凑（~35 KB/万条）| 最紧凑（~27 KB/万条）| 中等（~42 KB/万条）| 大（~58 KB/万条）|
+| **STR 字段支持** | ✅ 完整 | ❌ 不支持（仅数值型）| ✅ 完整 | ✅ 完整 |
+| **要求已知 N** | ❌（动态追加）| ✅ 必须预知 N | ❌（动态）| ❌（动态）|
+| **最适场景** | 通用 IPC 多进程共享 | 固定大小数值数据 IPC | 单进程批量分析 | 通用 Python 对象持久化 |
 
 ---
 
@@ -582,15 +606,18 @@ PyArrow build（24 ms）vs fastdb build（71 ms）的核心差距：
 
 ### 竞品对比总结
 
-- **vs pickle**：fastdb total 为 pickle 的 **0.84×**（快 16%）；encode 为 pickle 的 **0.75×**（快 25%）；反序列化快 **44×**（0.6ms vs 26ms）
-- **vs PyArrow**：fastdb total 为 PyArrow 的 **3.6×**（慢），主要差距在 build 阶段（Python OOP vs 批量 numpy）；encode 差距 40×，因为 PyArrow 在 build 阶段已完成列式构造
+- **vs pickle**：fastdb total 为 pickle 的 **0.86×**（快 14%）；encode 为 pickle 的 **0.82×**（快 18%）；反序列化快 **52×**（0.5ms vs 26ms）
+- **vs PyArrow（push 路径）**：fastdb total 为 PyArrow 的 **3.7×**（慢），主要差距在 build 阶段（Python OOP vs 批量 numpy）
+- **fdb-trunc\* vs PyArrow**：对于固定大小纯数值数据，`ORM.truncate + numpy 列赋值` total **2.0ms vs 25.0ms = 12.5× 更快**
+- **fdb-trunc\* vs pickle**：total **2.0ms vs 107ms = 53× 更快**
 - **独特优势**：POSIX 共享内存零拷贝读取，适合多进程数据共享场景；PyArrow 无此功能
 
 ### 适用场景建议
 
 | 场景 | 推荐 |
 |------|------|
-| 多进程数据共享，需要零拷贝读取 | **fastdb** ✅ |
+| 固定大小纯数值 IPC（已知 N，无 STR） | **fdb-trunc\*** ✅ 最快 |
+| 多进程数据共享，含字符串，需要零拷贝读取 | **fastdb**（push 路径）✅ |
 | 单进程批量分析，最大化吞吐 | PyArrow |
 | 通用 Python 对象持久化 | pickle |
 | N < 10K 且速度非关键 | 任意 |

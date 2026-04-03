@@ -16,6 +16,7 @@ Phases measured (milliseconds, median of `reps` runs):
   build      : construct N in-memory records
   encode     : convert to binary wire format
                  fastdb  → C++ columnar flush (_combine)
+                 fastdb* → included in ORM.truncate() call
                  arrow   → IPC stream encode
                  pickle  → pickle.dumps
   shm        : allocate POSIX shared memory + memcpy bytes in
@@ -70,6 +71,14 @@ class Coord(Feature):
     y: F64
     z: F64
     name: STR
+
+
+class CoordNum(Feature):
+    """Numeric-only Coord (no STR) — compatible with ORM.truncate."""
+    row_id: U32
+    x: F64
+    y: F64
+    z: F64
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +203,104 @@ def bench_fastdb(N: int, reps: int) -> dict:
         "read_ms": round(read_ms, 2),
         "total_ms": round(total_ms, 2),
         "size_bytes": size_bytes,
+    }
+
+
+# ---------------------------------------------------------------------------
+# fastdb-trunc benchmark  (known-N, numeric fields only, columnar fill)
+# ---------------------------------------------------------------------------
+
+def bench_fastdb_trunc(N: int, reps: int) -> dict:
+    """
+    fastdb ORM.truncate path: pre-allocate fixed-size table, fill columns via
+    numpy slice assignment.  No STR field (truncate does not support variable-
+    length types).  This path is fair when the record count is known upfront and
+    all fields are numeric.
+    """
+    from fastdb4py import TableDefn
+
+    shm_name = f"fdb_trunc_{uuid.uuid4().hex[:8]}"
+
+    # Pre-compute numpy arrays (shared across reps — building them is not part
+    # of the fastdb build phase, same as PyArrow pre-building arrays).
+    ids = np.arange(N, dtype=np.uint32)
+    xs  = np.arange(N, dtype=np.float64) * 0.1
+    ys  = np.arange(N, dtype=np.float64) * 0.2
+    zs  = np.arange(N, dtype=np.float64) * 0.3
+
+    # --- build: truncate + columnar numpy fill (includes _combine internally) ---
+    def do_build():
+        orm = ORM.truncate([TableDefn(CoordNum, N)])
+        tbl = orm[CoordNum][CoordNum]
+        tbl.column.row_id[:] = ids
+        tbl.column.x[:]      = xs
+        tbl.column.y[:]      = ys
+        tbl.column.z[:]      = zs
+        return orm
+
+    build_ms = _median_ms(do_build, reps)
+    orm = do_build()
+
+    # encode: already done inside ORM.truncate (_combine is called there)
+    encode_ms = 0.0
+
+    # --- shm: write flushed binary to POSIX shared memory ---
+    _raw = bytes(orm._origin.buffer().as_array(__import__('numpy').uint8))
+
+    def do_shm():
+        s = _shm_write(_raw)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+
+    # share once for deserial / read
+    orm.share(shm_name)
+
+    try:
+        _probe_shm = shared_memory.SharedMemory(name=shm_name)
+        size_bytes = _probe_shm.size
+        _probe_shm.close()
+    except Exception:
+        size_bytes = 0
+
+    orm2 = None
+    try:
+        def do_deserial():
+            h = ORM.load(shm_name)
+            h.close()
+
+        deserial_ms = _median_ms(do_deserial, reps)
+        orm2 = ORM.load(shm_name)
+
+        def do_read():
+            tbl = orm2[CoordNum][CoordNum]
+            cx = tbl.column.x
+            cy = tbl.column.y
+            cz = tbl.column.z
+            return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
+
+        read_ms = _median_ms(do_read, reps)
+    finally:
+        if orm2 is not None:
+            orm2.unlink()
+        else:
+            try:
+                h = ORM.load(shm_name); h.unlink()
+            except Exception:
+                pass
+
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
+    return {
+        "system": "fdb-trunc*",
+        "build_ms": round(build_ms, 2),
+        "encode_ms": round(encode_ms, 2),   # 0 — included in build
+        "shm_ms": round(shm_ms, 2),
+        "deserial_ms": round(deserial_ms, 2),
+        "read_ms": round(read_ms, 2),
+        "total_ms": round(total_ms, 2),
+        "size_bytes": size_bytes,
+        "_note": "no STR field; encode included in build",
     }
 
 
@@ -454,6 +561,7 @@ def main():
     print("=" * 77)
     print("  Kostya-Style Serialization Benchmark — fastdb ORM-Feature vs PyArrow vs pickle")
     print("  Data: Coordinate records  { x, y, z: F64 | name: STR }")
+    print("  fdb-trunc* = ORM.truncate + numpy columnar fill (no STR field, known N)")
     print("  Phases (ms, median): build | encode (binary fmt) | shm write | deserialize | sum(x+y+z)")
     print("  Size: uncompressed wire format (KB)")
     print("=" * 77)
@@ -470,6 +578,13 @@ def main():
         except Exception as e:
             row_results.append({"system": "fastdb", "error": str(e)})
             print(f" [fdb-ERR: {e}]", end="", flush=True)
+
+        try:
+            row_results.append(bench_fastdb_trunc(N, reps))
+            print(" [fdb-trunc]", end="", flush=True)
+        except Exception as e:
+            row_results.append({"system": "fdb-trunc*", "error": str(e)})
+            print(f" [fdb-trunc-ERR: {e}]", end="", flush=True)
 
         try:
             row_results.append(bench_arrow(N, reps))
