@@ -303,4 +303,14 @@ def get_class_schema(cls: Type) -> ClassSchema:
         except (TypeError, AttributeError):
             pass  # metaclass-protected class: WeakKeyDict only
         _SCHEMA_CACHE[cls] = schema  # keep WeakKeyDict in sync as GC-safe fallback
+
+        # Cache template: pre-populated dict with all field names → None.
+        # Feature.__init__ uses this to replace empty-dict + N key-inserts with a
+        # single C-level dict copy, which is significantly faster.
+        tmpl = dict.fromkeys(fn for fn, _ in ordered_defns)
+        try:
+            setattr(cls, '_fdb_cache_tmpl_', tmpl)
+        except (TypeError, AttributeError):
+            pass
+
         return schema
