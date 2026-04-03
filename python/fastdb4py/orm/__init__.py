@@ -266,13 +266,13 @@ class ORM:
             if batch_fn is not None:
                 # Batch path: accumulate cache dicts, flush every _PUSH_BATCH_SIZE features.
                 buf = slot[2]
-                buf.append(feature._cache)
+                buf.append(feature.__dict__)
                 if len(buf) == _PUSH_BATCH_SIZE:
                     batch_fn(buf)
                     del buf[:]
             else:
                 # Fallback single-call path (complex features: bytes/list/wstr).
-                slot[1](feature._cache)
+                slot[1](feature.__dict__)
             return
 
         if not self._is_mutable:
@@ -324,7 +324,7 @@ class ORM:
                     new_table._origin.add_field(fn, ft.value)
             self._table_map[feat_table_name] = new_table
             t_obj = new_table
-        schema.push_fn(feature._cache, t_obj._origin)
+        schema.push_fn(feature.__dict__, t_obj._origin)
         feat_idx = t_obj.feature_count
         t_obj.feature_count += 1
         if is_ref or feature_name:
@@ -385,7 +385,7 @@ class ORM:
         t_origin = t_obj._origin
         fc = t_obj.feature_count
         for feature in features:
-            push_fn(feature._cache, t_origin)
+            push_fn(feature.__dict__, t_origin)
             fc += 1
         t_obj.feature_count = fc
 
@@ -470,7 +470,7 @@ class ORM:
             self._table_map[feat_table_name] = new_table
             t_obj = new_table
 
-        schema.push_fn(feature._cache, t_obj._origin)
+        schema.push_fn(feature.__dict__, t_obj._origin)
         feat_idx = t_obj.feature_count  # before incrementing = 0-based index of just-added feature
         t_obj.feature_count += 1
 
@@ -519,7 +519,7 @@ class ORM:
 
             with Table.push2(t_obj) as t:
                 for idx, (fn, ft) in enumerate(defns):
-                    value = feat._cache.get(fn)
+                    value = feat.__dict__.get(fn)
                     if ft in (OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32,
                               OriginFieldType.i32, OriginFieldType.f32, OriginFieldType.f64):
                         t.set_field(idx, value if value is not None else 0)
@@ -575,7 +575,7 @@ class ORM:
                 continue
             _, feat_local_idx = gc.id_map[feat_id]
             ft = dict(defns).get(field_name)
-            val = feat._cache.get(field_name)
+            val = feat.__dict__.get(field_name)
             if ft == OriginFieldType.ref and val is not None:
                 target_ref = built_refs.get(id(val))
                 if target_ref:
