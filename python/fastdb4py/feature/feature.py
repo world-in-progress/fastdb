@@ -42,18 +42,10 @@ class Feature(BaseFeature):
     __slots__ = ('_cache', '_origin', '_db', '_schema', '_origin_hints')
 
     def __init__(self, **kwargs):
-        # Use per-class cache template if available (set by get_class_schema on first push).
-        # template.copy() is a single C-level memcpy of a compact dict, much faster than
-        # allocating an empty dict and inserting N field keys one by one via __setattr__.
-        tmpl = type(self).__dict__.get('_fdb_cache_tmpl_')
-        if tmpl is not None:
-            cache = tmpl.copy()
-            if kwargs:
-                cache.update(kwargs)
-        else:
-            # First construction before schema is built — use kwargs path (only once per class).
-            cache = kwargs
-        _cache_s.__set__(self, cache)
+        # Use kwargs dict directly as _cache — avoids empty-dict allocation and copy loop.
+        # _origin is eagerly set to None so __setattr__ can read it without __getattr__.
+        # All other private slots (_db, _schema, _origin_hints) are lazily initialised.
+        _cache_s.__set__(self, kwargs)
         _origin_s.__set__(self, None)
 
     @property
