@@ -190,3 +190,57 @@ class ORM2:
     def _check_built(self):
         if not self._built:
             raise RuntimeError("Call combine() before reading")
+
+    def share(self, name: str):
+        """Publish the built database to POSIX shared memory."""
+        if not self._built:
+            raise RuntimeError("Call combine() before sharing")
+        
+        import multiprocessing.shared_memory as shm_mod
+        data = self._buffer
+        seg = shm_mod.SharedMemory(name=name, create=True, size=len(data))
+        seg.buf[:len(data)] = data
+        seg.close()
+
+    @classmethod
+    def load(cls, name: str) -> 'ORM2':
+        """Load a database from POSIX shared memory."""
+        import multiprocessing.shared_memory as shm_mod
+        seg = shm_mod.SharedMemory(name=name, create=False)
+        buf = bytes(seg.buf)
+        seg.close()
+
+        orm = cls()
+        orm._db = core.WxDatabase.load_xbuffer(buf)
+        orm._db._buffer = buf
+        orm._buffer = buf
+        orm._built = True
+
+        # Reconstruct layer states from database
+        from .registry import _registry
+        for i in range(orm._db.get_layer_count()):
+            layer = orm._db.get_layer(i)
+            layer_name = layer.name()
+            for registered_cls, schema in _registry.items():
+                if schema.layer_name == layer_name:
+                    state = LayerState(
+                        cls=registered_cls,
+                        schema=schema,
+                        layer_idx=i,
+                        row_count=layer.get_feature_count(),
+                    )
+                    orm._layers[registered_cls] = state
+                    orm._layer_order.append(registered_cls)
+                    break
+        return orm
+
+    @staticmethod
+    def unlink(name: str):
+        """Remove a shared memory segment."""
+        import multiprocessing.shared_memory as shm_mod
+        try:
+            seg = shm_mod.SharedMemory(name=name, create=False)
+            seg.close()
+            seg.unlink()
+        except FileNotFoundError:
+            pass
