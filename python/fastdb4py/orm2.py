@@ -9,6 +9,7 @@ from . import core
 from .registry import get_schema, LayerSchema
 from .push import push_feature
 from .reader import map_feature, copy_feature
+from .type import OriginFieldType
 
 
 @dataclass
@@ -38,6 +39,7 @@ class ORM2:
         self._layers: Dict[Type, LayerState] = {}
         self._layer_order: List[Type] = []  # preserves layer creation order
         self._built = False
+        self._pushed_ids: Dict[int, tuple] = {}  # id(obj) -> (layer_idx, row_idx)
 
     @classmethod
     def create(cls) -> 'ORM2':
@@ -48,14 +50,66 @@ class ORM2:
         return orm
 
     def push(self, obj: Any) -> int:
-        """Serialize a @feature object into its layer. Returns row index."""
+        """Serialize a @feature object into its layer. Returns row index.
+        
+        Automatically resolves REF and LIST[REF] fields by recursively pushing
+        dependencies first. Deduplicates by object identity.
+        """
+        return self._push_recursive(obj)
+        
+    def _push_recursive(self, obj: Any) -> int:
+        """Internal recursive push with deduplication."""
+        obj_id = id(obj)
+        if obj_id in self._pushed_ids:
+            # Already pushed, return existing row
+            layer_idx, row_idx = self._pushed_ids[obj_id]
+            return row_idx
+            
         cls = type(obj)
+        schema = get_schema(cls)
+        
+        # First, recursively push all REF and LIST[REF] dependencies
+        self._push_dependencies(obj, schema)
+        
+        # Now push this object
         state = self._ensure_layer(cls)
-
         row_idx = state.row_count
-        push_feature(obj, state.build, state.schema)
+        
+        # Create ref_resolver closure that uses our _pushed_ids
+        def ref_resolver(ref_obj):
+            if ref_obj is None:
+                return None
+            ref_id = id(ref_obj)
+            if ref_id in self._pushed_ids:
+                layer_idx, row_idx = self._pushed_ids[ref_id]
+                return core.WxFeatureRef.make_ref(layer_idx, row_idx)
+            return None
+            
+        push_feature(obj, state.build, state.schema, ref_resolver)
         state.row_count += 1
+        
+        # Record this object as pushed
+        self._pushed_ids[obj_id] = (state.layer_idx, row_idx)
+        
         return row_idx
+        
+    def _push_dependencies(self, obj: Any, schema: 'LayerSchema'):
+        """Recursively push all REF and LIST[REF] field dependencies."""
+        cache = obj.__dict__
+        for fd in schema.fields:
+            value = cache.get(fd.name)
+            if value is None:
+                continue
+                
+            if fd.field_type == OriginFieldType.ref:
+                # Single REF field - push the referenced object
+                self._push_recursive(value)
+            elif fd.field_type == OriginFieldType.list and fd.list_elem_type == OriginFieldType.ref:
+                # LIST[REF] field - push all referenced objects
+                if hasattr(value, '__iter__'):
+                    for ref_obj in value:
+                        if ref_obj is not None:
+                            self._push_recursive(ref_obj)
 
     def combine(self):
         """Finalize build into a read-only database."""

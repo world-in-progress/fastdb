@@ -64,17 +64,28 @@ def _set_field(layer_build, fd, value, ref_resolver):
             if ref is not None:
                 layer_build.set_field(fid, ref)
     elif ft == OriginFieldType.list:
-        _set_list_field(layer_build, fd, value)
+        _set_list_field(layer_build, fd, value, ref_resolver)
 
 
-def _set_list_field(layer_build, fd, value):
-    """Set a list field using set_field_list_numeric."""
+def _set_list_field(layer_build, fd, value, ref_resolver=None):
+    """Set a list field using set_field_list_numeric or set_field_list_refs."""
     if value is None or (hasattr(value, '__len__') and len(value) == 0):
         layer_build.set_field_list_numeric(fd.field_id, b"")
         return
     elem_type = fd.list_elem_type
-    if elem_type is None or elem_type == OriginFieldType.ref:
-        return  # LIST[REF] handled by ORM-level graph traversal
+    if elem_type == OriginFieldType.ref:
+        # LIST[REF] field - resolve each reference
+        if ref_resolver is not None:
+            refs = []
+            for ref_obj in value:
+                if ref_obj is not None:
+                    ref = ref_resolver(ref_obj)
+                    if ref is not None:
+                        refs.append(ref)
+            layer_build.set_field_list_refs(fd.field_id, refs)
+        return
+    if elem_type is None:
+        return  # Unknown list type
     dtype_str = LIST_ELEM_DTYPE.get(elem_type, 'float64')
     if isinstance(value, np.ndarray):
         arr = np.ascontiguousarray(value.astype(dtype_str, copy=False))

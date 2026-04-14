@@ -107,3 +107,59 @@ class TestORM2Basic:
         assert len(results) == 3
         assert all(isinstance(r, O2Point) for r in results)
         assert [r.x for r in results] == [0.0, 1.0, 2.0]
+
+
+from fastdb4py.type import F64, U32, STR
+from typing import List
+
+@feature
+class Vendor:
+    name: STR
+
+@feature
+class Device:
+    model: STR
+    vendor: Vendor
+
+
+class TestORM2Refs:
+    def test_push_with_ref(self):
+        orm = ORM2.create()
+        v = Vendor()
+        v.name = "Acme"
+        d = Device()
+        d.model = "Widget"
+        d.vendor = v
+        orm.push(d)
+        assert orm.count(Vendor) == 1
+        assert orm.count(Device) == 1
+
+    def test_push_shared_ref(self):
+        """Two devices sharing the same vendor should push vendor once."""
+        orm = ORM2.create()
+        v = Vendor()
+        v.name = "Shared"
+        d1 = Device()
+        d1.model = "A"
+        d1.vendor = v
+        d2 = Device()
+        d2.model = "B"
+        d2.vendor = v
+        orm.push(d1)
+        orm.push(d2)
+        assert orm.count(Vendor) == 1
+        assert orm.count(Device) == 2
+
+    def test_ref_readback(self):
+        orm = ORM2.create()
+        v = Vendor()
+        v.name = "TestCo"
+        d = Device()
+        d.model = "X100"
+        d.vendor = v
+        orm.push(d)
+        orm.combine()
+        device = orm.get(Device, 0, mode='copy')
+        assert device.model == "X100"
+        vendor = orm.get(Vendor, 0, mode='copy')
+        assert vendor.name == "TestCo"

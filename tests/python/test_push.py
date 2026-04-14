@@ -185,3 +185,50 @@ def test_push_mixed_field_types():
     assert feat.get_field_as_string(2) == "mixed_test"
     arr = feat.get_field_as_list_view(3).as_array(np.float64)
     assert list(arr) == [10.0, 20.0]
+
+
+@feature
+class Tag:
+    name: STR
+
+@feature
+class Article:
+    title: STR
+    scores: List[F64]
+    tags: List[Tag]
+
+
+def test_push_numeric_list_via_orm():
+    from fastdb4py.orm2 import ORM2
+    orm = ORM2.create()
+    a = Article()
+    a.title = "Test"
+    a.scores = [1.0, 2.0, 3.0]
+    a.tags = []
+    orm.push(a)
+    orm.combine()
+    result = orm.get(Article, 0, mode='copy')
+    assert result.title == "Test"
+    import numpy as np
+    np.testing.assert_array_almost_equal(result.scores, [1.0, 2.0, 3.0])
+
+
+def test_push_ref_list_via_orm():
+    from fastdb4py.orm2 import ORM2
+    orm = ORM2.create()
+    t1 = Tag()
+    t1.name = "python"
+    t2 = Tag()
+    t2.name = "fastdb"
+    a = Article()
+    a.title = "Guide"
+    a.scores = [5.0]
+    a.tags = [t1, t2]
+    orm.push(a)
+    orm.combine()
+    assert orm.count(Tag) == 2
+    assert orm.count(Article) == 1
+    tag0 = orm.get(Tag, 0, mode='copy')
+    tag1 = orm.get(Tag, 1, mode='copy')
+    assert tag0.name == "python"
+    assert tag1.name == "fastdb"
