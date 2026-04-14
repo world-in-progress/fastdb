@@ -71,3 +71,68 @@ def test_get_schema_skips_private():
     schema = get_schema(WithPrivate)
     assert len(schema.fields) == 1
     assert schema.fields[0].name == 'x'
+
+from fastdb4py.decorator import feature
+
+def test_feature_decorator_returns_class():
+    @feature
+    class Point:
+        x: F64
+        y: F64
+    assert Point.__name__ == 'Point'
+    p = Point()
+    p.x = 1.0
+    assert p.x == 1.0
+
+def test_feature_decorator_registers_schema():
+    @feature
+    class Sensor:
+        temp: F64
+        label: STR
+    schema = get_schema(Sensor)
+    assert len(schema.fields) == 2
+
+def test_feature_decorator_rejects_dict():
+    with pytest.raises(TypeError, match="Unsupported.*dict"):
+        @feature
+        class Bad:
+            meta: dict
+
+def test_feature_decorator_rejects_any():
+    from typing import Any as TypingAny
+    with pytest.raises(TypeError, match="Unsupported.*Any"):
+        @feature
+        class Bad:
+            data: TypingAny
+
+def test_feature_decorator_rejects_bare_list():
+    with pytest.raises(TypeError, match="Unsupported.*list"):
+        @feature
+        class Bad:
+            items: list
+
+def test_feature_decorator_rejects_tuple():
+    with pytest.raises(TypeError, match="Unsupported.*tuple"):
+        @feature
+        class Bad:
+            coords: tuple
+
+def test_feature_decorator_accepts_typed_list():
+    from typing import List
+    @feature
+    class Good:
+        vals: List[F64]
+    schema = get_schema(Good)
+    assert schema.fields[0].field_type == OriginFieldType.list
+
+def test_feature_decorator_accepts_ref():
+    @feature
+    class Vendor:
+        name: STR
+
+    @feature
+    class Device:
+        vendor: Vendor
+    schema = get_schema(Device)
+    assert schema.fields[0].field_type == OriginFieldType.ref
+    assert schema.fields[0].ref_target is Vendor
