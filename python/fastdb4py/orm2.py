@@ -40,6 +40,7 @@ class ORM2:
         self._layer_order: List[Type] = []  # preserves layer creation order
         self._built = False
         self._pushed_ids: Dict[int, tuple] = {}  # id(obj) -> (layer_idx, row_idx)
+        self._pushed_objs: List[Any] = []  # prevent GC so id() stays unique
 
     @classmethod
     def create(cls) -> 'ORM2':
@@ -88,8 +89,9 @@ class ORM2:
         push_feature(obj, state.build, state.schema, ref_resolver)
         state.row_count += 1
         
-        # Record this object as pushed
+        # Record this object as pushed (and keep it alive to prevent id() reuse)
         self._pushed_ids[obj_id] = (state.layer_idx, row_idx)
+        self._pushed_objs.append(obj)
         
         return row_idx
         
