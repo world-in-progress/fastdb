@@ -1,4 +1,5 @@
 # tests/python/test_is_feature.py
+import pytest
 from fastdb4py.decorator import feature
 from fastdb4py.registry import is_feature
 from fastdb4py.type import F64, STR
@@ -71,3 +72,33 @@ class Collider:
     with pytest.raises(ValueError, match="already registered"):
         from fastdb4py.registry import register_class
         register_class(other_cls)
+
+
+# --- Layout tests ---
+
+from fastdb4py.layout import Layout
+
+def test_layout_basic():
+    @feature
+    class LayoutPoint:
+        x: F64
+        y: F64
+    layout = Layout(LayoutPoint, 1000)
+    assert layout.feature_type is LayoutPoint
+    assert layout.capacity == 1000
+
+def test_layout_rejects_non_feature():
+    class NotFeature:
+        x: float
+    with pytest.raises(TypeError, match="is_feature"):
+        Layout(NotFeature, 100)
+
+def test_layout_allows_ref_fields():
+    """Layout itself does NOT reject REFs — engines do that."""
+    @feature
+    class LayoutNode:
+        x: F64
+        child: 'LayoutNode'
+    # Should not raise
+    layout = Layout(LayoutNode, 100)
+    assert layout.feature_type is LayoutNode
