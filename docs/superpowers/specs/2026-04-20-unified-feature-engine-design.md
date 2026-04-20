@@ -28,11 +28,14 @@ class Point:
     label: STR
 ```
 
-The decorator performs four actions:
-1. Validate annotations against the strict type policy (existing)
+The decorator performs five actions:
+1. Validate annotations against the strict type policy (existing), with forward-ref tolerance (see below)
 2. Set `cls.__fastdb_feature__ = True` marker (new)
 3. Inject `__init__(**kwargs)` if the class does not define its own (new)
-4. Schema registration is **lazy** — `LayerSchema` is built on first `get_schema(cls)` call, not at decoration time
+4. Register class in the global class registry (`_class_registry[cls.__name__] = cls`) — enables `load()` to reconstruct layers by name
+5. Schema registration is **lazy** — `LayerSchema` is built on first `get_schema(cls)` call, not at decoration time
+
+**`__slots__` restriction**: Classes with `__slots__` that do NOT include `'__dict__'` are rejected by the decorator. The constructor, `copy_feature()`, and serializer all rely on `obj.__dict__` for field storage. Raises `TypeError` with a clear message.
 
 ### Constructor generation
 
@@ -41,7 +44,15 @@ The decorator performs four actions:
 ```python
 def feature(cls):
     _validate_annotations(cls)
+    # Reject __slots__ without __dict__
+    if '__slots__' in cls.__dict__ and '__dict__' not in cls.__dict__['__slots__']:
+        raise TypeError(
+            f"@feature class '{cls.__name__}' defines __slots__ without '__dict__'. "
+            "fastdb requires __dict__ for field storage."
+        )
     cls.__fastdb_feature__ = True
+    # Register class name for load() reconstruction (NOT schema building)
+    _class_registry[cls.__name__] = cls
     if '__init__' not in cls.__dict__:
         def __init__(self, **kwargs):
             if kwargs:
@@ -57,6 +68,22 @@ def feature(cls):
 ### Lazy schema registration
 
 Schema building is deferred to first `get_schema(cls)` call (not decoration time). This ensures `get_type_hints()` can resolve forward references and self-references that may not be available at class definition time. The `get_schema()` function already supports on-demand building and caching.
+
+**Class registry vs schema cache**: The decorator registers the class in a separate name→class registry (`_class_registry: Dict[str, Type]`) at decoration time. This is NOT the schema cache — it's a lightweight name lookup used by `load()` to reconstruct layer types from layer names. Schema building (the expensive part involving `get_type_hints()`) remains lazy.
+
+```python
+# In registry.py
+_class_registry: Dict[str, Type] = {}  # name → cls (populated by @feature)
+
+def get_class_by_name(name: str) -> Optional[Type]:
+    return _class_registry.get(name)
+```
+
+### Forward-reference tolerant validation
+
+Current `_validate_annotations()` calls `_check_hint()` which rejects unresolvable types. But for forward references (e.g. `parent: 'Node'` or `parent: Node` before Node is defined), the hint may be a string or `ForwardRef`, not a resolvable type.
+
+**Fix**: `_check_hint()` skips validation for string annotations and `ForwardRef` objects — these are validated later when `get_schema()` calls `get_type_hints()` which resolves them. If resolution fails at schema-build time, the field is treated as `OriginFieldType.unknown` (existing fallback behavior).
 
 ### Marker-based identity
 
@@ -133,7 +160,12 @@ eng.share("my_data")
 eng2 = ColumnEngine.load("my_data")
 ```
 
-**Strict no-REF policy**: ColumnEngine rejects @feature classes that contain REF or List[REF] fields. Detection happens at `Layout()` construction and `ColumnEngine.table()` call — fail-fast before any data flows. Raises `TypeError` with message directing to ObjectEngine.
+**Strict no-REF policy**: ColumnEngine rejects @feature classes that contain REF or List[REF] fields at ALL entry points:
+- `Layout()` constructor — fail-fast for truncate path
+- `ColumnEngine.push()` / `push_many()` — fail-fast for dynamic path (first push of a REF-containing type raises `TypeError`)
+- `ColumnEngine.table()` — fail-fast for read access
+
+Raises `TypeError` with message directing to ObjectEngine.
 
 ```python
 class Layout:
@@ -147,6 +179,8 @@ class Layout:
                 "Use ObjectEngine for ref-containing types."
             )
 ```
+
+**Breaking change: REF detection tightening**: Currently, `_resolve_field_type()` in `registry.py` treats almost any non-builtin class as REF (including non-@feature classes with `__annotations__`). In the new design, REF targets are validated at schema resolution time: they must be `@feature`-decorated classes. This is a deliberate tightening — annotating a field with a plain (non-@feature) class will raise an error instead of silently treating it as REF.
 
 ### ObjectEngine (formerly ORM2)
 
@@ -177,7 +211,30 @@ obj = eng.get(Node, 0, mode='copy')
 arr = eng.table(Node).column.val  # also supports columnar read
 ```
 
-**ObjectEngine.truncate()**: Supports preallocated tables including those with REF fields (the capability removed from ColumnEngine). Scalar column `fill()` works. REF fields in preallocated tables are populated per-object via `push()` or individual writes, not bulk fill (dependency ordering makes bulk REF fill high-risk).
+**ObjectEngine.truncate()**: Supports preallocated tables including those with REF fields (the capability removed from ColumnEngine). Scalar column `fill()` works. REF fields in preallocated tables are populated per-object via individual writes, not bulk fill (dependency ordering makes bulk REF fill high-risk).
+
+**ObjectEngine truncate design**: Unlike ColumnEngine's truncate (which uses the existing ORM truncate → `_combine()` flow), ObjectEngine's truncate creates a fixed-scale database with pre-allocated rows, then exposes per-object write access:
+
+```python
+@classmethod
+def truncate(cls, layouts: List[Layout]) -> 'ObjectEngine':
+    """Pre-allocate fixed-size tables (REF fields allowed)."""
+    orm = cls()
+    orm._db_build = core.WxDatabaseBuild()
+    orm._db_build.begin("")
+    for layout in layouts:
+        schema = get_schema(layout.feature_type)
+        state = orm._ensure_layer(layout.feature_type)
+        # Uses C++ truncate (same as ColumnEngine)
+        orm._db_build.truncate(schema.layer_name, layout.capacity)
+    # Build immediately into read-only database
+    orm._finalize_build()
+    return orm
+```
+
+The key difference from ColumnEngine.truncate: ObjectEngine does NOT reject REF fields, and provides `get(mode='copy')` for REF readback.
+
+**Graph semantics limit**: ObjectEngine inherits ORM2's **class-level circular REF dependency rejection**. `_topo_sort_classes()` uses Kahn's algorithm and raises `RuntimeError` for cycles. **Instance-level** cycles (e.g. `a.parent = b; b.parent = a` where both are same type) are supported — they don't affect class-level ordering.
 
 ### Capability matrix
 
@@ -185,17 +242,22 @@ arr = eng.table(Node).column.val  # also supports columnar read
 |------------|:---:|:---:|
 | `truncate()` + `fill()` (pre-allocated tables, scalar only) | ✅ | ✅ |
 | `truncate()` with REF fields | ❌ (rejected) | ✅ |
-| `push()` per-object (scalar/list/bytes) | ✅ | ✅ |
-| REF fields | ❌ (rejected at Layout) | ✅ (auto topo-sort) |
+| `push()` / `push_many()` per-object | ✅ | ✅ |
+| REF fields | ❌ (rejected at all entry points) | ✅ (auto topo-sort) |
 | Object dedup by `id()` | ❌ | ✅ |
-| `get(mode='map'/'copy')` | ❌ | ✅ |
+| `get(cls, idx, mode='copy')` | ❌ | ✅ (copy with REF resolution) |
+| `get(cls, idx, mode='map')` | ❌ | ✅ (read-only proxy, REFs return None) |
 | `table().column` columnar read/write | ✅ | ✅ |
 | `table[i]` / `iter(table)` | ✅ (detached copy) | ✅ (detached copy) |
 | `iter_reuse()` | ✅ (read-only proxy) | ✅ (read-only proxy) |
-| REF readback (resolve refs to objects) | ❌ | ✅ (with cycle detection) |
-| Shared memory IPC | ✅ | ✅ |
-| `save(path)` / file load | ✅ | ✅ |
+| REF readback (resolve refs to objects) | ❌ | ✅ (copy mode only, with cycle detection) |
+| Shared memory IPC (`share`/`load`/`unlink`) | ✅ | ✅ |
+| `save(path)` / file load | ✅ | ❌ (future — add to ObjectEngine) |
+| Named features (`get(Type, name)`) | ✅ (kept from ORM) | ❌ (not supported) |
+| `push_many()` bulk push | ✅ | ❌ (use push() — dedup requires per-object) |
 | Deferred mutation (push then modify) | ❌ | ✅ |
+
+**REF readback in map mode**: `MappedFeature` returns `None` for REF fields (same as `_read_field()` behavior). This is by design — mapped proxies are for fast scalar reads. Use `get(mode='copy')` for full REF resolution.
 
 ---
 
@@ -211,6 +273,14 @@ Old `Feature.map_from()` created a DB-mapped wrapper with `__getattr__` reading 
 - `copy_feature(cls, layer, idx)` → detached instance with all values in `__dict__`
 - `map_feature(cls, layer, idx)` → `MappedFeature` read-only proxy
 
+### Detached copy contract
+
+`copy_feature()` returns a fully detached Python object with NO dependency on C++ memory. This means:
+- Scalar fields: copied by value (Python ints/floats are immutable, no issue)
+- String fields: Python strings from `get_field_as_string()` are already copies
+- **Bytes fields**: Currently `get_geometry_like_chunk()` returns a C++ memory view — must call `bytes()` to copy. Fix: `_read_field()` for bytes must return `bytes(feat.get_geometry_like_chunk())` to enforce detach semantics.
+- List fields: already call `.copy()` on numpy arrays (line 46-47 of reader.py)
+
 ### Table read API changes
 
 | API | Old behavior | New behavior |
@@ -221,6 +291,8 @@ Old `Feature.map_from()` created a DB-mapped wrapper with `__getattr__` reading 
 | `table.column.x` | numpy array (zero-copy) | unchanged |
 
 **Rationale**: Per-feature DB writes should use column access (`tbl.column.x[:] = values`) which is faster and doesn't require DB-mapped objects. Detached copies are simpler, safer (no stale C++ pointer risk), and sufficient for the read-then-process pattern.
+
+**Removed APIs**: `read_all_scalars()` and `write_all_scalars()` (Feature methods that required DB-mapped instances) are removed. Equivalent functionality via column access: `tbl.column.x[i]` for reads, `tbl.column.x[i] = v` for writes.
 
 ### iter_reuse() implementation
 
@@ -286,6 +358,11 @@ The `seen` dict keyed by `(layer_idx, feature_idx)` prevents infinite recursion 
 4. Uses `isinstance(obj, Feature)` / `issubclass(cls, Feature)` for type checks (~12 sites)
 5. Has its own schema adapter cache (`_get_class_schema`, line 917+)
 6. Uses `issubclass(base, Feature)` in type discovery (`_discover_types_impl`)
+7. Uses `Feature` as **fallback/sentinel type** in at least 6 places:
+   - `ref_type = hints.get(fn, Feature)` — fallback when hint missing (line 557)
+   - `isinstance(first, Feature)` — list element type detection (line 775)
+   - `issubclass(inner, Feature)` — list element type check (line 787)
+   - Multiple uses in `unpack_list` for ref resolution and fallback type (lines 825-855)
 
 ### Solution
 
@@ -304,6 +381,21 @@ obj = cls.__new__(cls)
 ```
 
 **Detach loop removal**: No `_origin`/`_db` to detach → the detach loop in `loads_shm()` is removed entirely.
+
+**Feature sentinel replacement**: All uses of `Feature` as a type sentinel are replaced with `is_feature()`:
+
+```python
+# Old: ref_type = hints.get(fn, Feature)
+# New: ref_type = hints.get(fn, None)  # None means "unknown type"
+
+# Old: isinstance(first, Feature)
+# New: is_feature(first)
+
+# Old: issubclass(inner, Feature)
+# New: is_feature(inner)
+```
+
+For the fallback type pattern (line 557), `None` replaces `Feature` as the sentinel. The downstream code that checks `issubclass(ref_type, Feature)` becomes `ref_type is not None and is_feature(ref_type)`.
 
 **Type identity**: Replace all `isinstance(obj, Feature)` with `is_feature(obj)`, and all `issubclass(cls, Feature)` with `is_feature(cls)`.
 
@@ -371,6 +463,16 @@ def get_schema(cls: Type) -> LayerSchema:
 
 Schema lookup only occurs once per class per engine lifetime (at first push). All subsequent pushes use cached `_push_buf` / `_push_dispatch`. Zero impact on push hot path.
 
+### Push cache location
+
+**Push caches are per-engine-instance, NOT per-schema.** The compiled push functions (`push_fn`, `batch_fn` from `push_compiler.py`) are **table-bound** — they bake in `t_obj._origin` (the specific C++ layer object) via `functools.partial`. The same `@feature` class may exist in multiple engine instances, each with different underlying C++ layers.
+
+Current locations (unchanged by this refactoring):
+- **ColumnEngine**: stores in `self._push_buf`, `self._push_batch_fn`, `self._push_dispatch` (per-instance dicts keyed by class)
+- **ObjectEngine**: creates fresh push functions per `combine()` call (acceptable since combine is amortized)
+
+`LayerSchema` stores type-level metadata only (field definitions, type hints, field ordering). It NEVER stores engine-instance-specific caches.
+
 ---
 
 ## 6. Migration Impact
@@ -385,6 +487,52 @@ Migration checklist for users:
 - `from fastdb4py import ORM2` → `from fastdb4py import ObjectEngine`
 - `from fastdb4py import TableDefn` → `from fastdb4py import Layout`
 - `isinstance(obj, Feature)` → `is_feature(obj)`
+
+### Complete API diff
+
+Every public API with keep/remove/migrate status:
+
+| API | Status | Notes |
+|-----|--------|-------|
+| `Feature` base class | **REMOVED** | Use `@feature` decorator |
+| `BaseFeature` | **REMOVED** | Use `is_feature()` |
+| `Feature.__getattr__` / `__setattr__` dispatch | **REMOVED** | Replaced by column access + copy/map reads |
+| `Feature.map_from(layer, idx)` | **REMOVED** | Use `map_feature(cls, layer, idx)` or `table[i]` |
+| `Feature.fixed` property | **REMOVED** | No two-mode objects; all instances are plain Python |
+| `read_all_scalars()` / `write_all_scalars()` | **REMOVED** | Use column access: `tbl.column.x[i]` |
+| `FeatureRefList` | **REMOVED** | ObjectEngine handles list-ref reads internally |
+| `parse_defns()` / `get_all_defns()` | **REMOVED** | Use `get_schema(cls).fields` |
+| `ClassSchema` | **REMOVED** | Merged into `LayerSchema` |
+| `_FeatureDBMixin` | **REMOVED** | DB-mapped mixin no longer needed |
+| `ORM` | **RENAMED** → `ColumnEngine` | Same functionality, no REF support |
+| `ORM2` | **RENAMED** → `ObjectEngine` | Same functionality + truncate() |
+| `TableDefn` | **RENAMED** → `Layout` | Same semantics |
+| `ORM.push()` | **KEPT** as `ColumnEngine.push()` | Rejects REF-containing types |
+| `ORM.push_many()` | **KEPT** as `ColumnEngine.push_many()` | Bulk push, rejects REFs |
+| `ORM.truncate()` | **KEPT** as `ColumnEngine.truncate()` | Takes `List[Layout]` |
+| `ORM.share/load/unlink` | **KEPT** | Shared memory IPC |
+| `ORM.save(path)` | **KEPT** as `ColumnEngine.save(path)` | File persistence |
+| `ORM.get(cls, name)` | **KEPT** as `ColumnEngine.get(cls, name)` | Named feature lookup |
+| `Table.column` / `ColumnAccessor` | **KEPT** | Zero-copy NumPy columns |
+| `Table.push2()` context manager | **KEPT** | Low-level push API |
+| `Table[i]` / `iter(table)` | **CHANGED** | Returns detached copy (was mapped) |
+| `Table.iter_reuse()` | **CHANGED** | Returns `MappedFeature` proxy (was mutable mapped) |
+| `TableBuilder` / `orm[Point]["name"]` | **KEPT** as `engine[Point]["name"]` | Syntax preserved |
+| `@feature` decorator | **KEPT** | Now with `__init__` injection + class registry |
+| `is_feature()` | **NEW** | Replaces `isinstance(x, Feature)` |
+| `Layout()` | **NEW** | Replaces `TableDefn`; validates no-REF for ColumnEngine |
+| `get_schema()` | **KEPT** | Unified schema source |
+| `MappedFeature` | **KEPT** | Read-only proxy for iter_reuse |
+| `copy_feature()` | **KEPT** | Detached copy for table[i] |
+| `FastSerializer` | **KEPT** | Adapted for `@feature` classes |
+
+### Breaking change: REF detection tightening
+
+Current behavior: `_resolve_field_type()` in `registry.py` treats any class with `__annotations__` and at least one known-type field as a REF target — even non-@feature plain classes.
+
+New behavior: REF targets must be `@feature`-decorated classes. `is_feature(hint)` must return `True` for the annotation to be treated as REF. Non-@feature class annotations raise `TypeError` at schema build time.
+
+This is a deliberate tightening for type safety. Users who currently annotate fields with plain classes will need to add `@feature` to those classes.
 
 ### Files to modify
 
@@ -447,17 +595,58 @@ Python-side changes have zero impact on TS binding or C++ core. Each language bi
 
 ## 8. Testing Strategy
 
+### Converted tests
 - Convert all existing ORM tests to use `@feature` + `ColumnEngine`
 - Convert all existing ORM2 tests to use `ObjectEngine`
-- Add specific tests for:
-  - Marker inheritance rules (non-inheritance, is_feature edge cases)
-  - REF rejection in ColumnEngine (at Layout, truncate, push)
-  - `@feature` constructor generation (kwargs, custom __init__ preserved)
-  - Copy semantics in `table[i]` / `iter()` (detached objects, no C++ dependency)
-  - `iter_reuse()` MappedFeature proxy (read-only, reused)
-  - ObjectEngine REF readback with cycle detection
-  - ObjectEngine `truncate()` + `fill()` with REF fields
-  - Serializer with `@feature` classes (no Feature inheritance, cls.__new__ path)
-  - Forward reference / self-reference schema resolution (lazy build)
+
+### New test categories
+
+**Decorator & class identity:**
+- Marker inheritance rules (non-inheritance, `is_feature` edge cases with subclasses, non-decorated classes)
+- `@feature` constructor generation (kwargs, custom `__init__` preserved, empty kwargs)
+- `__slots__` rejection (with and without `__dict__` in slots)
+- Forward-reference and self-reference resolution (lazy schema build, circular class refs)
+- Class registry population at decoration time (`_class_registry[cls.__name__]`)
+
+**ColumnEngine:**
+- REF rejection at `Layout()`, `push()`, `push_many()`, `table()` — all entry points
+- `truncate()` + `fill()` + columnar read round-trip
+- `push_many()` bulk push correctness
+- Named features (`get(Type, name)`)
+- `save(path)` / file load round-trip
+- Shared memory IPC
+
+**ObjectEngine:**
+- `truncate()` with REF-containing types + scalar fill + per-object REF write
+- `push()` with auto topo-sort (class-level deps)
+- REF readback with `get(mode='copy')` — including cycle detection
+- `get(mode='map')` returns `None` for REF fields
+- Instance-level cycles (A.parent = B, B.parent = A, same type)
+- Class-level circular REF deps → `RuntimeError`
+- Shared memory IPC (share/load)
+
+**Read mechanism:**
+- `table[i]` returns detached copy (no C++ memory dependency)
+- `iter(table)` returns detached copies
+- `iter_reuse()` returns `MappedFeature` proxy (read-only)
+- `copy_feature()` bytes field produces `bytes()` copy (not C++ view)
+- `MappedFeature` raises `AttributeError` on write attempt
+
+**Serializer:**
+- `FastSerializer.dumps/loads` with `@feature` classes (no Feature inheritance)
+- `is_feature()` replaces `isinstance(obj, Feature)` in all type detection paths
+- `cls.__new__(cls)` object creation path (no `__init__` side effects)
+- Nested/cyclic object graphs with `@feature` classes
+- Buffer-layer protocol compatibility (unchanged)
+- Cross-language interop (Python ↔ TypeScript)
+
+**Schema system:**
+- `get_schema()` produces `LayerSchema` with all merged attributes
+- `cls.__dict__` fast-path works correctly
+- Schema computed lazily (not at decoration time)
+- Same class schema from both engines
+
+**Performance:**
 - Re-run Kostya benchmark to verify zero performance regression
-- Verify FastSerializer and Codegen work with `@feature` classes
+- Column access latency unchanged
+- Push throughput unchanged
