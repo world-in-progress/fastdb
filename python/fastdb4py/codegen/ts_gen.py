@@ -18,8 +18,23 @@ from typing import get_type_hints, get_origin, get_args, Any, Dict, List, Set, T
 
 # ─── Type imports from fastdb4py ──────────────────────────────────────────────
 
-from fastdb4py.feature.base import BaseFeature as _BaseFeature
+from fastdb4py.registry import is_feature
+from fastdb4py.feature.base import BaseFeature
 import fastdb4py as _fdb
+
+
+def _is_feature_cls(cls: type) -> bool:
+    """Check if *cls* is a feature class for codegen purposes.
+
+    Matches both old-style ``Feature`` subclasses (via ``issubclass``) and
+    new ``@feature``-decorated classes (via ``is_feature``).
+    Excludes ``BaseFeature`` itself.
+    """
+    if not isinstance(cls, type):
+        return False
+    if cls is BaseFeature:
+        return False
+    return is_feature(cls) or issubclass(cls, BaseFeature)
 
 
 class CodegenError(Exception):
@@ -135,7 +150,7 @@ class CodegenContext:
         mod = sys.modules.get(getattr(cls, '__module__', ''), None)
         if mod is not None:
             for name, obj in vars(mod).items():
-                if isinstance(obj, type) and issubclass(obj, _BaseFeature) and obj is not _BaseFeature:
+                if _is_feature_cls(obj):
                     if name not in ctx:
                         ctx[name] = obj
 
@@ -233,9 +248,7 @@ def discover_features(module: types.ModuleType, py_file: Path, input_dir: Path) 
     module_name = module.__name__
     found = []
     for _name, cls in inspect.getmembers(module, inspect.isclass):
-        if not issubclass(cls, _BaseFeature):
-            continue
-        if cls is _BaseFeature:
+        if not _is_feature_cls(cls):
             continue
         if cls.__name__ == 'Feature':
             continue
@@ -305,7 +318,7 @@ def build_dep_graph(cls: Type, ctx: CodegenContext) -> Set[Type]:
             args = get_args(hint)
             if args:
                 inner = _resolve_hint(args[0], resolve_ctx)
-                if isinstance(inner, type) and issubclass(inner, _BaseFeature) and inner is not _BaseFeature:
+                if _is_feature_cls(inner):
                     deps.add(inner)
             continue
 
@@ -322,7 +335,7 @@ def build_dep_graph(cls: Type, ctx: CodegenContext) -> Set[Type]:
             continue
 
         # Direct Feature subclass reference
-        if isinstance(hint, type) and issubclass(hint, _BaseFeature) and hint is not _BaseFeature:
+        if _is_feature_cls(hint):
             deps.add(hint)
 
     return deps
@@ -417,7 +430,7 @@ def classify_hint(
             return ('listOf(/* unknown */)', 'unknown[]')
 
         # Inner is a Feature class
-        if isinstance(inner, type) and issubclass(inner, _BaseFeature) and inner is not _BaseFeature:
+        if _is_feature_cls(inner):
             name = inner.__name__
             if (current_cls, inner) in lazy_ref_pairs:
                 schema = f'listOf(ref(() => {name}))'
@@ -432,7 +445,7 @@ def classify_hint(
         return (f'listOf({inner_schema})', f'{base_decl}[]')
 
     # Direct Feature subclass reference
-    if isinstance(hint, type) and issubclass(hint, _BaseFeature) and hint is not _BaseFeature:
+    if _is_feature_cls(hint):
         name = hint.__name__
         if (current_cls, hint) in lazy_ref_pairs:
             return (f'ref(() => {name})', f'{name} | null')
@@ -525,9 +538,9 @@ def generate_class(
             inner_for_import = _resolve_hint(args[0], resolve_ctx) if args else None
 
         ref_cls: Optional[Type] = None
-        if inner_for_import is not None and isinstance(inner_for_import, type) and issubclass(inner_for_import, _BaseFeature) and inner_for_import is not _BaseFeature:
+        if inner_for_import is not None and _is_feature_cls(inner_for_import):
             ref_cls = ctx.canonicalize(inner_for_import)
-        elif isinstance(hint, type) and issubclass(hint, _BaseFeature) and hint is not _BaseFeature:
+        elif _is_feature_cls(hint):
             ref_cls = ctx.canonicalize(hint)
 
         if ref_cls is not None:
