@@ -15,6 +15,16 @@ from .type import (
 from .feature.base import BaseFeature
 
 
+def is_feature(cls) -> bool:
+    """Check if cls was decorated with @feature.
+
+    Uses cls.__dict__.get() (not getattr) so subclasses that merely
+    inherit the marker are rejected — every class must be explicitly
+    decorated.
+    """
+    return isinstance(cls, type) and cls.__dict__.get('__fastdb_feature__', False) is True
+
+
 @dataclass(frozen=True, slots=True)
 class FieldDef:
     """Metadata for a single field in a @feature class."""

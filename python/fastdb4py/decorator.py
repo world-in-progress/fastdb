@@ -23,6 +23,7 @@ def feature(cls):
             x: F64
             y: F64
     """
+    cls.__fastdb_feature__ = True
     _validate_annotations(cls)
     get_schema(cls)  # register
     return cls
