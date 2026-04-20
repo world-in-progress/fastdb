@@ -166,12 +166,13 @@ def bench_orm2(N: int, reps: int) -> dict:
         deserial_ms = _median_ms(do_deserial, reps)
         orm2 = ORM2.load(shm_name)
 
-        # --- read: iterate all N records, sum x+y+z ---
+        # --- read: sum x+y+z via columnar numpy (zero-copy) ---
         def do_read():
-            total = 0.0
-            for f in orm2.iter(Coord2, mode='map'):
-                total += f.x + f.y + f.z
-            return total
+            tbl = orm2.table(Coord2)
+            cx = tbl.column.x
+            cy = tbl.column.y
+            cz = tbl.column.z
+            return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
 
         read_ms = _median_ms(do_read, reps)
     finally:

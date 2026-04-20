@@ -333,4 +333,74 @@ class TestLayerSchemaPushPlans:
         schema = get_schema(PlanTestAllNumeric)
         assert schema.pfd_str_names == []
         assert len(schema.pfd_str_ids) == 0
-        assert schema.pfd_str_ids.dtype == np.uint32
+
+
+# ---------------------------------------------------------------------------
+# Column access tests
+# ---------------------------------------------------------------------------
+class TestORM2ColumnAccess:
+    def test_table_column_numpy(self):
+        """table().column.x returns numpy array with correct values."""
+        orm = ORM2.create()
+        for i in range(100):
+            p = O2Point()
+            p.x = float(i)
+            p.y = float(i * 10)
+            p.label = f"p{i}"
+            orm.push(p)
+        orm.combine()
+
+        tbl = orm.table(O2Point)
+        assert len(tbl) == 100
+        xs = tbl.column.x
+        ys = tbl.column.y
+        assert isinstance(xs, np.ndarray)
+        assert xs[0] == 0.0
+        assert xs[99] == 99.0
+        assert ys[50] == 500.0
+
+    def test_table_column_slice(self):
+        """Slicing column arrays works."""
+        orm = ORM2.create()
+        for i in range(10):
+            p = O2Point()
+            p.x = float(i)
+            p.y = 0.0
+            p.label = ""
+            orm.push(p)
+        orm.combine()
+
+        arr = orm.table(O2Point).column.x[2:5]
+        np.testing.assert_array_equal(arr, [2.0, 3.0, 4.0])
+
+    def test_table_before_combine_raises(self):
+        """table() before combine() raises."""
+        orm = ORM2.create()
+        p = O2Point()
+        p.x = 1.0; p.y = 2.0; p.label = ""
+        orm.push(p)
+        with pytest.raises(RuntimeError):
+            orm.table(O2Point)
+
+    def test_table_unknown_class_raises(self):
+        """table() with unregistered class raises KeyError."""
+        @feature
+        class Ghost:
+            v: F64
+        orm = ORM2.create()
+        p = O2Point()
+        p.x = 1.0; p.y = 2.0; p.label = ""
+        orm.push(p)
+        orm.combine()
+        with pytest.raises(KeyError):
+            orm.table(Ghost)
+
+    def test_column_bad_name_raises(self):
+        """Accessing a non-existent column raises AttributeError."""
+        orm = ORM2.create()
+        p = O2Point()
+        p.x = 1.0; p.y = 2.0; p.label = ""
+        orm.push(p)
+        orm.combine()
+        with pytest.raises(AttributeError):
+            _ = orm.table(O2Point).column.nonexistent

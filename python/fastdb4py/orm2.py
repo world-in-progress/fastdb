@@ -8,12 +8,55 @@ import struct
 import numpy as np
 
 from . import core
-from .registry import get_schema, LayerSchema
+from .registry import get_schema, LayerSchema, FieldDef
 from .reader import map_feature, copy_feature
 from .push_compiler import (
     compile_push_fn, compile_ref_push_fn,
     make_batch_inlined_dispatch,
 )
+
+
+class _ColumnAccessor2:
+    """Zero-copy numpy column accessor for ORM2 layers."""
+    __slots__ = ('_layer', '_field_map', '_cache')
+
+    def __init__(self, layer, field_map: Dict[str, int]):
+        object.__setattr__(self, '_layer', layer)
+        object.__setattr__(self, '_field_map', field_map)
+        object.__setattr__(self, '_cache', {})
+
+    def __getattr__(self, name: str) -> np.ndarray:
+        cache = object.__getattribute__(self, '_cache')
+        arr = cache.get(name)
+        if arr is not None:
+            return arr
+        fmap = object.__getattribute__(self, '_field_map')
+        fid = fmap.get(name)
+        if fid is None:
+            raise AttributeError(f'No column "{name}"')
+        layer = object.__getattribute__(self, '_layer')
+        arr = layer.get_column(fid).as_nparray()
+        cache[name] = arr
+        return arr
+
+
+class Table2:
+    """Lightweight read-only table with columnar access for ORM2."""
+    __slots__ = ('_cls', '_layer', '_count', '_col')
+
+    def __init__(self, cls: Type, layer, count: int, schema: LayerSchema):
+        self._cls = cls
+        self._layer = layer
+        self._count = count
+        fmap = {fd.name: fd.field_id for fd in schema.fields}
+        self._col = _ColumnAccessor2(layer, fmap)
+
+    @property
+    def column(self) -> _ColumnAccessor2:
+        return self._col
+
+    def __len__(self) -> int:
+        return self._count
 
 
 @dataclass
@@ -273,6 +316,21 @@ class ORM2:
             return map_feature(cls, layer, idx)
         else:
             raise ValueError(f"Unknown mode: {mode!r}")
+
+    def table(self, cls: Type) -> Table2:
+        """Get a Table2 with zero-copy numpy column access.
+
+        Usage:
+            tbl = orm.table(Point)
+            xs = tbl.column.x       # numpy array, zero-copy
+            ys = tbl.column.y[:]    # slice also works
+        """
+        self._check_built()
+        state = self._layers.get(cls)
+        if state is None:
+            raise KeyError(f"No layer for {cls.__name__}")
+        layer = self._db.get_layer(state.layer_idx)
+        return Table2(cls, layer, state.row_count, state.schema)
 
     def iter(self, cls: Type, mode: str = 'map') -> Iterator:
         """Iterate all features of a given type."""

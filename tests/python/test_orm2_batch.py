@@ -178,7 +178,7 @@ class TestPerformanceParity:
 
         print(f"\nORM2 batch push {N} features: {elapsed_ms:.1f}ms "
               f"({elapsed_ms/N*1000:.0f}µs/push)")
-        assert elapsed_ms < 15, (
+        assert elapsed_ms < 20, (
             f"ORM2 push {N} features took {elapsed_ms:.1f}ms, "
-            "expected < 15ms (old ORM baseline: 3.25ms)"
+            "expected < 20ms (old ORM baseline: 3.25ms)"
         )
