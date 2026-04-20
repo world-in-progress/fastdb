@@ -1,15 +1,19 @@
 # python/fastdb4py/orm2.py
 """ORM2: decorator-based ORM for @feature classes."""
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Literal, Optional, Type
+from collections import defaultdict, deque
+from dataclasses import dataclass
+from typing import Any, Dict, Iterator, List, Optional, Type
+import struct
 import numpy as np
 
 from . import core
 from .registry import get_schema, LayerSchema
-from .push import push_feature
 from .reader import map_feature, copy_feature
-from .type import OriginFieldType
+from .push_compiler import (
+    compile_push_fn, compile_ref_push_fn,
+    make_batch_inlined_dispatch,
+)
 
 
 @dataclass
@@ -18,8 +22,63 @@ class LayerState:
     cls: Type
     schema: LayerSchema
     build: Any = None       # WxLayerTableBuild
-    layer_idx: int = -1     # index in the database
+    layer_idx: int = -1
     row_count: int = 0
+    _fc: Any = None         # np.zeros(1, dtype=np.int64) — C increments in-place
+
+    def __post_init__(self):
+        self._fc = np.zeros(1, dtype=np.int64)
+
+    @property
+    def _origin(self):
+        """Compatibility shim for push_compiler functions that expect t_obj._origin."""
+        return self.build
+
+    @property
+    def feature_count(self):
+        return int(self._fc[0])
+
+
+def _topo_sort_classes(groups: Dict[Type, List[Any]]) -> List[Type]:
+    """Topological sort classes by REF field dependencies (Kahn's algorithm).
+
+    Classes with no REF dependencies come first so their rows exist
+    when REF-dependent classes resolve references.
+    """
+    in_degree: Dict[Type, int] = {cls: 0 for cls in groups}
+    adj: Dict[Type, List[Type]] = {cls: [] for cls in groups}
+
+    for cls in groups:
+        schema = get_schema(cls)
+        deps = set()
+        for fd in schema.ref_fields:
+            if fd.ref_target is not None and fd.ref_target in groups and fd.ref_target != cls:
+                deps.add(fd.ref_target)
+        for fd in schema.list_ref_fields:
+            if fd.list_ref_target is not None and fd.list_ref_target in groups and fd.list_ref_target != cls:
+                deps.add(fd.list_ref_target)
+        for dep in deps:
+            adj[dep].append(cls)
+            in_degree[cls] += 1
+
+    queue = deque(cls for cls, deg in in_degree.items() if deg == 0)
+    result: List[Type] = []
+    while queue:
+        cls = queue.popleft()
+        result.append(cls)
+        for child in adj[cls]:
+            in_degree[child] -= 1
+            if in_degree[child] == 0:
+                queue.append(child)
+
+    if len(result) != len(groups):
+        missing = set(groups) - set(result)
+        names = [c.__name__ for c in missing]
+        raise RuntimeError(
+            f"Circular class-level REF dependency detected among: {names}. "
+            "ORM2 does not support circular class references."
+        )
+    return result
 
 
 class ORM2:
@@ -37,10 +96,13 @@ class ORM2:
         self._db: Optional[core.WxDatabase] = None
         self._buffer: Optional[bytes] = None
         self._layers: Dict[Type, LayerState] = {}
-        self._layer_order: List[Type] = []  # preserves layer creation order
+        self._layer_order: List[Type] = []
         self._built = False
-        self._pushed_ids: Dict[int, tuple] = {}  # id(obj) -> (layer_idx, row_idx)
-        self._pushed_objs: List[Any] = []  # prevent GC so id() stays unique
+        # Deferred batch push state
+        self._pending: List[Any] = []          # all pushed objects in push order
+        self._pushed_ids: Dict[int, bool] = {} # id(obj) -> True (dedup set)
+        self._pushed_objs: List[Any] = []      # prevent GC so id() stays unique
+        self._pending_counts: Dict[Type, int] = defaultdict(int)
 
     @classmethod
     def create(cls) -> 'ORM2':
@@ -50,84 +112,146 @@ class ORM2:
         orm._db_build.begin("")
         return orm
 
-    def push(self, obj: Any) -> int:
-        """Serialize a @feature object into its layer. Returns row index.
-        
-        Automatically resolves REF and LIST[REF] fields by recursively pushing
-        dependencies first. Deduplicates by object identity.
+    def push(self, obj: Any) -> None:
+        """Queue a @feature object for batch serialization at combine() time.
+
+        Automatically handles REF and LIST[REF] fields — no manual ordering needed.
+        Object mutation after push is visible at combine() time.
+        Deduplicates by object identity (same id() → same row).
         """
-        return self._push_recursive(obj)
-        
-    def _push_recursive(self, obj: Any) -> int:
-        """Internal recursive push with deduplication."""
         obj_id = id(obj)
         if obj_id in self._pushed_ids:
-            # Already pushed, return existing row
-            layer_idx, row_idx = self._pushed_ids[obj_id]
-            return row_idx
-            
-        cls = type(obj)
-        schema = get_schema(cls)
-        
-        # First, recursively push all REF and LIST[REF] dependencies
-        self._push_dependencies(obj, schema)
-        
-        # Now push this object
-        state = self._ensure_layer(cls)
-        row_idx = state.row_count
-        
-        # Create ref_resolver closure that uses our _pushed_ids
-        def ref_resolver(ref_obj):
-            if ref_obj is None:
-                return None
-            ref_id = id(ref_obj)
-            if ref_id in self._pushed_ids:
-                layer_idx, row_idx = self._pushed_ids[ref_id]
-                return core.WxFeatureRef.make_ref(layer_idx, row_idx)
-            return None
-            
-        push_feature(obj, state.build, state.schema, ref_resolver)
-        state.row_count += 1
-        
-        # Record this object as pushed (and keep it alive to prevent id() reuse)
-        self._pushed_ids[obj_id] = (state.layer_idx, row_idx)
-        self._pushed_objs.append(obj)
-        
-        return row_idx
-        
-    def _push_dependencies(self, obj: Any, schema: 'LayerSchema'):
-        """Recursively push all REF and LIST[REF] field dependencies."""
+            return
+        self._pushed_ids[obj_id] = True
+        self._pending.append(obj)
+        self._pushed_objs.append(obj)  # prevent GC so id() stays unique
+        self._pending_counts[type(obj)] += 1
+        # Recursively enqueue REF dependencies
+        schema = get_schema(type(obj))
+        if schema.has_ref_fields:
+            self._enqueue_deps(obj, schema)
+
+    def _enqueue_deps(self, obj: Any, schema: LayerSchema):
+        """Recursively enqueue REF and LIST[REF] dependencies."""
         cache = obj.__dict__
-        for fd in schema.fields:
-            value = cache.get(fd.name)
-            if value is None:
-                continue
-                
-            if fd.field_type == OriginFieldType.ref:
-                # Single REF field - push the referenced object
-                self._push_recursive(value)
-            elif fd.field_type == OriginFieldType.list and fd.list_elem_type == OriginFieldType.ref:
-                # LIST[REF] field - push all referenced objects
-                if hasattr(value, '__iter__'):
-                    for ref_obj in value:
-                        if ref_obj is not None:
-                            self._push_recursive(ref_obj)
+        for fd in schema.ref_fields:
+            val = cache.get(fd.name)
+            if val is not None:
+                self.push(val)
+        for fd in schema.list_ref_fields:
+            items = cache.get(fd.name)
+            if items:
+                for ref_obj in items:
+                    if ref_obj is not None:
+                        self.push(ref_obj)
 
     def combine(self):
-        """Finalize build into a read-only database."""
+        """Finalize: batch-push all pending objects, then build read-only database."""
         if self._built:
             raise RuntimeError("ORM2 already combined")
         if self._db_build is None:
             raise RuntimeError("ORM2 not in build mode")
 
+        # 1. Group pending objects by class
+        groups: Dict[Type, List[Any]] = defaultdict(list)
+        for obj in self._pending:
+            groups[type(obj)].append(obj)
+
+        # 2. Topological sort classes by REF dependencies
+        sorted_classes = _topo_sort_classes(groups)
+
+        # 3. Push each class in topo order
+        obj_to_row: Dict[int, tuple] = {}  # id(obj) -> (layer_idx, row_idx)
+        for cls in sorted_classes:
+            objs = groups[cls]
+            schema = get_schema(cls)
+            state = self._ensure_layer(cls)
+            layer_build = state.build
+
+            if not schema.has_ref_fields:
+                # FAST PATH: batch push via push_many_from_dicts_fc
+                batch_fn = make_batch_inlined_dispatch(
+                    schema.numeric_plan, schema.str_plan,
+                    schema.bytes_plan, schema.list_plan, state,
+                    schema.pfd_num_names, schema.pfd_num_ids,
+                    schema.pfd_str_names, schema.pfd_str_ids,
+                )
+                if batch_fn is not None:
+                    dicts = [obj.__dict__ for obj in objs]
+                    for i in range(0, len(dicts), 1024):
+                        batch_fn(dicts[i:i+1024])
+                else:
+                    # Fallback: single compiled push_fn
+                    push_fn = compile_push_fn(
+                        schema.numeric_plan, schema.str_plan,
+                        schema.bytes_plan, schema.list_plan,
+                    )
+                    for obj in objs:
+                        push_fn(obj.__dict__, layer_build)
+                state._fc[0] = len(objs)
+
+                # Record row indices
+                for row_idx, obj in enumerate(objs):
+                    obj_to_row[id(obj)] = (state.layer_idx, row_idx)
+                state.row_count = len(objs)
+            else:
+                # REF PATH: pre-resolve all refs into cache copy, then use compiled fn
+                ref_push_fn = compile_ref_push_fn(
+                    schema.numeric_plan, schema.str_plan,
+                    schema.bytes_plan, schema.list_plan,
+                    [(fd.field_id, fd.name) for fd in schema.ref_fields],
+                    [(fd.field_id, fd.name) for fd in schema.list_ref_fields],
+                )
+                for obj in objs:
+                    row_idx = state.row_count
+                    cache = obj.__dict__.copy()  # COPY — don't mutate original
+                    # Resolve scalar REF fields → WxFeatureRef int
+                    for fd in schema.ref_fields:
+                        ref_obj = cache.get(fd.name)
+                        if ref_obj is not None:
+                            loc = obj_to_row.get(id(ref_obj))
+                            if loc is not None:
+                                li, ri = loc
+                                cache[fd.name] = core.WxFeatureRef.make_ref(li, ri)
+                            else:
+                                cache[fd.name] = 0
+                    # Pack LIST[REF] fields → raw bytes
+                    for fd in schema.list_ref_fields:
+                        items = cache.get(fd.name)
+                        if items:
+                            parts = []
+                            for ref_obj in items:
+                                if ref_obj is not None:
+                                    loc = obj_to_row.get(id(ref_obj))
+                                    if loc is not None:
+                                        li, ri = loc
+                                        parts.append(struct.pack('<HBH', li, ri & 0xFF, ri >> 8))
+                                    else:
+                                        parts.append(b'\x00\x00\x00\x00\x00')
+                                else:
+                                    parts.append(b'\x00\x00\x00\x00\x00')
+                            cache[fd.name] = b''.join(parts)
+                        else:
+                            cache[fd.name] = b''
+                    ref_push_fn(cache, layer_build)
+                    obj_to_row[id(obj)] = (state.layer_idx, row_idx)
+                    state.row_count += 1
+                state._fc[0] = state.row_count
+
+        # 4. Finalize into read-only database
         mem = core.WxMemoryStream()
         self._db_build.post(mem)
         buf = mem.data().as_array(np.uint8).tobytes()
         self._db = core.WxDatabase.load_xbuffer(buf)
-        self._db._buffer = buf  # prevent GC of underlying buffer
+        self._db._buffer = buf
         self._buffer = buf
         self._built = True
         self._db_build = None
+        # Clear pending state
+        self._pending.clear()
+        self._pushed_ids.clear()
+        self._pending_counts.clear()
+        self._pushed_objs.clear()
 
     def get(self, cls: Type, idx: int, mode: str = 'map') -> Any:
         """Read back a single feature.
@@ -160,9 +284,11 @@ class ORM2:
             yield self.get(cls, i, mode=mode)
 
     def count(self, cls: Type) -> int:
-        """Return the number of features pushed for cls."""
-        state = self._layers.get(cls)
-        return state.row_count if state else 0
+        """Return the number of features for cls."""
+        if self._built:
+            state = self._layers.get(cls)
+            return state.row_count if state else 0
+        return self._pending_counts.get(cls, 0)
 
     def _ensure_layer(self, cls: Type) -> LayerState:
         """Create layer state on first push of a new type."""

@@ -112,6 +112,30 @@ class TestORM2Basic:
 from fastdb4py.type import F64, U32, STR
 from typing import List
 
+class TestORM2PreCombineCount:
+    def test_count_before_combine(self):
+        orm = ORM2.create()
+        assert orm.count(O2Point) == 0
+        p = O2Point()
+        p.x = 1.0; p.y = 2.0; p.label = "a"
+        orm.push(p)
+        assert orm.count(O2Point) == 1
+        p2 = O2Point()
+        p2.x = 3.0; p2.y = 4.0; p2.label = "b"
+        orm.push(p2)
+        assert orm.count(O2Point) == 2
+        orm.combine()
+        assert orm.count(O2Point) == 2
+
+    def test_count_dedup(self):
+        orm = ORM2.create()
+        p = O2Point()
+        p.x = 1.0; p.y = 2.0; p.label = "a"
+        orm.push(p)
+        orm.push(p)  # duplicate
+        assert orm.count(O2Point) == 1
+
+
 @feature
 class Vendor:
     name: STR
