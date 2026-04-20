@@ -1,6 +1,7 @@
 import tempfile
 import platform
 import warnings
+import struct as _struct
 import numpy as np
 from pathlib import Path
 from dataclasses import dataclass, field as dc_field
@@ -9,8 +10,34 @@ from multiprocessing import shared_memory, resource_tracker
 
 from .. import core
 from .table import Table
-from ..type import OriginFieldType
+from ..type import OriginFieldType, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE, get_list_element_type
 from ..feature import Feature, get_all_defns
+from ..feature._schema import get_class_schema, make_inlined_dispatch, make_batch_inlined_dispatch
+
+# Batch size for internal push buffering: 1024 cache dicts are accumulated before
+# a single C call processes them all, eliminating per-feature Python→C bridge overhead.
+_PUSH_BATCH_SIZE = 1024
+
+# Pre-compiled struct.Struct pack-method cache: (typecode, n) → bound .pack method
+# struct.Struct.pack is 4× faster than struct.pack for small/medium n (avoids fmt-string lookup overhead)
+_struct_pack_method_cache: dict = {}
+
+def _get_struct_pack_method(typecode: str, n: int):
+    key = (typecode, n)
+    fn = _struct_pack_method_cache.get(key)
+    if fn is None:
+        _struct_pack_method_cache[key] = fn = _struct.Struct(f'{n}{typecode}').pack
+    return fn
+
+# Keep format cache for external consumers
+_struct_fmt_cache: dict = {}
+
+def _get_struct_fmt(typecode: str, n: int) -> str:
+    key = (typecode, n)
+    fmt = _struct_fmt_cache.get(key)
+    if fmt is None:
+        _struct_fmt_cache[key] = fmt = f'{n}{typecode}'
+    return fmt
 
 T = TypeVar('T', bound=Feature)
 
@@ -55,6 +82,15 @@ class ORM:
         self._table_map: dict[str, Table | TableBuilder] = {}
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._named_table: core.WxLayerTable | core.WxLayerTableBuild | None = None
+        self._is_mutable: bool = False  # True only when origin is WxDatabaseBuild (push is allowed)
+        # Per-class push dispatch:
+        #   _push_buf[cls]  = list of feature.__dict__ objects awaiting C flush
+        #   _push_batch_fn[cls] = batch C function (partial) for flushing
+        #   _push_dispatch[cls] = single-call C function (for complex features)
+        # Only one of _push_batch_fn or _push_dispatch is set per class.
+        self._push_buf: dict = {}       # cls -> buf_list (batchable types)
+        self._push_batch_fn: dict = {}  # cls -> batch_fn (batchable types)
+        self._push_dispatch: dict = {}  # cls -> single_fn (complex types)
 
     @property
     def fixed(self) -> bool:
@@ -64,6 +100,7 @@ class ORM:
     def create() -> 'ORM':
         orm = ORM()
         orm._origin = core.WxDatabaseBuild()
+        orm._is_mutable = True
         
         # Create default name table
         nt = _get_default_table_build(orm._origin, '_name_')
@@ -115,11 +152,8 @@ class ORM:
                 for f_defn in f_defns:
                     field_name, origin_type = f_defn
                     if origin_type == OriginFieldType.list:
-                        from ..feature._schema import get_class_schema
-                        from ..type import get_list_element_type, LIST_ELEM_CPP_TYPE
                         hints = get_class_schema(feature_type).hints
                         hint = hints.get(field_name)
-                        from ..type import get_list_element_type
                         elem_ot = get_list_element_type(hint) if hint is not None else None
                         cpp_elem = LIST_ELEM_CPP_TYPE.get(elem_ot, 8)  # default f64=8
                         new_table._origin.add_list_field(field_name, cpp_elem)
@@ -153,7 +187,10 @@ class ORM:
         if isinstance(self._origin, core.WxDatabase):
             warnings.warn('Database has been combined, no need to combine again.', UserWarning)
             return
-        
+
+        # Flush any remaining features buffered in the batch push buffers.
+        self._flush_push_batches()
+
         # Use memory stream to combine directly
         memory_stream = core.WxMemoryStream()
         self._origin.post(memory_stream)
@@ -228,26 +265,135 @@ class ORM:
 
     def push(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
         """Push the given feature to the database."""
-        # Check if is synchronizable
-        if self._origin is None:
-            warnings.warn('Database has not connected to fastdb, not supporting push operation.', UserWarning)
+        # Ultra-fast common path for batchable features: accumulate dict refs in a
+        # per-class buffer; no flush until _combine() — eliminates the len() check.
+        cls = feature.__class__
+        buf = self._push_buf.get(cls)
+        if buf is not None:
+            buf.append(feature.__dict__)
             return
-        if self.fixed:
-            warnings.warn('Database has fixed scale, not supporting push operation.', UserWarning)
+
+        # Fallback for complex features (bytes / list / wstr) already primed.
+        single_fn = self._push_dispatch.get(cls)
+        if single_fn is not None:
+            single_fn(feature.__dict__)
             return
-        if not isinstance(feature, Feature):
-            warnings.warn('Provided feature is not an instance of Feature.', UserWarning)
+
+        if not self._is_mutable:
+            if self._origin is None:
+                warnings.warn('Database has not connected to fastdb, not supporting push operation.', UserWarning)
+            else:
+                warnings.warn('Database has fixed scale, not supporting push operation.', UserWarning)
             return
-        
+
+        return self._push_full(feature, table_name, feature_name=feature_name, is_ref=is_ref)
+
+    def _flush_push_batches(self):
+        """Flush all pending push batch buffers to the C++ layer.
+
+        Must be called before _combine() / post() to ensure no features are lost.
+        """
+        for cls, buf in self._push_buf.items():
+            if buf:
+                self._push_batch_fn[cls](buf)
+                buf.clear()
+
+    def _push_full(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
+        """Full push implementation with schema lookup, table creation, and ref handling."""
         feature_type = feature.__class__
-        defns = get_all_defns(feature_type)
-        
-        # Route to graph-based push if feature has list fields (or skip graph for simple case)
-        from ..feature._schema import get_class_schema
+
+        # Route to graph-based push only for ref features; all others use compiled push_fn
         schema = get_class_schema(feature_type)
-        if schema.list_element_types:
+        if schema.has_ref_fields:
             return self._push_graph(feature, table_name=table_name,
                                      feature_name=feature_name, is_ref=is_ref)
+        # Fast path: use compiled push_fn (handles scalar, STR, BYTES, and list fields)
+        feat_table_name = table_name if table_name else feature_type.__name__
+        t_obj: Table = self._table_map.get(feat_table_name)
+        if t_obj is None:
+            new_table = Table.map_from(feature_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
+            list_elem_types = schema.list_element_types
+            for fn, ft in schema.ordered_defns:
+                if ft == OriginFieldType.list:
+                    cpp_elem = LIST_ELEM_CPP_TYPE.get(list_elem_types.get(fn), 8)
+                    new_table._origin.add_list_field(fn, cpp_elem)
+                else:
+                    new_table._origin.add_field(fn, ft.value)
+            self._table_map[feat_table_name] = new_table
+            t_obj = new_table
+        schema.push_fn(feature.__dict__, t_obj._origin)
+        feat_idx = t_obj.feature_count
+        t_obj.feature_count += 1
+        if is_ref or feature_name:
+            ref = t_obj._origin.create_feature_ref(feat_idx)
+            if feature_name:
+                nl = self._named_table
+                nl.add_feature_begin()
+                nl.set_field_cstring(0, feature_name)
+                nl.set_field(1, ref)
+                nl.add_feature_end()
+            if is_ref:
+                return ref
+        # Cache an inlined dispatch for this type (common case: no table_name/feature_name/is_ref).
+        # Pre-binds C++ SWIG methods to eliminate LOAD_ATTR overhead per hot-path push.
+        if not (table_name or feature_name or is_ref) and not schema.has_ref_fields:
+            single_fn = make_inlined_dispatch(
+                schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj,
+                schema.pfd_num_names, schema.pfd_num_ids, schema.pfd_str_names, schema.pfd_str_ids,
+            )
+            batch_fn = make_batch_inlined_dispatch(
+                schema.numeric_plan, schema.str_plan, schema.bytes_plan, schema.list_plan, t_obj,
+                schema.pfd_num_names, schema.pfd_num_ids, schema.pfd_str_names, schema.pfd_str_ids,
+            )
+            if batch_fn is not None:
+                # Batchable: accumulate dicts, flush all at _combine()
+                self._push_buf[feature_type] = []
+                self._push_batch_fn[feature_type] = batch_fn
+            else:
+                # Complex feature: single-call path
+                self._push_dispatch[feature_type] = single_fn
+
+    def push_many(self, features: list, table_name: str = '') -> None:
+        """Push multiple features of the same type efficiently in one call.
+
+        Hoists schema lookup, table lookup, and mutability check outside the inner loop.
+        All features must be the same Feature subclass with no ref fields (simple list path).
+        Falls back to push() per-feature for ref features.
+        """
+        if not self._is_mutable or not features:
+            return
+        feature_type = features[0].__class__
+        schema = get_class_schema(feature_type)
+        push_fn = schema.push_fn
+        feat_table_name = table_name if table_name else feature_type.__name__
+        t_obj: Table = self._table_map.get(feat_table_name)
+        if t_obj is None:
+            # Create table (same logic as push() fast path)
+            new_table = Table.map_from(feature_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
+            list_elem_types = schema.list_element_types
+            for fn, ft in schema.ordered_defns:
+                if ft == OriginFieldType.list:
+                    cpp_elem = LIST_ELEM_CPP_TYPE.get(list_elem_types.get(fn), 8)
+                    new_table._origin.add_list_field(fn, cpp_elem)
+                else:
+                    new_table._origin.add_field(fn, ft.value)
+            self._table_map[feat_table_name] = new_table
+            t_obj = new_table
+        if schema.has_ref_fields:
+            for feature in features:
+                self._push_graph(feature, table_name=feat_table_name)
+            return
+        t_origin = t_obj._origin
+        fc = t_obj.feature_count
+        for feature in features:
+            push_fn(feature.__dict__, t_origin)
+            fc += 1
+        t_obj.feature_count = fc
+
+    def _push_slow(self, feature: T, table_name: str = '', *, feature_name: str = '', is_ref=False) -> Any:
+        """Slow path push for features without list fields (no push_fn available)."""
+        feature_type = feature.__class__
+        defns = get_all_defns(feature_type)
 
         # Try to get table
         table_name = table_name if table_name else feature_type.__name__
@@ -307,11 +453,42 @@ class ORM:
                 nl.set_field(1, ref)
                 nl.add_feature_end()
 
+    def _push_simple_list(self, feature, schema, *, table_name='', feature_name='', is_ref=False):
+        """Fast path for Features with only scalar + numeric-list fields (no ref fields, no DFS needed)."""
+        feat_type = type(feature)
+        feat_table_name = table_name if table_name else feat_type.__name__
+
+        t_obj: Table = self._table_map.get(feat_table_name)
+        if t_obj is None:
+            new_table = Table.map_from(feat_type, _get_default_table_build(self._origin, feat_table_name), self._origin)
+            list_elem_types = schema.list_element_types
+            for fn, ft in schema.ordered_defns:
+                if ft == OriginFieldType.list:
+                    cpp_elem = LIST_ELEM_CPP_TYPE.get(list_elem_types.get(fn), 8)
+                    new_table._origin.add_list_field(fn, cpp_elem)
+                else:
+                    new_table._origin.add_field(fn, ft.value)
+            self._table_map[feat_table_name] = new_table
+            t_obj = new_table
+
+        schema.push_fn(feature.__dict__, t_obj._origin)
+        feat_idx = t_obj.feature_count  # before incrementing = 0-based index of just-added feature
+        t_obj.feature_count += 1
+
+        if is_ref or feature_name:
+            ref = t_obj._origin.create_feature_ref(feat_idx)
+            if feature_name:
+                nl = self._named_table
+                nl.add_feature_begin()
+                nl.set_field_cstring(0, feature_name)
+                nl.set_field(1, ref)
+                nl.add_feature_end()
+            if is_ref:
+                return ref
+
     def _push_graph(self, root_feature, *, table_name='', feature_name='', is_ref=False):
         """Push a feature graph (with list fields / cycles) using _GraphCollector."""
         import struct
-        from ..type import get_list_element_type, LIST_ELEM_CPP_TYPE, LIST_ELEM_DTYPE
-        from ..feature._schema import get_class_schema
         from ._graph import _GraphCollector
 
         gc = _GraphCollector()
@@ -343,7 +520,7 @@ class ORM:
 
             with Table.push2(t_obj) as t:
                 for idx, (fn, ft) in enumerate(defns):
-                    value = feat._cache.get(fn)
+                    value = feat.__dict__.get(fn)
                     if ft in (OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32,
                               OriginFieldType.i32, OriginFieldType.f32, OriginFieldType.f64):
                         t.set_field(idx, value if value is not None else 0)
@@ -399,7 +576,7 @@ class ORM:
                 continue
             _, feat_local_idx = gc.id_map[feat_id]
             ft = dict(defns).get(field_name)
-            val = feat._cache.get(field_name)
+            val = feat.__dict__.get(field_name)
             if ft == OriginFieldType.ref and val is not None:
                 target_ref = built_refs.get(id(val))
                 if target_ref:

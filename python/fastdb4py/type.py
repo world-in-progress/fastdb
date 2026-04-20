@@ -136,6 +136,16 @@ LIST_ELEM_DTYPE = {
     OriginFieldType.f64: 'float64',
 }
 
+# array.array typecodes for numeric list element types (faster than np.asarray for Python lists)
+LIST_ELEM_ARRAY_TYPECODE = {
+    OriginFieldType.u8:  'B',
+    OriginFieldType.u16: 'H',
+    OriginFieldType.u32: 'I',
+    OriginFieldType.i32: 'i',
+    OriginFieldType.f32: 'f',
+    OriginFieldType.f64: 'd',
+}
+
 def get_list_element_type(annotation) -> OriginFieldType:
     """Return the OriginFieldType of the element type inside a List[X] annotation.
 

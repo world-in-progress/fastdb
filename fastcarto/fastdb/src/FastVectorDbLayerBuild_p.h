@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <unordered_map>
 #include <assert.h>
 using namespace std;
 namespace wx{
@@ -105,10 +106,10 @@ namespace wx{
     private:
         vector<u8>       m_table_buffer;
         vector<u8>       m_geometries_buffer;
-        vector<string*>  m_string_table;
-        map<string,int>  m_string_map;
-        vector<wstring*> m_wstring_table;
-        map<wstring,int> m_wstring_map;
+        vector<const string*>       m_string_table;
+        unordered_map<string,int>  m_string_map;
+        vector<const wstring*>      m_wstring_table;
+        unordered_map<wstring,int> m_wstring_map;
         size_t           m_string_total_size;
         size_t           m_wstring_total_size;
         size_t           m_feature_count;

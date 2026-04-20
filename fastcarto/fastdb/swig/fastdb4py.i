@@ -293,6 +293,133 @@
     %}
 }
 
+%extend wx::FastVectorDbLayerBuild {
+    // Push one complete feature from a Python cache dict in a single Python→C transition.
+    // Pre-computed schema data (num_names, num_ids, str_names, str_ids) must be passed as
+    // pre-built Python list objects and numpy uint32 arrays (computed once at schema build time).
+    // This eliminates per-field SWIG wrapper overhead (~150ns × N_fields per feature).
+    void push_from_dict(PyObject* py_dict,
+                        PyObject* py_num_names, PyObject* py_num_ids,
+                        PyObject* py_str_names, PyObject* py_str_ids) {
+        int n_num = (int)PyList_GET_SIZE(py_num_names);
+        int n_str = (int)PyList_GET_SIZE(py_str_names);
+        const u32* num_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_num_ids);
+        const u32* str_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_str_ids);
+        self->addFeatureBegin();
+        for (int i = 0; i < n_num; i++) {
+            PyObject* name = PyList_GET_ITEM(py_num_names, i);
+            PyObject* val = PyDict_GetItem(py_dict, name);
+            double v;
+            if (!val || val == Py_None) {
+                v = 0.0;
+            } else if (PyFloat_Check(val)) {
+                v = PyFloat_AS_DOUBLE(val);
+            } else if (PyLong_Check(val)) {
+                v = PyLong_AsDouble(val);
+            } else {
+                v = PyFloat_AsDouble(val);
+            }
+            self->setField(num_ids[i], v);
+        }
+        for (int i = 0; i < n_str; i++) {
+            PyObject* name = PyList_GET_ITEM(py_str_names, i);
+            PyObject* val = PyDict_GetItem(py_dict, name);
+            if (val && val != Py_None) {
+                self->setField_cstring(str_ids[i], PyUnicode_AsUTF8(val));
+            } else {
+                self->setField_cstring(str_ids[i], "");
+            }
+        }
+        self->addFeatureEnd();
+    }
+
+    // Variant with feature-count increment: args reordered so cache is LAST to enable
+    // functools.partial(push_from_dict_fc, self, nn, ni, sn, si, fc_arr)(cache).
+    // fc_arr is a 1-element numpy int64 array; incremented in C to avoid Python attr overhead.
+    void push_from_dict_fc(PyObject* py_num_names, PyObject* py_num_ids,
+                           PyObject* py_str_names, PyObject* py_str_ids,
+                           PyObject* py_fc_arr, PyObject* py_dict) {
+        int n_num = (int)PyList_GET_SIZE(py_num_names);
+        int n_str = (int)PyList_GET_SIZE(py_str_names);
+        const u32* num_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_num_ids);
+        const u32* str_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_str_ids);
+        self->addFeatureBegin();
+        for (int i = 0; i < n_num; i++) {
+            PyObject* name = PyList_GET_ITEM(py_num_names, i);
+            PyObject* val = PyDict_GetItem(py_dict, name);
+            double v;
+            if (!val || val == Py_None) {
+                v = 0.0;
+            } else if (PyFloat_Check(val)) {
+                v = PyFloat_AS_DOUBLE(val);
+            } else if (PyLong_Check(val)) {
+                v = PyLong_AsDouble(val);
+            } else {
+                v = PyFloat_AsDouble(val);
+            }
+            self->setField(num_ids[i], v);
+        }
+        for (int i = 0; i < n_str; i++) {
+            PyObject* name = PyList_GET_ITEM(py_str_names, i);
+            PyObject* val = PyDict_GetItem(py_dict, name);
+            if (val && val != Py_None) {
+                self->setField_cstring(str_ids[i], PyUnicode_AsUTF8(val));
+            } else {
+                self->setField_cstring(str_ids[i], "");
+            }
+        }
+        self->addFeatureEnd();
+        /* increment feature counter stored in numpy int64 array (avoids Python attr overhead) */
+        int64_t* fc_ptr = (int64_t*)PyArray_DATA((PyArrayObject*)py_fc_arr);
+        (*fc_ptr)++;
+    }
+
+    // Batch variant: processes a Python list of cache dicts in a single C call.
+    // Eliminates per-feature Python→C bridge overhead; all features are handled in a tight C loop.
+    // Signature mirrors push_from_dict_fc but accepts py_list_of_dicts (last arg) instead of py_dict.
+    void push_many_from_dicts_fc(PyObject* py_num_names, PyObject* py_num_ids,
+                                  PyObject* py_str_names, PyObject* py_str_ids,
+                                  PyObject* py_fc_arr, PyObject* py_list_of_dicts) {
+        int n_num = (int)PyList_GET_SIZE(py_num_names);
+        int n_str = (int)PyList_GET_SIZE(py_str_names);
+        const u32* num_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_num_ids);
+        const u32* str_ids = (const u32*)PyArray_DATA((PyArrayObject*)py_str_ids);
+        int64_t* fc_ptr = (int64_t*)PyArray_DATA((PyArrayObject*)py_fc_arr);
+        Py_ssize_t n_features = PyList_GET_SIZE(py_list_of_dicts);
+        for (Py_ssize_t feat_idx = 0; feat_idx < n_features; feat_idx++) {
+            PyObject* py_dict = PyList_GET_ITEM(py_list_of_dicts, feat_idx);
+            self->addFeatureBegin();
+            for (int i = 0; i < n_num; i++) {
+                PyObject* name = PyList_GET_ITEM(py_num_names, i);
+                PyObject* val = PyDict_GetItem(py_dict, name);
+                double v;
+                if (!val || val == Py_None) {
+                    v = 0.0;
+                } else if (PyFloat_Check(val)) {
+                    v = PyFloat_AS_DOUBLE(val);
+                } else if (PyLong_Check(val)) {
+                    v = PyLong_AsDouble(val);
+                } else {
+                    v = PyFloat_AsDouble(val);
+                }
+                self->setField(num_ids[i], v);
+            }
+            for (int i = 0; i < n_str; i++) {
+                PyObject* name = PyList_GET_ITEM(py_str_names, i);
+                PyObject* val = PyDict_GetItem(py_dict, name);
+                if (val && val != Py_None) {
+                    self->setField_cstring(str_ids[i], PyUnicode_AsUTF8(val));
+                } else {
+                    self->setField_cstring(str_ids[i], "");
+                }
+            }
+            self->addFeatureEnd();
+            (*fc_ptr)++;
+        }
+    }
+
+}
+
 %extend wx::FastVectorDbFeature {
     // Batch-read: read multiple scalar fields into a freshly allocated numpy float64 array.
     PyObject* get_fields_as_doubles(PyObject* py_field_ids) {

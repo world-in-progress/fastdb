@@ -40,12 +40,12 @@ class _GraphCollector:
 
         for name, (ft, _) in hints.items():
             if ft == OriginFieldType.ref:
-                child = feature._cache.get(name)
+                child = feature.__dict__.get(name)
                 if child is not None and hasattr(child, '_origin_hints'):
                     self.collect(child, _parent_id=fid, _parent_field=name)
             elif ft == OriginFieldType.list:
                 if schema and schema.list_element_types.get(name) == OriginFieldType.ref:
-                    for child in (feature._cache.get(name) or []):
+                    for child in (feature.__dict__.get(name) or []):
                         if child is not None and hasattr(child, '_origin_hints'):
                             self.collect(child, _parent_id=fid, _parent_field=name)
 

@@ -5,6 +5,7 @@ from threading import Lock
 from weakref import WeakKeyDictionary
 from typing import Type, List, Dict, Any, Tuple, get_origin, get_args
 from .feature import Feature, get_all_defns
+from .feature.feature import _origin_s as _feat_origin_s, _db_s as _feat_db_s
 from .feature._schema import get_class_schema as _get_unified_schema
 from .type import OriginFieldType, U32, F64
 from . import core
@@ -317,8 +318,8 @@ class FastSerializer:
             # buffer-layer numpy arrays used .copy(), so nothing references
             # the shared memory region after this point.
             for obj in ctx.obj_cache.values():
-                obj._origin = None
-                obj._db = None
+                _feat_origin_s.__set__(obj, None)
+                _feat_db_s.__set__(obj, None)
 
             return result
         finally:
@@ -457,8 +458,8 @@ class _LoadContext:
         self.obj_cache[key] = obj # Cache to solve cyclic references
         
         # Fill data
-        obj._origin = feature_data
-        obj._db = self.db
+        _feat_origin_s.__set__(obj, feature_data)
+        _feat_db_s.__set__(obj, self.db)
         
         schema = _get_class_schema(cls)
         defns = schema["defns"]
@@ -488,7 +489,7 @@ class _LoadContext:
             if numeric_kind is not None:
                 if self.uses_aux_numeric:
                     # Old format: load from __fastser_list__ auxiliary layers
-                    obj._cache[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
+                    obj.__dict__[fn] = self.numeric_list_values.get((cls.__name__, fn, f_idx), [])
                 else:
                     # New format: read buffer ref from blob → direct layer access
                     if blob_view and curr_blob_offset < len(blob_view):
@@ -499,20 +500,20 @@ class _LoadContext:
                                 db_layer_idx, shape, new_offset = result
                                 if db_layer_idx == 0xFFFF:
                                     dtype = _KIND_TO_NUMPY_DTYPE.get(numeric_kind, np.dtype('<f8'))
-                                    obj._cache[fn] = np.array([], dtype=dtype)
+                                    obj.__dict__[fn] = np.array([], dtype=dtype)
                                 else:
                                     flat = self._read_buffer_layer(db_layer_idx, numeric_kind)
                                     if flat is not None:
-                                        obj._cache[fn] = flat.reshape(shape) if shape else flat
+                                        obj.__dict__[fn] = flat.reshape(shape) if shape else flat
                                     else:
-                                        obj._cache[fn] = np.array([], dtype=_KIND_TO_NUMPY_DTYPE.get(numeric_kind, np.dtype('<f8')))
+                                        obj.__dict__[fn] = np.array([], dtype=_KIND_TO_NUMPY_DTYPE.get(numeric_kind, np.dtype('<f8')))
                                 curr_blob_offset = new_offset
                             else:
-                                obj._cache[fn] = []
+                                obj.__dict__[fn] = []
                         else:
-                            obj._cache[fn] = []
+                            obj.__dict__[fn] = []
                     else:
-                        obj._cache[fn] = []
+                        obj.__dict__[fn] = []
                 continue
 
             # Check for buffer layer reference (only for blob-consuming field types)
@@ -531,7 +532,7 @@ class _LoadContext:
                                     kind = parsed[2]
                                     flat = self._read_buffer_layer(db_layer_idx, kind)
                                     if flat is not None:
-                                        obj._cache[fn] = flat.reshape(shape) if shape else flat
+                                        obj.__dict__[fn] = flat.reshape(shape) if shape else flat
                             curr_blob_offset = new_offset
                             continue
 
@@ -539,14 +540,14 @@ class _LoadContext:
             if ft in (OriginFieldType.list, OriginFieldType.unknown):
                 if blob_view:
                     val, new_offset = _unpack_list(blob_view, curr_blob_offset, hints.get(fn, Any), self)
-                    obj._cache[fn] = val
+                    obj.__dict__[fn] = val
                     curr_blob_offset = new_offset
             elif ft == OriginFieldType.bytes:
                 if blob_view:
                     cnt = struct.unpack_from('<I', blob_view, curr_blob_offset)[0]
                     curr_blob_offset += 4
                     val = bytes(blob_view[curr_blob_offset:curr_blob_offset+cnt])
-                    obj._cache[fn] = val
+                    obj.__dict__[fn] = val
                     curr_blob_offset += cnt
             elif ft == OriginFieldType.ref:
                 if blob_view:
@@ -554,21 +555,21 @@ class _LoadContext:
                     curr_blob_offset += 6
                     if l_idx_ref != 0xFFFF:
                         ref_type = hints.get(fn, Feature)
-                        obj._cache[fn] = self.get_object(l_idx_ref, f_idx_ref, ref_type)
+                        obj.__dict__[fn] = self.get_object(l_idx_ref, f_idx_ref, ref_type)
                     else:
-                        obj._cache[fn] = None
+                        obj.__dict__[fn] = None
             else:
                 # Recover scalar from Column (use pre-fetched db_idx_map)
                 db_idx = db_idx_map.get(idx, -1)
                 if db_idx != -1:
                     if ft in (OriginFieldType.u8, OriginFieldType.u16, OriginFieldType.u32, OriginFieldType.i32):
-                        obj._cache[fn] = feature_data.get_field_as_int(db_idx)
+                        obj.__dict__[fn] = feature_data.get_field_as_int(db_idx)
                     elif ft in (OriginFieldType.f32, OriginFieldType.f64):
-                        obj._cache[fn] = feature_data.get_field_as_float(db_idx)
+                        obj.__dict__[fn] = feature_data.get_field_as_float(db_idx)
                     elif ft == OriginFieldType.str:
-                        obj._cache[fn] = feature_data.get_field_as_string(db_idx)
+                        obj.__dict__[fn] = feature_data.get_field_as_string(db_idx)
                     elif ft == OriginFieldType.wstr:
-                        obj._cache[fn] = feature_data.get_field_as_wstring(db_idx)
+                        obj.__dict__[fn] = feature_data.get_field_as_wstring(db_idx)
 
         return obj
 

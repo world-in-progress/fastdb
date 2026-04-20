@@ -10,6 +10,8 @@ namespace wx
         m_feature_count = 0;
         m_string_total_size = 0;
         m_wstring_total_size = 0;
+        m_string_map.reserve(1 << 17);  // 131072 slots: avoids rehashes for up to ~65K unique strings
+        m_wstring_map.reserve(64);
         m_minx=m_miny=-1e10;
         m_maxx=m_maxy= 1e10;
         m_geometry_type = gtAny;
@@ -24,14 +26,8 @@ namespace wx
 
     FastVectorDbLayerBuild::Impl::~Impl()
     {
-        for (auto pstr : m_string_table)
-        {
-            delete pstr;
-        }
-        for (auto pwstr : m_wstring_table)
-        {
-            delete pwstr;
-        }
+        // m_string_table and m_wstring_table store pointers into the maps' keys.
+        // The maps own the memory; no manual deletion needed here.
         for(auto ref :m_created_feature_refs)
         {
             delete ref;
@@ -438,21 +434,14 @@ namespace wx
             return;
         if (!text)
             text = "";
-        auto it = m_string_map.find(text);
-        int id = -1;
-        if (it == m_string_map.end())
-        {
-            id = m_string_table.size();
-            auto pstr = new string(text);
-            m_string_table.push_back(pstr);
-            m_string_map[text] = id;
-            m_string_total_size += pstr->size() + 1;
+        // try_emplace: single hash lookup (find+insert in one op), value = next ID if inserted.
+        // Storing pointer-to-map-key avoids the separate `new string(text)` heap allocation.
+        auto [it, inserted] = m_string_map.try_emplace(text, (int)m_string_table.size());
+        if (inserted) {
+            m_string_table.push_back(&it->first);
+            m_string_total_size += it->first.size() + 1;
         }
-        else
-        {
-            id = it->second;
-        }
-        set_field_value_t(m_current_line_buffer.data(), fdx, id,m_string_table_u32);
+        set_field_value_t(m_current_line_buffer.data(), fdx, it->second, m_string_table_u32);
     }
     void FastVectorDbLayerBuild::Impl::setField(unsigned ix, const wchar_t *text)
     {
@@ -464,21 +453,12 @@ namespace wx
         if (!text)
             text = L"";
         wstring wtext(text);
-        auto it = m_wstring_map.find(wtext);
-        int id = -1;
-        if (it == m_wstring_map.end())
-        {
-            id = m_wstring_table.size();
-            auto pwstr = new wstring(wtext);
-            m_wstring_table.push_back(pwstr);
-            m_wstring_map[wtext] = id;
-            m_wstring_total_size += pwstr->size() * 2 + 2;
+        auto [it, inserted] = m_wstring_map.try_emplace(wtext, (int)m_wstring_table.size());
+        if (inserted) {
+            m_wstring_table.push_back(&it->first);
+            m_wstring_total_size += it->first.size() * 2 + 2;
         }
-        else
-        {
-            id = it->second;
-        }
-        set_field_value_t(m_current_line_buffer.data(), fdx, id,m_string_table_u32);
+        set_field_value_t(m_current_line_buffer.data(), fdx, it->second, m_string_table_u32);
     }
     void FastVectorDbLayerBuild::Impl::post()
     {
