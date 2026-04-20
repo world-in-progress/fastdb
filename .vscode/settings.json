@@ -67,5 +67,5 @@
         "typeinfo": "cpp",
         "variant": "cpp"
     },
-    "cmake.sourceDirectory": "/workspaces/fastdb/fastcarto"
+    "cmake.sourceDirectory": "${workspaceFolder}/fastcarto"
 }
