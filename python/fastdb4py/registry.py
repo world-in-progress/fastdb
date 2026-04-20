@@ -87,6 +87,13 @@ class LayerSchema:
         'pfd_num_ids',      # numpy uint32 array
         'pfd_str_names',    # List[str]
         'pfd_str_ids',      # numpy uint32 array
+        # --- Merged from ClassSchema ---
+        'hints',                  # Dict[str, Any] — raw type hints
+        'ordered_defns',          # List[(name, OriginFieldType)]
+        'origin_hints',           # Dict[str, (OriginFieldType, int)]
+        'field_index_map',        # Dict[str, int] — name → column index
+        'column_accessor_class',  # Dynamically created ColumnAccessor type
+        'scalar_field_ids_np',    # np.ndarray int32 — scalar field IDs
     )
 
     def __init__(self, layer_name: str, fields: List[FieldDef]):
@@ -108,6 +115,13 @@ class LayerSchema:
         self.pfd_num_ids = None
         self.pfd_str_names = []
         self.pfd_str_ids = None
+        # Merged ClassSchema attributes — populated by _build_schema
+        self.hints = {}
+        self.ordered_defns = []
+        self.origin_hints = {}
+        self.field_index_map = {}
+        self.column_accessor_class = None
+        self.scalar_field_ids_np = np.array([], dtype=np.int32)
 
     def get(self, name: str) -> Optional[FieldDef]:
         return self._by_name.get(name)
@@ -127,16 +141,32 @@ _NUMERIC_FT = frozenset((
 
 
 def get_schema(cls: Type) -> LayerSchema:
-    """Return (or compute) the LayerSchema for cls. Thread-safe, cached."""
-    schema = _registry.get(cls)
-    if schema is not None:
-        return schema
+    """Return (or compute) the LayerSchema for cls. Thread-safe, cached.
+
+    Uses cls.__dict__ fast-path (~40-50ns) before falling back to
+    WeakKeyDictionary under lock.
+    """
+    # Fast path: class-level cache
+    cached = cls.__dict__.get('__fastdb_schema__')
+    if cached is not None:
+        return cached
+
+    # Slow path: lock + build
     with _registry_lock:
+        # Re-check under lock
+        cached = cls.__dict__.get('__fastdb_schema__')
+        if cached is not None:
+            return cached
         schema = _registry.get(cls)
         if schema is not None:
             return schema
         schema = _build_schema(cls)
         _registry[cls] = schema
+        # Store on class for fast-path
+        try:
+            cls.__fastdb_schema__ = schema
+        except (TypeError, AttributeError):
+            pass
         return schema
 
 
@@ -192,6 +222,16 @@ def _build_schema(cls: Type) -> LayerSchema:
     schema.pfd_num_ids = np.array([idx for idx, _ in schema.numeric_plan], dtype=np.uint32)
     schema.pfd_str_names = [fn for _, fn, _ in schema.str_plan]
     schema.pfd_str_ids = np.array([idx for idx, _, _ in schema.str_plan], dtype=np.uint32)
+
+    # --- Compute merged ClassSchema attributes ---
+    schema.hints = {k: v for k, v in hints.items() if not k.startswith('_')}
+    schema.ordered_defns = [(fd.name, fd.field_type) for fd in fields]
+    schema.origin_hints = {fd.name: (fd.field_type, fd.field_id) for fd in fields}
+    schema.field_index_map = {fd.name: fd.field_id for fd in fields}
+    scalar_ids = [fd.field_id for fd in fields
+                  if fd.field_type not in (OriginFieldType.ref, OriginFieldType.list,
+                                           OriginFieldType.bytes, OriginFieldType.unknown)]
+    schema.scalar_field_ids_np = np.array(scalar_ids, dtype=np.int32)
 
     return schema
 
