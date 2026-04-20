@@ -5,7 +5,7 @@ from fastdb4py.decorator import feature
 from fastdb4py.registry import get_schema
 from fastdb4py.push import push_feature
 from fastdb4py.reader import map_feature, copy_feature
-from fastdb4py.type import F64, U32, STR
+from fastdb4py.type import F64, U32, STR, BYTES
 from fastdb4py import core
 
 
@@ -91,3 +91,33 @@ class TestCopyFeature:
         layer = db.get_layer(0)
         obj = copy_feature(ReadPoint, layer, 0)
         assert isinstance(obj, ReadPoint)
+
+    def test_copy_feature_detaches_bytes(self):
+        """copy_feature should return a detached bytes copy, not a memoryview."""
+        from fastdb4py.registry import get_schema
+        from fastdb4py.push import push_feature
+
+        @feature
+        class WithBytes:
+            data: BYTES
+
+        schema = get_schema(WithBytes)
+        db = core.WxDatabaseBuild()
+        db.begin("")
+        t = db.create_layer_begin(schema.layer_name)
+        t.set_geometry_type(core.gtAny, core.cfTx32, aabboxEnabled=False)
+        t.set_extent(-180, -90, 180, 90)
+        for fd in schema.fields:
+            t.add_field(fd.name, fd.cpp_type)
+        push_feature(WithBytes(data=b"hello"), t, schema)
+
+        mem = core.WxMemoryStream()
+        db.post(mem)
+        buf = mem.data().as_array(np.uint8).tobytes()
+        rdb = core.WxDatabase.load_xbuffer(buf)
+        rdb._buffer = buf
+
+        layer = rdb.get_layer(0)
+        obj = copy_feature(WithBytes, layer, 0)
+        assert isinstance(obj.data, bytes)
+        assert obj.data == b"hello"

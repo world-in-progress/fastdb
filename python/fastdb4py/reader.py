@@ -32,7 +32,10 @@ def _read_field(feat: 'core.WxFeature', fd: FieldDef) -> Any:
         return getter(fd.field_id)
 
     if fd.field_type == OriginFieldType.bytes:
-        return feat.get_geometry_like_chunk()
+        raw = feat.get_geometry_like_chunk()
+        if raw is None:
+            return b''
+        return raw.to_bytes() if hasattr(raw, 'to_bytes') else bytes(raw)
 
     if fd.field_type == OriginFieldType.ref:
         return None  # REF resolved at ORM level
