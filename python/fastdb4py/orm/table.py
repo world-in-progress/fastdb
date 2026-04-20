@@ -4,10 +4,10 @@ from contextlib import contextmanager
 from typing import TypeVar, Generic, Type, Generator
 
 from .. import core
-from ..feature import Feature, get_all_defns
-from ..feature._schema import get_class_schema
+from ..registry import get_schema
+from ..reader import copy_feature, bind_feature, MappedFeature
 
-T = TypeVar('T', bound=Feature)
+T = TypeVar('T')
 _column_accessor_lock = Lock()
 
 
@@ -19,7 +19,7 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
     eliminating the separate WeakKeyDictionary (Cache 3).
     """
     with _column_accessor_lock:
-        schema = get_class_schema(feature_type)
+        schema = get_schema(feature_type)
         ColumnAccessorClass = schema.column_accessor_class
         if ColumnAccessorClass is not None:
             return ColumnAccessorClass(table_origin, feature_type)
@@ -113,11 +113,11 @@ class Table(Generic[T]):
             index = self._origin.get_feature_count() + index
         
         # Get feature
-        return  self._feature_type.map_from(self._db, self._origin.tryGetFeature(index))
+        return bind_feature(self._feature_type, self._db, self._origin, index)
     
     def __iter__(self) -> Generator[T, None, None]:
         for i in range(self._origin.get_feature_count()):
-            yield self._feature_type.map_from(self._db, self._origin.tryGetFeature(i))
+            yield bind_feature(self._feature_type, self._db, self._origin, i)
     
     @staticmethod
     @contextmanager
@@ -208,22 +208,24 @@ class Table(Generic[T]):
             getattr(col, field_name)[:] = arr
 
     def iter_reuse(self) -> Generator[T, None, None]:
-        """
-        High-performance iterator that reuses a single Feature wrapper instance.
+        """High-performance iterator reusing a single MappedFeature proxy.
 
         WARNING: Do NOT hold references to the yielded object across iterations.
-        The same object is mutated on each step — any reference held outside the
-        loop body will see the NEXT item's data.
-
+        The same MappedFeature wrapper is returned with its internal pointer mutated.
         Only supported for fixed-scale tables (table.fixed == True).
         """
         if not self.fixed:
             raise RuntimeError('iter_reuse() only supports fixed-scale tables.')
 
-        wrapper = self._feature_type()          # allocate once
-        object.__setattr__(wrapper, '_db', self._db)
+        schema = get_schema(self._feature_type)
         count = self._origin.get_feature_count()
-        for i in range(count):
-            object.__setattr__(wrapper, '_origin', self._origin.tryGetFeature(i))
-            object.__setattr__(wrapper, '_cache', None)
-            yield wrapper
+        if count == 0:
+            return
+
+        feat0 = self._origin.tryGetFeature(0)
+        proxy = MappedFeature(self._feature_type, feat0, schema)
+        yield proxy
+
+        for i in range(1, count):
+            object.__setattr__(proxy, '_feat', self._origin.tryGetFeature(i))
+            yield proxy

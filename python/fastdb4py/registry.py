@@ -145,28 +145,34 @@ def get_schema(cls: Type) -> LayerSchema:
 
     Uses cls.__dict__ fast-path (~40-50ns) before falling back to
     WeakKeyDictionary under lock.
+
+    Note: old Feature subclasses may already have a ClassSchema cached on
+    ``__fastdb_schema__`` (set by ``get_class_schema``). The isinstance
+    check ensures we skip those and build a proper LayerSchema instead,
+    stored only in the WeakKeyDictionary to avoid overwriting the old cache.
     """
-    # Fast path: class-level cache
+    # Fast path: class-level cache (only if it's actually a LayerSchema)
     cached = cls.__dict__.get('__fastdb_schema__')
-    if cached is not None:
+    if isinstance(cached, LayerSchema):
         return cached
 
     # Slow path: lock + build
     with _registry_lock:
-        # Re-check under lock
         cached = cls.__dict__.get('__fastdb_schema__')
-        if cached is not None:
+        if isinstance(cached, LayerSchema):
             return cached
         schema = _registry.get(cls)
         if schema is not None:
             return schema
         schema = _build_schema(cls)
         _registry[cls] = schema
-        # Store on class for fast-path
-        try:
-            cls.__fastdb_schema__ = schema
-        except (TypeError, AttributeError):
-            pass
+        # Only store on class if __fastdb_schema__ is not already occupied
+        # by a ClassSchema from the old code path.
+        if '__fastdb_schema__' not in cls.__dict__:
+            try:
+                cls.__fastdb_schema__ = schema
+            except (TypeError, AttributeError):
+                pass
         return schema
 
 

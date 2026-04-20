@@ -96,3 +96,16 @@ def copy_feature(cls: Type, layer: 'core.WxLayerTable', idx: int) -> Any:
         obj.__dict__[fd.name] = val
 
     return obj
+
+
+def bind_feature(cls: Type, db, layer: 'core.WxLayerTable', idx: int) -> Any:
+    """Return a live-mapped instance bound to the C++ backing store.
+
+    For old Feature subclasses (which expose ``map_from``), delegates to
+    ``cls.map_from(db, feat)`` so reads AND writes dispatch to C++.
+    For new ``@feature`` classes, falls back to ``copy_feature``.
+    """
+    map_from = getattr(cls, 'map_from', None)
+    if map_from is not None:
+        return map_from(db, layer.tryGetFeature(idx))
+    return copy_feature(cls, layer, idx)
