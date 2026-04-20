@@ -5,3 +5,7 @@ from .type import (
 from .feature import Feature
 from .orm import ORM, Table, TableDefn
 from .serializer import FastSerializer
+
+# Decorator-based ORM2 API
+from .decorator import feature
+from .orm2 import ORM2

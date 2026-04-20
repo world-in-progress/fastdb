@@ -68,21 +68,30 @@ def _set_field(layer_build, fd, value, ref_resolver):
 
 
 def _set_list_field(layer_build, fd, value, ref_resolver=None):
-    """Set a list field using set_field_list_numeric or set_field_list_refs."""
+    """Set a list field using set_field_list_numeric."""
     if value is None or (hasattr(value, '__len__') and len(value) == 0):
         layer_build.set_field_list_numeric(fd.field_id, b"")
         return
     elem_type = fd.list_elem_type
     if elem_type == OriginFieldType.ref:
-        # LIST[REF] field - resolve each reference
+        # LIST[REF]: pack as raw 5-byte ref entries via set_field_list_numeric
+        import struct
+        _zero_ref = b'\x00\x00\x00\x00\x00'
+        parts = []
         if ref_resolver is not None:
-            refs = []
             for ref_obj in value:
                 if ref_obj is not None:
                     ref = ref_resolver(ref_obj)
                     if ref is not None:
-                        refs.append(ref)
-            layer_build.set_field_list_refs(fd.field_id, refs)
+                        parts.append(struct.pack('<HBH', ref.ilayer, ref.ifeature, ref.ifeatureH))
+                    else:
+                        parts.append(_zero_ref)
+                else:
+                    parts.append(_zero_ref)
+        if parts:
+            layer_build.set_field_list_numeric(fd.field_id, b''.join(parts))
+        else:
+            layer_build.set_field_list_numeric(fd.field_id, b"")
         return
     if elem_type is None:
         return  # Unknown list type
