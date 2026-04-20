@@ -136,3 +136,49 @@ def test_feature_decorator_accepts_ref():
     schema = get_schema(Device)
     assert schema.fields[0].field_type == OriginFieldType.ref
     assert schema.fields[0].ref_target is Vendor
+
+
+def test_feature_injects_init():
+    """@feature should inject __init__(**kwargs) for pure-Python construction."""
+    @feature
+    class WithInit:
+        x: F64
+        y: F64
+    obj = WithInit(x=1.0, y=2.0)
+    assert obj.x == 1.0
+    assert obj.y == 2.0
+
+def test_feature_init_ignores_unknown_kwargs():
+    """Unknown kwargs should be stored in __dict__ anyway (duck typing)."""
+    @feature
+    class Flexible:
+        x: F64
+    obj = Flexible(x=1.0, extra="hello")
+    assert obj.x == 1.0
+    assert obj.extra == "hello"
+
+def test_feature_rejects_slots():
+    """@feature should reject classes with __slots__ (unless they include __dict__)."""
+    with pytest.raises(TypeError, match="__slots__"):
+        @feature
+        class Slotted:
+            __slots__ = ('x',)
+            x: F64
+
+def test_feature_allows_slots_with_dict():
+    """Classes with __slots__ = ('__dict__',) are fine."""
+    @feature
+    class SlottedDict:
+        __slots__ = ('__dict__',)
+        x: F64
+    obj = SlottedDict(x=1.0)
+    assert obj.x == 1.0
+
+def test_feature_forward_ref_tolerance():
+    """@feature should not crash on forward references in annotations."""
+    @feature
+    class Container:
+        x: F64
+        child: 'ForwardRefTarget'
+    # Should not raise — forward refs are deferred to schema resolution time
+    assert hasattr(Container, '__fastdb_feature__')
