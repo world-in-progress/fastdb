@@ -25,6 +25,36 @@ def is_feature(cls) -> bool:
     return isinstance(cls, type) and cls.__dict__.get('__fastdb_feature__', False) is True
 
 
+_class_registry: Dict[str, Type] = {}
+
+
+def register_class(cls, *, allow_replace: bool = False) -> None:
+    """Register a @feature class by name. Fails fast on collision.
+
+    Parameters
+    ----------
+    allow_replace : bool
+        If True, silently overwrite an existing entry (used by the
+        @feature decorator where redefinition is normal across modules).
+        If False (default), raise ValueError when a *different* class
+        object with the same __name__ is already registered.
+    """
+    name = cls.__name__
+    existing = _class_registry.get(name)
+    if existing is not None and existing is not cls and not allow_replace:
+        raise ValueError(
+            f"Feature class name {name!r} already registered by "
+            f"{existing.__module__}.{existing.__qualname__}. "
+            f"Conflicting: {cls.__module__}.{cls.__qualname__}"
+        )
+    _class_registry[name] = cls
+
+
+def lookup_class(name: str):
+    """Look up a @feature class by name. Returns None if not found."""
+    return _class_registry.get(name)
+
+
 @dataclass(frozen=True, slots=True)
 class FieldDef:
     """Metadata for a single field in a @feature class."""

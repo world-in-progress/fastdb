@@ -36,3 +36,38 @@ def test_is_feature_with_old_feature_class():
     class Old(Feature):
         x: F64
     assert is_feature(Old) is False
+
+
+# --- Class registry tests ---
+
+from fastdb4py.registry import lookup_class
+
+def test_class_registry_lookup():
+    @feature
+    class Lookup1:
+        x: F64
+    found = lookup_class("Lookup1")
+    assert found is Lookup1
+
+def test_class_registry_not_found():
+    assert lookup_class("NonExistent__") is None
+
+def test_class_registry_collision_detection():
+    """Same name from different definitions should fail fast."""
+    import pytest
+    @feature
+    class Collider:
+        x: F64
+
+    # Create a new class with the same name but different identity
+    ns = {}
+    exec("""
+from fastdb4py.type import F64
+class Collider:
+    x: F64
+    """, ns)
+    other_cls = ns['Collider']
+
+    with pytest.raises(ValueError, match="already registered"):
+        from fastdb4py.registry import register_class
+        register_class(other_cls)

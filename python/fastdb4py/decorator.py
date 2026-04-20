@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, get_type_hints, get_origin, get_args
 import typing
 
-from .registry import get_schema
+from .registry import get_schema, register_class
 from .type import OriginFieldType, get_origin_type, FIELD_TYPE_MAP
 
 # Types that are explicitly rejected
@@ -24,6 +24,7 @@ def feature(cls):
             y: F64
     """
     cls.__fastdb_feature__ = True
+    register_class(cls, allow_replace=True)
     _validate_annotations(cls)
     get_schema(cls)  # register
     return cls
