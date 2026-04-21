@@ -259,3 +259,23 @@ def test_truncate_layer_build_set_numeric_column_bulk_rejects_non_contiguous_inp
 
     with pytest.raises(TypeError):
         layer.set_numeric_column_bulk(0, values)
+
+
+def test_truncate_layer_build_set_numeric_column_bulk_rejects_wrong_size_buffer():
+    db = core.WxDatabaseBuild()
+    db.begin("")
+    layer = db.create_layer_begin("num_rows")
+    layer.set_geometry_type(core.gtNone, core.cfTx32, aabboxEnabled=False)
+    layer.add_field("x", core.ftF64)
+    db.truncate("num_rows", 3)
+
+    layer.set_numeric_column_bulk(0, np.array([1.0, 2.5, 3.5], dtype=np.float64))
+    layer.set_numeric_column_bulk(0, np.array([9.0, 8.0, 7.0], dtype=np.float32))
+
+    mem = core.WxMemoryStream()
+    db.post(mem)
+    buf = mem.data().as_array(np.uint8).tobytes()
+    rdb = core.WxDatabase.load_xbuffer(buf)
+    rdb._buffer = buf
+    out = rdb.get_layer(0).get_column(0).as_nparray()
+    np.testing.assert_allclose(out, np.array([1.0, 2.5, 3.5], dtype=np.float64))

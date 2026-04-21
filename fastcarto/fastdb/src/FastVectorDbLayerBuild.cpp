@@ -615,8 +615,7 @@ namespace wx
         if (fd.type == ftSTR || fd.type == ftWSTR || fd.type == ftList || fd.type == ftFeatureRef)
             return;
         assert(fd.size > 0);
-        assert(data != nullptr);
-        assert(nbytes > 0);
+        assert(data != nullptr || nbytes == 0);
         if (fd.size == 0 || data == nullptr || nbytes == 0)
             return;
         assert(nbytes == (u64)m_feature_count * (u64)fd.size);
