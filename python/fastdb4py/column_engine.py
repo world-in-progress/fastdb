@@ -333,13 +333,20 @@ class ColumnEngine:
     def _fill_fixed_table(self, table_name: str, writes: dict[str, object]) -> None:
         layer_build = self._fixed_layer_builds[table_name]
         field_ids = self._fixed_table_fields[table_name]
-        for field_name, payload in writes.items():
-            field_index = field_ids[field_name]
-            if isinstance(payload, tuple):
-                offsets, data = payload
-                layer_build.set_string_column_bulk(field_index, offsets, data)
-            else:
-                layer_build.set_numeric_column_bulk(field_index, payload)
+        try:
+            for field_name, payload in writes.items():
+                field_index = field_ids[field_name]
+                if isinstance(payload, tuple):
+                    offsets, data = payload
+                    layer_build.set_string_column_bulk(field_index, offsets, data)
+                else:
+                    layer_build.set_numeric_column_bulk(field_index, payload)
+        except Exception:
+            # No new snapshot has been published yet, so readers still observe
+            # the previous self._origin view. However, layer_build writes are
+            # not rolled back here; the truncate build may now be partially
+            # updated and should be treated as pending/indeterminate state.
+            raise
         self._publish_fixed_snapshot()
 
     def _find_layer(self, table_name: str):
