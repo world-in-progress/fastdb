@@ -237,6 +237,24 @@ def test_loaded_fixed_table_rejects_fill():
             engine.unlink()
 
 
+def test_shared_writer_fixed_table_rejects_fill():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+    tbl.fill(
+        row_id=np.array([1, 2], dtype=np.uint32),
+        x=np.array([1.0, 2.0], dtype=np.float64),
+        name=["aa", "bb"],
+    )
+
+    shm_name = f"fastdb_fill_writer_{secrets.token_hex(4)}"
+    try:
+        engine.share(shm_name)
+        with pytest.raises(RuntimeError, match="read-only fixed tables"):
+            engine.table(CEStringPoint).fill(name=["x", "y"])
+    finally:
+        engine.unlink()
+
+
 def test_table_fill_overwrites_prior_values_on_repeated_success():
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)

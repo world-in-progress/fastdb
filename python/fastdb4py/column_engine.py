@@ -335,7 +335,8 @@ class ColumnEngine:
         field_ids = self._fixed_table_fields[table_name]
         # If a bulk setter raises, no new snapshot is published and readers
         # continue to observe self._origin. The writable truncate build is not
-        # rolled back here, so layer_build may be left partially updated.
+        # rolled back here, so layer_build may be left partially updated and a
+        # later successful fill could publish that partial build-state.
         for field_name, payload in writes.items():
             field_index = field_ids[field_name]
             if isinstance(payload, tuple):

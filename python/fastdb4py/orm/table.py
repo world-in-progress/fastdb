@@ -234,7 +234,7 @@ class Table(Generic[T]):
         if not self.fixed:
             raise RuntimeError('fill() only supports fixed-scale tables.')
         if self._fixed_fill_handler is None:
-            raise RuntimeError('fill() is read-only for loaded fixed tables.')
+            raise RuntimeError('fill() is unavailable for read-only fixed tables.')
         if not col_arrays:
             raise ValueError('fill() requires at least one column.')
 
