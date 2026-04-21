@@ -95,6 +95,25 @@ def test_column_engine_fill():
     assert tbl.column.y[4] == pytest.approx(50.0)
 
 
+def test_table_fill_coerces_float32_into_f64_columns():
+    engine = ColumnEngine.truncate([Layout(CEPoint, 3)])
+    tbl = engine.table(CEPoint)
+
+    tbl.fill(
+        x=np.array([1.5, 2.5, 3.5], dtype=np.float32),
+        y=np.array([10.0, 20.0, 30.0], dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(
+        tbl.column.x,
+        np.array([1.5, 2.5, 3.5], dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        tbl.column.y,
+        np.array([10.0, 20.0, 30.0], dtype=np.float64),
+    )
+
+
 def test_table_fill_rejects_non_fixed_tables():
     engine = ColumnEngine.create()
     engine.push(CEPoint(x=1.0, y=2.0))
@@ -228,6 +247,31 @@ def test_table_fill_overwrites_prior_values_on_repeated_success():
         np.array([9.0, 10.0], dtype=np.float64),
     )
     assert tbl.column.name.to_pylist() == ["left", "right"]
+
+
+def test_table_fill_preserves_other_tables_across_snapshot_publish():
+    engine = ColumnEngine.truncate([Layout(CEPoint, 2), Layout(CEStringPoint, 2)])
+    point_tbl = engine.table(CEPoint)
+    string_tbl = engine.table(CEStringPoint)
+
+    point_tbl.fill(
+        x=np.array([1.0, 2.0], dtype=np.float64),
+        y=np.array([10.0, 20.0], dtype=np.float64),
+    )
+    string_tbl.fill(
+        row_id=np.array([7, 8], dtype=np.uint32),
+        x=np.array([3.0, 4.0], dtype=np.float64),
+        name=["aa", "bb"],
+    )
+
+    np.testing.assert_array_equal(
+        point_tbl.column.x,
+        np.array([1.0, 2.0], dtype=np.float64),
+    )
+    np.testing.assert_array_equal(
+        point_tbl.column.y,
+        np.array([10.0, 20.0], dtype=np.float64),
+    )
 
 
 def test_column_engine_rejects_ref_in_push():

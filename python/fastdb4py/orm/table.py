@@ -11,6 +11,16 @@ from ..type import OriginFieldType
 
 T = TypeVar('T')
 _column_accessor_lock = Lock()
+_FILL_NUMERIC_DTYPES = {
+    OriginFieldType.u8: np.uint8,
+    OriginFieldType.u16: np.uint16,
+    OriginFieldType.u32: np.uint32,
+    OriginFieldType.i32: np.int32,
+    OriginFieldType.u8n: np.uint8,
+    OriginFieldType.u16n: np.uint16,
+    OriginFieldType.f32: np.float32,
+    OriginFieldType.f64: np.float64,
+}
 
 
 def _create_column_accessor(feature_type: Type[T], table) -> T:
@@ -231,13 +241,15 @@ class Table(Generic[T]):
         expected = len(self)
         writes = {}
         col = self._column
+        schema = get_schema(self._feature_type)
         for field_name, values in col_arrays.items():
             column = getattr(col, field_name)
             if isinstance(column, StringColumn):
                 writes[field_name] = column._normalize_fill_values(values, expected)
                 continue
 
-            arr = np.ascontiguousarray(values)
+            field_type = schema.get(field_name).field_type
+            arr = np.ascontiguousarray(values, dtype=_FILL_NUMERIC_DTYPES[field_type])
             if len(arr) != expected:
                 raise ValueError(
                     f'{field_name} expected {expected} rows, got {len(arr)}.'
