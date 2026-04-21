@@ -95,6 +95,23 @@ def test_column_engine_fill():
     assert tbl.column.y[4] == pytest.approx(50.0)
 
 
+def test_table_fill_rejects_non_fixed_tables():
+    engine = ColumnEngine.create()
+    engine.push(CEPoint(x=1.0, y=2.0))
+    tbl = engine._table_map[CEPoint.__name__]
+
+    with pytest.raises(RuntimeError, match='fixed-scale tables'):
+        tbl.fill(x=np.array([1.0], dtype=np.float64))
+
+
+def test_table_fill_rejects_empty_call():
+    engine = ColumnEngine.truncate([Layout(CEPoint, 2)])
+    tbl = engine.table(CEPoint)
+
+    with pytest.raises(ValueError, match='at least one column'):
+        tbl.fill()
+
+
 def test_table_fill_accepts_mixed_numeric_and_string_columns():
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
     tbl = engine.table(CEStringPoint)

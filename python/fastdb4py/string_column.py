@@ -110,11 +110,6 @@ class StringColumn:
             fill_handler({self._field_name: (offsets_arr, data_arr)})
             return
 
-        table_origin = self._table._origin
-        if hasattr(table_origin, 'set_string_column_bulk'):
-            table_origin.set_string_column_bulk(self._field_index, offsets_arr, data_arr)
-            return
-
         raise RuntimeError(
             'StringColumn.fill_utf8() requires a writable truncate table. '
             'Loaded read-only databases support reads only.'

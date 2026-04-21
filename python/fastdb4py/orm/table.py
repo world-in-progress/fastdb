@@ -215,7 +215,11 @@ class Table(Generic[T]):
         self._origin.rewind()
 
     def fill(self, **col_arrays) -> None:
-        """Bulk-fill fixed tables with validated numeric and UTF-8 string columns."""
+        """Bulk-fill fixed tables with validated numeric and UTF-8 string columns.
+
+        Re-fetch any previously cached column arrays after a successful fill,
+        because the table is remapped to a fresh published snapshot.
+        """
         if not self.fixed:
             raise RuntimeError('fill() only supports fixed-scale tables.')
         if self._fixed_fill_handler is None:
