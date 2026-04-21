@@ -16,7 +16,7 @@ import numpy as np
 from dataclasses import dataclass, field
 
 sys.path.insert(0, "python")
-from fastdb4py import Feature, F64, U32, I32, STR
+from fastdb4py import feature, F64, U32, I32, STR
 from fastdb4py.serializer import FastSerializer
 from typing import List
 
@@ -24,7 +24,8 @@ from typing import List
 # --- Complex Feature definition ---
 # Realistic point-cloud-like object: scalars + string + typed numeric lists + ndarray
 
-class PointCloud(Feature):
+@feature
+class PointCloud:
     name: STR
     id: U32
     timestamp: F64
@@ -32,7 +33,7 @@ class PointCloud(Feature):
     positions: List[F64]     # 3N floats (x,y,z interleaved)
     indices: List[U32]       # triangle indices
     labels: List[str]        # string labels (non-numeric)
-    weights: object          # numpy float64 array (buffer layer path)
+    weights: np.ndarray      # numpy float64 array (buffer layer path)
 
 
 # Plain dataclass equivalent for pickle comparison

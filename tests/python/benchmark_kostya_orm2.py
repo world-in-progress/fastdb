@@ -1,19 +1,19 @@
 """
-Kostya-Style Serialization Benchmark — ORM2 vs Old ORM vs PyArrow
-==================================================================
+Kostya-Style Serialization Benchmark — ColumnEngine vs ObjectEngine vs PyArrow vs pickle
+==========================================================================================
 Inspired by Kostya's benchmarks (github.com/kostya/benchmarks).
 
 Data structure: 'Coordinate' records — x, y, z (float64) + name (string).
 
 Compares four systems:
-  - fastdb ORM2   (@feature decorator, deferred batch push)
-  - fastdb ORM    (Feature base class, old push path)
-  - PyArrow       (columnar IPC)
-  - pickle        (Python native binary)
+  - fastdb ColumnEngine  (OLAP/batch columnar, push + combine)
+  - fastdb ObjectEngine  (OLTP/graph, deferred batch push + combine)
+  - PyArrow              (columnar IPC)
+  - pickle               (Python native binary)
 
 Phases measured (milliseconds, median of `reps` runs):
   build      : construct N in-memory records + push
-  encode     : convert to binary wire format (combine / _combine / IPC)
+  encode     : convert to binary wire format (combine)
   shm        : allocate POSIX shared memory + memcpy bytes in
   deserialize: load from shared-memory / IPC buffer
   read       : iterate all N records, sum x+y+z
@@ -40,9 +40,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
-from fastdb4py import Feature, ORM, F64, U32, STR
-from fastdb4py.decorator import feature
-from fastdb4py.orm2 import ORM2
+from fastdb4py import feature, ColumnEngine, ObjectEngine, F64, U32, STR
 
 try:
     import pyarrow as pa
@@ -57,9 +55,9 @@ except ImportError:
 # Data models
 # ---------------------------------------------------------------------------
 
-# Old ORM model (Feature base class)
-class Coord(Feature):
-    """Kostya-style coordinate record (old ORM)."""
+@feature
+class Coord:
+    """Kostya-style coordinate record (ColumnEngine)."""
     row_id: U32
     x: F64
     y: F64
@@ -67,10 +65,9 @@ class Coord(Feature):
     name: STR
 
 
-# ORM2 model (@feature decorator)
 @feature
 class Coord2:
-    """Kostya-style coordinate record (ORM2)."""
+    """Kostya-style coordinate record (ObjectEngine)."""
     row_id: U32
     x: F64
     y: F64
@@ -107,15 +104,15 @@ def _median_ms(fn, reps: int) -> float:
 
 
 # ---------------------------------------------------------------------------
-# ORM2 benchmark
+# ObjectEngine benchmark
 # ---------------------------------------------------------------------------
 
-def bench_orm2(N: int, reps: int) -> dict:
-    shm_name = f"orm2_kostya_{uuid.uuid4().hex[:8]}"
+def bench_object_engine(N: int, reps: int) -> dict:
+    shm_name = f"oe_kostya_{uuid.uuid4().hex[:8]}"
 
     # --- build: push N Coord2 features ---
     def do_build():
-        orm = ORM2.create()
+        orm = ObjectEngine.create()
         for i in range(N):
             f = Coord2()
             f.row_id = i
@@ -161,10 +158,10 @@ def bench_orm2(N: int, reps: int) -> dict:
     try:
         # --- deserialize: load from shm ---
         def do_deserial():
-            h = ORM2.load(shm_name)
+            h = ObjectEngine.load(shm_name)
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ORM2.load(shm_name)
+        orm2 = ObjectEngine.load(shm_name)
 
         # --- read: sum x+y+z via columnar numpy (zero-copy) ---
         def do_read():
@@ -176,11 +173,11 @@ def bench_orm2(N: int, reps: int) -> dict:
 
         read_ms = _median_ms(do_read, reps)
     finally:
-        ORM2.unlink(shm_name)
+        ObjectEngine.unlink(shm_name)
 
     total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
     return {
-        "system": "orm2",
+        "system": "object",
         "build_ms": round(build_ms, 2),
         "encode_ms": round(encode_ms, 2),
         "shm_ms": round(shm_ms, 2),
@@ -343,15 +340,15 @@ def bench_pickle(N: int, reps: int) -> dict:
     }
 
 # ---------------------------------------------------------------------------
-# Old ORM benchmark
+# ColumnEngine benchmark
 # ---------------------------------------------------------------------------
 
-def bench_old_orm(N: int, reps: int) -> dict:
-    shm_name = f"orm_kostya_{uuid.uuid4().hex[:8]}"
+def bench_column_engine(N: int, reps: int) -> dict:
+    shm_name = f"ce_kostya_{uuid.uuid4().hex[:8]}"
 
     # --- build: push N Coord features ---
     def do_build():
-        orm = ORM.create()
+        orm = ColumnEngine.create()
         for i in range(N):
             f = Coord()
             f.row_id = i
@@ -364,17 +361,17 @@ def bench_old_orm(N: int, reps: int) -> dict:
 
     build_ms = _median_ms(do_build, reps)
 
-    # --- encode: C++ columnar flush (_combine) ---
+    # --- encode: C++ columnar flush (combine) ---
     _unflushed = [do_build() for _ in range(reps)]
 
     def do_encode():
-        _unflushed.pop()._combine()
+        _unflushed.pop().combine()
 
     encode_ms = _median_ms(do_encode, reps)
 
     # --- shm: write flushed binary to POSIX shared memory ---
     orm = do_build()
-    orm._combine()
+    orm.combine()
     _raw = bytes(orm._origin.buffer().as_array(np.uint8))
 
     def do_shm():
@@ -397,15 +394,15 @@ def bench_old_orm(N: int, reps: int) -> dict:
     try:
         # --- deserialize: zero-copy load from shm ---
         def do_deserial():
-            h = ORM.load(shm_name)
+            h = ColumnEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ORM.load(shm_name)
+        orm2 = ColumnEngine.load(shm_name)
 
         # --- read: sum x+y+z via columnar numpy ---
         def do_read():
-            tbl = orm2[Coord][Coord]
+            tbl = orm2.table(Coord)
             cx = tbl.column.x
             cy = tbl.column.y
             cz = tbl.column.z
@@ -417,14 +414,14 @@ def bench_old_orm(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ORM.load(shm_name)
+                h = ColumnEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
 
     total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
     return {
-        "system": "old-orm",
+        "system": "column",
         "build_ms": round(build_ms, 2),
         "encode_ms": round(encode_ms, 2),
         "shm_ms": round(shm_ms, 2),
@@ -530,13 +527,13 @@ def main():
     reps = 1 if args.quick else args.reps
 
     print("=" * 85)
-    print("  Kostya-Style Benchmark — ORM2 vs Old ORM vs PyArrow vs pickle")
+    print("  Kostya-Style Benchmark — ColumnEngine vs ObjectEngine vs PyArrow vs pickle")
     print("  Data: Coordinate records  { row_id: U32 | x, y, z: F64 | name: STR }")
     print("  Phases (ms, median): build | encode | shm write | deserialize | read sum(x+y+z)")
     print("  Size: uncompressed wire format (KB)")
     print("  Notes:")
-    print("    orm2    = @feature decorator + deferred batch push + combine()")
-    print("    old-orm = Feature base class + push + _combine() + numpy column read")
+    print("    column  = ColumnEngine (OLAP/batch) push + combine() + numpy column read")
+    print("    object  = ObjectEngine (OLTP/graph) deferred batch push + combine()")
     print("    arrow   = PyArrow Table + IPC stream + numpy read")
     print("    pickle  = list[dict] + pickle.dumps/loads + dict iteration")
     print("=" * 85)
@@ -548,8 +545,8 @@ def main():
         print(f"\n  Running N={N:,}  reps={reps} ...", end="", flush=True)
 
         for name, fn in [
-            ("orm2", bench_orm2),
-            ("old-orm", bench_old_orm),
+            ("object", bench_object_engine),
+            ("column", bench_column_engine),
             ("arrow", bench_arrow),
             ("pickle", bench_pickle),
         ]:

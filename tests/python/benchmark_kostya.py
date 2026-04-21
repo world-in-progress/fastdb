@@ -49,7 +49,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
-from fastdb4py import Feature, ORM
+from fastdb4py import feature, ColumnEngine, Layout
 from fastdb4py import F64, U32, STR
 
 try:
@@ -64,7 +64,8 @@ except ImportError:
 # Data model — at module level so get_type_hints() resolves annotation strings
 # ---------------------------------------------------------------------------
 
-class Coord(Feature):
+@feature
+class Coord:
     """Kostya-style coordinate record."""
     row_id: U32
     x: F64
@@ -73,8 +74,9 @@ class Coord(Feature):
     name: STR
 
 
-class CoordNum(Feature):
-    """Numeric-only Coord (no STR) — compatible with ORM.truncate."""
+@feature
+class CoordNum:
+    """Numeric-only Coord (no STR) — compatible with ColumnEngine.truncate."""
     row_id: U32
     x: F64
     y: F64
@@ -117,9 +119,9 @@ def _median_ms(fn, reps: int) -> float:
 def bench_fastdb(N: int, reps: int) -> dict:
     shm_name = f"fdb_kostya_{uuid.uuid4().hex[:8]}"
 
-    # --- build: push N Coord features into a mutable ORM ---
+    # --- build: push N Coord features into a mutable engine ---
     def do_build():
-        orm = ORM.create()
+        orm = ColumnEngine.create()
         for i in range(N):
             f = Coord()
             f.row_id = i
@@ -133,18 +135,18 @@ def bench_fastdb(N: int, reps: int) -> dict:
     build_ms = _median_ms(do_build, reps)
     orm = do_build()
 
-    # --- encode: C++ columnar flush (_combine) only ---
-    # Pre-build un-flushed ORMs so we only time the flush itself
+    # --- encode: C++ columnar flush (combine) only ---
+    # Pre-build un-flushed engines so we only time the flush itself
     _unflushed = [do_build() for _ in range(reps)]
 
     def do_encode():
-        _unflushed.pop()._combine()
+        _unflushed.pop().combine()
 
     encode_ms = _median_ms(do_encode, reps)
 
     # --- shm: write already-flushed binary to POSIX shared memory ---
-    orm._combine()  # ensure flushed before timing shm write
-    _raw = bytes(orm._origin.buffer().as_array(__import__('numpy').uint8))
+    orm.combine()  # ensure flushed before timing shm write
+    _raw = bytes(orm._origin.buffer().as_array(np.uint8))
 
     def do_shm():
         s = _shm_write(_raw)
@@ -168,15 +170,15 @@ def bench_fastdb(N: int, reps: int) -> dict:
     try:
         # --- deserialize: zero-copy load from shm ---
         def do_deserial():
-            h = ORM.load(shm_name)
+            h = ColumnEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ORM.load(shm_name)
+        orm2 = ColumnEngine.load(shm_name)
 
         # --- read: iterate all N records, sum x+y+z ---
         def do_read():
-            tbl = orm2[Coord][Coord]
+            tbl = orm2.table(Coord)
             cx = tbl.column.x
             cy = tbl.column.y
             cz = tbl.column.z
@@ -188,7 +190,7 @@ def bench_fastdb(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ORM.load(shm_name)
+                h = ColumnEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
@@ -212,13 +214,11 @@ def bench_fastdb(N: int, reps: int) -> dict:
 
 def bench_fastdb_trunc(N: int, reps: int) -> dict:
     """
-    fastdb ORM.truncate path: pre-allocate fixed-size table, fill columns via
+    fastdb ColumnEngine.truncate path: pre-allocate fixed-size table, fill columns via
     numpy slice assignment.  No STR field (truncate does not support variable-
     length types).  This path is fair when the record count is known upfront and
     all fields are numeric.
     """
-    from fastdb4py import TableDefn
-
     shm_name = f"fdb_trunc_{uuid.uuid4().hex[:8]}"
 
     # Pre-compute numpy arrays (shared across reps — building them is not part
@@ -228,10 +228,10 @@ def bench_fastdb_trunc(N: int, reps: int) -> dict:
     ys  = np.arange(N, dtype=np.float64) * 0.2
     zs  = np.arange(N, dtype=np.float64) * 0.3
 
-    # --- build: truncate + columnar numpy fill (includes _combine internally) ---
+    # --- build: truncate + columnar numpy fill (includes combine internally) ---
     def do_build():
-        orm = ORM.truncate([TableDefn(CoordNum, N)])
-        tbl = orm[CoordNum][CoordNum]
+        orm = ColumnEngine.truncate([Layout(CoordNum, N)])
+        tbl = orm.table(CoordNum)
         tbl.column.row_id[:] = ids
         tbl.column.x[:]      = xs
         tbl.column.y[:]      = ys
@@ -241,11 +241,11 @@ def bench_fastdb_trunc(N: int, reps: int) -> dict:
     build_ms = _median_ms(do_build, reps)
     orm = do_build()
 
-    # encode: already done inside ORM.truncate (_combine is called there)
+    # encode: already done inside ColumnEngine.truncate (combine is called there)
     encode_ms = 0.0
 
     # --- shm: write flushed binary to POSIX shared memory ---
-    _raw = bytes(orm._origin.buffer().as_array(__import__('numpy').uint8))
+    _raw = bytes(orm._origin.buffer().as_array(np.uint8))
 
     def do_shm():
         s = _shm_write(_raw)
@@ -267,14 +267,14 @@ def bench_fastdb_trunc(N: int, reps: int) -> dict:
     orm2 = None
     try:
         def do_deserial():
-            h = ORM.load(shm_name)
+            h = ColumnEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ORM.load(shm_name)
+        orm2 = ColumnEngine.load(shm_name)
 
         def do_read():
-            tbl = orm2[CoordNum][CoordNum]
+            tbl = orm2.table(CoordNum)
             cx = tbl.column.x
             cy = tbl.column.y
             cz = tbl.column.z
@@ -286,7 +286,7 @@ def bench_fastdb_trunc(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ORM.load(shm_name); h.unlink()
+                h = ColumnEngine.load(shm_name); h.unlink()
             except Exception:
                 pass
 
