@@ -243,12 +243,20 @@ class Table(Generic[T]):
         col = self._column
         schema = get_schema(self._feature_type)
         for field_name, values in col_arrays.items():
+            field_def = schema.get(field_name)
+            if field_def is None:
+                getattr(col, field_name)
+            field_type = field_def.field_type
+            if field_type == OriginFieldType.list:
+                raise TypeError(
+                    f'Field "{field_name}" does not support fill() for type "{field_type.name}".'
+                )
+
             column = getattr(col, field_name)
             if isinstance(column, StringColumn):
                 writes[field_name] = column._normalize_fill_values(values, expected)
                 continue
 
-            field_type = schema.get(field_name).field_type
             arr = np.ascontiguousarray(values, dtype=_FILL_NUMERIC_DTYPES[field_type])
             if len(arr) != expected:
                 raise ValueError(

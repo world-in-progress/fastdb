@@ -26,6 +26,12 @@ class CEOtherPoint:
     y: F64
 
 
+@feature
+class CEListPoint:
+    x: F64
+    values: list[F64]
+
+
 def test_column_engine_truncate():
     engine = ColumnEngine.truncate([Layout(CEPoint, 100)])
     tbl = engine.table(CEPoint)
@@ -174,6 +180,14 @@ def test_table_fill_rejects_unknown_field_name():
 
     with pytest.raises(AttributeError, match='missing'):
         tbl.fill(missing=np.array([1.0, 2.0], dtype=np.float64))
+
+
+def test_table_fill_rejects_list_field_with_clear_error():
+    engine = ColumnEngine.truncate([Layout(CEListPoint, 2)])
+    tbl = engine.table(CEListPoint)
+
+    with pytest.raises(TypeError, match='values.*does not support'):
+        tbl.fill(values=[[1.0], [2.0]])
 
 
 def test_table_fill_validation_failure_does_not_mutate_existing_values():
