@@ -4,8 +4,7 @@ import ctypes
 from threading import Lock
 from weakref import WeakKeyDictionary
 from typing import Type, List, Dict, Any, Tuple, get_origin, get_args
-from .registry import get_schema as _get_registry_schema
-from .feature import Feature  # Keep for backward compat during transition
+from .registry import get_schema as _get_registry_schema, is_feature as _is_registry_feature
 from .type import OriginFieldType, U32, F64
 from . import core
 
@@ -16,14 +15,12 @@ _CLASS_SCHEMA_CACHE_LOCK = Lock()
 _CLASS_SCHEMA_CACHE: WeakKeyDictionary = WeakKeyDictionary()
 
 def _is_feature_class(cls):
-    """Check if cls is a feature class (old Feature subclass OR new @feature)."""
-    if not isinstance(cls, type):
-        return False
-    return getattr(cls, '__fastdb_feature__', False) is True or issubclass(cls, Feature)
+    """Check if cls is a @feature-decorated class."""
+    return isinstance(cls, type) and _is_registry_feature(cls)
 
 def _is_feature_instance(obj):
-    """Check if obj is an instance of a feature class."""
-    return isinstance(obj, Feature) or getattr(type(obj), '__fastdb_feature__', False) is True
+    """Check if obj is an instance of a @feature-decorated class."""
+    return _is_registry_feature(type(obj))
 
 # Mapping from numpy dtype to fastdb field type and short kind string
 _NUMPY_DTYPE_TO_FDB = {
@@ -570,7 +567,7 @@ class _LoadContext:
                     l_idx_ref, f_idx_ref = struct.unpack_from('<HI', blob_view, curr_blob_offset)
                     curr_blob_offset += 6
                     if l_idx_ref != 0xFFFF:
-                        ref_type = hints.get(fn, Feature)
+                        ref_type = hints.get(fn, object)
                         obj.__dict__[fn] = self.get_object(l_idx_ref, f_idx_ref, ref_type)
                     else:
                         obj.__dict__[fn] = None
@@ -866,8 +863,8 @@ def _unpack_list(view, offset, type_hint, ctx):
                  if l_idx == 0xFFFF:
                      lst.append(None)
                  else:
-                     # Using Feature base class
-                     lst.append(ctx.get_object(l_idx, f_idx, Feature))
+                     # Unknown feature class — pass object as fallback sentinel
+                     lst.append(ctx.get_object(l_idx, f_idx, object))
         except:
              pass
     

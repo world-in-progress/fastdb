@@ -15,49 +15,57 @@ Tests cover:
 import unittest
 import numpy as np
 from typing import List
-from fastdb4py import FastSerializer, Feature
+from fastdb4py import FastSerializer
 from fastdb4py.decorator import feature
 from fastdb4py.type import F64, U32, I32, STR
 
 
-# --- Feature classes using object annotations (ndarray fields) ---
-# These must remain Feature subclasses because @feature rejects 'object' type.
+# --- @feature classes using np.ndarray annotations ---
 
-class ArrayF64(Feature):
+@feature
+class ArrayF64:
     label: STR
-    data: object  # numpy float64 array
+    data: np.ndarray  # numpy float64 array
 
-class ArrayF32(Feature):
-    data: object  # numpy float32 array
+@feature
+class ArrayF32:
+    data: np.ndarray  # numpy float32 array
 
-class ArrayU32(Feature):
-    data: object  # numpy uint32 array
+@feature
+class ArrayU32:
+    data: np.ndarray  # numpy uint32 array
 
-class ArrayI32(Feature):
-    data: object  # numpy int32 array
+@feature
+class ArrayI32:
+    data: np.ndarray  # numpy int32 array
 
-class ArrayU16(Feature):
-    data: object  # numpy uint16 array
+@feature
+class ArrayU16:
+    data: np.ndarray  # numpy uint16 array
 
-class ArrayU8(Feature):
-    data: object  # numpy uint8 array
+@feature
+class ArrayU8:
+    data: np.ndarray  # numpy uint8 array
 
-class MultiArray(Feature):
+@feature
+class MultiArray:
     """Feature with multiple ndarray fields."""
-    positions: object  # float64
-    indices: object    # uint32
+    positions: np.ndarray  # float64
+    indices: np.ndarray    # uint32
 
-class MixedScalarArray(Feature):
+@feature
+class MixedScalarArray:
     """Feature with scalar + ndarray fields."""
     name: STR
     value: F64
-    data: object  # numpy array
+    data: np.ndarray  # numpy array
 
-class MixedListArray(Feature):
+@feature
+class MixedListArray:
     """Feature with typed list + ndarray fields."""
     ids: List[U32]
     values: List[F64]
-    extra: object  # numpy array
+    extra: np.ndarray  # numpy array
 
 @feature
 class ScalarOnly:

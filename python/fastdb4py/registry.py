@@ -12,7 +12,6 @@ from .type import (
     OriginFieldType, get_origin_type, get_list_element_type,
     LIST_ELEM_CPP_TYPE, FIELD_TYPE_MAP, LIST_ELEM_ARRAY_TYPECODE,
 )
-from .feature.base import BaseFeature
 
 
 def is_feature(cls) -> bool:
@@ -246,7 +245,7 @@ def _resolve_field_type(hint) -> OriginFieldType:
     ft = get_origin_type(hint)
     if ft != OriginFieldType.unknown:
         return ft
-    if isinstance(hint, type) and issubclass(hint, BaseFeature):
+    if isinstance(hint, type) and is_feature(hint):
         return OriginFieldType.ref
     if isinstance(hint, type) and not issubclass(hint, (int, float, str, bytes, bool)):
         return OriginFieldType.ref

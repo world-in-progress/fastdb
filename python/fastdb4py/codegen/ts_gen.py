@@ -19,22 +19,12 @@ from typing import get_type_hints, get_origin, get_args, Any, Dict, List, Set, T
 # ─── Type imports from fastdb4py ──────────────────────────────────────────────
 
 from fastdb4py.registry import is_feature
-from fastdb4py.feature.base import BaseFeature
 import fastdb4py as _fdb
 
 
 def _is_feature_cls(cls: type) -> bool:
-    """Check if *cls* is a feature class for codegen purposes.
-
-    Matches both old-style ``Feature`` subclasses (via ``issubclass``) and
-    new ``@feature``-decorated classes (via ``is_feature``).
-    Excludes ``BaseFeature`` itself.
-    """
-    if not isinstance(cls, type):
-        return False
-    if cls is BaseFeature:
-        return False
-    return is_feature(cls) or issubclass(cls, BaseFeature)
+    """Check if *cls* is a @feature-decorated class."""
+    return isinstance(cls, type) and is_feature(cls)
 
 
 class CodegenError(Exception):

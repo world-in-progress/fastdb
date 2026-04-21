@@ -9,6 +9,13 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb4py -->
 ## fastdb4py (Python binding)
 
+### Removed
+- **BREAKING**: Deleted `Feature` base class, `ORM`, `ORM2`, `TableDefn`, `ClassSchema`, `FeatureRefList`, `BaseFeature`, `parse_defns`, `get_all_defns`, `get_class_schema`, `make_inlined_dispatch`, `make_batch_inlined_dispatch`, and the `orm._graph` module. Use `@feature` decorator with `ColumnEngine` (columnar/truncate workloads) or `ObjectEngine` (object-graph/serializer workloads) instead. The `feature` and `orm` subpackages now expose only the new minimal surface.
+
+### Changed
+- `@feature` decorator now accepts `np.ndarray` field annotations (handled via `FastSerializer` buffer layers).
+- `FastSerializer` no longer recognises pre-v2.0 `Feature` subclasses; only `@feature`-decorated classes are accepted.
+
 ### Added
 - `fdb codegen --ts <input_dir> <output_dir>` CLI command: auto-generates TypeScript `Feature` classes from Python Feature definitions, with full type mapping, cross-file import resolution, cycle detection (lazy refs), and topological ordering.
 - Free-threaded Python (PEP 703) support: module-level caches (`get_class_schema`, serializer schema, ColumnAccessor) are now safe under concurrent access; CI tests against Python 3.13t.

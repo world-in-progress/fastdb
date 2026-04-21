@@ -26,7 +26,13 @@ from fastdb4py.codegen.ts_gen import (
     topological_sort,
 )
 import fastdb4py as fdb
-from fastdb4py.feature.base import BaseFeature
+from fastdb4py.decorator import feature as _feature_decorator
+
+
+def _make_feature_cls(name: str) -> type:
+    """Create a synthetic @feature-decorated class for codegen unit tests."""
+    cls = type(name, (), {"__annotations__": {}})
+    return _feature_decorator(cls)
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -543,12 +549,12 @@ class TestClassifyHint(unittest.TestCase):
 
     # Feature ref
     def test_feature_ref_direct(self):
-        Pt = type("Point", (BaseFeature,), {})
+        Pt = _make_feature_cls("Point")
         reg = {"Point": Pt}
         self.assertEqual(self._ch(Pt, reg), ("ref(Point)", "Point | null"))
 
     def test_feature_ref_lazy(self):
-        Pt = type("Point", (BaseFeature,), {})
+        Pt = _make_feature_cls("Point")
         reg = {"Point": Pt}
         lazy = {(None, Pt)}
         self.assertEqual(
@@ -567,7 +573,7 @@ class TestClassifyHint(unittest.TestCase):
         self.assertEqual(self._ch(List[int]), ("listOf(I32)", "number[]"))
 
     def test_list_feature(self):
-        Pt = type("Point", (BaseFeature,), {})
+        Pt = _make_feature_cls("Point")
         reg = {"Point": Pt}
         self.assertEqual(
             self._ch(List[Pt], reg),
@@ -575,7 +581,7 @@ class TestClassifyHint(unittest.TestCase):
         )
 
     def test_list_feature_lazy(self):
-        Pt = type("Point", (BaseFeature,), {})
+        Pt = _make_feature_cls("Point")
         reg = {"Point": Pt}
         lazy = {(None, Pt)}
         self.assertEqual(

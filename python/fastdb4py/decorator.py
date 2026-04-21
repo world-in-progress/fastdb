@@ -109,6 +109,13 @@ def _check_hint(name: str, hint):
     # Check that it maps to a known type
     ft = get_origin_type(hint)
     if ft == OriginFieldType.unknown:
+        # numpy.ndarray (and other ndarray subclasses) — handled by FastSerializer buffer layers
+        try:
+            import numpy as _np
+            if isinstance(hint, type) and issubclass(hint, _np.ndarray):
+                return
+        except ImportError:
+            pass
         # Could be a @feature class (REF) — that's OK if it has annotations
         if isinstance(hint, type) and hasattr(hint, '__annotations__'):
             return

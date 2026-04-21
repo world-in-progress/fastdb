@@ -6,7 +6,7 @@ import pytest
 from multiprocessing import shared_memory
 from typing import List
 
-from fastdb4py import Feature, FastSerializer
+from fastdb4py import FastSerializer
 from fastdb4py.decorator import feature
 from fastdb4py.type import F64, U32, I32, STR
 
@@ -30,8 +30,8 @@ class NumericCloud:
     indices: List[U32]
 
 
-# Uses np.ndarray annotation — must remain Feature subclass
-class WithArray(Feature):
+@feature
+class WithArray:
     tag: STR
     weights: np.ndarray
 

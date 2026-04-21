@@ -11,12 +11,14 @@ import threading
 import numpy as np
 import pytest
 
-from fastdb4py import Feature, F64, U32, STR
+from fastdb4py import F64, U32, STR
 from fastdb4py.decorator import feature
 from fastdb4py.column_engine import ColumnEngine
 from fastdb4py.layout import Layout
-from fastdb4py.feature._schema import get_class_schema, _SCHEMA_ATTR
+from fastdb4py.registry import get_schema as get_class_schema
 from fastdb4py.serializer import FastSerializer
+
+_SCHEMA_ATTR = '__fastdb_schema__'
 
 
 # ---------------------------------------------------------------------------
