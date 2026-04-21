@@ -329,14 +329,15 @@
 }
 
 %extend wx::FastVectorDbLayerBuild {
-    void set_numeric_column_bulk(unsigned field_id, PyObject* py_values) {
+    PyObject* set_numeric_column_bulk(unsigned field_id, PyObject* py_values) {
         Py_buffer view;
         if (PyObject_GetBuffer(py_values, &view, PyBUF_CONTIG_RO) != 0)
-            SWIG_exception_fail(SWIG_ValueError, "Expected a contiguous buffer.");
+            SWIG_exception_fail(SWIG_TypeError, "Expected a contiguous buffer-compatible object.");
         $self->setNumericColumnBulk(field_id, view.buf, (u64)view.len);
         PyBuffer_Release(&view);
+        Py_RETURN_NONE;
     fail:
-        return;
+        return NULL;
     }
 }
 

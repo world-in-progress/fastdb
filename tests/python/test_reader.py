@@ -245,3 +245,17 @@ def test_truncate_layer_build_set_numeric_column_bulk_round_trips():
     rdb._buffer = buf
     out = rdb.get_layer(0).get_column(0).as_nparray()
     np.testing.assert_allclose(out, np.array([1.0, 2.5, 3.5], dtype=np.float64))
+
+
+def test_truncate_layer_build_set_numeric_column_bulk_rejects_non_contiguous_input():
+    db = core.WxDatabaseBuild()
+    db.begin("")
+    layer = db.create_layer_begin("num_rows")
+    layer.set_geometry_type(core.gtNone, core.cfTx32, aabboxEnabled=False)
+    layer.add_field("x", core.ftF64)
+    db.truncate("num_rows", 3)
+
+    values = np.array([1.0, 99.0, 2.5, 77.0, 3.5, 55.0], dtype=np.float64)[::2]
+
+    with pytest.raises(TypeError):
+        layer.set_numeric_column_bulk(0, values)
