@@ -312,3 +312,12 @@ def test_truncate_layer_build_set_numeric_column_bulk_zero_rows_round_trips():
     assert field_desc.offset == 0
     assert header.offset_strings - header.offset_table == header.feature_count * field_desc.size
     assert header.offset_strings == header.offset_table
+
+
+def test_truncate_layer_build_numeric_bulk_exposes_only_snake_case_api():
+    db = core.WxDatabaseBuild()
+    db.begin("")
+    layer = db.create_layer_begin("num_rows")
+
+    assert hasattr(layer, "set_numeric_column_bulk")
+    assert not hasattr(layer, "setNumericColumnBulk")

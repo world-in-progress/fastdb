@@ -133,6 +133,7 @@
 %ignore wx::FastVectorDbFeature::FastVectorDbFeature();
 %ignore wx::FastVectorDbFeature::~FastVectorDbFeature();
 %ignore wx::FastVectorDb::load(void *pdata, size_t size, fnFreeDbBuffer fnFreeBuffer, void *cookie);
+%ignore wx::FastVectorDbLayerBuild::setNumericColumnBulk;
 %nodefaultctor FastVectorDbLayerBuild;
 %nodefaultdtor FastVectorDbLayerBuild;
 %nodefaultctor FastVectorDbFeature;
