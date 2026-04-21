@@ -495,6 +495,11 @@ namespace wx
             return;
         if (!text)
             text = "";
+        if (fdx.size == 0 && find_string_field(m_string_fields, ix) != nullptr)
+        {
+            setFieldStringView(ix, text, (unsigned)strlen(text));
+            return;
+        }
         // try_emplace: single hash lookup (find+insert in one op), value = next ID if inserted.
         // Storing pointer-to-map-key avoids the separate `new string(text)` heap allocation.
         auto [it, inserted] = m_string_map.try_emplace(text, (int)m_string_table.size());
@@ -531,6 +536,9 @@ namespace wx
         auto* sfd = find_string_field(m_string_fields, ix);
         if (sfd == nullptr)
             return;
+        assert(data != nullptr || len == 0);
+        if (data == nullptr && len > 0)
+            return;
         if (data != nullptr && len > 0)
         {
             const u8* p = reinterpret_cast<const u8*>(data);
@@ -542,6 +550,27 @@ namespace wx
     {
         auto* sfd = find_string_field(m_string_fields, field_id);
         if (sfd == nullptr)
+            return;
+        assert(n_offsets == m_feature_count + 1);
+        if (n_offsets != m_feature_count + 1)
+            return;
+        assert(offsets != nullptr || n_offsets == 0);
+        if (offsets == nullptr)
+            return;
+        assert(offsets[0] == 0);
+        if (offsets[0] != 0)
+            return;
+        for (unsigned i = 1; i < n_offsets; ++i)
+        {
+            assert(offsets[i - 1] <= offsets[i]);
+            if (offsets[i - 1] > offsets[i])
+                return;
+        }
+        assert((u64)offsets[n_offsets - 1] == nbytes);
+        if ((u64)offsets[n_offsets - 1] != nbytes)
+            return;
+        assert(data != nullptr || nbytes == 0);
+        if (data == nullptr && nbytes > 0)
             return;
         sfd->offsets.assign(offsets, offsets + n_offsets);
         sfd->data.assign(data, data + nbytes);
