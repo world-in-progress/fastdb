@@ -245,7 +245,9 @@ class Table(Generic[T]):
         for field_name, values in col_arrays.items():
             field_def = schema.get(field_name)
             if field_def is None:
-                getattr(col, field_name)
+                raise AttributeError(
+                    f'Field "{field_name}" not found in table "{self._feature_type.__name__}".'
+                )
             field_type = field_def.field_type
             if field_type == OriginFieldType.list:
                 raise TypeError(
