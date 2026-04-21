@@ -1,6 +1,7 @@
 import secrets
 
 import numpy as np
+import pytest
 
 from fastdb4py import ColumnEngine, Layout, feature, F64, U32, STR
 
@@ -53,19 +54,21 @@ def test_column_engine_share_load_keeps_string_column():
     offsets, data = _pack_utf8(["alpha", "beta"])
     tbl.column.name.fill_utf8(offsets, data)
     engine.share(shm_name)
-    loaded = ColumnEngine.load(shm_name)
+    loaded = None
     try:
+        loaded = ColumnEngine.load(shm_name)
         assert loaded.table(CEStringPoint).column.name.to_pylist() == ["alpha", "beta"]
     finally:
-        loaded.unlink()
+        if loaded is not None:
+            loaded.unlink()
+            engine.close()
+        else:
+            engine.unlink()
 
 
 def test_table_fill_rejects_string_field_keyword():
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 1)])
     tbl = engine.table(CEStringPoint)
-    try:
+    with pytest.raises(Exception) as excinfo:
         tbl.fill(name=np.array(["bad"], dtype=object))
-    except Exception as exc:
-        assert "StringColumn.fill" in str(exc)
-    else:
-        raise AssertionError("expected string fill rejection")
+    assert "StringColumn.fill" in str(excinfo.value)
