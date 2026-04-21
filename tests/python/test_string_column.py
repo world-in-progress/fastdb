@@ -73,17 +73,71 @@ def test_table_fill_accepts_string_field_keyword():
     assert tbl.column.name.to_pylist() == ["bad"]
 
 
+def test_string_column_fill_validates_payload_once(monkeypatch):
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+    column = tbl.column.name
+    validate_calls = []
+    original = column._validate_utf8_payload
+
+    def capture_validate(offsets, data, expected_len):
+        validate_calls.append(expected_len)
+        return original(offsets, data, expected_len)
+
+    monkeypatch.setattr(column, '_validate_utf8_payload', capture_validate)
+
+    column.fill(["hi", "中"])
+
+    assert validate_calls == [2]
+    assert column.to_pylist() == ["hi", "中"]
+
+
 def test_string_column_fill_utf8_uses_unified_fixed_writer(monkeypatch):
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
+    captured = []
 
-    monkeypatch.setattr(
-        engine,
-        '_rewrite_string_column',
-        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('old path called')),
-    )
+    original = engine._fill_fixed_table
+
+    def capture_fill(table_name, writes):
+        captured.append((table_name, writes))
+        return original(table_name, writes)
+
+    monkeypatch.setattr(engine, '_fill_fixed_table', capture_fill)
 
     offsets, data = _pack_utf8(["hi", "中"])
     tbl.column.name.fill_utf8(offsets, data)
 
+    assert len(captured) == 1
+    table_name, writes = captured[0]
+    assert table_name == CEStringPoint.__name__
+    assert list(writes) == ["name"]
+    written_offsets, written_data = writes["name"]
+    np.testing.assert_array_equal(written_offsets, offsets)
+    np.testing.assert_array_equal(written_data, data)
     assert tbl.column.name.to_pylist() == ["hi", "中"]
+
+
+def test_loaded_string_column_fill_utf8_rejects_read_only_table():
+    shm_name = f"fastdb_str_fill_{secrets.token_hex(4)}"
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+    tbl.fill(
+        row_id=np.array([1, 2], dtype=np.uint32),
+        x=np.array([1.0, 2.0], dtype=np.float64),
+        name=["aa", "bb"],
+    )
+    offsets, data = _pack_utf8(["x", "y"])
+
+    loaded = None
+    try:
+        engine.share(shm_name)
+        loaded = ColumnEngine.load(shm_name)
+        with pytest.raises(RuntimeError, match='read-only'):
+            loaded.table(CEStringPoint).column.name.fill_utf8(offsets, data)
+    finally:
+        if loaded is not None:
+            loaded.unlink()
+            engine.close()
+        else:
+            engine.unlink()

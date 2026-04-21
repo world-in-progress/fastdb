@@ -54,7 +54,7 @@ class StringColumn:
 
     def fill(self, strings: Iterable[str]) -> None:
         offsets_arr, data_arr = self._normalize_fill_values(strings, len(self))
-        self.fill_utf8(offsets_arr, data_arr)
+        self._dispatch_utf8_payload(offsets_arr, data_arr)
 
     def _normalize_fill_values(
         self,
@@ -98,7 +98,13 @@ class StringColumn:
 
     def fill_utf8(self, offsets: np.ndarray, data: np.ndarray) -> None:
         offsets_arr, data_arr = self._validate_utf8_payload(offsets, data, len(self))
+        self._dispatch_utf8_payload(offsets_arr, data_arr)
 
+    def _dispatch_utf8_payload(
+        self,
+        offsets_arr: np.ndarray,
+        data_arr: np.ndarray,
+    ) -> None:
         fill_handler = self._table._fixed_fill_handler
         if fill_handler is not None:
             fill_handler({self._field_name: (offsets_arr, data_arr)})

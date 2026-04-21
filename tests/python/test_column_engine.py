@@ -187,6 +187,32 @@ def test_loaded_fixed_table_rejects_fill():
             engine.unlink()
 
 
+def test_table_fill_overwrites_prior_values_on_repeated_success():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+
+    tbl.fill(
+        row_id=np.array([1, 2], dtype=np.uint32),
+        x=np.array([1.0, 2.0], dtype=np.float64),
+        name=["aa", "bb"],
+    )
+    tbl.fill(
+        row_id=np.array([9, 10], dtype=np.uint32),
+        x=np.array([9.0, 10.0], dtype=np.float64),
+        name=["left", "right"],
+    )
+
+    np.testing.assert_array_equal(
+        tbl.column.row_id,
+        np.array([9, 10], dtype=np.uint32),
+    )
+    np.testing.assert_array_equal(
+        tbl.column.x,
+        np.array([9.0, 10.0], dtype=np.float64),
+    )
+    assert tbl.column.name.to_pylist() == ["left", "right"]
+
+
 def test_column_engine_rejects_ref_in_push():
     engine = ColumnEngine.create()
     node = CENode(x=1.0, child=None)

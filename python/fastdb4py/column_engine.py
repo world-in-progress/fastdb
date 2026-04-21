@@ -8,8 +8,7 @@ from typing import List, TypeVar, Type
 from multiprocessing import shared_memory
 
 from . import core
-from .reader import copy_feature
-from .registry import get_schema, is_feature, LayerSchema, lookup_class
+from .registry import get_schema, is_feature, LayerSchema
 from .layout import Layout
 from .orm.table import Table
 from .type import OriginFieldType
@@ -53,7 +52,6 @@ class ColumnEngine:
         self._table_feature_types: dict[str, Type] = {}
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._is_mutable: bool = False
-        self._fixed_string_rewrite_enabled: bool = False
         self._fixed_build: core.WxDatabaseBuild | None = None
         self._fixed_layer_builds: dict[str, core.WxLayerTableBuild] = {}
         self._fixed_table_fields: dict[str, dict[str, int]] = {}
@@ -325,7 +323,6 @@ class ColumnEngine:
         raise KeyError(f'Table "{table_name}" not found')
 
     def _attach_fixed_fill_handler(self, table: Table, table_name: str) -> None:
-        table._string_fill_handler = None
         if table.fixed and self._fixed_build is not None and self._shm is None:
             table._fixed_fill_handler = (
                 lambda writes: self._fill_fixed_table(table_name, writes)
@@ -354,17 +351,6 @@ class ColumnEngine:
                 return layer
         return None
 
-    def _resolve_feature_type(self, table_name: str, fallback_table: Table | None = None):
-        if fallback_table is not None and table_name == fallback_table.name:
-            return fallback_table._feature_type
-        mapped = self._table_feature_types.get(table_name)
-        if mapped is not None:
-            return mapped
-        cached = self._table_map.get(table_name)
-        if cached is not None and cached._feature_type is not None:
-            return cached._feature_type
-        return lookup_class(table_name)
-
     def _publish_fixed_snapshot(self) -> None:
         if self._fixed_build is None:
             raise RuntimeError('No writable fixed table build is available.')
@@ -381,79 +367,6 @@ class ColumnEngine:
                 continue
             table._remap(new_layer, self._origin)
             self._attach_fixed_fill_handler(table, table_name)
-
-    def _rewrite_string_column(
-        self,
-        table_name: str,
-        target_table: Table,
-        field_index: int,
-        field_name: str,
-        offsets: np.ndarray,
-        data: np.ndarray,
-    ) -> None:
-        if not isinstance(self._origin, core.WxDatabase):
-            raise RuntimeError('StringColumn.fill_utf8() only supports fixed-scale tables.')
-
-        values = [
-            bytes(data[int(offsets[i]):int(offsets[i + 1])]).decode('utf-8')
-            for i in range(len(offsets) - 1)
-        ]
-
-        rebuilt = ColumnEngine.create()
-        rebuilt._fixed_string_rewrite_enabled = self._fixed_string_rewrite_enabled
-        rebuilt._table_feature_types = dict(self._table_feature_types)
-        current_db = self._origin
-        fallback_names = list(self._table_feature_types)
-        for i in range(current_db.get_layer_count()):
-            layer = current_db.get_layer(i)
-            layer_name = layer.name() or (fallback_names[i] if i < len(fallback_names) else '')
-            feature_type = self._resolve_feature_type(layer_name, target_table)
-            if feature_type is None:
-                raise RuntimeError(
-                    f'StringColumn.fill_utf8() cannot rewrite table "{table_name}" because '
-                    f'the feature type for layer "{layer_name}" is unknown. '
-                    'Map all layers with ColumnEngine.table(...) before mutating string columns.'
-                )
-            if layer_name not in rebuilt._table_map:
-                schema = get_schema(feature_type)
-                new_table = Table.map_from(
-                    feature_type,
-                    _get_default_table_build(rebuilt._origin, layer_name),
-                    rebuilt._origin,
-                )
-                for fd in schema.fields:
-                    if fd.field_type == OriginFieldType.list:
-                        new_table._origin.add_list_field(fd.name, fd.cpp_type)
-                    else:
-                        new_table._origin.add_field(fd.name, fd.field_type.value)
-                rebuilt._table_map[layer_name] = new_table
-                rebuilt._table_feature_types[layer_name] = feature_type
-            count = layer.get_feature_count()
-            if layer_name == table_name and count != len(values):
-                raise ValueError(
-                    f'StringColumn.fill_utf8() expected {count} strings, got {len(values)}.'
-                )
-            for row_idx in range(count):
-                feature = copy_feature(feature_type, layer, row_idx)
-                if layer_name == table_name:
-                    feature.__dict__[field_name] = values[row_idx]
-                rebuilt.push(feature, table_name=layer_name)
-
-        rebuilt.combine()
-        if self._shm is not None:
-            self._shm.close()
-            self._shm = None
-        self._origin = rebuilt._origin
-
-        cached_tables = list(self._table_map.items())
-        self._table_map = {}
-        for cached_name, cached_table in cached_tables:
-            new_layer = self._find_layer(cached_name)
-            if new_layer is None:
-                continue
-            cached_table._remap(new_layer, self._origin)
-            self._attach_fixed_fill_handler(cached_table, cached_name)
-            self._table_map[cached_name] = cached_table
 
     # ------------------------------------------------------------------
     # Persistence / sharing

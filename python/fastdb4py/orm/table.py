@@ -5,7 +5,7 @@ from typing import TypeVar, Generic, Type, Generator
 
 from .. import core
 from ..registry import get_schema
-from ..reader import copy_feature, bind_feature, MappedFeature
+from ..reader import bind_feature, MappedFeature
 from ..string_column import StringColumn
 from ..type import OriginFieldType
 
@@ -99,7 +99,6 @@ class Table(Generic[T]):
         self._feature_type: Type[T] | None = None
         self._db: core.WxDatabase | core.WxDatabaseBuild = None
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
-        self._string_fill_handler = None
         self._fixed_fill_handler = None
 
     @property
@@ -216,6 +215,7 @@ class Table(Generic[T]):
         self._origin.rewind()
 
     def fill(self, **col_arrays) -> None:
+        """Bulk-fill fixed tables with validated numeric and UTF-8 string columns."""
         if not self.fixed:
             raise RuntimeError('fill() only supports fixed-scale tables.')
         if self._fixed_fill_handler is None:
