@@ -1,3 +1,5 @@
+import secrets
+
 from fastdb4py.decorator import feature
 from fastdb4py.column_engine import ColumnEngine
 from fastdb4py.layout import Layout
@@ -14,6 +16,7 @@ class CEPoint:
 
 @feature
 class CEStringPoint:
+    row_id: U32
     x: F64
     name: STR
 
@@ -90,6 +93,98 @@ def test_column_engine_fill():
     )
     assert tbl.column.x[2] == pytest.approx(3.0)
     assert tbl.column.y[4] == pytest.approx(50.0)
+
+
+def test_table_fill_accepts_mixed_numeric_and_string_columns():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
+    tbl = engine.table(CEStringPoint)
+
+    tbl.fill(
+        row_id=np.array([1, 2, 3], dtype=np.uint32),
+        x=np.array([1.0, 2.0, 3.0], dtype=np.float64),
+        name=["a", "be", "中"],
+    )
+
+    assert tbl.column.name.to_pylist() == ["a", "be", "中"]
+    np.testing.assert_array_equal(
+        tbl.column.row_id,
+        np.array([1, 2, 3], dtype=np.uint32),
+    )
+
+
+def test_table_fill_accepts_string_only_columns():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+
+    tbl.fill(name=["left", "right"])
+
+    assert tbl.column.name.to_pylist() == ["left", "right"]
+
+
+def test_table_fill_rejects_mismatched_lengths():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+
+    with pytest.raises(ValueError, match='name.*expected 2.*got 1'):
+        tbl.fill(
+            row_id=np.array([1, 2], dtype=np.uint32),
+            name=["only-one"],
+        )
+
+
+def test_table_fill_rejects_unknown_field_name():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+
+    with pytest.raises(AttributeError, match='missing'):
+        tbl.fill(missing=np.array([1.0, 2.0], dtype=np.float64))
+
+
+def test_table_fill_validation_failure_does_not_mutate_existing_values():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+
+    tbl.fill(
+        row_id=np.array([7, 8], dtype=np.uint32),
+        x=np.array([1.0, 2.0], dtype=np.float64),
+        name=["aa", "bb"],
+    )
+
+    with pytest.raises(ValueError, match='name.*expected 2.*got 1'):
+        tbl.fill(
+            row_id=np.array([9, 10], dtype=np.uint32),
+            name=["only-one"],
+        )
+
+    np.testing.assert_array_equal(
+        tbl.column.row_id,
+        np.array([7, 8], dtype=np.uint32),
+    )
+    assert tbl.column.name.to_pylist() == ["aa", "bb"]
+
+
+def test_loaded_fixed_table_rejects_fill():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+    tbl.fill(
+        row_id=np.array([1, 2], dtype=np.uint32),
+        x=np.array([1.0, 2.0], dtype=np.float64),
+        name=["aa", "bb"],
+    )
+
+    shm_name = f"fastdb_fill_{secrets.token_hex(4)}"
+    loaded = None
+    try:
+        engine.share(shm_name)
+        loaded = ColumnEngine.load(shm_name)
+        with pytest.raises(RuntimeError, match="read-only"):
+            loaded.table(CEStringPoint).fill(name=["x", "y"])
+    finally:
+        if loaded is not None:
+            loaded.unlink()
+            engine.close()
+        else:
+            engine.unlink()
 
 
 def test_column_engine_rejects_ref_in_push():

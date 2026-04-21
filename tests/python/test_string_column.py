@@ -66,9 +66,24 @@ def test_column_engine_share_load_keeps_string_column():
             engine.unlink()
 
 
-def test_table_fill_rejects_string_field_keyword():
+def test_table_fill_accepts_string_field_keyword():
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 1)])
     tbl = engine.table(CEStringPoint)
-    with pytest.raises(Exception) as excinfo:
-        tbl.fill(name=np.array(["bad"], dtype=object))
-    assert "StringColumn.fill" in str(excinfo.value)
+    tbl.fill(name=["bad"])
+    assert tbl.column.name.to_pylist() == ["bad"]
+
+
+def test_string_column_fill_utf8_uses_unified_fixed_writer(monkeypatch):
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+
+    monkeypatch.setattr(
+        engine,
+        '_rewrite_string_column',
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('old path called')),
+    )
+
+    offsets, data = _pack_utf8(["hi", "中"])
+    tbl.column.name.fill_utf8(offsets, data)
+
+    assert tbl.column.name.to_pylist() == ["hi", "中"]

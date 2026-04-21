@@ -54,6 +54,9 @@ class ColumnEngine:
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._is_mutable: bool = False
         self._fixed_string_rewrite_enabled: bool = False
+        self._fixed_build: core.WxDatabaseBuild | None = None
+        self._fixed_layer_builds: dict[str, core.WxLayerTableBuild] = {}
+        self._fixed_table_fields: dict[str, dict[str, int]] = {}
         # Per-class push dispatch caches
         self._push_buf: dict = {}
         self._push_batch_fn: dict = {}
@@ -82,8 +85,8 @@ class ColumnEngine:
         Rejects any class with REF fields.
         """
         engine = ColumnEngine()
-        engine._origin = core.WxDatabaseBuild()
-        engine._fixed_string_rewrite_enabled = True
+        engine._fixed_build = core.WxDatabaseBuild()
+        engine._origin = engine._fixed_build
 
         for layout in layouts:
             ft_cls = layout.feature_type
@@ -113,19 +116,23 @@ class ColumnEngine:
             else:
                 new_table = Table.map_from(
                     ft_cls,
-                    _get_default_table_build(engine._origin, table_name),
-                    engine._origin,
+                    _get_default_table_build(engine._fixed_build, table_name),
+                    engine._fixed_build,
                 )
+                field_ids = {}
                 for fd in schema.fields:
+                    field_ids[fd.name] = len(field_ids)
                     if fd.field_type == OriginFieldType.list:
                         new_table._origin.add_list_field(fd.name, fd.cpp_type)
                     else:
                         new_table._origin.add_field(fd.name, fd.field_type.value)
                 engine._table_map[table_name] = new_table
+                engine._fixed_layer_builds[table_name] = new_table._origin
+                engine._fixed_table_fields[table_name] = field_ids
 
-            engine._origin.truncate(table_name, layout.capacity)
+            engine._fixed_build.truncate(table_name, layout.capacity)
 
-        engine.combine()
+        engine._publish_fixed_snapshot()
         return engine
 
     # ------------------------------------------------------------------
@@ -302,7 +309,7 @@ class ColumnEngine:
         cached = self._table_map.get(table_name)
         if cached is not None:
             self._table_feature_types[table_name] = feature_type
-            self._attach_string_fill_handler(cached, table_name)
+            self._attach_fixed_fill_handler(cached, table_name)
             return cached
         db = self._origin
         fallback_names = list(self._table_feature_types)
@@ -312,19 +319,31 @@ class ColumnEngine:
             if layer_name == table_name:
                 tbl = Table.map_from(feature_type, layer, db)
                 self._table_feature_types[table_name] = feature_type
-                self._attach_string_fill_handler(tbl, table_name)
+                self._attach_fixed_fill_handler(tbl, table_name)
                 self._table_map[table_name] = tbl
                 return tbl
         raise KeyError(f'Table "{table_name}" not found')
 
-    def _attach_string_fill_handler(self, table: Table, table_name: str) -> None:
-        if table.fixed and self._fixed_string_rewrite_enabled and self._shm is None:
-            table._string_fill_handler = (
-                lambda field_index, field_name, offsets, data:
-                    self._rewrite_string_column(table_name, table, field_index, field_name, offsets, data)
+    def _attach_fixed_fill_handler(self, table: Table, table_name: str) -> None:
+        table._string_fill_handler = None
+        if table.fixed and self._fixed_build is not None and self._shm is None:
+            table._fixed_fill_handler = (
+                lambda writes: self._fill_fixed_table(table_name, writes)
             )
         else:
-            table._string_fill_handler = None
+            table._fixed_fill_handler = None
+
+    def _fill_fixed_table(self, table_name: str, writes: dict[str, object]) -> None:
+        layer_build = self._fixed_layer_builds[table_name]
+        field_ids = self._fixed_table_fields[table_name]
+        for field_name, payload in writes.items():
+            field_index = field_ids[field_name]
+            if isinstance(payload, tuple):
+                offsets, data = payload
+                layer_build.set_string_column_bulk(field_index, offsets, data)
+            else:
+                layer_build.set_numeric_column_bulk(field_index, payload)
+        self._publish_fixed_snapshot()
 
     def _find_layer(self, table_name: str):
         fallback_names = list(self._table_feature_types)
@@ -345,6 +364,23 @@ class ColumnEngine:
         if cached is not None and cached._feature_type is not None:
             return cached._feature_type
         return lookup_class(table_name)
+
+    def _publish_fixed_snapshot(self) -> None:
+        if self._fixed_build is None:
+            raise RuntimeError('No writable fixed table build is available.')
+
+        memory_stream = core.WxMemoryStream()
+        self._fixed_build.post(memory_stream)
+        buffer = memory_stream.data().as_array(np.uint8).tobytes()
+        self._origin = core.WxDatabase.load_xbuffer(buffer)
+        self._origin._buffer = buffer
+
+        for table_name, table in list(self._table_map.items()):
+            new_layer = self._find_layer(table_name)
+            if new_layer is None:
+                continue
+            table._remap(new_layer, self._origin)
+            self._attach_fixed_fill_handler(table, table_name)
 
     def _rewrite_string_column(
         self,
@@ -416,7 +452,7 @@ class ColumnEngine:
             if new_layer is None:
                 continue
             cached_table._remap(new_layer, self._origin)
-            self._attach_string_fill_handler(cached_table, cached_name)
+            self._attach_fixed_fill_handler(cached_table, cached_name)
             self._table_map[cached_name] = cached_table
 
     # ------------------------------------------------------------------
@@ -440,7 +476,6 @@ class ColumnEngine:
                 engine._origin = core.WxDatabase.load_xbuffer(engine._shm.buf)
             except FileNotFoundError:
                 raise FileNotFoundError(f"Database '{name}' not found in shared memory.")
-        engine._fixed_string_rewrite_enabled = False
         return engine
 
     def share(self, shm_name: str, close_after: bool = False):
@@ -457,9 +492,11 @@ class ColumnEngine:
         dest[:] = chunk.as_array(np.uint8)
         self._origin._buffer = None
         self._origin = core.WxDatabase.load_xbuffer(self._shm.buf)
-        self._fixed_string_rewrite_enabled = False
+        self._fixed_build = None
+        self._fixed_layer_builds = {}
+        self._fixed_table_fields = {}
         for table_name, table in self._table_map.items():
-            self._attach_string_fill_handler(table, table_name)
+            self._attach_fixed_fill_handler(table, table_name)
 
         if close_after and platform.system() != 'Windows':
             self.close()

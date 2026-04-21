@@ -100,6 +100,7 @@ class Table(Generic[T]):
         self._db: core.WxDatabase | core.WxDatabaseBuild = None
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
         self._string_fill_handler = None
+        self._fixed_fill_handler = None
 
     @property
     def feature_count(self) -> int:
@@ -215,27 +216,30 @@ class Table(Generic[T]):
         self._origin.rewind()
 
     def fill(self, **col_arrays) -> None:
-        """
-        Batch-write multiple columns from numpy arrays in a single call.
-
-        Each keyword argument maps a field name to a numpy array whose length
-        must equal the table's feature count.
-
-        Only supported for fixed-scale tables (table.fixed == True).
-        Usage:
-            tbl.fill(x=xs, y=ys, z=zs)   # xs, ys, zs are numpy arrays of length N
-        """
         if not self.fixed:
             raise RuntimeError('fill() only supports fixed-scale tables.')
+        if self._fixed_fill_handler is None:
+            raise RuntimeError('fill() is read-only for loaded fixed tables.')
+        if not col_arrays:
+            raise ValueError('fill() requires at least one column.')
+
+        expected = len(self)
+        writes = {}
         col = self._column
-        for field_name, arr in col_arrays.items():
+        for field_name, values in col_arrays.items():
             column = getattr(col, field_name)
             if isinstance(column, StringColumn):
-                raise TypeError(
-                    'Table.fill() is numeric-only. '
-                    f'Use table.column.{field_name}.fill() or StringColumn.fill_utf8() instead.'
+                writes[field_name] = column._normalize_fill_values(values, expected)
+                continue
+
+            arr = np.ascontiguousarray(values)
+            if len(arr) != expected:
+                raise ValueError(
+                    f'{field_name} expected {expected} rows, got {len(arr)}.'
                 )
-            column[:] = arr
+            writes[field_name] = arr
+
+        self._fixed_fill_handler(writes)
 
     def iter_reuse(self) -> Generator[T, None, None]:
         """High-performance iterator reusing a single MappedFeature proxy.

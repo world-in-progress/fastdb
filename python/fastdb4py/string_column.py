@@ -53,18 +53,30 @@ class StringColumn:
         return [self.get(i) for i in range(len(self))]
 
     def fill(self, strings: Iterable[str]) -> None:
+        offsets_arr, data_arr = self._normalize_fill_values(strings, len(self))
+        self.fill_utf8(offsets_arr, data_arr)
+
+    def _normalize_fill_values(
+        self,
+        strings: Iterable[str],
+        expected_len: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
         raw = bytearray()
         offsets = [0]
         for value in strings:
             encoded = ('' if value is None else str(value)).encode('utf-8')
             raw.extend(encoded)
             offsets.append(len(raw))
-        self.fill_utf8(
-            np.asarray(offsets, dtype=np.uint32),
-            np.frombuffer(bytes(raw), dtype=np.uint8),
-        )
+        offsets_arr = np.asarray(offsets, dtype=np.uint32)
+        data_arr = np.frombuffer(bytes(raw), dtype=np.uint8)
+        return self._validate_utf8_payload(offsets_arr, data_arr, expected_len)
 
-    def fill_utf8(self, offsets: np.ndarray, data: np.ndarray) -> None:
+    def _validate_utf8_payload(
+        self,
+        offsets: np.ndarray,
+        data: np.ndarray,
+        expected_len: int,
+    ) -> tuple[np.ndarray, np.ndarray]:
         offsets_arr = np.ascontiguousarray(offsets, dtype=np.uint32)
         data_arr = np.ascontiguousarray(data, dtype=np.uint8)
 
@@ -72,9 +84,9 @@ class StringColumn:
             raise ValueError('offsets must be a 1D uint32 array.')
         if data_arr.ndim != 1:
             raise ValueError('data must be a 1D uint8 array.')
-        if len(offsets_arr) != len(self) + 1:
+        if len(offsets_arr) != expected_len + 1:
             raise ValueError(
-                f'offsets length must equal feature_count + 1 ({len(self) + 1}).'
+                f'{self._field_name} expected {expected_len} rows, got {len(offsets_arr) - 1}.'
             )
         if len(offsets_arr) == 0 or int(offsets_arr[0]) != 0:
             raise ValueError('offsets must start at 0.')
@@ -82,10 +94,14 @@ class StringColumn:
             raise ValueError('offsets must be monotonically non-decreasing.')
         if int(offsets_arr[-1]) != int(data_arr.size):
             raise ValueError('offsets[-1] must equal the UTF-8 byte length.')
+        return offsets_arr, data_arr
 
-        fill_handler = self._table._string_fill_handler
+    def fill_utf8(self, offsets: np.ndarray, data: np.ndarray) -> None:
+        offsets_arr, data_arr = self._validate_utf8_payload(offsets, data, len(self))
+
+        fill_handler = self._table._fixed_fill_handler
         if fill_handler is not None:
-            fill_handler(self._field_index, self._field_name, offsets_arr, data_arr)
+            fill_handler({self._field_name: (offsets_arr, data_arr)})
             return
 
         table_origin = self._table._origin
