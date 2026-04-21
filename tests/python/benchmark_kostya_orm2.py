@@ -40,7 +40,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
-from fastdb4py import feature, ColumnEngine, ObjectEngine, F64, U32, STR
+from fastdb4py import feature, ColumnEngine, ObjectEngine, Layout, F64, U32, STR
 
 try:
     import pyarrow as pa
@@ -75,6 +75,20 @@ class Coord2:
     name: STR
 
 
+@feature
+class CoordNumeric:
+    """Numeric-only coordinate record (ColumnEngine truncate fast-path).
+
+    truncate() rejects variable-length fields (STR/WSTR/BYTES), so the
+    apples-to-apples comparison drops the `name` column. PyArrow and pickle
+    numeric variants drop it too for fair side-by-side timing.
+    """
+    row_id: U32
+    x: F64
+    y: F64
+    z: F64
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -94,13 +108,36 @@ def _shm_read(shm: shared_memory.SharedMemory, length: int) -> bytes:
 
 
 def _median_ms(fn, reps: int) -> float:
+    return _stats_ms(fn, reps)["median"]
+
+
+def _stats_ms(fn, reps: int) -> dict:
     times = []
     for _ in range(reps):
         gc.collect()
         t0 = time.perf_counter()
         fn()
         times.append((time.perf_counter() - t0) * 1000)
-    return statistics.median(times)
+    return {
+        "median": statistics.median(times),
+        "min": min(times),
+        "max": max(times),
+        "stddev": statistics.pstdev(times) if len(times) > 1 else 0.0,
+        "samples": times,
+    }
+
+
+def _throughput(N: int, ms: float) -> float:
+    """Million records/second."""
+    if ms <= 0:
+        return float("inf")
+    return (N / 1_000_000.0) / (ms / 1000.0)
+
+
+def _bytes_per_record(size_bytes: int, N: int) -> float:
+    if N <= 0:
+        return float("nan")
+    return size_bytes / N
 
 
 # ---------------------------------------------------------------------------
@@ -340,10 +377,11 @@ def bench_pickle(N: int, reps: int) -> dict:
     }
 
 # ---------------------------------------------------------------------------
-# ColumnEngine benchmark
+# ColumnEngine benchmarks
 # ---------------------------------------------------------------------------
 
-def bench_column_engine(N: int, reps: int) -> dict:
+def bench_column_push(N: int, reps: int) -> dict:
+    """ColumnEngine via dynamic create() + per-row push() (handles STR)."""
     shm_name = f"ce_kostya_{uuid.uuid4().hex[:8]}"
 
     # --- build: push N Coord features ---
@@ -421,7 +459,219 @@ def bench_column_engine(N: int, reps: int) -> dict:
 
     total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
     return {
-        "system": "column",
+        "system": "column_push",
+        "build_ms": round(build_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
+        "deserial_ms": round(deserial_ms, 2),
+        "read_ms": round(read_ms, 2),
+        "total_ms": round(total_ms, 2),
+        "size_bytes": size_bytes,
+    }
+
+
+def bench_column_truncate(N: int, reps: int) -> dict:
+    """ColumnEngine via truncate(Layout) + bulk numpy fill() (numeric-only fast path)."""
+    shm_name = f"cet_kostya_{uuid.uuid4().hex[:8]}"
+
+    # --- build: pre-allocate + bulk fill numeric columns from numpy ---
+    def do_build():
+        ids = np.arange(N, dtype=np.uint32)
+        xs = np.arange(N, dtype=np.float64) * 0.1
+        ys = np.arange(N, dtype=np.float64) * 0.2
+        zs = np.arange(N, dtype=np.float64) * 0.3
+        orm = ColumnEngine.truncate([Layout(CoordNumeric, N)])
+        tbl = orm.table(CoordNumeric)
+        tbl.fill(row_id=ids, x=xs, y=ys, z=zs)
+        return orm
+
+    build_ms = _median_ms(do_build, reps)
+
+    # --- encode: combine() (truncate path: data already in C++ columns) ---
+    _unflushed = [do_build() for _ in range(reps)]
+
+    def do_encode():
+        _unflushed.pop().combine()
+
+    encode_ms = _median_ms(do_encode, reps)
+
+    # --- shm: write flushed binary to POSIX shared memory ---
+    orm = do_build()
+    orm.combine()
+    _raw = bytes(orm._origin.buffer().as_array(np.uint8))
+
+    def do_shm():
+        s = _shm_write(_raw)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+
+    orm.share(shm_name)
+
+    try:
+        _probe = shared_memory.SharedMemory(name=shm_name)
+        size_bytes = _probe.size
+        _probe.close()
+    except Exception:
+        size_bytes = 0
+
+    orm2 = None
+    try:
+        def do_deserial():
+            h = ColumnEngine.load(shm_name)
+            h.close()
+
+        deserial_ms = _median_ms(do_deserial, reps)
+        orm2 = ColumnEngine.load(shm_name)
+
+        def do_read():
+            tbl = orm2.table(CoordNumeric)
+            cx = tbl.column.x
+            cy = tbl.column.y
+            cz = tbl.column.z
+            return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
+
+        read_ms = _median_ms(do_read, reps)
+    finally:
+        if orm2 is not None:
+            orm2.unlink()
+        else:
+            try:
+                h = ColumnEngine.load(shm_name)
+                h.unlink()
+            except Exception:
+                pass
+
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
+    return {
+        "system": "column_truncate",
+        "build_ms": round(build_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
+        "deserial_ms": round(deserial_ms, 2),
+        "read_ms": round(read_ms, 2),
+        "total_ms": round(total_ms, 2),
+        "size_bytes": size_bytes,
+    }
+
+
+def bench_arrow_numeric(N: int, reps: int) -> dict:
+    """PyArrow Table without `name` — apples-to-apples vs column_truncate."""
+    if not HAS_ARROW:
+        return {"system": "arrow_num", "error": "pyarrow not installed"}
+
+    def do_build():
+        ids = np.arange(N, dtype=np.uint32)
+        xs = np.arange(N, dtype=np.float64) * 0.1
+        ys = np.arange(N, dtype=np.float64) * 0.2
+        zs = np.arange(N, dtype=np.float64) * 0.3
+        return pa.table({
+            "row_id": pa.array(ids, type=pa.uint32()),
+            "x": pa.array(xs, type=pa.float64()),
+            "y": pa.array(ys, type=pa.float64()),
+            "z": pa.array(zs, type=pa.float64()),
+        })
+
+    build_ms = _median_ms(do_build, reps)
+    tbl = do_build()
+
+    def _to_ipc(t) -> bytes:
+        sink = pa.BufferOutputStream()
+        writer = pa_ipc.new_stream(sink, t.schema)
+        writer.write_table(t)
+        writer.close()
+        return sink.getvalue().to_pybytes()
+
+    encode_ms = _median_ms(lambda: _to_ipc(tbl), reps)
+    ipc_bytes = _to_ipc(tbl)
+
+    def do_shm():
+        s = _shm_write(ipc_bytes)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+    shm = _shm_write(ipc_bytes)
+    size_bytes = len(ipc_bytes)
+
+    def do_deserial():
+        raw = _shm_read(shm, size_bytes)
+        buf = pa.py_buffer(raw)
+        reader = pa_ipc.open_stream(buf)
+        _ = reader.read_all()
+
+    deserial_ms = _median_ms(do_deserial, reps)
+    raw = _shm_read(shm, size_bytes)
+    tbl2 = pa_ipc.open_stream(pa.py_buffer(raw)).read_all()
+
+    def do_read():
+        cx = tbl2.column("x").to_numpy()
+        cy = tbl2.column("y").to_numpy()
+        cz = tbl2.column("z").to_numpy()
+        return float(cx.sum() + cy.sum() + cz.sum())
+
+    read_ms = _median_ms(do_read, reps)
+    shm.close()
+    shm.unlink()
+
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
+    return {
+        "system": "arrow_num",
+        "build_ms": round(build_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
+        "deserial_ms": round(deserial_ms, 2),
+        "read_ms": round(read_ms, 2),
+        "total_ms": round(total_ms, 2),
+        "size_bytes": size_bytes,
+    }
+
+
+def bench_pickle_numeric(N: int, reps: int) -> dict:
+    """Pickle list[dict] without `name` — apples-to-apples vs column_truncate."""
+    def do_build():
+        return [
+            {"row_id": i, "x": float(i) * 0.1, "y": float(i) * 0.2, "z": float(i) * 0.3}
+            for i in range(N)
+        ]
+
+    build_ms = _median_ms(do_build, reps)
+    data = do_build()
+
+    encode_ms = _median_ms(lambda: pickle.dumps(data, protocol=5), reps)
+    pkl_bytes = pickle.dumps(data, protocol=5)
+
+    def do_shm():
+        s = _shm_write(pkl_bytes)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+    shm = _shm_write(pkl_bytes)
+    size_bytes = len(pkl_bytes)
+
+    def do_deserial():
+        raw = _shm_read(shm, size_bytes)
+        _ = pickle.loads(raw)
+
+    deserial_ms = _median_ms(do_deserial, reps)
+    raw = _shm_read(shm, size_bytes)
+    data2 = pickle.loads(raw)
+
+    def do_read():
+        total = 0.0
+        for row in data2:
+            total += row["x"] + row["y"] + row["z"]
+        return total
+
+    read_ms = _median_ms(do_read, reps)
+    shm.close()
+    shm.unlink()
+
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
+    return {
+        "system": "pickle_num",
         "build_ms": round(build_ms, 2),
         "encode_ms": round(encode_ms, 2),
         "shm_ms": round(shm_ms, 2),
@@ -437,7 +687,7 @@ def bench_column_engine(N: int, reps: int) -> dict:
 # ---------------------------------------------------------------------------
 
 COLS = ["system", "build_ms", "encode_ms", "shm_ms", "deserial_ms", "read_ms", "total_ms", "size_kb"]
-WIDTHS = [10, 10, 11, 9, 14, 10, 11, 10]
+WIDTHS = [16, 10, 11, 9, 14, 10, 11, 10]
 
 
 def _fmt(v, width: int) -> str:
@@ -450,53 +700,86 @@ def _kb(size_bytes) -> float:
     return round(size_bytes / 1024, 1) if isinstance(size_bytes, int) else float("nan")
 
 
-def print_table(results: list[dict], N: int):
-    header = "".join(f"{c:>{w}}" for c, w in zip(COLS, WIDTHS))
-    sep = "-" * sum(WIDTHS)
-    print(f"\n  N = {N:,}  (row_id: U32 | x, y, z: F64 | name: STR)")
+def _print_throughput(results: list[dict], N: int):
+    """Print throughput (M records/sec) and bytes-per-record per system."""
+    THRU_COLS = ["system", "build", "encode", "shm", "deserial", "read", "total", "B/rec"]
+    THRU_WIDTHS = [16, 10, 10, 10, 10, 10, 10, 10]
+    sep = "-" * sum(THRU_WIDTHS)
+    print(f"\n  Throughput (M records/sec)  + bytes/record")
     print(f"  {sep}")
-    print(f"  {header}")
+    print(f"  {''.join(f'{c:>{w}}' for c, w in zip(THRU_COLS, THRU_WIDTHS))}")
     print(f"  {sep}")
     for r in results:
         if "error" in r:
-            print(f"  {r['system']:>10}  {r['error']}")
             continue
-        display = dict(r)
-        display["size_kb"] = _kb(r["size_bytes"])
-        row = "".join(f"{_fmt(display[c], w)}" for c, w in zip(COLS, WIDTHS))
-        print(f"  {row}")
+        row = {
+            "system": r["system"],
+            "build":    round(_throughput(N, r["build_ms"]), 2),
+            "encode":   round(_throughput(N, r["encode_ms"]), 2),
+            "shm":      round(_throughput(N, r["shm_ms"]), 2),
+            "deserial": round(_throughput(N, r["deserial_ms"]), 2),
+            "read":     round(_throughput(N, r["read_ms"]), 2),
+            "total":    round(_throughput(N, r["total_ms"]), 2),
+            "B/rec":    round(_bytes_per_record(r["size_bytes"], N), 1),
+        }
+        print(f"  {''.join(_fmt(row[c], w) for c, w in zip(THRU_COLS, THRU_WIDTHS))}")
     print(f"  {sep}")
 
-    # ratio table (vs pickle as baseline)
-    pkl = next((r for r in results if r["system"] == "pickle"), None)
-    if pkl:
-        print(f"\n  Ratio vs pickle  (lower = faster/smaller):")
-        ratio_header = "".join(f"{c:>{w}}" for c, w in zip(COLS, WIDTHS))
-        print(f"  {'-' * sum(WIDTHS)}")
-        print(f"  {ratio_header}")
-        print(f"  {'-' * sum(WIDTHS)}")
-        for r in results:
-            if "error" in r:
-                continue
-            def ratio(key):
-                base = pkl.get(key, 0)
-                val = r.get(key, 0)
-                if base and val:
-                    return round(val / base, 2)
-                return float("nan")
-            ratios = {
-                "system": r["system"],
-                "build_ms": ratio("build_ms"),
-                "encode_ms": ratio("encode_ms"),
-                "shm_ms": ratio("shm_ms"),
-                "deserial_ms": ratio("deserial_ms"),
-                "read_ms": ratio("read_ms"),
-                "total_ms": ratio("total_ms"),
-                "size_kb": ratio("size_bytes"),
-            }
-            row = "".join(f"{_fmt(ratios[c], w)}" for c, w in zip(COLS, WIDTHS))
-            print(f"  {row}")
-        print(f"  {'-' * sum(WIDTHS)}")
+
+def _print_ratio(results: list[dict], baseline_system: str, label: str):
+    base = next((r for r in results if r.get("system") == baseline_system and "error" not in r), None)
+    if base is None:
+        return
+    print(f"\n  Ratio vs {label}  (lower = faster/smaller; 1.00 = baseline):")
+    sep = "-" * sum(WIDTHS)
+    print(f"  {sep}")
+    print(f"  {''.join(f'{c:>{w}}' for c, w in zip(COLS, WIDTHS))}")
+    print(f"  {sep}")
+    for r in results:
+        if "error" in r:
+            continue
+        def ratio(key):
+            b = base.get(key, 0)
+            v = r.get(key, 0)
+            if b and v:
+                return round(v / b, 2)
+            return float("nan")
+        row = {
+            "system":      r["system"],
+            "build_ms":    ratio("build_ms"),
+            "encode_ms":   ratio("encode_ms"),
+            "shm_ms":      ratio("shm_ms"),
+            "deserial_ms": ratio("deserial_ms"),
+            "read_ms":     ratio("read_ms"),
+            "total_ms":    ratio("total_ms"),
+            "size_kb":     ratio("size_bytes"),
+        }
+        print(f"  {''.join(_fmt(row[c], w) for c, w in zip(COLS, WIDTHS))}")
+    print(f"  {sep}")
+
+
+def print_table(results: list[dict], N: int, *, title: str, schema_desc: str):
+    sep = "-" * sum(WIDTHS)
+    print(f"\n  ━━━ {title}  (N = {N:,}) ━━━")
+    print(f"  Schema: {schema_desc}")
+    print(f"  {sep}")
+    print(f"  {''.join(f'{c:>{w}}' for c, w in zip(COLS, WIDTHS))}")
+    print(f"  {sep}")
+    for r in results:
+        if "error" in r:
+            print(f"  {r['system']:>16}  {r['error']}")
+            continue
+        d = dict(r)
+        d["size_kb"] = _kb(r["size_bytes"])
+        print(f"  {''.join(_fmt(d[c], w) for c, w in zip(COLS, WIDTHS))}")
+    print(f"  {sep}")
+
+    _print_throughput(results, N)
+
+    # Dual baselines: pickle (general) and arrow (columnar best-of-breed)
+    for baseline in ("pickle", "pickle_num", "arrow", "arrow_num"):
+        if any(r.get("system") == baseline for r in results):
+            _print_ratio(results, baseline, baseline)
 
 
 # ---------------------------------------------------------------------------
@@ -526,40 +809,73 @@ def main():
 
     reps = 1 if args.quick else args.reps
 
-    print("=" * 85)
-    print("  Kostya-Style Benchmark — ColumnEngine vs ObjectEngine vs PyArrow vs pickle")
-    print("  Data: Coordinate records  { row_id: U32 | x, y, z: F64 | name: STR }")
-    print("  Phases (ms, median): build | encode | shm write | deserialize | read sum(x+y+z)")
-    print("  Size: uncompressed wire format (KB)")
+    print("=" * 95)
+    print("  Kostya-Style Benchmark — fastdb engines vs PyArrow vs pickle")
+    print("  Two sections: (A) Full schema with STR name; (B) Numeric-only apples-to-apples")
+    print("  Phases (ms, median): build | encode (combine/dumps) | shm | deserialize | read sum(x+y+z)")
+    print("  Throughput: million records/sec; B/rec: wire bytes per record")
     print("  Notes:")
-    print("    column  = ColumnEngine (OLAP/batch) push + combine() + numpy column read")
-    print("    object  = ObjectEngine (OLTP/graph) deferred batch push + combine()")
-    print("    arrow   = PyArrow Table + IPC stream + numpy read")
-    print("    pickle  = list[dict] + pickle.dumps/loads + dict iteration")
-    print("=" * 85)
+    print("    column_push     = ColumnEngine.create() + per-row push() + combine()  [supports STR]")
+    print("    column_truncate = ColumnEngine.truncate(Layout) + tbl.fill(numpy)     [numeric-only]")
+    print("    object          = ObjectEngine.create() + per-row push() + combine()")
+    print("    arrow / arrow_num   = PyArrow Table + IPC stream + numpy read")
+    print("    pickle / pickle_num = list[dict] + pickle.dumps/loads + dict iteration")
+    print("=" * 95)
 
     all_results = []
 
-    for N in Ns:
-        row_results = []
-        print(f"\n  Running N={N:,}  reps={reps} ...", end="", flush=True)
+    full_benches = [
+        ("object",      bench_object_engine),
+        ("column_push", bench_column_push),
+        ("arrow",       bench_arrow),
+        ("pickle",      bench_pickle),
+    ]
+    numeric_benches = [
+        ("column_truncate", bench_column_truncate),
+        ("arrow_num",       bench_arrow_numeric),
+        ("pickle_num",      bench_pickle_numeric),
+    ]
 
-        for name, fn in [
-            ("object", bench_object_engine),
-            ("column", bench_column_engine),
-            ("arrow", bench_arrow),
-            ("pickle", bench_pickle),
-        ]:
+    for N in Ns:
+        # ---- Section A: full schema (with STR `name`) ----
+        print(f"\n  Running N={N:,}  reps={reps}  [Section A — full schema with STR] ...", end="", flush=True)
+        full_results = []
+        for name, fn in full_benches:
             try:
-                row_results.append(fn(N, reps))
+                full_results.append(fn(N, reps))
                 print(f" [{name}]", end="", flush=True)
             except Exception as e:
-                row_results.append({"system": name, "error": str(e)})
+                full_results.append({"system": name, "error": str(e)})
                 print(f" [{name}-ERR: {e}]", end="", flush=True)
-
         print()
-        print_table(row_results, N)
-        all_results.append({"N": N, "results": row_results})
+        print_table(
+            full_results, N,
+            title="Section A — Full schema",
+            schema_desc="row_id: U32 | x, y, z: F64 | name: STR",
+        )
+
+        # ---- Section B: numeric-only (apples-to-apples for ColumnEngine truncate) ----
+        print(f"\n  Running N={N:,}  reps={reps}  [Section B — numeric-only] ...", end="", flush=True)
+        num_results = []
+        for name, fn in numeric_benches:
+            try:
+                num_results.append(fn(N, reps))
+                print(f" [{name}]", end="", flush=True)
+            except Exception as e:
+                num_results.append({"system": name, "error": str(e)})
+                print(f" [{name}-ERR: {e}]", end="", flush=True)
+        print()
+        print_table(
+            num_results, N,
+            title="Section B — Numeric only (apples-to-apples)",
+            schema_desc="row_id: U32 | x, y, z: F64",
+        )
+
+        all_results.append({
+            "N": N,
+            "section_full": full_results,
+            "section_numeric": num_results,
+        })
 
     if args.output_json:
         existing = []
