@@ -6,6 +6,8 @@ namespace wx
 {
     namespace
     {
+        constexpr u64 kMaxStringFieldBytes = 0xFFFFFFFFull;
+
         size_t field_type_storage_size(u32 ft, bool string_table_u32)
         {
             switch (ft)
@@ -86,6 +88,24 @@ namespace wx
                     register_varlen_string_field(string_fields, ix);
                 table_line_size += fd.size;
             }
+        }
+
+        template <typename TStringField>
+        bool validate_string_field_for_write(const TStringField& sfd, size_t feature_count)
+        {
+            assert(sfd.data.size() <= kMaxStringFieldBytes);
+            if (sfd.data.size() > kMaxStringFieldBytes)
+                return false;
+            assert(sfd.offsets.size() == feature_count + 1);
+            if (sfd.offsets.size() != feature_count + 1)
+                return false;
+            assert(!sfd.offsets.empty());
+            if (sfd.offsets.empty())
+                return false;
+            assert(sfd.offsets.back() == sfd.data.size());
+            if (sfd.offsets.back() != sfd.data.size())
+                return false;
+            return true;
         }
     }
 
@@ -539,6 +559,10 @@ namespace wx
         assert(data != nullptr || len == 0);
         if (data == nullptr && len > 0)
             return;
+        u64 next_size = (u64)sfd->data.size() + (u64)len;
+        assert(next_size <= kMaxStringFieldBytes);
+        if (next_size > kMaxStringFieldBytes)
+            return;
         if (data != nullptr && len > 0)
         {
             const u8* p = reinterpret_cast<const u8*>(data);
@@ -553,6 +577,9 @@ namespace wx
             return;
         assert(n_offsets == m_feature_count + 1);
         if (n_offsets != m_feature_count + 1)
+            return;
+        assert(nbytes <= kMaxStringFieldBytes);
+        if (nbytes > kMaxStringFieldBytes)
             return;
         assert(offsets != nullptr || n_offsets == 0);
         if (offsets == nullptr)
@@ -832,6 +859,8 @@ string table:%s\n",
         }
         // String sections follow list sections so later reader work can scan trailing column payloads in order.
         for (const auto& sfd : m_string_fields) {
+            if (!validate_string_field_for_write(sfd, m_feature_count))
+                return;
             stream->write((void*)&sfd.field_id, sizeof(u32));
             stream->write((void*)&sfd.codec, sizeof(u32));
             u32 offset_count = (u32)sfd.offsets.size();
