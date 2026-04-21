@@ -1,4 +1,7 @@
 # tests/python/test_reader.py
+import ctypes
+import struct
+
 import pytest
 import numpy as np
 from fastdb4py.decorator import feature
@@ -49,6 +52,67 @@ def _pack_utf8(strings):
         raw.extend(value.encode("utf-8"))
         offsets.append(len(raw))
     return np.array(offsets, dtype=np.uint32), np.frombuffer(bytes(raw), dtype=np.uint8)
+
+
+class _LayerHeader(ctypes.Structure):
+    _fields_ = [
+        ("name", ctypes.c_char * 64),
+        ("feature_count", ctypes.c_uint32),
+        ("geometry_type", ctypes.c_uint16),
+        ("field_count", ctypes.c_uint16),
+        ("coord_format", ctypes.c_uint16),
+        ("aabbox_enable", ctypes.c_bool),
+        ("string_table_u32", ctypes.c_bool),
+        ("n_list_fields", ctypes.c_uint16),
+        ("minx", ctypes.c_double),
+        ("miny", ctypes.c_double),
+        ("maxx", ctypes.c_double),
+        ("maxy", ctypes.c_double),
+        ("offset_table", ctypes.c_uint64),
+        ("offset_strings", ctypes.c_uint64),
+        ("offset_wstrings", ctypes.c_uint64),
+        ("total_size", ctypes.c_uint64),
+    ]
+
+
+class _FieldDesc(ctypes.Structure):
+    _fields_ = [
+        ("name", ctypes.c_char * 16),
+        ("type", ctypes.c_uint16),
+        ("element_type", ctypes.c_uint16),
+        ("vmin", ctypes.c_double),
+        ("vmax", ctypes.c_double),
+        ("size", ctypes.c_uint64),
+        ("offset", ctypes.c_uint64),
+    ]
+
+
+def _build_varlen_string_db_bytes(strings):
+    db = core.WxDatabaseBuild()
+    db.begin("")
+    layer_build = db.create_layer_begin("utf8_rows")
+    layer_build.set_geometry_type(core.gtNone, core.cfTx32, aabboxEnabled=False)
+    layer_build.add_field("name", core.ftSTR)
+    db.truncate("utf8_rows", len(strings))
+
+    offsets, data = _pack_utf8(strings)
+    layer_build.set_string_column_bulk(0, offsets, data)
+
+    mem = core.WxMemoryStream()
+    db.post(mem)
+    return mem.data().as_array(np.uint8).tobytes(), offsets, data
+
+
+def _corrupt_first_varlen_string_byte_count(buf, byte_count):
+    mutated = bytearray(buf)
+    layer_offset = 16 + 4
+    header = _LayerHeader.from_buffer_copy(mutated[layer_offset:layer_offset + ctypes.sizeof(_LayerHeader)])
+    data_offset = layer_offset + ctypes.sizeof(_LayerHeader) + header.field_count * ctypes.sizeof(_FieldDesc)
+    wstring_count_offset = data_offset + header.offset_wstrings
+    assert struct.unpack_from("=I", mutated, wstring_count_offset)[0] == 0
+    string_section_offset = wstring_count_offset + 4
+    struct.pack_into("=Q", mutated, string_section_offset + 12, byte_count)
+    return bytes(mutated)
 
 
 class TestMapFeature:
@@ -133,19 +197,7 @@ class TestCopyFeature:
 
 
 def test_varlen_string_column_reader_exposes_raw_buffers():
-    db = core.WxDatabaseBuild()
-    db.begin("")
-    layer_build = db.create_layer_begin("utf8_rows")
-    layer_build.set_geometry_type(core.gtNone, core.cfTx32, aabboxEnabled=False)
-    layer_build.add_field("name", core.ftSTR)
-    db.truncate("utf8_rows", 3)
-
-    offsets, data = _pack_utf8(["a", "bé", "中"])
-    layer_build.set_string_column_bulk(0, offsets, data)
-
-    mem = core.WxMemoryStream()
-    db.post(mem)
-    buf = mem.data().as_array(np.uint8).tobytes()
+    buf, offsets, data = _build_varlen_string_db_bytes(["a", "bé", "中"])
     rdb = core.WxDatabase.load_xbuffer(buf)
     rdb._buffer = buf
 
@@ -161,3 +213,16 @@ def test_varlen_string_column_reader_exposes_raw_buffers():
 
     feature = layer.tryGetFeature(2)
     assert feature.get_field_as_string_view(0).to_bytes().decode("utf-8") == "中"
+
+
+def test_varlen_string_column_reader_rejects_truncated_section_payload():
+    valid_buf, _, data = _build_varlen_string_db_bytes(["a", "bé", "中"])
+    corrupted_buf = _corrupt_first_varlen_string_byte_count(valid_buf, data.nbytes + 8)
+
+    rdb = core.WxDatabase.load_xbuffer(corrupted_buf)
+    rdb._buffer = corrupted_buf
+
+    layer = rdb.get_layer(0)
+    assert layer.get_string_column_offsets(0).size == 0
+    assert layer.get_string_column_data(0).size == 0
+    assert layer.tryGetFeature(0).get_field_as_string_view(0).size == 0

@@ -1,6 +1,7 @@
 #include "fastdb.h"
 #include "FastVectorDbLayer_p.h"
 #include "FastVectorDbLayerBuild_p.h"
+#include <limits>
 namespace wx
 {
     namespace
@@ -27,6 +28,24 @@ namespace wx
             }
             return count;
         }
+
+        bool has_remaining_bytes(const u8* ptr, const u8* end, size_t need)
+        {
+            return ptr <= end && need <= size_t(end - ptr);
+        }
+
+        bool has_remaining_bytes_u64(const u8* ptr, const u8* end, u64 need)
+        {
+            return ptr <= end && need <= u64(end - ptr);
+        }
+
+        bool try_multiply_size(size_t lhs, size_t rhs, size_t& out)
+        {
+            if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs)
+                return false;
+            out = lhs * rhs;
+            return true;
+        }
     }
 
     size_t ustring_len(const uchar_t *str)
@@ -47,6 +66,7 @@ namespace wx
     FastVectorDbLayer::Impl::Impl(u8 *pdata, size_t size)
         :m_data(pdata), m_size(size), m_ifeature(-1)
     {
+        const u8* data_end = m_data + m_size;
          m_header = (layer_header_t *)m_data;
         m_field_descs = (field_desc_ex_t *)(m_data + sizeof(layer_header_t));
         m_data_ptr0 = m_data + sizeof(layer_header_t) + m_header->field_count * sizeof(field_desc_ex_t);
@@ -87,12 +107,21 @@ namespace wx
         for (u16 si = 0; si < string_field_count; ++si)
         {
             StringFieldData sfd;
+            if (!has_remaining_bytes(ptr, data_end, sizeof(u32) + sizeof(u32) + sizeof(u32) + sizeof(u64)))
+                break;
             sfd.field_id = *(u32*)ptr; ptr += 4;
             sfd.codec = *(u32*)ptr; ptr += 4;
             sfd.offset_count = *(u32*)ptr; ptr += 4;
             sfd.byte_count = *(u64*)ptr; ptr += 8;
+            size_t offset_bytes = 0;
+            if (!try_multiply_size(size_t(sfd.offset_count), sizeof(u32), offset_bytes))
+                break;
+            if (!has_remaining_bytes(ptr, data_end, offset_bytes))
+                break;
             sfd.offsets_ptr = sfd.offset_count ? (u32*)ptr : nullptr;
-            ptr += size_t(sfd.offset_count) * sizeof(u32);
+            ptr += offset_bytes;
+            if (!has_remaining_bytes_u64(ptr, data_end, sfd.byte_count))
+                break;
             sfd.data_ptr = sfd.byte_count ? const_cast<u8*>(ptr) : nullptr;
             ptr += size_t(sfd.byte_count);
             m_string_fields.push_back(sfd);
