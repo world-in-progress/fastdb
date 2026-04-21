@@ -96,6 +96,9 @@ namespace wx
             assert(sfd.data.size() <= kMaxStringFieldBytes);
             if (sfd.data.size() > kMaxStringFieldBytes)
                 return false;
+            assert(sfd.offsets.size() <= kMaxStringFieldBytes);
+            if (sfd.offsets.size() > kMaxStringFieldBytes)
+                return false;
             assert(sfd.offsets.size() == feature_count + 1);
             if (sfd.offsets.size() != feature_count + 1)
                 return false;
