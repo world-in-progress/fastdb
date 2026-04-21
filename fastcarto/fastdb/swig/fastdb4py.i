@@ -177,7 +177,6 @@
 %rename(get_string_column_offsets) getStringColumnOffsets;
 %rename(get_string_column_data) getStringColumnData;
 %rename(set_field_string_view) setFieldStringView;
-%rename(set_numeric_column_bulk) setNumericColumnBulk;
 %rename(set_string_column_bulk) setStringColumnBulk;
 %rename(get_field_as_ref)       getFieldAsFeatureRef;   
 %rename(set_feature_cookie)     setFeatureCookie;   
