@@ -139,6 +139,15 @@ namespace wx{
         };
         vector<ListFieldBuildData> m_list_fields;
 
+        struct StringFieldBuildData {
+            int         field_id;
+            u32         codec;      // 1 = plain_utf8
+            vector<u32> offsets;    // length = feature_count + 1
+            vector<u8>  data;
+        };
+        vector<StringFieldBuildData> m_string_fields;
+        bool m_enable_varlen_string_columns;
+
         template <class coord_type>
         friend bool build_geometry_buffer_from_buffer(vector<u8> &buffer, FastVectorDbLayerBuild::Impl &build, const char *data, size_t size, GeometryLikeFormat inputFormat, GeometryLikeEnum declType);
 

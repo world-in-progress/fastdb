@@ -118,6 +118,16 @@ namespace wx
             u8*   data_ptr;    // points directly into the database memory buffer
         };
         vector<ListFieldData>   m_list_fields;
+
+        struct StringFieldData {
+            u32 field_id;
+            u32 codec;
+            u32 offset_count;
+            u64 byte_count;
+            u32* offsets_ptr;
+            u8*  data_ptr;
+        };
+        vector<StringFieldData> m_string_fields;
         friend class FastVectorDbFeature;
         friend class FastVectorDb::Impl;
     };

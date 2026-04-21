@@ -192,6 +192,8 @@ namespace wx
         void setField(unsigned ix, int value);
         void setField(unsigned ix, const char *text);
         void setField(unsigned ix, const wchar_t *text);
+        void setFieldStringView(unsigned ix, const char* data, unsigned len);
+        void setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes);
         void setField(unsigned ix, const FastVectorDbFeatureRef* ref);
         FastVectorDbFeatureRef* createFeatureRef(u32 ix=-1);
         void freeFeatureRef(FastVectorDbFeatureRef* ref);
@@ -349,6 +351,9 @@ namespace wx
         int                     getFieldAsInt(u32 ix);
         const char*             getFieldAsString(u32 ix);
         const uchar_t*          getFieldAsWString(u32 ix);
+        chunk_data_t            getFieldAsStringView(u32 ix);
+        chunk_data_t            getStringColumnOffsets(u32 ix);
+        chunk_data_t            getStringColumnData(u32 ix);
         FastVectorDbFeatureRef* getFieldAsFeatureRef(u32 ix);
         void*                   setFeatureCookie(void *cookie);
         void*                   getFeatureCookie();
@@ -406,6 +411,7 @@ namespace wx
         int                     getFieldAsInt(u32 ix);
         const char*             getFieldAsString(u32 ix);
         const uchar_t*          getFieldAsWString(u32 ix);
+        chunk_data_t            getFieldAsStringView(u32 ix);
         FastVectorDbFeatureRef* getFieldAsFeatureRef(u32 ix);
         void*                   setFeatureCookie(void *cookie);
         void*                   getFeatureCookie();
