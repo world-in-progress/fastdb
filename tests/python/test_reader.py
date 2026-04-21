@@ -279,3 +279,36 @@ def test_truncate_layer_build_set_numeric_column_bulk_rejects_wrong_size_buffer(
     rdb._buffer = buf
     out = rdb.get_layer(0).get_column(0).as_nparray()
     np.testing.assert_allclose(out, np.array([1.0, 2.5, 3.5], dtype=np.float64))
+
+
+def test_truncate_layer_build_set_numeric_column_bulk_zero_rows_round_trips():
+    db = core.WxDatabaseBuild()
+    db.begin("")
+    layer = db.create_layer_begin("num_rows")
+    layer.set_geometry_type(core.gtNone, core.cfTx32, aabboxEnabled=False)
+    layer.add_field("x", core.ftF64)
+    db.truncate("num_rows", 0)
+
+    layer.set_numeric_column_bulk(0, np.array([], dtype=np.float64))
+
+    mem = core.WxMemoryStream()
+    db.post(mem)
+    buf = mem.data().as_array(np.uint8).tobytes()
+    rdb = core.WxDatabase.load_xbuffer(buf)
+    rdb._buffer = buf
+    out_layer = rdb.get_layer(0)
+    assert out_layer.get_feature_count() == 0
+    assert out_layer.get_field_count() == 1
+
+    db_buf = rdb.buffer().as_array(np.uint8)
+    layer_offset = 16 + 4
+    header = _LayerHeader.from_buffer_copy(db_buf[layer_offset:layer_offset + ctypes.sizeof(_LayerHeader)])
+    field_desc_offset = layer_offset + ctypes.sizeof(_LayerHeader)
+    field_desc = _FieldDesc.from_buffer_copy(
+        db_buf[field_desc_offset:field_desc_offset + ctypes.sizeof(_FieldDesc)]
+    )
+    assert field_desc.type == core.ftF64
+    assert field_desc.size == np.dtype(np.float64).itemsize
+    assert field_desc.offset == 0
+    assert header.offset_strings - header.offset_table == header.feature_count * field_desc.size
+    assert header.offset_strings == header.offset_table
