@@ -23,7 +23,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - `FastSerializer` numpy ndarray buffer layer support (`__fastser_buf__`): numpy arrays are now serialized via dedicated fastdb layers using `memcpy`-level writes and `np.frombuffer` loads, achieving 5–8× speedup over list-based paths for large arrays. Supports float64, float32, uint32, int32, uint16, uint8 dtypes and 1D/2D/3D shapes.
 - `FastSerializer.loads_shm(shm_name, length, offset, root_type)`: deserialize a Feature directly from a named shared memory segment without copying to an intermediate `bytes` object. Returns a fully detached Feature (pure Python mode) after closing the shared memory mapping.
 - **Native list columns**: `List[F64]`, `List[U32]`, `List[I32]`, `List[F32]`, `List[U8]`, `List[U16]`, and `List[SomeFeature]` are now first-class column types in the ORM. Features with list fields are stored directly in shared-memory ORM layers — no `FastSerializer` needed. Accessing `feature.my_list` returns a zero-copy NumPy array (numeric) or a lazy `FeatureRefList` (refs) backed by C++ memory. Cyclic object graphs are supported via two-pass DFS writing and back-edge patching.
-- `ColumnEngine.truncate()` now accepts `STR` fields and exposes them through a dedicated `StringColumn` wrapper with bulk `fill()` / `fill_utf8()` APIs while keeping `Table.fill()` numeric-only.
+- `ColumnEngine.truncate()` now accepts `STR` fields, exposes them through a dedicated `StringColumn` wrapper with bulk `fill()` / `fill_utf8()` APIs, and supports fixed-table mixed numeric + `STR` batch writes via `Table.fill()`.
 
 ### Performance
 - `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.
@@ -37,6 +37,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 
 ### Fixed
 - `ColumnEngine.truncate()` now preserves later tables in mixed layouts when an earlier `STR` column is still empty at combine time.
+- `ColumnEngine.truncate()` fixed-table writes now let `Table.fill()` batch mixed numeric + `STR` columns in one call, with upfront length validation and no Python-side whole-database rebuild for string columns.
 - SWIG/Python bindings now expose UTF-8 string-column reader APIs (`get_field_as_string_view`, `get_string_column_offsets`, `get_string_column_data`) for upcoming `ColumnEngine` string-column integration work.
 - `fdb codegen --ts` no longer warns or skips when the same class name (e.g. `Point`) appears in different `.py` files. Each file is treated as an independent module; all classes are generated in their respective `.ts` files.
 - `_schema.py`: `WeakKeyDictionary` reads moved fully under lock to prevent data races in free-threaded Python; `cls.__dict__` remains the lock-free fast path.

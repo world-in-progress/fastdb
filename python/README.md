@@ -127,7 +127,7 @@ The field order is part of the schema contract. It affects table layout, seriali
 
 ### Fixed-size tables with `ColumnEngine.truncate`
 
-Use `truncate` when the row count is known ahead of time. This is the fastest path for bulk numeric workloads, and it now also supports UTF-8 `STR` fields through `StringColumn`.
+Use `truncate` when the row count is known ahead of time. This is the fastest path for bulk numeric workloads, and fixed-size tables now let `Table.fill(...)` batch UTF-8 `STR` fields alongside numeric columns in one call.
 
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, F64, F32
@@ -172,7 +172,7 @@ db = ColumnEngine.truncate([
 ])
 ```
 
-For string columns on fixed-size tables, numeric fields still use NumPy-backed writes while strings go through `StringColumn`:
+For fixed-size tables with string columns, `Table.fill(...)` now batches numeric and UTF-8 `STR` data together with upfront length validation:
 
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR
@@ -191,8 +191,8 @@ tbl = db.table(Sample)
 tbl.fill(
     row_id=np.array([1, 2, 3], dtype=np.uint32),
     value=np.array([0.5, 1.5, 2.5], dtype=np.float64),
+    name=["a", "be", "中"],
 )
-tbl.column.name.fill(["a", "be", "中"])
 ```
 
 ### Dynamic tables with `ObjectEngine.create` + `push`
