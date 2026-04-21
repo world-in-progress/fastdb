@@ -3,17 +3,19 @@ Kostya-Style Serialization Benchmark — ColumnEngine vs ObjectEngine vs PyArrow
 ==========================================================================================
 Inspired by Kostya's benchmarks (github.com/kostya/benchmarks).
 
-Data structure: 'Coordinate' records — x, y, z (float64) + name (string).
+Data structure: 'Coordinate' records — row_id (u32), x/y/z (float64), name (UTF-8 string).
 
-Compares four systems:
-  - fastdb ColumnEngine  (OLAP/batch columnar, push + combine)
-  - fastdb ObjectEngine  (OLTP/graph, deferred batch push + combine)
-  - PyArrow              (columnar IPC)
-  - pickle               (Python native binary)
+Compares fastdb ColumnEngine in multiple modes plus ObjectEngine, PyArrow, and pickle:
+  - fastdb ColumnEngine push path            (OLAP/batch columnar, push + combine)
+  - fastdb ColumnEngine truncate + STR path  (known-size truncate + StringColumn.fill())
+  - fastdb ColumnEngine truncate fast path   (known-size numeric-only apples-to-apples)
+  - fastdb ObjectEngine                      (OLTP/graph, deferred batch push + combine)
+  - PyArrow                                  (columnar IPC)
+  - pickle                                   (Python native binary)
 
 Phases measured (milliseconds, median of `reps` runs):
-  build      : construct N in-memory records + push
-  encode     : convert to binary wire format (combine)
+  build      : construct/fill N in-memory records or columns
+  encode     : convert to binary wire format (combine/dumps when needed)
   shm        : allocate POSIX shared memory + memcpy bytes in
   deserialize: load from shared-memory / IPC buffer
   read       : iterate all N records, sum x+y+z
@@ -77,12 +79,7 @@ class Coord2:
 
 @feature
 class CoordNumeric:
-    """Numeric-only coordinate record (ColumnEngine truncate fast-path).
-
-    truncate() rejects variable-length fields (STR/WSTR/BYTES), so the
-    apples-to-apples comparison drops the `name` column. PyArrow and pickle
-    numeric variants drop it too for fair side-by-side timing.
-    """
+    """Numeric-only coordinate record for the truncate fast-path benchmark."""
     row_id: U32
     x: F64
     y: F64
@@ -470,6 +467,86 @@ def bench_column_push(N: int, reps: int) -> dict:
     }
 
 
+def bench_column_trunc_str(N: int, reps: int) -> dict:
+    """ColumnEngine via truncate(Layout) + numeric fill + StringColumn.fill()."""
+    shm_name = f"cets_kostya_{uuid.uuid4().hex[:8]}"
+
+    def do_build():
+        ids = np.arange(N, dtype=np.uint32)
+        xs = np.arange(N, dtype=np.float64) * 0.1
+        ys = np.arange(N, dtype=np.float64) * 0.2
+        zs = np.arange(N, dtype=np.float64) * 0.3
+        names = [_make_name(i) for i in range(N)]
+        orm = ColumnEngine.truncate([Layout(Coord, N)])
+        tbl = orm.table(Coord)
+        tbl.fill(row_id=ids, x=xs, y=ys, z=zs)
+        tbl.column.name.fill(names)
+        return orm
+
+    build_ms = _median_ms(do_build, reps)
+
+    # truncate() returns a fixed buffer immediately; string writes rebuild it in-place.
+    encode_ms = 0.0
+
+    orm = do_build()
+    _raw = bytes(orm._origin.buffer().as_array(np.uint8))
+
+    def do_shm():
+        s = _shm_write(_raw)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+
+    orm.share(shm_name)
+
+    try:
+        _probe = shared_memory.SharedMemory(name=shm_name)
+        size_bytes = _probe.size
+        _probe.close()
+    except Exception:
+        size_bytes = 0
+
+    orm2 = None
+    try:
+        def do_deserial():
+            h = ColumnEngine.load(shm_name)
+            h.close()
+
+        deserial_ms = _median_ms(do_deserial, reps)
+        orm2 = ColumnEngine.load(shm_name)
+
+        def do_read():
+            tbl = orm2.table(Coord)
+            cx = tbl.column.x
+            cy = tbl.column.y
+            cz = tbl.column.z
+            return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
+
+        read_ms = _median_ms(do_read, reps)
+    finally:
+        if orm2 is not None:
+            orm2.unlink()
+        else:
+            try:
+                h = ColumnEngine.load(shm_name)
+                h.unlink()
+            except Exception:
+                pass
+
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
+    return {
+        "system": "column_trunc_str",
+        "build_ms": round(build_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
+        "deserial_ms": round(deserial_ms, 2),
+        "read_ms": round(read_ms, 2),
+        "total_ms": round(total_ms, 2),
+        "size_bytes": size_bytes,
+    }
+
+
 def bench_column_truncate(N: int, reps: int) -> dict:
     """ColumnEngine via truncate(Layout) + bulk numpy fill() (numeric-only fast path)."""
     shm_name = f"cet_kostya_{uuid.uuid4().hex[:8]}"
@@ -487,17 +564,11 @@ def bench_column_truncate(N: int, reps: int) -> dict:
 
     build_ms = _median_ms(do_build, reps)
 
-    # --- encode: combine() (truncate path: data already in C++ columns) ---
-    _unflushed = [do_build() for _ in range(reps)]
-
-    def do_encode():
-        _unflushed.pop().combine()
-
-    encode_ms = _median_ms(do_encode, reps)
+    # --- encode: no extra combine() step; truncate already materializes fixed buffer ---
+    encode_ms = 0.0
 
     # --- shm: write flushed binary to POSIX shared memory ---
     orm = do_build()
-    orm.combine()
     _raw = bytes(orm._origin.buffer().as_array(np.uint8))
 
     def do_shm():
@@ -741,9 +812,9 @@ def _print_ratio(results: list[dict], baseline_system: str, label: str):
         def ratio(key):
             b = base.get(key, 0)
             v = r.get(key, 0)
-            if b and v:
-                return round(v / b, 2)
-            return float("nan")
+            if b == 0:
+                return 1.0 if v == 0 else float("inf")
+            return round(v / b, 2)
         row = {
             "system":      r["system"],
             "build_ms":    ratio("build_ms"),
@@ -788,7 +859,7 @@ def print_table(results: list[dict], N: int, *, title: str, schema_desc: str):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Kostya-style benchmark: ORM2 vs Old ORM vs PyArrow vs pickle"
+        description="Kostya-style benchmark: fastdb engines vs PyArrow vs pickle"
     )
     parser.add_argument("--quick", action="store_true",
                         help="Skip N=1_000_000, use 1 rep")
@@ -811,15 +882,17 @@ def main():
 
     print("=" * 95)
     print("  Kostya-Style Benchmark — fastdb engines vs PyArrow vs pickle")
-    print("  Two sections: (A) Full schema with STR name; (B) Numeric-only apples-to-apples")
+    print("  Two sections: (A) full schema with real UTF-8 string-column writes; (B) numeric-only fast path")
     print("  Phases (ms, median): build | encode (combine/dumps) | shm | deserialize | read sum(x+y+z)")
     print("  Throughput: million records/sec; B/rec: wire bytes per record")
     print("  Notes:")
-    print("    column_push     = ColumnEngine.create() + per-row push() + combine()  [supports STR]")
-    print("    column_truncate = ColumnEngine.truncate(Layout) + tbl.fill(numpy)     [numeric-only]")
-    print("    object          = ObjectEngine.create() + per-row push() + combine()")
-    print("    arrow / arrow_num   = PyArrow Table + IPC stream + numpy read")
+    print("    column_push       = ColumnEngine.create() + per-row push() + combine()")
+    print("    column_trunc_str  = ColumnEngine.truncate(Layout) + tbl.fill(numpy) + table.column.name.fill(...)")
+    print("    column_truncate   = ColumnEngine.truncate(Layout) + tbl.fill(numpy)  [numeric-only fast path]")
+    print("    object            = ObjectEngine.create() + per-row push() + combine()")
+    print("    arrow / arrow_num = PyArrow Table + IPC stream + numpy read")
     print("    pickle / pickle_num = list[dict] + pickle.dumps/loads + dict iteration")
+    print("    truncate paths report encode_ms = 0 because the fixed buffer is already materialized during build/fill")
     print("=" * 95)
 
     all_results = []
@@ -827,6 +900,7 @@ def main():
     full_benches = [
         ("object",      bench_object_engine),
         ("column_push", bench_column_push),
+        ("column_trunc_str", bench_column_trunc_str),
         ("arrow",       bench_arrow),
         ("pickle",      bench_pickle),
     ]
@@ -850,8 +924,8 @@ def main():
         print()
         print_table(
             full_results, N,
-            title="Section A — Full schema",
-            schema_desc="row_id: U32 | x, y, z: F64 | name: STR",
+            title="Section A — Full schema with STR",
+            schema_desc="row_id: U32 | x, y, z: F64 | name: STR (ColumnEngine truncate uses StringColumn.fill)",
         )
 
         # ---- Section B: numeric-only (apples-to-apples for ColumnEngine truncate) ----
@@ -867,7 +941,7 @@ def main():
         print()
         print_table(
             num_results, N,
-            title="Section B — Numeric only (apples-to-apples)",
+            title="Section B — Numeric only (apples-to-apples truncate fast path)",
             schema_desc="row_id: U32 | x, y, z: F64",
         )
 

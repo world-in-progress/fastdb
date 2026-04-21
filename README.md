@@ -58,6 +58,32 @@ If you are working on native internals or storage layout, start with:
 
 - [`fastcarto/README.md`](fastcarto/README.md)
 
+## Python `ColumnEngine.truncate()` with `STR`
+
+`fastdb4py` `ColumnEngine.truncate()` now supports UTF-8 `STR` fields.
+Numeric columns remain NumPy-backed (`table.column.x[:]`), while string columns are exposed as `StringColumn` wrappers via `table.column.<name>`.
+
+```python
+import numpy as np
+from fastdb4py import ColumnEngine, Layout, F64, STR, feature
+
+@feature
+class Point:
+    x: F64
+    y: F64
+    name: STR
+
+orm = ColumnEngine.truncate([Layout(Point, 3)])
+tbl = orm.table(Point)
+
+tbl.fill(
+    x=np.array([1.0, 2.0, 3.0], dtype=np.float64),
+    y=np.array([4.0, 5.0, 6.0], dtype=np.float64),
+)
+tbl.column.name.fill(["a", "bb", "ccc"])  # StringColumn
+# or: tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
+```
+
 ## CLI tools
 
 `fastdb4py` ships a CLI named `fdb` for cross-language tooling. Currently it provides the `codegen` subcommand.
@@ -124,7 +150,8 @@ export class Point extends Feature {
 **Recommended patterns by use case:**
 
 - **Bulk read/write of one field across all rows** → `table.column.x` (columnar, zero-copy)
-- **Bulk fill all fields from arrays** → `ORM.truncate` + `table.column.field[:] = array`
+- **Bulk fill numeric fields on known-size tables** → `ColumnEngine.truncate` + `table.fill(...)`
+- **Bulk fill UTF-8 string fields on known-size tables** → `table.column.name.fill(...)` or `fill_utf8(...)`
 - **Iterate and process all fields per row** → `table.iter_reuse()` + `feat.read_all_scalars()`
 - **Sparse random access** → `table[i].field`
 
