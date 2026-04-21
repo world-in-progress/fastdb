@@ -3,6 +3,32 @@
 #include "FastVectorDbLayerBuild_p.h"
 namespace wx
 {
+    namespace
+    {
+        template <typename TStringFields>
+        auto* find_string_field(TStringFields& string_fields, u32 field_id)
+        {
+            for (auto& field : string_fields)
+            {
+                if (field.field_id == field_id)
+                    return &field;
+            }
+            return static_cast<typename TStringFields::value_type*>(nullptr);
+        }
+
+        u16 count_varlen_string_fields(const field_desc_ex_t* field_descs, u16 field_count)
+        {
+            u16 count = 0;
+            for (u16 ix = 0; ix < field_count; ++ix)
+            {
+                const auto& field = field_descs[ix];
+                if (field.type == ftSTR && field.size == 0)
+                    count++;
+            }
+            return count;
+        }
+    }
+
     size_t ustring_len(const uchar_t *str)
     {
         size_t len = 0;
@@ -56,6 +82,20 @@ namespace wx
                 ptr += lfd.total_elements * lfd.elem_size;
                 m_list_fields.push_back(lfd);
             }
+        }
+        u16 string_field_count = count_varlen_string_fields(m_field_descs, m_header->field_count);
+        for (u16 si = 0; si < string_field_count; ++si)
+        {
+            StringFieldData sfd;
+            sfd.field_id = *(u32*)ptr; ptr += 4;
+            sfd.codec = *(u32*)ptr; ptr += 4;
+            sfd.offset_count = *(u32*)ptr; ptr += 4;
+            sfd.byte_count = *(u64*)ptr; ptr += 8;
+            sfd.offsets_ptr = sfd.offset_count ? (u32*)ptr : nullptr;
+            ptr += size_t(sfd.offset_count) * sizeof(u32);
+            sfd.data_ptr = sfd.byte_count ? const_cast<u8*>(ptr) : nullptr;
+            ptr += size_t(sfd.byte_count);
+            m_string_fields.push_back(sfd);
         }
     }
     FastVectorDbLayer::Impl::~Impl() {
@@ -438,6 +478,60 @@ namespace wx
         return getFieldAsWString_internal(m_ifeature,ix);
     }
 
+    chunk_data_t FastVectorDbLayer::Impl::getFieldAsStringView_internal(u32 ifeature, u32 ix)
+    {
+        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+            return {0, nullptr};
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftSTR)
+            return {0, nullptr};
+        if (fd->size == 0)
+        {
+            auto* sfd = find_string_field(m_string_fields, ix);
+            if (sfd == nullptr || ifeature + 1 >= sfd->offset_count)
+                return {0, nullptr};
+            u32 start = sfd->offsets_ptr[ifeature];
+            u32 end = sfd->offsets_ptr[ifeature + 1];
+            if (end < start || end > sfd->byte_count)
+                return {0, nullptr};
+            u8* data_ptr = sfd->data_ptr;
+            return {(size_t)(end - start), data_ptr ? (data_ptr + start) : nullptr};
+        }
+        const char* text = getFieldAsString_internal(ifeature, ix);
+        return text ? chunk_data_t{strlen(text), (u8*)text} : chunk_data_t{0, nullptr};
+    }
+
+    chunk_data_t FastVectorDbLayer::Impl::getFieldAsStringView(u32 ix)
+    {
+        return getFieldAsStringView_internal(m_ifeature, ix);
+    }
+
+    chunk_data_t FastVectorDbLayer::Impl::getStringColumnOffsets_internal(u32 ix)
+    {
+        if (ix >= m_header->field_count)
+            return {0, nullptr};
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftSTR || fd->size != 0)
+            return {0, nullptr};
+        auto* sfd = find_string_field(m_string_fields, ix);
+        if (sfd == nullptr)
+            return {0, nullptr};
+        return {size_t(sfd->offset_count) * sizeof(u32), (u8*)sfd->offsets_ptr};
+    }
+
+    chunk_data_t FastVectorDbLayer::Impl::getStringColumnData_internal(u32 ix)
+    {
+        if (ix >= m_header->field_count)
+            return {0, nullptr};
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftSTR || fd->size != 0)
+            return {0, nullptr};
+        auto* sfd = find_string_field(m_string_fields, ix);
+        if (sfd == nullptr)
+            return {0, nullptr};
+        return {(size_t)sfd->byte_count, sfd->data_ptr};
+    }
+
     void* FastVectorDbLayer::Impl::setFeatureCookie_internal(u32 ifeature,void* cookie)
     {
         u32 featureCount = m_header->feature_count;
@@ -629,6 +723,21 @@ namespace wx
     {
         return impl->getFieldAsWString(ix);
     }
+
+    chunk_data_t FastVectorDbLayer::getFieldAsStringView(u32 ix)
+    {
+        return impl->getFieldAsStringView(ix);
+    }
+
+    chunk_data_t FastVectorDbLayer::getStringColumnOffsets(u32 ix)
+    {
+        return impl->getStringColumnOffsets_internal(ix);
+    }
+
+    chunk_data_t FastVectorDbLayer::getStringColumnData(u32 ix)
+    {
+        return impl->getStringColumnData_internal(ix);
+    }
     
     u32 FastVectorDbLayer::getFeatureCount()
     {
@@ -744,6 +853,10 @@ namespace wx
     const uchar_t* FastVectorDbFeature::getFieldAsWString(u32 ix)
     {
         return impl->layer->impl->getFieldAsWString_internal(impl->ifeature,ix);
+    }
+    chunk_data_t FastVectorDbFeature::getFieldAsStringView(u32 ix)
+    {
+        return impl->layer->impl->getFieldAsStringView_internal(impl->ifeature, ix);
     }
     FastVectorDbFeatureRef* FastVectorDbFeature::getFieldAsFeatureRef(u32 ix)
     {

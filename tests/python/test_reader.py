@@ -42,6 +42,15 @@ def _build_db_with_points():
     return rdb
 
 
+def _pack_utf8(strings):
+    raw = bytearray()
+    offsets = [0]
+    for value in strings:
+        raw.extend(value.encode("utf-8"))
+        offsets.append(len(raw))
+    return np.array(offsets, dtype=np.uint32), np.frombuffer(bytes(raw), dtype=np.uint8)
+
+
 class TestMapFeature:
     def test_read_scalar(self):
         db = _build_db_with_points()
@@ -121,3 +130,34 @@ class TestCopyFeature:
         obj = copy_feature(WithBytes, layer, 0)
         assert isinstance(obj.data, bytes)
         assert obj.data == b"hello"
+
+
+def test_varlen_string_column_reader_exposes_raw_buffers():
+    db = core.WxDatabaseBuild()
+    db.begin("")
+    layer_build = db.create_layer_begin("utf8_rows")
+    layer_build.set_geometry_type(core.gtNone, core.cfTx32, aabboxEnabled=False)
+    layer_build.add_field("name", core.ftSTR)
+    db.truncate("utf8_rows", 3)
+
+    offsets, data = _pack_utf8(["a", "bé", "中"])
+    layer_build.set_string_column_bulk(0, offsets, data)
+
+    mem = core.WxMemoryStream()
+    db.post(mem)
+    buf = mem.data().as_array(np.uint8).tobytes()
+    rdb = core.WxDatabase.load_xbuffer(buf)
+    rdb._buffer = buf
+
+    layer = rdb.get_layer(0)
+    np.testing.assert_array_equal(
+        layer.get_string_column_offsets(0).as_array(np.uint32),
+        offsets,
+    )
+    np.testing.assert_array_equal(
+        layer.get_string_column_data(0).as_array(np.uint8),
+        data,
+    )
+
+    feature = layer.tryGetFeature(2)
+    assert feature.get_field_as_string_view(0).to_bytes().decode("utf-8") == "中"

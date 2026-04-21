@@ -77,6 +77,36 @@
     }
 }
 
+%typemap(in) (const u32* offsets, unsigned n_offsets) (Py_buffer view) {
+    if (PyObject_GetBuffer($input, &view, PyBUF_SIMPLE) < 0) {
+        SWIG_exception_fail(SWIG_TypeError, "Expected a buffer for uint32 offsets");
+    }
+    if (view.len % sizeof(u32) != 0) {
+        PyBuffer_Release(&view);
+        SWIG_exception_fail(SWIG_ValueError, "Offset buffer size must be a multiple of 4 bytes");
+    }
+    $1 = (u32*)view.buf;
+    $2 = (unsigned)(view.len / sizeof(u32));
+}
+%typemap(freearg) (const u32* offsets, unsigned n_offsets) {
+    if (view$argnum.obj) {
+        PyBuffer_Release(&view$argnum);
+    }
+}
+
+%typemap(in) (const u8* data, u64 nbytes) (Py_buffer view) {
+    if (PyObject_GetBuffer($input, &view, PyBUF_SIMPLE) < 0) {
+        SWIG_exception_fail(SWIG_TypeError, "Expected a buffer for UTF-8 data bytes");
+    }
+    $1 = (u8*)view.buf;
+    $2 = (u64)view.len;
+}
+%typemap(freearg) (const u8* data, u64 nbytes) {
+    if (view$argnum.obj) {
+        PyBuffer_Release(&view$argnum);
+    }
+}
+
 // Exception handling for copy_to_buffer
 %typemap(out) int copy_to_buffer {
     if ($1 < 0) {
@@ -143,6 +173,11 @@
 %rename(get_field_as_int)       getFieldAsInt;       
 %rename(get_field_as_string)    getFieldAsString;       
 %rename(get_field_as_wstring)   getFieldAsWString;       
+%rename(get_field_as_string_view) getFieldAsStringView;
+%rename(get_string_column_offsets) getStringColumnOffsets;
+%rename(get_string_column_data) getStringColumnData;
+%rename(set_field_string_view) setFieldStringView;
+%rename(set_string_column_bulk) setStringColumnBulk;
 %rename(get_field_as_ref)       getFieldAsFeatureRef;   
 %rename(set_feature_cookie)     setFeatureCookie;   
 %rename(get_feature_cookie)     getFeatureCookie;   

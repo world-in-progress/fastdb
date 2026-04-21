@@ -35,6 +35,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - Cumulative `FastSerializer` improvement on complex PointCloud benchmark: **54%** (153.93 → 70.01 µs geo-mean); loads at N=10000 is now **21× faster than pickle**.
 
 ### Fixed
+- SWIG/Python bindings now expose UTF-8 string-column reader APIs (`get_field_as_string_view`, `get_string_column_offsets`, `get_string_column_data`) for upcoming `ColumnEngine` string-column integration work.
 - `fdb codegen --ts` no longer warns or skips when the same class name (e.g. `Point`) appears in different `.py` files. Each file is treated as an independent module; all classes are generated in their respective `.ts` files.
 - `_schema.py`: `WeakKeyDictionary` reads moved fully under lock to prevent data races in free-threaded Python; `cls.__dict__` remains the lock-free fast path.
 - `serializer.py`: `_CLASS_SCHEMA_CACHE` reads moved fully under lock (removed unsafe lock-free pre-check).
@@ -83,6 +84,9 @@ When a binding is released (tagged), its section is automatically copied to the 
 
 ### Added
 - **Native list column support**: `ftList=12` field type with backwards-compatible wire format. New public API on `FastVectorDbLayerBuild`: `add_list_field(name, element_type)`, `set_field_list_numeric(idx, data, nbytes)`, `set_field_list_refs(idx, refs, count)`, `update_feature_ref(feature_idx, field_idx, ref)`, `update_list_ref_at(feature_idx, field_idx, list_idx, ref)`. New public API on `FastVectorDbFeature`: `getFieldAsListView(idx)`, `getFieldListSize(idx)`, `getFieldListRefAt(idx, list_idx)`. Wire format: `element_type` field added in 2 previously-unused padding bytes of `field_desc_ex_t`; `n_list_fields` in `layer_header_t`; list data section appended after wstrings in each layer binary. Fully backwards-compatible — old databases with zero-filled padding read as no list data.
+
+### Fixed
+- `FastVectorDbLayer` now reads varlen UTF-8 string columns (`ftSTR + size=0`) from trailing offsets/data sections and exposes zero-copy reader buffers for per-row string views and whole-column offsets/data access.
 
 ### Changed
 - SWIG interface (`fastdb4py.i`): added `%feature("threadallow")` for pure C++ operations and `Py_BEGIN_ALLOW_THREADS` around `copy_to_buffer` memcpy, improving multi-threaded throughput and preparing for free-threaded Python.
