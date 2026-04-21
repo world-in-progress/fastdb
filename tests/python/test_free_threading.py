@@ -11,7 +11,10 @@ import threading
 import numpy as np
 import pytest
 
-from fastdb4py import Feature, F64, U32, STR, ORM, TableDefn
+from fastdb4py import Feature, F64, U32, STR
+from fastdb4py.decorator import feature
+from fastdb4py.column_engine import ColumnEngine
+from fastdb4py.layout import Layout
 from fastdb4py.feature._schema import get_class_schema, _SCHEMA_ATTR
 from fastdb4py.serializer import FastSerializer
 
@@ -61,7 +64,8 @@ class TestSchemaCacheConcurrency:
     def test_same_class_concurrent(self):
         """All threads should get the identical ClassSchema object."""
         # Define a fresh class so the schema has not been cached yet.
-        class ConcurrentPoint(Feature):
+        @feature
+        class ConcurrentPoint:
             x: F64
             y: F64
 
@@ -82,8 +86,8 @@ class TestSchemaCacheConcurrency:
         the shared cache or deadlock."""
         classes = []
         for k in range(NUM_THREADS):
-            # type() dynamically creates a fresh Feature subclass.
-            cls = type(f"DynPoint{k}", (Feature,), {"__annotations__": {"x": F64, "y": F64}})
+            cls = type(f"DynPoint{k}", (), {"__annotations__": {"x": F64, "y": F64}})
+            cls = feature(cls)
             classes.append(cls)
 
         results = _run_concurrent(lambda i: get_class_schema(classes[i]))
@@ -104,7 +108,8 @@ class TestSerializerConcurrency:
     def test_concurrent_dumps(self):
         """Multiple threads serialising different objects of the same type
         should not crash or produce corrupt output."""
-        class SerPoint(Feature):
+        @feature
+        class SerPoint:
             x: F64
             y: F64
 
@@ -123,10 +128,12 @@ class TestSerializerConcurrency:
 
     def test_concurrent_loads_different_types(self):
         """Concurrent loads of different Feature types sharing the schema cache."""
-        class TypeA(Feature):
+        @feature
+        class TypeA:
             val: F64
 
-        class TypeB(Feature):
+        @feature
+        class TypeB:
             val: U32
 
         buf_a = FastSerializer.dumps(TypeA(val=3.14))
@@ -159,12 +166,13 @@ class TestColumnAccessorConcurrency:
         numpy arrays without corruption."""
         N = 100
 
-        class ColPoint(Feature):
+        @feature
+        class ColPoint:
             x: F64
             y: F64
 
-        orm = ORM.truncate([TableDefn(ColPoint, N)])
-        tbl = orm[ColPoint][ColPoint]
+        orm = ColumnEngine.truncate([Layout(ColPoint, N)])
+        tbl = orm.table(ColPoint)
 
         # Fill with known data
         xs = np.arange(N, dtype=np.float64)
@@ -186,12 +194,13 @@ class TestColumnAccessorConcurrency:
         """Race on the very first access to a column (cold cache path)."""
         N = 50
 
-        class FreshColPoint(Feature):
+        @feature
+        class FreshColPoint:
             a: F64
             b: F64
 
-        orm = ORM.truncate([TableDefn(FreshColPoint, N)])
-        tbl = orm[FreshColPoint][FreshColPoint]
+        orm = ColumnEngine.truncate([Layout(FreshColPoint, N)])
+        tbl = orm.table(FreshColPoint)
 
         data = np.ones(N, dtype=np.float64) * 7.0
         tbl.fill(a=data, b=data)
@@ -215,7 +224,8 @@ class TestFeatureConcurrency:
 
     def test_concurrent_read_write_no_crash(self):
         """Readers and writers on the same Feature instance must not crash."""
-        class SharedPoint(Feature):
+        @feature
+        class SharedPoint:
             x: F64
             y: F64
 
@@ -257,7 +267,8 @@ class TestFeatureConcurrency:
 
     def test_concurrent_construction(self):
         """Many threads constructing Feature instances of the same class."""
-        class ConPoint(Feature):
+        @feature
+        class ConPoint:
             x: F64
             y: F64
 
@@ -279,14 +290,15 @@ class TestORMConcurrency:
         """Multiple threads getting the same table from an ORM."""
         N = 50
 
-        class OrmPoint(Feature):
+        @feature
+        class OrmPoint:
             x: F64
             y: F64
 
-        orm = ORM.truncate([TableDefn(OrmPoint, N)])
+        orm = ColumnEngine.truncate([Layout(OrmPoint, N)])
 
         def get_table(i):
-            tbl = orm[OrmPoint][OrmPoint]
+            tbl = orm.table(OrmPoint)
             return len(tbl)
 
         results = _run_concurrent(get_table)
@@ -297,20 +309,22 @@ class TestORMConcurrency:
         """Multiple threads reading from different tables in the same ORM."""
         N = 30
 
-        class TableA(Feature):
+        @feature
+        class TableA:
             a: F64
 
-        class TableB(Feature):
+        @feature
+        class TableB:
             b: U32
 
-        orm = ORM.truncate([TableDefn(TableA, N), TableDefn(TableB, N)])
+        orm = ColumnEngine.truncate([Layout(TableA, N), Layout(TableB, N)])
 
         def read_table(i):
             if i % 2 == 0:
-                tbl = orm[TableA][TableA]
+                tbl = orm.table(TableA)
                 return ("A", len(tbl))
             else:
-                tbl = orm[TableB][TableB]
+                tbl = orm.table(TableB)
                 return ("B", len(tbl))
 
         results = _run_concurrent(read_table)
@@ -322,11 +336,12 @@ class TestORMConcurrency:
         """Multiple threads iterating through the same table concurrently."""
         N = 20
 
-        class IterPoint(Feature):
+        @feature
+        class IterPoint:
             x: F64
 
-        orm = ORM.truncate([TableDefn(IterPoint, N)])
-        tbl = orm[IterPoint][IterPoint]
+        orm = ColumnEngine.truncate([Layout(IterPoint, N)])
+        tbl = orm.table(IterPoint)
         tbl.fill(x=np.arange(N, dtype=np.float64))
 
         def iterate(i):
@@ -355,13 +370,14 @@ class TestFreeThreadingStress:
         """
         N = 50
 
-        class StressPoint(Feature):
+        @feature
+        class StressPoint:
             x: F64
             y: F64
 
         # Shared ORM for read operations
-        shared_orm = ORM.truncate([TableDefn(StressPoint, N)])
-        shared_tbl = shared_orm[StressPoint][StressPoint]
+        shared_orm = ColumnEngine.truncate([Layout(StressPoint, N)])
+        shared_tbl = shared_orm.table(StressPoint)
         shared_tbl.fill(
             x=np.arange(N, dtype=np.float64),
             y=np.arange(N, dtype=np.float64) * 3
@@ -370,10 +386,10 @@ class TestFreeThreadingStress:
         errors = []
 
         def workload_truncate():
-            """Create independent ORM, write, read back."""
+            """Create independent ColumnEngine, write, read back."""
             try:
-                orm = ORM.truncate([TableDefn(StressPoint, 10)])
-                tbl = orm[StressPoint][StressPoint]
+                orm = ColumnEngine.truncate([Layout(StressPoint, 10)])
+                tbl = orm.table(StressPoint)
                 tbl.fill(x=np.ones(10, dtype=np.float64))
                 assert np.all(tbl.column.x == 1.0)
             except Exception as e:

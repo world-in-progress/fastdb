@@ -138,8 +138,10 @@ class TestLoadModule(unittest.TestCase):
 class TestDiscoverFeatures(unittest.TestCase):
     def test_finds_feature_subclasses(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64
-            class Point(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
+            @feature
+            class Point:
                 x: F64
         """})
         names = [c.__name__ for c in ctx.all_classes]
@@ -150,16 +152,20 @@ class TestDiscoverFeatures(unittest.TestCase):
         """Features imported from another file should not be re-discovered."""
         td, ctx, _ = _discover({
             "base.py": """\
-                from fastdb4py import Feature, F64
-                class Point(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
+                @feature
+                class Point:
                     x: F64
             """,
             "consumer.py": """\
-                from fastdb4py import Feature, STR
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import STR
                 import sys, os
                 sys.path.insert(0, os.path.dirname(__file__))
                 from base import Point
-                class Scene(Feature):
+                @feature
+                class Scene:
                     name: STR
             """,
         })
@@ -171,10 +177,12 @@ class TestDiscoverFeatures(unittest.TestCase):
 
     def test_ignores_non_feature_classes(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
             class Helper:
                 pass
-            class Point(Feature):
+            @feature
+            class Point:
                 x: F64
         """})
         names = [c.__name__ for c in ctx.all_classes]
@@ -189,10 +197,13 @@ class TestDiscoverFeatures(unittest.TestCase):
 
     def test_multiple_classes(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64, I32
-            class A(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64, I32
+            @feature
+            class A:
                 x: F64
-            class B(Feature):
+            @feature
+            class B:
                 y: I32
         """})
         names = [c.__name__ for c in ctx.all_classes]
@@ -204,8 +215,10 @@ class TestDiscoverFeatures(unittest.TestCase):
 class TestDiscoverAll(unittest.TestCase):
     def test_basic_discovery(self):
         td, ctx, errors = _discover({"f.py": """\
-            from fastdb4py import Feature, F64
-            class Point(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
+            @feature
+            class Point:
                 x: F64
                 y: F64
         """})
@@ -219,13 +232,17 @@ class TestDiscoverAll(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             _write_files(Path(d), {
                 "a.py": """\
-                    from fastdb4py import Feature, F64
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class Point:
                         x: F64
                 """,
                 "b.py": """\
-                    from fastdb4py import Feature, F64
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class Point:
                         y: F64
                 """,
             })
@@ -244,8 +261,10 @@ class TestDiscoverAll(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             _write_files(Path(d), {
                 "good.py": """\
-                    from fastdb4py import Feature, F64
-                    class A(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class A:
                         x: F64
                 """,
                 "bad.py": "def oops(\n",
@@ -257,8 +276,10 @@ class TestDiscoverAll(unittest.TestCase):
 
     def test_class_to_file_mapping(self):
         td, ctx, _ = _discover({"models.py": """\
-            from fastdb4py import Feature, F64
-            class Pt(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
+            @feature
+            class Pt:
                 x: F64
         """})
         pt_cls = [c for c in ctx.all_classes if c.__name__ == "Pt"][0]
@@ -278,8 +299,10 @@ class TestDiscoverAll(unittest.TestCase):
 class TestBuildDepGraph(unittest.TestCase):
     def test_no_deps(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64, STR
-            class Point(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64, STR
+            @feature
+            class Point:
                 x: F64
                 y: F64
                 name: STR
@@ -291,10 +314,13 @@ class TestBuildDepGraph(unittest.TestCase):
 
     def test_direct_feature_ref(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64, I32
-            class Point(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64, I32
+            @feature
+            class Point:
                 x: F64
-            class Line(Feature):
+            @feature
+            class Line:
                 id: I32
                 origin: Point
         """})
@@ -305,11 +331,14 @@ class TestBuildDepGraph(unittest.TestCase):
 
     def test_list_of_feature(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64, I32
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64, I32
             from typing import List
-            class Point(Feature):
+            @feature
+            class Point:
                 x: F64
-            class Line(Feature):
+            @feature
+            class Line:
                 id: I32
                 points: List[Point]
         """})
@@ -320,9 +349,11 @@ class TestBuildDepGraph(unittest.TestCase):
 
     def test_list_of_scalar_no_deps(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
             from typing import List
-            class Data(Feature):
+            @feature
+            class Data:
                 values: List[F64]
         """})
         data = [c for c in ctx.all_classes if c.__name__ == "Data"][0]
@@ -332,8 +363,10 @@ class TestBuildDepGraph(unittest.TestCase):
 
     def test_self_ref(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, I32
-            class Node(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import I32
+            @feature
+            class Node:
                 val: I32
                 next: 'Node'
         """})
@@ -346,10 +379,13 @@ class TestBuildDepGraph(unittest.TestCase):
 class TestTopologicalSort(unittest.TestCase):
     def test_no_deps_all_present(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64, I32
-            class A(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64, I32
+            @feature
+            class A:
                 x: F64
-            class B(Feature):
+            @feature
+            class B:
                 y: I32
         """})
         dep_graph = {c: build_dep_graph(c, ctx) for c in ctx.all_classes}
@@ -360,11 +396,14 @@ class TestTopologicalSort(unittest.TestCase):
 
     def test_dep_before_dependent(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64, I32
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64, I32
             from typing import List
-            class Point(Feature):
+            @feature
+            class Point:
                 x: F64
-            class Line(Feature):
+            @feature
+            class Line:
                 id: I32
                 points: List[Point]
         """})
@@ -376,8 +415,10 @@ class TestTopologicalSort(unittest.TestCase):
 
     def test_self_ref_detected(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, I32
-            class Node(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import I32
+            @feature
+            class Node:
                 val: I32
                 next: 'Node'
         """})
@@ -389,11 +430,14 @@ class TestTopologicalSort(unittest.TestCase):
 
     def test_mutual_cycle(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, I32
-            class A(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import I32
+            @feature
+            class A:
                 val: I32
                 other: 'B'
-            class B(Feature):
+            @feature
+            class B:
                 val: I32
                 other: 'A'
         """})
@@ -407,14 +451,19 @@ class TestTopologicalSort(unittest.TestCase):
 
     def test_diamond_dependency(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, I32
-            class D(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import I32
+            @feature
+            class D:
                 val: I32
-            class B(Feature):
+            @feature
+            class B:
                 d: D
-            class C(Feature):
+            @feature
+            class C:
                 d: D
-            class A(Feature):
+            @feature
+            class A:
                 b: B
                 c: C
         """})
@@ -545,8 +594,10 @@ class TestClassifyHint(unittest.TestCase):
 class TestCollectFastdb4tsImports(unittest.TestCase):
     def test_always_includes_base_symbols(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64
-            class Pt(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
+            @feature
+            class Pt:
                 x: F64
         """})
         pt = [c for c in ctx.all_classes if c.__name__ == "Pt"][0]
@@ -558,11 +609,14 @@ class TestCollectFastdb4tsImports(unittest.TestCase):
 
     def test_includes_ref_and_listof(self):
         td, ctx, _ = _discover({"f.py": """\
-            from fastdb4py import Feature, F64, I32
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64, I32
             from typing import List
-            class Pt(Feature):
+            @feature
+            class Pt:
                 x: F64
-            class Line(Feature):
+            @feature
+            class Line:
                 id: I32
                 points: List[Pt]
         """})
@@ -588,8 +642,10 @@ class TestGenerateClass(unittest.TestCase):
 
     def test_simple_scalars(self):
         code, _ = self._gen({"f.py": """\
-            from fastdb4py import Feature, F64
-            class Point(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
+            @feature
+            class Point:
                 x: F64
                 y: F64
         """}, "Point")
@@ -601,8 +657,9 @@ class TestGenerateClass(unittest.TestCase):
 
     def test_native_types(self):
         code, _ = self._gen({"f.py": """\
-            from fastdb4py import Feature
-            class Data(Feature):
+            from fastdb4py.decorator import feature
+            @feature
+            class Data:
                 count: int
                 ratio: float
                 label: str
@@ -613,11 +670,14 @@ class TestGenerateClass(unittest.TestCase):
 
     def test_ref_field(self):
         code, _ = self._gen({"f.py": """\
-            from fastdb4py import Feature, F64
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
             from typing import List
-            class Pt(Feature):
+            @feature
+            class Pt:
                 x: F64
-            class Line(Feature):
+            @feature
+            class Line:
                 points: List[Pt]
         """}, "Line")
         self.assertIn("listOf(ref(Pt))", code)
@@ -625,8 +685,10 @@ class TestGenerateClass(unittest.TestCase):
 
     def test_self_ref_lazy(self):
         code, _ = self._gen({"f.py": """\
-            from fastdb4py import Feature, I32
-            class Node(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import I32
+            @feature
+            class Node:
                 val: I32
                 next: 'Node'
         """}, "Node")
@@ -635,8 +697,9 @@ class TestGenerateClass(unittest.TestCase):
 
     def test_no_fields(self):
         code, _ = self._gen({"f.py": """\
-            from fastdb4py import Feature
-            class Empty(Feature):
+            from fastdb4py.decorator import feature
+            @feature
+            class Empty:
                 pass
         """}, "Empty")
         self.assertIn("defineSchema({", code)
@@ -644,8 +707,10 @@ class TestGenerateClass(unittest.TestCase):
 
     def test_output_has_export(self):
         code, _ = self._gen({"f.py": """\
-            from fastdb4py import Feature, F64
-            class Pt(Feature):
+            from fastdb4py.decorator import feature
+            from fastdb4py.type import F64
+            @feature
+            class Pt:
                 x: F64
         """}, "Pt")
         self.assertTrue(code.startswith("export class"))
@@ -659,17 +724,21 @@ class TestGenerateClass(unittest.TestCase):
             (pkg / "__init__.py").write_text("")
             _write_files(Path(indir), {
                 "geometry.py": textwrap.dedent("""\
-                    from fastdb4py import Feature, F64
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class Point:
                         x: F64
                         y: F64
                 """),
                 "scene.py": textwrap.dedent("""\
-                    from fastdb4py import Feature, STR
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import STR
                     import sys, os
                     sys.path.insert(0, os.path.dirname(__file__))
                     from geometry import Point
-                    class Scene(Feature):
+                    @feature
+                    class Scene:
                         name: STR
                         root: Point
                 """),
@@ -694,8 +763,10 @@ class TestRunCodegenTs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as indir:
             outdir = Path(indir) / "nonexistent_out"
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, F64
-                class A(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
+                @feature
+                class A:
                     x: F64
             """})
             run_codegen_ts(indir, str(outdir))
@@ -704,8 +775,10 @@ class TestRunCodegenTs(unittest.TestCase):
     def test_generates_ts_file(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"geometry.py": """\
-                from fastdb4py import Feature, F64
-                class Point(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
+                @feature
+                class Point:
                     x: F64
                     y: F64
             """})
@@ -715,8 +788,10 @@ class TestRunCodegenTs(unittest.TestCase):
     def test_ts_file_content(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"geometry.py": """\
-                from fastdb4py import Feature, F64
-                class Point(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
+                @feature
+                class Point:
                     x: F64
                     y: F64
             """})
@@ -730,8 +805,10 @@ class TestRunCodegenTs(unittest.TestCase):
     def test_header_comment(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, F64
-                class A(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
+                @feature
+                class A:
                     x: F64
             """})
             run_codegen_ts(indir, outdir)
@@ -753,8 +830,10 @@ class TestRunCodegenTs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {
                 "good.py": """\
-                    from fastdb4py import Feature, F64
-                    class A(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class A:
                         x: F64
                 """,
                 "bad.py": "def oops(\n",
@@ -768,8 +847,10 @@ class TestRunCodegenTs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {
                 "good.py": """\
-                    from fastdb4py import Feature, F64
-                    class A(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class A:
                         x: F64
                 """,
                 "bad_import.py": "import nonexistent_pkg_xyz_abc\n",
@@ -783,10 +864,12 @@ class TestRunCodegenTs(unittest.TestCase):
     def test_non_feature_classes_ignored(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, F64
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
                 class Helper:
                     x = 1
-                class Pt(Feature):
+                @feature
+                class Pt:
                     x: F64
             """})
             run_codegen_ts(indir, outdir)
@@ -798,13 +881,17 @@ class TestRunCodegenTs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {
                 "geometry.py": """\
-                    from fastdb4py import Feature, F64
-                    class Pt(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class Pt:
                         x: F64
                 """,
                 "scene.py": """\
-                    from fastdb4py import Feature, STR
-                    class Scene(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import STR
+                    @feature
+                    class Scene:
                         name: STR
                 """,
             })
@@ -816,17 +903,21 @@ class TestRunCodegenTs(unittest.TestCase):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {
                 "geometry.py": """\
-                    from fastdb4py import Feature, F64
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class Point:
                         x: F64
                         y: F64
                 """,
                 "scene.py": """\
-                    from fastdb4py import Feature, STR
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import STR
                     import sys, os
                     sys.path.insert(0, os.path.dirname(__file__))
                     from geometry import Point
-                    class Scene(Feature):
+                    @feature
+                    class Scene:
                         name: STR
                         root: Point
                 """,
@@ -839,8 +930,10 @@ class TestRunCodegenTs(unittest.TestCase):
     def test_summary_printed(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, F64
-                class A(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
+                @feature
+                class A:
                     x: F64
             """})
             with patch("sys.stdout", new_callable=io.StringIO) as out:
@@ -852,12 +945,15 @@ class TestRunCodegenTs(unittest.TestCase):
         """Dependency class appears before dependent class in the output."""
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, F64, I32
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64, I32
                 from typing import List
-                class Line(Feature):
+                @feature
+                class Line:
                     id: I32
                     points: List['Point']
-                class Point(Feature):
+                @feature
+                class Point:
                     x: F64
                     y: F64
             """})
@@ -874,8 +970,10 @@ class TestRobustnessEdgeCases(unittest.TestCase):
     def test_deeply_nested_dir_structure(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"a/b/c/features.py": """\
-                from fastdb4py import Feature, F64
-                class DeepPoint(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
+                @feature
+                class DeepPoint:
                     x: F64
             """})
             run_codegen_ts(indir, outdir)
@@ -886,8 +984,10 @@ class TestRobustnessEdgeCases(unittest.TestCase):
     def test_class_with_all_scalar_types(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, U8, U16, U32, I32, U8N, U16N, F32, F64, STR, WSTR, BYTES, BOOL
-                class AllTypes(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import U8, U16, U32, I32, U8N, U16N, F32, F64, STR, WSTR, BYTES, BOOL
+                @feature
+                class AllTypes:
                     a: U8
                     b: U16
                     c: U32
@@ -909,9 +1009,10 @@ class TestRobustnessEdgeCases(unittest.TestCase):
     def test_list_of_int_and_str(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature
+                from fastdb4py.decorator import feature
                 from typing import List
-                class Data(Feature):
+                @feature
+                class Data:
                     ints: List[int]
                     names: List[str]
             """})
@@ -925,11 +1026,14 @@ class TestRobustnessEdgeCases(unittest.TestCase):
     def test_circular_ref_generates_lazy(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, I32
-                class A(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import I32
+                @feature
+                class A:
                     val: I32
                     other: 'B'
-                class B(Feature):
+                @feature
+                class B:
                     val: I32
                     other: 'A'
             """})
@@ -941,7 +1045,7 @@ class TestRobustnessEdgeCases(unittest.TestCase):
     def test_file_with_only_imports_no_features(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"empty.py": """\
-                from fastdb4py import Feature
+                from fastdb4py.decorator import feature
                 # No Feature subclasses defined
                 x = 1
             """})
@@ -957,9 +1061,11 @@ class TestRobustnessEdgeCases(unittest.TestCase):
         """Forward reference as string annotation should resolve when class exists."""
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, I32
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import I32
                 from typing import List
-                class TreeNode(Feature):
+                @feature
+                class TreeNode:
                     val: I32
                     children: List['TreeNode']
             """})
@@ -977,8 +1083,10 @@ class TestRobustnessEdgeCases(unittest.TestCase):
         """
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, F64
-                class Bad(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64
+                @feature
+                class Bad:
                     x: F64
                     mystery: 'Nonexistent'
             """})
@@ -997,13 +1105,17 @@ class TestRobustnessEdgeCases(unittest.TestCase):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {
                 "a.py": """\
-                    from fastdb4py import Feature, F64
-                    class Dup(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class Dup:
                         x: F64
                 """,
                 "b.py": """\
-                    from fastdb4py import Feature, I32
-                    class Dup(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import I32
+                    @feature
+                    class Dup:
                         y: I32
                 """,
             })
@@ -1025,8 +1137,10 @@ class TestRobustnessEdgeCases(unittest.TestCase):
     def test_bool_field(self):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, BOOL
-                class Flags(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import BOOL
+                @feature
+                class Flags:
                     active: BOOL
             """})
             run_codegen_ts(indir, outdir)
@@ -1039,10 +1153,13 @@ class TestRobustnessEdgeCases(unittest.TestCase):
         """Python semantics: last class definition wins for same name in one file."""
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {"f.py": """\
-                from fastdb4py import Feature, F64, I32
-                class Point(Feature):
+                from fastdb4py.decorator import feature
+                from fastdb4py.type import F64, I32
+                @feature
+                class Point:
                     x: F64
-                class Point(Feature):
+                @feature
+                class Point:
                     y: I32
             """})
             run_codegen_ts(indir, outdir)
@@ -1057,18 +1174,24 @@ class TestRobustnessEdgeCases(unittest.TestCase):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {
                 "a.py": """\
-                    from fastdb4py import Feature, F64
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class Point:
                         x: F64
                 """,
                 "b.py": """\
-                    from fastdb4py import Feature, I32
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import I32
+                    @feature
+                    class Point:
                         y: I32
                 """,
                 "c.py": """\
-                    from fastdb4py import Feature, STR
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import STR
+                    @feature
+                    class Point:
                         label: STR
                 """,
             })
@@ -1090,21 +1213,27 @@ class TestRobustnessEdgeCases(unittest.TestCase):
         with tempfile.TemporaryDirectory() as indir, tempfile.TemporaryDirectory() as outdir:
             _write_files(Path(indir), {
                 "a.py": """\
-                    from fastdb4py import Feature, F64
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import F64
+                    @feature
+                    class Point:
                         x: F64
                 """,
                 "b.py": """\
-                    from fastdb4py import Feature, I32
-                    class Point(Feature):
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import I32
+                    @feature
+                    class Point:
                         y: I32
                 """,
                 "c.py": """\
-                    from fastdb4py import Feature, STR
+                    from fastdb4py.decorator import feature
+                    from fastdb4py.type import STR
                     import sys, os
                     sys.path.insert(0, os.path.dirname(__file__))
                     from a import Point
-                    class Scene(Feature):
+                    @feature
+                    class Scene:
                         name: STR
                         origin: Point
                 """,

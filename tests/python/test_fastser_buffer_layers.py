@@ -15,10 +15,13 @@ Tests cover:
 import unittest
 import numpy as np
 from typing import List
-from fastdb4py import FastSerializer, Feature, F64, U32, I32, STR
+from fastdb4py import FastSerializer, Feature
+from fastdb4py.decorator import feature
+from fastdb4py.type import F64, U32, I32, STR
 
 
-# --- Feature classes for testing ---
+# --- Feature classes using object annotations (ndarray fields) ---
+# These must remain Feature subclasses because @feature rejects 'object' type.
 
 class ArrayF64(Feature):
     label: STR
@@ -56,7 +59,8 @@ class MixedListArray(Feature):
     values: List[F64]
     extra: object  # numpy array
 
-class ScalarOnly(Feature):
+@feature
+class ScalarOnly:
     """Feature with only scalars (no ndarrays)."""
     x: F64
     y: F64
@@ -244,11 +248,13 @@ class TestBufferLayerBackwardCompat(unittest.TestCase):
         """Verify that the basic FastSerializer contract is unbroken."""
         from typing import List as L
 
-        class Pt(Feature):
+        @feature
+        class Pt:
             x: F64
             y: F64
 
-        class Ln(Feature):
+        @feature
+        class Ln:
             pts: L[Pt]
             id: I32
 

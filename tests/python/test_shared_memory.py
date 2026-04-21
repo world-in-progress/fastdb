@@ -1,75 +1,68 @@
 import secrets
-import fastdb4py
 from multiprocessing import Process, shared_memory
 
-class Point(fastdb4py.Feature):
-    idx: fastdb4py.U32
-    x: fastdb4py.F64
-    y: fastdb4py.F64
-    z: fastdb4py.F64
+from fastdb4py.decorator import feature
+from fastdb4py.object_engine import ObjectEngine
+from fastdb4py.type import U32, F64
 
-class Triangle(fastdb4py.Feature):
-    id: fastdb4py.U32
-    a: Point
-    b: Point
-    c: Point
+
+@feature
+class ShmPoint:
+    idx: U32
+    x: F64
+    y: F64
+    z: F64
+
 
 def verify_shared_data(shm_name: str):
     try:
-        db = fastdb4py.ORM.load(shm_name)
-        
-        triangles = db[Triangle][Triangle]
-        assert len(triangles) == 1, f"Expected 1 triangle, got {len(triangles)}"
-        
-        t = triangles[0]
-        
-        assert t.id == 1
-        
-        assert t.a.idx == 1
-        assert t.a.x == 10.0
-        assert t.a.y == 20.0
-        assert t.a.z == 30.0
-        
-        assert t.b.idx == 2
-        assert t.b.x == 11.0
-        assert t.b.y == 21.0
-        assert t.b.z == 31.0
-        
-        assert t.c.idx == 3
-        assert t.c.x == 12.0
-        assert t.c.y == 22.0
-        assert t.c.z == 32.0
-        
+        db = ObjectEngine.load(shm_name)
+
+        assert db.count(ShmPoint) == 3
+
+        p0 = db.get(ShmPoint, 0, mode='copy')
+        assert p0.idx == 1
+        assert p0.x == 10.0
+        assert p0.y == 20.0
+        assert p0.z == 30.0
+
+        p1 = db.get(ShmPoint, 1, mode='copy')
+        assert p1.idx == 2
+        assert p1.x == 11.0
+
+        p2 = db.get(ShmPoint, 2, mode='copy')
+        assert p2.idx == 3
+        assert p2.z == 32.0
+
     except Exception as e:
         print(f"Verification failed: {e}")
         import traceback
         traceback.print_exc()
         exit(1)
     finally:
-        if 'db' in locals():
-            db.unlink()
+        ObjectEngine.unlink(shm_name)
+
 
 def test_shared_memory():
-    # macOS POSIX shm name limit is 31 chars (PSHMNAMLEN in bsd/sys/posix_shm.h),
-    # much shorter than Linux (255). "fastdb_" (7) + 16 hex chars = 23 chars — safe on all platforms.
     shm_name = f"fastdb_{secrets.token_hex(8)}"
-    
-    db = fastdb4py.ORM.create()
-    
-    t = Triangle()
-    t.id = 1
-    t.a = Point(idx=1, x=10.0, y=20.0, z=30.0)
-    t.b = Point(idx=2, x=11.0, y=21.0, z=31.0)
-    t.c = Point(idx=3, x=12.0, y=22.0, z=32.0)
-    
-    db.push(t)
-    
-    db.share(shm_name, close_after=True)
-    
+
+    db = ObjectEngine.create()
+
+    for i, (idx, x, y, z) in enumerate([
+        (1, 10.0, 20.0, 30.0),
+        (2, 11.0, 21.0, 31.0),
+        (3, 12.0, 22.0, 32.0),
+    ]):
+        p = ShmPoint(idx=idx, x=x, y=y, z=z)
+        db.push(p)
+
+    db.combine()
+    db.share(shm_name)
+
     p = Process(target=verify_shared_data, args=(shm_name,))
     p.start()
     p.join()
-    
+
     # Cleanup if child failed
     if p.exitcode != 0:
         try:
@@ -77,5 +70,5 @@ def test_shared_memory():
             s.unlink()
         except FileNotFoundError:
             pass
-            
+
     assert p.exitcode == 0, "Child process failed verification"
