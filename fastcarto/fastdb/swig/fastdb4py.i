@@ -177,6 +177,7 @@
 %rename(get_string_column_offsets) getStringColumnOffsets;
 %rename(get_string_column_data) getStringColumnData;
 %rename(set_field_string_view) setFieldStringView;
+%rename(set_numeric_column_bulk) setNumericColumnBulk;
 %rename(set_string_column_bulk) setStringColumnBulk;
 %rename(get_field_as_ref)       getFieldAsFeatureRef;   
 %rename(set_feature_cookie)     setFeatureCookie;   
@@ -326,6 +327,18 @@
                         )
             return __column_np_interface__.create_from_table(self,index)
     %}
+}
+
+%extend wx::FastVectorDbLayerBuild {
+    void set_numeric_column_bulk(unsigned field_id, PyObject* py_values) {
+        Py_buffer view;
+        if (PyObject_GetBuffer(py_values, &view, PyBUF_CONTIG_RO) != 0)
+            SWIG_exception_fail(SWIG_ValueError, "Expected a contiguous buffer.");
+        $self->setNumericColumnBulk(field_id, view.buf, (u64)view.len);
+        PyBuffer_Release(&view);
+    fail:
+        return;
+    }
 }
 
 %extend wx::FastVectorDbLayerBuild {

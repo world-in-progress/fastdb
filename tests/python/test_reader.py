@@ -226,3 +226,22 @@ def test_varlen_string_column_reader_rejects_truncated_section_payload():
     assert layer.get_string_column_offsets(0).size == 0
     assert layer.get_string_column_data(0).size == 0
     assert layer.tryGetFeature(0).get_field_as_string_view(0).size == 0
+
+
+def test_truncate_layer_build_set_numeric_column_bulk_round_trips():
+    db = core.WxDatabaseBuild()
+    db.begin("")
+    layer = db.create_layer_begin("num_rows")
+    layer.set_geometry_type(core.gtNone, core.cfTx32, aabboxEnabled=False)
+    layer.add_field("x", core.ftF64)
+    db.truncate("num_rows", 3)
+
+    layer.set_numeric_column_bulk(0, np.array([1.0, 2.5, 3.5], dtype=np.float64))
+
+    mem = core.WxMemoryStream()
+    db.post(mem)
+    buf = mem.data().as_array(np.uint8).tobytes()
+    rdb = core.WxDatabase.load_xbuffer(buf)
+    rdb._buffer = buf
+    out = rdb.get_layer(0).get_column(0).as_nparray()
+    np.testing.assert_allclose(out, np.array([1.0, 2.5, 3.5], dtype=np.float64))

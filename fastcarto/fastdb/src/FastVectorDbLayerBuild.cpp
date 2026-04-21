@@ -605,6 +605,27 @@ namespace wx
         sfd->offsets.assign(offsets, offsets + n_offsets);
         sfd->data.assign(data, data + nbytes);
     }
+    void FastVectorDbLayerBuild::Impl::setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes)
+    {
+        assert(field_id < m_field_descs.size());
+        if (field_id >= m_field_descs.size())
+            return;
+        auto& fd = m_field_descs[field_id];
+        assert(fd.type != ftSTR && fd.type != ftWSTR && fd.type != ftList && fd.type != ftFeatureRef);
+        if (fd.type == ftSTR || fd.type == ftWSTR || fd.type == ftList || fd.type == ftFeatureRef)
+            return;
+        assert(fd.size > 0);
+        assert(data != nullptr || nbytes == 0);
+        assert(nbytes > 0);
+        if (fd.size == 0 || data == nullptr || nbytes == 0)
+            return;
+        assert(nbytes == (u64)m_feature_count * (u64)fd.size);
+        if (nbytes != (u64)m_feature_count * (u64)fd.size)
+            return;
+        const u8* src = reinterpret_cast<const u8*>(data);
+        for (size_t row = 0; row < m_feature_count; ++row)
+            memcpy(m_table_buffer.data() + (u64)row * m_table_line_size + fd.offset, src + (u64)row * fd.size, fd.size);
+    }
     void FastVectorDbLayerBuild::Impl::post()
     {
         printf("\nlayer [%s] has been created with the fellowing params:\n\
@@ -934,6 +955,10 @@ string table:%s\n",
         void FastVectorDbLayerBuild::setFieldStringView(unsigned ix, const char* data, unsigned len)
         {
             impl->setFieldStringView(ix, data, len);
+        }
+        void FastVectorDbLayerBuild::setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes)
+        {
+            impl->setNumericColumnBulk(field_id, data, nbytes);
         }
         void FastVectorDbLayerBuild::setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes)
         {
