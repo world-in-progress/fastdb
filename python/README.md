@@ -30,7 +30,7 @@ The Python stack is layered:
 2. **SWIG/native bridge** — `python/fastdb4py/core/`
    - generated wrappers and compiled native extension
 3. **High-level Python API** — `python/fastdb4py/`
-   - ergonomic `Feature`, `ORM`, `Table`, and `FastSerializer` abstractions
+   - ergonomic `@feature`, `ColumnEngine`, `ObjectEngine`, `Table`, and `FastSerializer` abstractions
 
 Important directories:
 
@@ -39,7 +39,7 @@ Important directories:
 - `python/fastdb4py/feature/`
   - schema discovery, feature dispatch, caching, runtime access
 - `python/fastdb4py/orm/`
-  - `ORM`, `Table`, `TableDefn`, column access, iteration
+  - shared `Table` class, column access, and iteration helpers used by both engines
 - `python/fastdb4py/serializer.py`
   - graph serialization on top of `fastdb`
 - `python/fastdb4py/core/`
@@ -56,7 +56,7 @@ pip install fastdb4py
 From the repository root during development:
 
 ```bash
-./py_utils.sh --build
+./py_utils.sh --setup
 ```
 
 Prebuilt wheels are expected for the main supported platforms. Source builds require a C++17 compiler, CMake, SWIG, and NumPy.
@@ -64,18 +64,19 @@ Prebuilt wheels are expected for the main supported platforms. Source builds req
 ## Quick start
 
 ```python
-import fastdb4py as fx
+from fastdb4py import feature, ColumnEngine, Layout, F64
 import numpy as np
 
 
-class Point(fx.Feature):
-    x: fx.F64
-    y: fx.F64
-    z: fx.F64
+@feature
+class Point:
+    x: F64
+    y: F64
+    z: F64
 
 
-db = fx.ORM.truncate([fx.TableDefn(Point, 5)])
-table = db[Point][Point]
+db = ColumnEngine.truncate([Layout(Point, 5)])
+table = db.table(Point)
 
 table.column.x[:] = np.linspace(0.0, 1.0, 5)
 table.column.y[:] = np.zeros(5)
@@ -97,8 +98,8 @@ print(table.column.x.mean())
 | `fx.I32` | `int32_t` | Signed 32-bit integer |
 | `fx.F32` | `float` | 32-bit float |
 | `fx.F64` | `double` | 64-bit float |
-| `fx.STR` | string table index | Short string |
-| `fx.WSTR` | wide string table index | Unicode string |
+| `fx.STR` | UTF-8 string storage | String column / per-row string value |
+| `fx.WSTR` | wide string table index | Legacy wide string |
 | `fx.BYTES` | blob / raw geometry payload | Byte storage |
 | `fx.U8N` | normalized `uint8_t` | Quantized float in a configured range |
 | `fx.U16N` | normalized `uint16_t` | Quantized float in a configured range |
@@ -106,43 +107,45 @@ print(table.column.x.mean())
 
 ## Defining schemas with `Feature`
 
-Users model rows by subclassing `Feature` and annotating fields:
+Users model rows by decorating plain classes with `@feature` and annotating fields:
 
 ```python
-import fastdb4py as fx
+from fastdb4py import feature, U32, F64, F32
 
 
-class Particle(fx.Feature):
-    id: fx.U32
-    x: fx.F64
-    y: fx.F64
-    mass: fx.F32
+@feature
+class Particle:
+    id: U32
+    x: F64
+    y: F64
+    mass: F32
 ```
 
 The field order is part of the schema contract. It affects table layout, serializer traversal order, and binary compatibility.
 
 ## Database creation patterns
 
-### Fixed-size tables with `ORM.truncate`
+### Fixed-size tables with `ColumnEngine.truncate`
 
-Use `truncate` when the row count is known ahead of time. This is the fastest path for bulk numeric workloads.
+Use `truncate` when the row count is known ahead of time. This is the fastest path for bulk numeric workloads, and it now also supports UTF-8 `STR` fields through `StringColumn`.
 
 ```python
-import fastdb4py as fx
+from fastdb4py import feature, ColumnEngine, Layout, F64, F32
 import numpy as np
 
 
-class Particle(fx.Feature):
-    x: fx.F64
-    y: fx.F64
-    vx: fx.F64
-    vy: fx.F64
-    mass: fx.F32
+@feature
+class Particle:
+    x: F64
+    y: F64
+    vx: F64
+    vy: F64
+    mass: F32
 
 
 N = 100_000
-db = fx.ORM.truncate([fx.TableDefn(Particle, N)])
-tbl = db[Particle][Particle]
+db = ColumnEngine.truncate([Layout(Particle, N)])
+tbl = db.table(Particle)
 
 tbl.column.x[:] = np.random.uniform(-1.0, 1.0, N)
 tbl.column.y[:] = np.random.uniform(-1.0, 1.0, N)
@@ -154,43 +157,71 @@ tbl.column.mass[:] = np.ones(N, dtype=np.float32)
 Multiple tables can be created in one call:
 
 ```python
-class Cell(fx.Feature):
-    id: fx.U32
-    temperature: fx.F64
+from fastdb4py import feature, Layout, U32, F64
 
 
-db = fx.ORM.truncate([
-    fx.TableDefn(Particle, 50_000),
-    fx.TableDefn(Cell, 1_000),
+@feature
+class Cell:
+    id: U32
+    temperature: F64
+
+
+db = ColumnEngine.truncate([
+    Layout(Particle, 50_000),
+    Layout(Cell, 1_000),
 ])
 ```
 
-### Dynamic tables with `ORM.create` + `push`
-
-Use `create` when the final row count is not known in advance.
+For string columns on fixed-size tables, numeric fields still use NumPy-backed writes while strings go through `StringColumn`:
 
 ```python
-import fastdb4py as fx
+from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR
+import numpy as np
 
 
-class LogEntry(fx.Feature):
-    level: fx.U8
-    code: fx.U32
-    message: fx.STR
+@feature
+class Sample:
+    row_id: U32
+    value: F64
+    name: STR
 
 
-db = fx.ORM.create()
+db = ColumnEngine.truncate([Layout(Sample, 3)])
+tbl = db.table(Sample)
+tbl.fill(
+    row_id=np.array([1, 2, 3], dtype=np.uint32),
+    value=np.array([0.5, 1.5, 2.5], dtype=np.float64),
+)
+tbl.column.name.fill(["a", "be", "中"])
+```
+
+### Dynamic tables with `ObjectEngine.create` + `push`
+
+Use `ObjectEngine` when the final row count is not known in advance or when your schema includes REF fields / graph structure.
+
+```python
+from fastdb4py import feature, ObjectEngine, U8, U32, STR
+
+
+@feature
+class LogEntry:
+    level: U8
+    code: U32
+    message: STR
+
+
+db = ObjectEngine.create()
 db.push(LogEntry(level=1, code=200, message="ok"))
 db.push(LogEntry(level=3, code=500, message="internal error"))
 
-db._combine()
+db.combine()
 ```
 
 ## Reading data
 
 ### Columnar access
 
-The fastest read path in Python is columnar access. `table.column.field_name` returns a NumPy array directly backed by the native storage.
+The fastest read path in Python is columnar access. Numeric fields return NumPy arrays directly backed by the native storage. UTF-8 string fields return a `StringColumn` wrapper.
 
 ```python
 xs = tbl.column.x
@@ -200,6 +231,12 @@ xs += 0.01 * tbl.column.vx
 ys += 0.01 * tbl.column.vy
 
 print(xs.mean())
+```
+
+```python
+names = tbl.column.name
+print(names.get(0))
+print(names.to_pylist())
 ```
 
 ### Row access
@@ -223,41 +260,37 @@ for feat in tbl.iter_reuse():
 
 ## Feature references
 
-Reference fields let one feature point at another feature, possibly in a different table.
+Reference fields let one feature point at another feature, possibly in a different table. This is handled by `ObjectEngine`, not `ColumnEngine`.
 
 ```python
-import fastdb4py as fx
+from fastdb4py import feature, ObjectEngine, F64
 
 
-class Point(fx.Feature):
-    x: fx.F64
-    y: fx.F64
-    z: fx.F64
+@feature
+class Point:
+    x: F64
+    y: F64
+    z: F64
 
 
-class Triangle(fx.Feature):
+@feature
+class Triangle:
     a: Point
     b: Point
     c: Point
 
 
-db = fx.ORM.truncate([
-    fx.TableDefn(Point, 6),
-    fx.TableDefn(Triangle, 2, "TriA"),
-])
+db = ObjectEngine.create()
+p0 = Point(); p0.x = 0.0; p0.y = 0.0; p0.z = 0.0
+p1 = Point(); p1.x = 1.0; p1.y = 0.5; p1.z = 0.0
+p2 = Point(); p2.x = 2.0; p2.y = 1.0; p2.z = 0.0
+tri = Triangle(); tri.a = p0; tri.b = p1; tri.c = p2
 
-points = db[Point][Point]
-for i in range(6):
-    points[i].x = float(i)
-    points[i].y = float(i) * 0.5
-    points[i].z = 0.0
+db.push(tri)
+db.combine()
+loaded = db.get(Triangle, 0, mode="copy")
 
-tri = db[Triangle]["TriA"][0]
-tri.a = points[0]
-tri.b = points[1]
-tri.c = points[2]
-
-print(tri.a.x, tri.b.x, tri.c.x)
+print(loaded.a.x, loaded.b.x, loaded.c.x)
 ```
 
 ## File persistence
@@ -265,8 +298,8 @@ print(tri.a.x, tri.b.x, tri.c.x)
 ```python
 db.save("simulation_state")
 
-db2 = fx.ORM.load("simulation_state", from_file=True)
-tbl2 = db2[Particle][Particle]
+db2 = ColumnEngine.load("simulation_state", from_file=True)
+tbl2 = db2.table(Particle)
 print(tbl2.column.x[:5])
 ```
 
@@ -277,33 +310,36 @@ Shared memory is available in the Python binding even though it is intentionally
 Publisher:
 
 ```python
-import fastdb4py as fx
+from fastdb4py import feature, ObjectEngine, F64
 
 
-class Signal(fx.Feature):
-    t: fx.F64
-    value: fx.F64
+@feature
+class Signal:
+    t: F64
+    value: F64
 
 
-db = fx.ORM.create()
+db = ObjectEngine.create()
 db.push(Signal(t=0.0, value=3.14))
 db.push(Signal(t=0.1, value=2.71))
-db.share("my_signals", close_after=True)
+db.combine()
+db.share("my_signals")
 ```
 
 Reader:
 
 ```python
-import fastdb4py as fx
+from fastdb4py import feature, ObjectEngine, F64
 
 
-class Signal(fx.Feature):
-    t: fx.F64
-    value: fx.F64
+@feature
+class Signal:
+    t: F64
+    value: F64
 
 
-db = fx.ORM.load("my_signals")
-tbl = db[Signal][Signal]
+db = ObjectEngine.load("my_signals")
+tbl = db.table(Signal)
 for row in tbl:
     print(row.t, row.value)
 db.unlink()
@@ -315,15 +351,16 @@ For db-mapped features, scalar fields can be read or written in bulk to reduce p
 
 ```python
 import numpy as np
-import fastdb4py as fx
+from fastdb4py import feature, I32, STR, F32, F64
 
 
-class Particle(fx.Feature):
-    index: fx.I32
-    name: fx.STR
-    mass: fx.F32
-    x: fx.F64
-    y: fx.F64
+@feature
+class Particle:
+    index: I32
+    name: STR
+    mass: F32
+    x: F64
+    y: F64
 
 
 feat = tbl[0]
@@ -352,15 +389,17 @@ Example:
 
 ```python
 from typing import List
-from fastdb4py import FastSerializer, Feature, I32, F64, STR
+from fastdb4py import FastSerializer, feature, I32, F64, STR
 
 
-class Point(Feature):
+@feature
+class Point:
     x: F64
     y: F64
 
 
-class Line(Feature):
+@feature
+class Line:
     id: I32
     label: STR
     points: List[Point]
@@ -378,7 +417,8 @@ print(copy.label, copy.points[1].x)
 Cyclic identity is preserved:
 
 ```python
-class Node(Feature):
+@feature
+class Node:
     val: I32
     next: "Node"
 
@@ -399,10 +439,11 @@ Numpy `ndarray` fields and simple numeric lists are stored via dedicated columna
 ```python
 import numpy as np
 from typing import List
-from fastdb4py import FastSerializer, Feature, F64, U32
+from fastdb4py import FastSerializer, feature, F64, U32
 
 
-class PointCloud(Feature):
+@feature
+class PointCloud:
     coords: np.ndarray   # stored as buffer layer (1 SWIG call, memcpy)
     weights: List[F64]   # also stored as buffer layer
     ids: List[U32]       # also stored as buffer layer
@@ -429,9 +470,11 @@ loaded = FastSerializer.loads(blob, PointCloud)
 
 ```python
 from multiprocessing import shared_memory
-from fastdb4py import FastSerializer, Feature, F64
+from fastdb4py import FastSerializer, feature, F64
 
-class Point(Feature):
+
+@feature
+class Point:
     x: F64
     y: F64
 
@@ -451,7 +494,7 @@ shm.unlink()
 
 All returned objects are fully detached from the shared memory segment (pure Python `_cache` mode). Numpy arrays are copied. The shared memory is closed immediately after deserialization.
 
-For large homogeneous numerical datasets, `ORM.truncate` plus columnar writes is still the preferred path. `FastSerializer` is aimed at trees, graphs, mesh-like structures, and mixed payloads.
+For large homogeneous numerical datasets, `ColumnEngine.truncate` plus columnar writes is still the preferred path. `FastSerializer` is aimed at trees, graphs, mesh-like structures, and mixed payloads.
 
 ## Running tests
 
@@ -477,7 +520,7 @@ uv run pytest tests/python/test_codegen.py
 
 ### `fdb codegen --ts` — Generate TypeScript Feature classes
 
-When working with both `fastdb4py` (Python) and `fastdb4ts` (TypeScript), you can use `fdb codegen` to automatically generate TypeScript `Feature` classes from your Python definitions. Python Feature classes serve as the single source of truth — similar to how `.proto` files work in Protocol Buffers, but without an intermediate format.
+When working with both `fastdb4py` (Python) and `fastdb4ts` (TypeScript), you can use `fdb codegen` to automatically generate TypeScript `Feature` classes from your Python definitions. Python `@feature` classes serve as the single source of truth — similar to how `.proto` files work in Protocol Buffers, but without an intermediate format.
 
 ```bash
 fdb codegen --ts ./features/ ./ts-features/
@@ -486,7 +529,7 @@ fdb codegen --ts ./features/ ./ts-features/
 The tool:
 
 1. **Scans** all `.py` files in the input directory recursively
-2. **Discovers** all `Feature` subclasses (ignoring non-Feature code)
+2. **Discovers** all `@feature` classes (ignoring non-feature code)
 3. **Analyzes** dependencies, detects cycles, and topologically sorts
 4. **Generates** one `.ts` file per `.py` file, preserving the directory structure
 
@@ -522,7 +565,11 @@ Each `.py` file is treated as an independent module. The same class name (e.g. `
 Self-referential and mutually recursive types are detected automatically and use lazy refs:
 
 ```python
-class Node(Feature):
+from fastdb4py import feature, I32
+
+
+@feature
+class Node:
     val: I32
     next: 'Node'  # forward reference
 ```

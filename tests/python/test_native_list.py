@@ -81,8 +81,9 @@ def test_schema_list_element_type():
 # ---------------------------------------------------------------------------
 
 def test_feature_ref_list_lazy():
-    """FeatureRefList: iterable, len, negative index, to_list."""
-    pytest.skip("FeatureRefList removed in v2.0 — REF list traversal pending")
+    """The legacy FeatureRefList helper is no longer exported in v2.0."""
+    with pytest.raises(ImportError, match="cannot import name 'FeatureRefList'"):
+        from fastdb4py.orm import FeatureRefList  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -115,12 +116,14 @@ class ChainFeat:
     pass
 
 
-def test_graph_collector_simple():
-    pytest.skip("_GraphCollector removed in v2.0 (old ORM module deleted)")
+def test_graph_collector_module_removed():
+    with pytest.raises(ModuleNotFoundError, match="fastdb4py\\.orm\\._graph"):
+        __import__('fastdb4py.orm._graph')
 
 
-def test_graph_collector_cycle():
-    pytest.skip("_GraphCollector removed in v2.0 (old ORM module deleted)")
+def test_orm_package_exposes_only_shared_table_surface():
+    import fastdb4py.orm as orm
+    assert orm.__all__ == ['Table']
 
 
 # ---------------------------------------------------------------------------

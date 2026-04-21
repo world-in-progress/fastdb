@@ -32,9 +32,9 @@ def test_is_feature_rejects_subclass_forgery():
     assert is_feature(Sub) is False
 
 def test_is_feature_with_old_feature_class():
-    """Old Feature class no longer exists in v2.0."""
-    import pytest
-    pytest.skip("Feature class removed in v2.0 hard break")
+    """The legacy Feature base class is no longer exported in v2.0."""
+    with pytest.raises(ImportError, match="cannot import name 'Feature'"):
+        from fastdb4py import Feature  # noqa: F401
 
 
 # --- Class registry tests ---
