@@ -23,6 +23,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - `FastSerializer` numpy ndarray buffer layer support (`__fastser_buf__`): numpy arrays are now serialized via dedicated fastdb layers using `memcpy`-level writes and `np.frombuffer` loads, achieving 5–8× speedup over list-based paths for large arrays. Supports float64, float32, uint32, int32, uint16, uint8 dtypes and 1D/2D/3D shapes.
 - `FastSerializer.loads_shm(shm_name, length, offset, root_type)`: deserialize a Feature directly from a named shared memory segment without copying to an intermediate `bytes` object. Returns a fully detached Feature (pure Python mode) after closing the shared memory mapping.
 - **Native list columns**: `List[F64]`, `List[U32]`, `List[I32]`, `List[F32]`, `List[U8]`, `List[U16]`, and `List[SomeFeature]` are now first-class column types in the ORM. Features with list fields are stored directly in shared-memory ORM layers — no `FastSerializer` needed. Accessing `feature.my_list` returns a zero-copy NumPy array (numeric) or a lazy `FeatureRefList` (refs) backed by C++ memory. Cyclic object graphs are supported via two-pass DFS writing and back-edge patching.
+- `ColumnEngine.truncate()` now accepts `STR` fields and exposes them through a dedicated `StringColumn` wrapper with bulk `fill()` / `fill_utf8()` APIs while keeping `Table.fill()` numeric-only.
 
 ### Performance
 - `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.

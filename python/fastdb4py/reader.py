@@ -19,13 +19,18 @@ _GETTERS = {
     OriginFieldType.u16n: 'get_field_as_int',
     OriginFieldType.f32: 'get_field_as_float',
     OriginFieldType.f64: 'get_field_as_float',
-    OriginFieldType.str: 'get_field_as_string',
     OriginFieldType.wstr: 'get_field_as_string',
 }
 
 
 def _read_field(feat: 'core.WxFeature', fd: FieldDef) -> Any:
     """Read one field value from a C++ WxFeature."""
+    if fd.field_type == OriginFieldType.str:
+        raw = feat.get_field_as_string_view(fd.field_id)
+        if raw is None:
+            return ''
+        return raw.to_bytes().decode('utf-8')
+
     getter_name = _GETTERS.get(fd.field_type)
     if getter_name is not None:
         getter = getattr(feat, getter_name)

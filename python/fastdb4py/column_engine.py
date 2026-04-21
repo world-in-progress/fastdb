@@ -8,7 +8,8 @@ from typing import List, TypeVar, Type
 from multiprocessing import shared_memory
 
 from . import core
-from .registry import get_schema, is_feature, LayerSchema
+from .reader import copy_feature
+from .registry import get_schema, is_feature, LayerSchema, lookup_class
 from .layout import Layout
 from .orm.table import Table
 from .type import OriginFieldType
@@ -49,8 +50,10 @@ class ColumnEngine:
     def __init__(self):
         self._shm: shared_memory.SharedMemory | None = None
         self._table_map: dict[str, Table] = {}
+        self._table_feature_types: dict[str, Type] = {}
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._is_mutable: bool = False
+        self._fixed_string_rewrite_enabled: bool = False
         # Per-class push dispatch caches
         self._push_buf: dict = {}
         self._push_batch_fn: dict = {}
@@ -75,11 +78,12 @@ class ColumnEngine:
     def truncate(layouts: List[Layout]) -> 'ColumnEngine':
         """Create a ColumnEngine with fixed-size pre-allocated tables.
 
-        Does not support variable-length fields (STR, WSTR, BYTES).
+        Supports UTF-8 ``STR`` columns. ``WSTR`` and ``BYTES`` remain unsupported.
         Rejects any class with REF fields.
         """
         engine = ColumnEngine()
         engine._origin = core.WxDatabaseBuild()
+        engine._fixed_string_rewrite_enabled = True
 
         for layout in layouts:
             ft_cls = layout.feature_type
@@ -87,17 +91,18 @@ class ColumnEngine:
 
             _reject_ref(schema, ft_cls.__name__)
 
-            # Reject variable-length types
+            # Reject unsupported variable-length types
             for fd in schema.fields:
-                if fd.field_type in (OriginFieldType.bytes, OriginFieldType.str, OriginFieldType.wstr):
+                if fd.field_type in (OriginFieldType.bytes, OriginFieldType.wstr):
                     raise ValueError(
                         f'Table defined by feature "{ft_cls.__name__}" contains '
                         f'field "{fd.name}" of type "{fd.field_type.name}". '
                         f'Truncate operation does not support variable-length '
-                        f'field types (str, wstr, bytes).'
+                        f'field types (wstr, bytes).'
                     )
 
             table_name = ft_cls.__name__
+            engine._table_feature_types[table_name] = ft_cls
             existing = engine._table_map.get(table_name)
             if existing is not None:
                 warnings.warn(
@@ -175,6 +180,7 @@ class ColumnEngine:
                 else:
                     new_table._origin.add_field(fd.name, fd.field_type.value)
             self._table_map[feat_table_name] = new_table
+            self._table_feature_types[feat_table_name] = feature_type
             t_obj = new_table
 
         # Ensure compiled push_fn exists
@@ -242,6 +248,7 @@ class ColumnEngine:
                 else:
                     new_table._origin.add_field(fd.name, fd.field_type.value)
             self._table_map[feat_table_name] = new_table
+            self._table_feature_types[feat_table_name] = feature_type
             t_obj = new_table
 
         t_origin = t_obj._origin
@@ -294,15 +301,123 @@ class ColumnEngine:
         table_name = name or feature_type.__name__
         cached = self._table_map.get(table_name)
         if cached is not None:
+            self._table_feature_types[table_name] = feature_type
+            self._attach_string_fill_handler(cached, table_name)
             return cached
         db = self._origin
+        fallback_names = list(self._table_feature_types)
         for i in range(db.get_layer_count()):
             layer = db.get_layer(i)
-            if layer.name() == table_name:
+            layer_name = layer.name() or (fallback_names[i] if i < len(fallback_names) else '')
+            if layer_name == table_name:
                 tbl = Table.map_from(feature_type, layer, db)
+                self._table_feature_types[table_name] = feature_type
+                self._attach_string_fill_handler(tbl, table_name)
                 self._table_map[table_name] = tbl
                 return tbl
         raise KeyError(f'Table "{table_name}" not found')
+
+    def _attach_string_fill_handler(self, table: Table, table_name: str) -> None:
+        if table.fixed and self._fixed_string_rewrite_enabled and self._shm is None:
+            table._string_fill_handler = (
+                lambda field_index, field_name, offsets, data:
+                    self._rewrite_string_column(table_name, table, field_index, field_name, offsets, data)
+            )
+        else:
+            table._string_fill_handler = None
+
+    def _find_layer(self, table_name: str):
+        fallback_names = list(self._table_feature_types)
+        for i in range(self._origin.get_layer_count()):
+            layer = self._origin.get_layer(i)
+            layer_name = layer.name() or (fallback_names[i] if i < len(fallback_names) else '')
+            if layer_name == table_name:
+                return layer
+        return None
+
+    def _resolve_feature_type(self, table_name: str, fallback_table: Table | None = None):
+        if fallback_table is not None and table_name == fallback_table.name:
+            return fallback_table._feature_type
+        mapped = self._table_feature_types.get(table_name)
+        if mapped is not None:
+            return mapped
+        cached = self._table_map.get(table_name)
+        if cached is not None and cached._feature_type is not None:
+            return cached._feature_type
+        return lookup_class(table_name)
+
+    def _rewrite_string_column(
+        self,
+        table_name: str,
+        target_table: Table,
+        field_index: int,
+        field_name: str,
+        offsets: np.ndarray,
+        data: np.ndarray,
+    ) -> None:
+        if not isinstance(self._origin, core.WxDatabase):
+            raise RuntimeError('StringColumn.fill_utf8() only supports fixed-scale tables.')
+
+        values = [
+            bytes(data[int(offsets[i]):int(offsets[i + 1])]).decode('utf-8')
+            for i in range(len(offsets) - 1)
+        ]
+
+        rebuilt = ColumnEngine.create()
+        rebuilt._fixed_string_rewrite_enabled = self._fixed_string_rewrite_enabled
+        rebuilt._table_feature_types = dict(self._table_feature_types)
+        current_db = self._origin
+        fallback_names = list(self._table_feature_types)
+        for i in range(current_db.get_layer_count()):
+            layer = current_db.get_layer(i)
+            layer_name = layer.name() or (fallback_names[i] if i < len(fallback_names) else '')
+            feature_type = self._resolve_feature_type(layer_name, target_table)
+            if feature_type is None:
+                raise RuntimeError(
+                    f'StringColumn.fill_utf8() cannot rewrite table "{table_name}" because '
+                    f'the feature type for layer "{layer_name}" is unknown. '
+                    'Map all layers with ColumnEngine.table(...) before mutating string columns.'
+                )
+            if layer_name not in rebuilt._table_map:
+                schema = get_schema(feature_type)
+                new_table = Table.map_from(
+                    feature_type,
+                    _get_default_table_build(rebuilt._origin, layer_name),
+                    rebuilt._origin,
+                )
+                for fd in schema.fields:
+                    if fd.field_type == OriginFieldType.list:
+                        new_table._origin.add_list_field(fd.name, fd.cpp_type)
+                    else:
+                        new_table._origin.add_field(fd.name, fd.field_type.value)
+                rebuilt._table_map[layer_name] = new_table
+                rebuilt._table_feature_types[layer_name] = feature_type
+            count = layer.get_feature_count()
+            if layer_name == table_name and count != len(values):
+                raise ValueError(
+                    f'StringColumn.fill_utf8() expected {count} strings, got {len(values)}.'
+                )
+            for row_idx in range(count):
+                feature = copy_feature(feature_type, layer, row_idx)
+                if layer_name == table_name:
+                    feature.__dict__[field_name] = values[row_idx]
+                rebuilt.push(feature, table_name=layer_name)
+
+        rebuilt.combine()
+        if self._shm is not None:
+            self._shm.close()
+            self._shm = None
+        self._origin = rebuilt._origin
+
+        cached_tables = list(self._table_map.items())
+        self._table_map = {}
+        for cached_name, cached_table in cached_tables:
+            new_layer = self._find_layer(cached_name)
+            if new_layer is None:
+                continue
+            cached_table._remap(new_layer, self._origin)
+            self._attach_string_fill_handler(cached_table, cached_name)
+            self._table_map[cached_name] = cached_table
 
     # ------------------------------------------------------------------
     # Persistence / sharing
@@ -325,6 +440,7 @@ class ColumnEngine:
                 engine._origin = core.WxDatabase.load_xbuffer(engine._shm.buf)
             except FileNotFoundError:
                 raise FileNotFoundError(f"Database '{name}' not found in shared memory.")
+        engine._fixed_string_rewrite_enabled = False
         return engine
 
     def share(self, shm_name: str, close_after: bool = False):
@@ -341,6 +457,9 @@ class ColumnEngine:
         dest[:] = chunk.as_array(np.uint8)
         self._origin._buffer = None
         self._origin = core.WxDatabase.load_xbuffer(self._shm.buf)
+        self._fixed_string_rewrite_enabled = False
+        for table_name, table in self._table_map.items():
+            self._attach_string_fill_handler(table, table_name)
 
         if close_after and platform.system() != 'Windows':
             self.close()

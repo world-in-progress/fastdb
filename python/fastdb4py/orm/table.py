@@ -6,12 +6,14 @@ from typing import TypeVar, Generic, Type, Generator
 from .. import core
 from ..registry import get_schema
 from ..reader import copy_feature, bind_feature, MappedFeature
+from ..string_column import StringColumn
+from ..type import OriginFieldType
 
 T = TypeVar('T')
 _column_accessor_lock = Lock()
 
 
-def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
+def _create_column_accessor(feature_type: Type[T], table) -> T:
     """
     Create a column accessor that provides numpy array access with proper type hints.
 
@@ -22,7 +24,7 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
         schema = get_schema(feature_type)
         ColumnAccessorClass = schema.column_accessor_class
         if ColumnAccessorClass is not None:
-            return ColumnAccessorClass(table_origin, feature_type)
+            return ColumnAccessorClass(table, feature_type)
 
         # Get original annotations from feature_type
         original_annotations = getattr(feature_type, '__annotations__', {}).copy()
@@ -37,10 +39,10 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
             # Set the new annotations
             __annotations__ = original_annotations
 
-            def __init__(self, table_origin, feature_type):
+            def __init__(self, table, feature_type):
                 # Don't call parent __init__ to avoid initializing cache
                 # Just set internal references
-                object.__setattr__(self, '_table_origin', table_origin)
+                object.__setattr__(self, '_table', table)
                 object.__setattr__(self, '_field_index_map', _field_index_map)
                 object.__setattr__(self, '_name_cache', {})
                 object.__setattr__(self, '_cache_lock', Lock())
@@ -66,8 +68,13 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
                     if idx is None:
                         raise AttributeError(f'Field "{name}" not found in the table.')
 
-                    table_origin = object.__getattribute__(self, '_table_origin')
-                    arr = table_origin.get_column(idx).as_nparray()
+                    table = object.__getattribute__(self, '_table')
+                    table_origin = table._origin
+                    fd = schema.fields[idx]
+                    if fd.field_type == OriginFieldType.str:
+                        arr = StringColumn(table, idx, name)
+                    else:
+                        arr = table_origin.get_column(idx).as_nparray()
                     name_cache[name] = arr
                     return arr
             
@@ -83,7 +90,7 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
         
         # Store the class in ClassSchema (replaces _column_accessor_cache WeakKeyDict).
         schema.column_accessor_class = ColumnAccessor
-        return ColumnAccessor(table_origin, feature_type)
+        return ColumnAccessor(table, feature_type)
 
 class Table(Generic[T]):
     def __init__(self):
@@ -92,6 +99,7 @@ class Table(Generic[T]):
         self._feature_type: Type[T] | None = None
         self._db: core.WxDatabase | core.WxDatabaseBuild = None
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
+        self._string_fill_handler = None
 
     @property
     def feature_count(self) -> int:
@@ -183,9 +191,25 @@ class Table(Generic[T]):
         if table.fixed:
             table.feature_count = origin.get_feature_count()
             # Create column accessor that pretends to be T but returns numpy arrays
-            table._column = _create_column_accessor(feature_type, origin) if feature_type is not None else None
+            table._column = _create_column_accessor(feature_type, table) if feature_type is not None else None
         
         return table
+
+    def _remap(
+        self,
+        origin: core.WxLayerTable | core.WxLayerTableBuild,
+        db: core.WxDatabase | core.WxDatabaseBuild,
+    ) -> None:
+        self._db = db
+        self._origin = origin
+        if self.fixed:
+            self.feature_count = origin.get_feature_count()
+            self._column = (
+                _create_column_accessor(self._feature_type, self)
+                if self._feature_type is not None else None
+            )
+        else:
+            self._column = None
     
     def rewind(self):
         self._origin.rewind()
@@ -205,7 +229,13 @@ class Table(Generic[T]):
             raise RuntimeError('fill() only supports fixed-scale tables.')
         col = self._column
         for field_name, arr in col_arrays.items():
-            getattr(col, field_name)[:] = arr
+            column = getattr(col, field_name)
+            if isinstance(column, StringColumn):
+                raise TypeError(
+                    'Table.fill() is numeric-only. '
+                    f'Use table.column.{field_name}.fill() or StringColumn.fill_utf8() instead.'
+                )
+            column[:] = arr
 
     def iter_reuse(self) -> Generator[T, None, None]:
         """High-performance iterator reusing a single MappedFeature proxy.
