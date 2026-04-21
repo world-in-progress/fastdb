@@ -12,6 +12,17 @@ class CEPoint:
     y: F64
 
 
+@feature
+class CEStringPoint:
+    x: F64
+    name: STR
+
+
+@feature
+class CEOtherPoint:
+    y: F64
+
+
 def test_column_engine_truncate():
     engine = ColumnEngine.truncate([Layout(CEPoint, 100)])
     tbl = engine.table(CEPoint)
@@ -19,6 +30,13 @@ def test_column_engine_truncate():
     tbl.column.x[:] = np.arange(100, dtype=np.float64)
     assert tbl.column.x[0] == 0.0
     assert tbl.column.x[99] == 99.0
+
+
+def test_column_engine_truncate_keeps_other_tables_after_string_layer():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2), Layout(CEOtherPoint, 3)])
+
+    assert len(engine.table(CEStringPoint)) == 2
+    assert len(engine.table(CEOtherPoint)) == 3
 
 
 @feature

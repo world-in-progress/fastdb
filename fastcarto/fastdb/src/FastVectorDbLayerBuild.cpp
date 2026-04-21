@@ -764,7 +764,7 @@ string table:%s\n",
         m_table_buffer.resize(nfeatures * m_table_line_size);
         for (auto& sfd : m_string_fields)
         {
-            sfd.offsets.assign(1, 0);
+            sfd.offsets.assign(nfeatures + 1, 0);
             sfd.data.clear();
         }
         // TODO(Dsssyc): need to recalc geometry buffer size

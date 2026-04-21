@@ -36,6 +36,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - Cumulative `FastSerializer` improvement on complex PointCloud benchmark: **54%** (153.93 → 70.01 µs geo-mean); loads at N=10000 is now **21× faster than pickle**.
 
 ### Fixed
+- `ColumnEngine.truncate()` now preserves later tables in mixed layouts when an earlier `STR` column is still empty at combine time.
 - SWIG/Python bindings now expose UTF-8 string-column reader APIs (`get_field_as_string_view`, `get_string_column_offsets`, `get_string_column_data`) for upcoming `ColumnEngine` string-column integration work.
 - `fdb codegen --ts` no longer warns or skips when the same class name (e.g. `Point`) appears in different `.py` files. Each file is treated as an independent module; all classes are generated in their respective `.ts` files.
 - `_schema.py`: `WeakKeyDictionary` reads moved fully under lock to prevent data races in free-threaded Python; `cls.__dict__` remains the lock-free fast path.
@@ -88,6 +89,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 
 ### Fixed
 - `FastVectorDbLayer` now reads varlen UTF-8 string columns (`ftSTR + size=0`) from trailing offsets/data sections and exposes zero-copy reader buffers for per-row string views and whole-column offsets/data access.
+- Empty truncated UTF-8 string columns now serialize valid offset tables, preventing later layers from being misaligned in multi-layer databases.
 
 ### Changed
 - SWIG interface (`fastdb4py.i`): added `%feature("threadallow")` for pure C++ operations and `Py_BEGIN_ALLOW_THREADS` around `copy_to_buffer` memcpy, improving multi-threaded throughput and preparing for free-threaded Python.
