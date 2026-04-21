@@ -62,6 +62,8 @@ namespace wx{
         void   setField(unsigned ix,int    value);
         void   setField(unsigned ix,const char* text);
         void   setField(unsigned ix,const wchar_t* text);
+        void   setFieldStringView(unsigned ix, const char* data, unsigned len);
+        void   setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes);
         void   setField(unsigned ix,const FastVectorDbFeatureRef* ref);
         FastVectorDbFeatureRef* createFeatureRef(u32 ix);
         void   freeFeatureRef(FastVectorDbFeatureRef* ref);
