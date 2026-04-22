@@ -8,6 +8,26 @@ if TYPE_CHECKING:
     from .orm.table import Table
 
 
+def pack_utf8_column(strings: Iterable[str]) -> tuple[np.ndarray, np.ndarray]:
+    """Pack an iterable of strings (or None) into UTF-8 offsets and data arrays.
+
+    - Coerces None to an empty string
+    - Returns (offsets: np.uint32 array, data: np.uint8 array)
+    """
+    raw = bytearray()
+    offsets = [0]
+    for value in strings:
+        encoded = ('' if value is None else str(value)).encode('utf-8')
+        raw.extend(encoded)
+        offsets.append(len(raw))
+    offsets_arr = np.asarray(offsets, dtype=np.uint32)
+    data_arr = np.frombuffer(bytes(raw), dtype=np.uint8)
+    # Ensure dtypes and contiguity
+    offsets_arr = np.ascontiguousarray(offsets_arr, dtype=np.uint32)
+    data_arr = np.ascontiguousarray(data_arr, dtype=np.uint8)
+    return offsets_arr, data_arr
+
+
 class StringColumn:
     def __init__(self, table: 'Table', field_index: int, field_name: str):
         self._table = table
