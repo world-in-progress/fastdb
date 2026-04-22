@@ -7,8 +7,8 @@ Data structure: 'Coordinate' records — row_id (u32), x/y/z (float64), name (UT
 
   Compares fastdb ColumnEngine in multiple modes plus ObjectEngine, PyArrow, and pickle:
    - fastdb ColumnEngine push path            (OLAP/batch columnar, push + combine)
-   - fastdb ColumnEngine truncate + STR path  (raw strings: known-size truncate + unified tbl.fill(..., name=names))
-   - fastdb ColumnEngine truncate + STR path  (prepacked: pack_utf8_column([...]) + tbl.column.name.fill_utf8(...))
+    - fastdb ColumnEngine truncate + STR path  (raw strings: known-size truncate + native-backed tbl.fill(..., name=names))
+    - fastdb ColumnEngine truncate + STR path  (prepacked: pack_utf8_column([...]) + tbl.column.name.fill_utf8(...))
    - fastdb ColumnEngine truncate fast path   (known-size numeric-only apples-to-apples)
    - fastdb ObjectEngine                      (OLTP/graph, deferred batch push + combine)
    - PyArrow                                  (columnar IPC)
@@ -478,7 +478,7 @@ def bench_column_push(N: int, reps: int) -> dict:
 
 
 def bench_column_trunc_str(N: int, reps: int) -> dict:
-    """ColumnEngine via truncate(Layout) + unified tbl.fill(..., name=names)."""
+    """ColumnEngine via truncate(Layout) + tbl.fill(..., name=names) backed by the native raw-string batch API."""
     shm_name = f"cets_kostya_{uuid.uuid4().hex[:8]}"
 
     def do_build():
@@ -490,7 +490,7 @@ def bench_column_trunc_str(N: int, reps: int) -> dict:
 
     build_ms = _median_ms(do_build, reps)
 
-    # truncate() returns a fixed buffer immediately; unified fixed-table fill writes it in-place.
+    # truncate() returns a fixed buffer immediately; native raw-string batch fill writes it in-place.
     encode_ms = 0.0
 
     orm = do_build()
@@ -972,9 +972,9 @@ def main():
     print("  Throughput: million records/sec; B/rec: wire bytes per record")
     print("  Notes:")
     print("    column_push            = ColumnEngine.create() + per-row push() + combine()")
-    print("    column_trunc_str_raw    = ColumnEngine.truncate(Layout) + tbl.fill(..., name=names)")
-    print("    column_trunc_str_prepacked = pack_utf8_column(names) + tbl.column.name.fill_utf8(...)")
-    print("                               (build = string prep + packing; encode = native UTF-8 ingest)")
+    print("    column_trunc_str_raw      = default raw-string path: ColumnEngine.truncate(Layout) + tbl.fill(..., name=names)")
+    print("    column_trunc_str_prepacked = advanced prepacked path: pack_utf8_column(names) + tbl.column.name.fill_utf8(...)")
+    print("                               (raw build now includes native string packing; prepacked encode isolates fill_utf8(...))")
     print("    column_truncate   = ColumnEngine.truncate(Layout) + tbl.fill(numpy)  [numeric-only fast path]")
     print("    object            = ObjectEngine.create() + per-row push() + combine()")
     print("    arrow / arrow_num = PyArrow Table + IPC stream + numpy read")
@@ -1013,7 +1013,7 @@ def main():
         print_table(
             full_results, N,
             title="Section A — Full schema with STR (raw vs prepacked)",
-            schema_desc="row_id: U32 | x, y, z: F64 | name: STR (raw tbl.fill vs prepacked pack_utf8_column + fill_utf8)",
+            schema_desc="row_id: U32 | x, y, z: F64 | name: STR (raw tbl.fill native batch API vs prepacked pack_utf8_column + fill_utf8)",
         )
 
         # ---- Section B: numeric-only (apples-to-apples for ColumnEngine truncate) ----

@@ -27,6 +27,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - Python docs and benchmark now show the two UTF-8 truncate ingest tiers: high-level `tbl.fill(..., name=[...])` and advanced `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`, with benchmark output split into raw-string vs prepacked paths.
 
 ### Performance
+- Raw `STR` writes now route `tbl.fill(..., name=[...])` through a native string-column batch API in the C++ core, reducing Python-side UTF-8 packing overhead while preserving `pack_utf8_column(...) + fill_utf8(...)` as the advanced path.
 - `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.
 - `FastSerializer` loads path: lazy initialization of auxiliary layer data, eliminated redundant schema lookups in scalar read path.
 - Overall `FastSerializer` geometric mean improvement: **32%** (44.26 → 30.09 µs across all test cases).

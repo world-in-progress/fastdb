@@ -131,7 +131,7 @@ The field order is part of the schema contract. It affects table layout, seriali
 
 Use `truncate` when the row count is known ahead of time. For fixed-size tables, there are two UTF-8 string-ingest tiers:
 
-- **Default high-level path** — `tbl.fill(..., name=[...])`
+- **Default high-level path** — `tbl.fill(..., name=[...])` now routes raw strings through the native batch string-column API
 - **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
 
 ```python
@@ -179,7 +179,7 @@ db = ColumnEngine.truncate([
 ])
 ```
 
-For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric and UTF-8 `STR` data together with upfront length validation:
+For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric data and raw Python `STR` values together, and the raw-string path now routes through the native batch string-column API with upfront length validation:
 
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR, pack_utf8_column

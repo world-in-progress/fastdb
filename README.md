@@ -62,10 +62,10 @@ If you are working on native internals or storage layout, start with:
 
 `fastdb4py` `ColumnEngine.truncate()` now supports UTF-8 `STR` fields in two usage tiers:
 
-- **Default high-level path** — `tbl.fill(..., name=[...])`
+- **Default high-level path** — `tbl.fill(..., name=[...])` now routes raw strings through the native batch string-column API
 - **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
 
-For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Numeric columns still remain NumPy-backed after publication, while string columns are exposed as `StringColumn` wrappers via `table.column.<name>`.
+For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Raw string inputs are packed inside the native batch API, while numeric columns still remain NumPy-backed after publication and string columns are exposed as `StringColumn` wrappers via `table.column.<name>`.
 
 ```python
 import numpy as np
