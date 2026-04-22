@@ -85,6 +85,12 @@ namespace wx
         }
     };
 
+    struct utf8_view_t
+    {
+        const char* data;
+        u32 len;
+    };
+
     class  FastVectorDbBuild;
     class  FastVectorDbLayerBuild;
     class  FastVectorDb;
@@ -193,6 +199,7 @@ namespace wx
         void setField(unsigned ix, const char *text);
         void setField(unsigned ix, const wchar_t *text);
         void setFieldStringView(unsigned ix, const char* data, unsigned len);
+        void setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes = nullptr);
         void setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes);
         void setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes);
         void setField(unsigned ix, const FastVectorDbFeatureRef* ref);

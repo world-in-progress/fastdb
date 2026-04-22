@@ -340,6 +340,42 @@
     fail:
         return NULL;
     }
+
+    PyObject* set_string_column_from_sequence(unsigned field_id, PyObject* py_values) {
+        PyObject* seq = PySequence_Fast(py_values, "Expected a sequence of str or None");
+        if (!seq)
+            return NULL;
+        Py_ssize_t count = PySequence_Fast_GET_SIZE(seq);
+        vector<wx::utf8_view_t> views;
+        views.reserve((size_t)count);
+        for (Py_ssize_t i = 0; i < count; ++i) {
+            PyObject* item = PySequence_Fast_GET_ITEM(seq, i);
+            if (item == Py_None) {
+                views.push_back(wx::utf8_view_t{"", 0});
+                continue;
+            }
+            if (!PyUnicode_Check(item)) {
+                Py_DECREF(seq);
+                SWIG_exception_fail(SWIG_TypeError, "Expected a sequence of str or None");
+            }
+            Py_ssize_t len = 0;
+            const char* data = PyUnicode_AsUTF8AndSize(item, &len);
+            if (!data) {
+                Py_DECREF(seq);
+                return NULL;
+            }
+            if (len < 0 || len > (Py_ssize_t)UINT32_MAX) {
+                Py_DECREF(seq);
+                SWIG_exception_fail(SWIG_ValueError, "String item is too large");
+            }
+            views.push_back(wx::utf8_view_t{data, (u32)len});
+        }
+        $self->setStringColumnFromViews(field_id, views.data(), (unsigned)views.size(), nullptr);
+        Py_DECREF(seq);
+        Py_RETURN_NONE;
+    fail:
+        return NULL;
+    }
 }
 
 %extend wx::FastVectorDbLayerBuild {

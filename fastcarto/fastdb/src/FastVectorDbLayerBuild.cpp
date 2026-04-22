@@ -605,6 +605,36 @@ namespace wx
         sfd->offsets.assign(offsets, offsets + n_offsets);
         sfd->data.assign(data, data + nbytes);
     }
+    void FastVectorDbLayerBuild::Impl::setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes)
+    {
+        if (count == 0)
+        {
+            static const u32 kEmptyOffsets[] = {0};
+            setStringColumnBulk(field_id, kEmptyOffsets, 1, nullptr, 0);
+            return;
+        }
+        if (values == nullptr)
+            return;
+        vector<u32> offsets;
+        vector<u8> data;
+        offsets.reserve((size_t)count + 1);
+        data.reserve(0);
+        offsets.push_back(0);
+        for (unsigned i = 0; i < count; ++i)
+        {
+            const bool is_valid = (valid_bytes == nullptr) ? true : (valid_bytes[i] != 0);
+            const utf8_view_t& view = is_valid ? values[i] : utf8_view_t{"", 0};
+            if (view.len > 0)
+            {
+                if (view.data == nullptr)
+                    return;
+                const u8* p = reinterpret_cast<const u8*>(view.data);
+                data.insert(data.end(), p, p + view.len);
+            }
+            offsets.push_back((u32)data.size());
+        }
+        setStringColumnBulk(field_id, offsets.data(), (unsigned)offsets.size(), data.empty() ? nullptr : data.data(), (u64)data.size());
+    }
     void FastVectorDbLayerBuild::Impl::setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes)
     {
         assert(field_id < m_field_descs.size());
@@ -974,6 +1004,10 @@ string table:%s\n",
         void FastVectorDbLayerBuild::setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes)
         {
             impl->setStringColumnBulk(field_id, offsets, n_offsets, data, nbytes);
+        }
+        void FastVectorDbLayerBuild::setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes)
+        {
+            impl->setStringColumnFromViews(field_id, values, count, valid_bytes);
         }
         void   FastVectorDbLayerBuild::addFeatureEnd()
         {
