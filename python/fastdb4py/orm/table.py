@@ -227,9 +227,9 @@ class Table(Generic[T]):
     def fill(self, **col_arrays) -> None:
         """Bulk-fill fixed tables with validated numeric and UTF-8 string columns.
 
-        After a successful fill(), any previously cached ``tbl.column`` accessor
-        and any cached ``tbl.column.<field>`` numpy array are stale and must
-        not be reused. Always re-fetch ``tbl.column.<field>`` after fill().
+        After a successful fill(), any numpy array previously obtained from
+        ``tbl.column.<field>`` is stale and must not be reused. Always
+        re-fetch ``tbl.column.<field>`` after fill().
         """
         if not self.fixed:
             raise RuntimeError('fill() only supports fixed-scale tables.')

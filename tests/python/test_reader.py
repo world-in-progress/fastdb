@@ -261,7 +261,7 @@ def test_truncate_layer_build_set_numeric_column_bulk_rejects_non_contiguous_inp
         layer.set_numeric_column_bulk(0, values)
 
 
-def test_truncate_layer_build_set_numeric_column_bulk_rejects_wrong_size_buffer():
+def test_truncate_layer_build_set_numeric_column_bulk_silently_ignores_wrong_size_buffer():
     db = core.WxDatabaseBuild()
     db.begin("")
     layer = db.create_layer_begin("num_rows")
@@ -270,6 +270,8 @@ def test_truncate_layer_build_set_numeric_column_bulk_rejects_wrong_size_buffer(
     db.truncate("num_rows", 3)
 
     layer.set_numeric_column_bulk(0, np.array([1.0, 2.5, 3.5], dtype=np.float64))
+    # The low-level SWIG bridge drops wrong-size buffers; Table.fill() rejects
+    # mismatched lengths earlier with a Python-side ValueError.
     layer.set_numeric_column_bulk(0, np.array([9.0, 8.0, 7.0], dtype=np.float32))
 
     mem = core.WxMemoryStream()

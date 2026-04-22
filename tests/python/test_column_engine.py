@@ -163,6 +163,15 @@ def test_table_fill_accepts_string_only_columns():
     assert tbl.column.name.to_pylist() == ["left", "right"]
 
 
+def test_table_fill_round_trips_empty_strings():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
+    tbl = engine.table(CEStringPoint)
+
+    tbl.fill(name=["", "mid", ""])
+
+    assert tbl.column.name.to_pylist() == ["", "mid", ""]
+
+
 def test_table_fill_rejects_mismatched_lengths():
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
@@ -211,6 +220,39 @@ def test_table_fill_validation_failure_does_not_mutate_existing_values():
         np.array([7, 8], dtype=np.uint32),
     )
     assert tbl.column.name.to_pylist() == ["aa", "bb"]
+
+
+def test_table_fill_invalidates_fixed_writer_after_bulk_setter_failure():
+    engine = ColumnEngine.truncate([Layout(CEPoint, 2)])
+    tbl = engine.table(CEPoint)
+
+    class FailingLayerBuild:
+        def __init__(self):
+            self.numeric_calls = 0
+
+        def set_numeric_column_bulk(self, field_index, payload):
+            self.numeric_calls += 1
+            if self.numeric_calls == 2:
+                raise RuntimeError("boom")
+
+        def set_string_column_bulk(self, field_index, offsets, data):
+            raise AssertionError("unexpected string bulk write")
+
+    engine._fixed_layer_builds[CEPoint.__name__] = FailingLayerBuild()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        tbl.fill(
+            x=np.array([1.0, 2.0], dtype=np.float64),
+            y=np.array([3.0, 4.0], dtype=np.float64),
+        )
+
+    assert engine._fixed_build is None
+    assert engine._fixed_layer_builds == {}
+    assert engine._fixed_table_fields == {}
+    assert tbl._fixed_fill_handler is None
+
+    with pytest.raises(RuntimeError, match="read-only fixed tables"):
+        tbl.fill(x=np.array([5.0, 6.0], dtype=np.float64))
 
 
 def test_loaded_fixed_table_rejects_fill():

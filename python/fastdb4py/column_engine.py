@@ -330,20 +330,30 @@ class ColumnEngine:
         else:
             table._fixed_fill_handler = None
 
+    def _invalidate_fixed_writes(self) -> None:
+        self._fixed_build = None
+        self._fixed_layer_builds = {}
+        self._fixed_table_fields = {}
+        for table_name, table in self._table_map.items():
+            self._attach_fixed_fill_handler(table, table_name)
+
     def _fill_fixed_table(self, table_name: str, writes: dict[str, object]) -> None:
         layer_build = self._fixed_layer_builds[table_name]
         field_ids = self._fixed_table_fields[table_name]
-        # If a bulk setter raises, no new snapshot is published and readers
-        # continue to observe self._origin. The writable truncate build is not
-        # rolled back here, so layer_build may be left partially updated and a
-        # later successful fill could publish that partial build-state.
-        for field_name, payload in writes.items():
-            field_index = field_ids[field_name]
-            if isinstance(payload, tuple):
-                offsets, data = payload
-                layer_build.set_string_column_bulk(field_index, offsets, data)
-            else:
-                layer_build.set_numeric_column_bulk(field_index, payload)
+        try:
+            for field_name, payload in writes.items():
+                field_index = field_ids[field_name]
+                if isinstance(payload, tuple):
+                    offsets, data = payload
+                    layer_build.set_string_column_bulk(field_index, offsets, data)
+                else:
+                    layer_build.set_numeric_column_bulk(field_index, payload)
+        except Exception:
+            # A setter may have already mutated the retained truncate build.
+            # Invalidate future writes so a later fill() cannot publish a mixed
+            # partial state from this failed batch.
+            self._invalidate_fixed_writes()
+            raise
         self._publish_fixed_snapshot()
 
     def _find_layer(self, table_name: str):
@@ -409,11 +419,7 @@ class ColumnEngine:
         dest[:] = chunk.as_array(np.uint8)
         self._origin._buffer = None
         self._origin = core.WxDatabase.load_xbuffer(self._shm.buf)
-        self._fixed_build = None
-        self._fixed_layer_builds = {}
-        self._fixed_table_fields = {}
-        for table_name, table in self._table_map.items():
-            self._attach_fixed_fill_handler(table, table_name)
+        self._invalidate_fixed_writes()
 
         if close_after and platform.system() != 'Windows':
             self.close()

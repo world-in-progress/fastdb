@@ -78,9 +78,11 @@ class Point:
 db = ColumnEngine.truncate([Layout(Point, 5)])
 table = db.table(Point)
 
-table.column.x[:] = np.linspace(0.0, 1.0, 5)
-table.column.y[:] = np.zeros(5)
-table.column.z[:] = np.ones(5)
+table.fill(
+    x=np.linspace(0.0, 1.0, 5),
+    y=np.zeros(5),
+    z=np.ones(5),
+)
 
 print(table[2].x)
 print(table.column.x.mean())
@@ -127,7 +129,7 @@ The field order is part of the schema contract. It affects table layout, seriali
 
 ### Fixed-size tables with `ColumnEngine.truncate`
 
-Use `truncate` when the row count is known ahead of time. This is the fastest path for bulk numeric workloads, and fixed-size tables now let `Table.fill(...)` batch UTF-8 `STR` fields alongside numeric columns in one call.
+Use `truncate` when the row count is known ahead of time. This is the fastest path for bulk ingest into fixed-size tables: `Table.fill(...)` batches numeric columns, and it can batch UTF-8 `STR` fields alongside them in the same call.
 
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, F64, F32
@@ -147,11 +149,13 @@ N = 100_000
 db = ColumnEngine.truncate([Layout(Particle, N)])
 tbl = db.table(Particle)
 
-tbl.column.x[:] = np.random.uniform(-1.0, 1.0, N)
-tbl.column.y[:] = np.random.uniform(-1.0, 1.0, N)
-tbl.column.vx[:] = np.zeros(N)
-tbl.column.vy[:] = np.zeros(N)
-tbl.column.mass[:] = np.ones(N, dtype=np.float32)
+tbl.fill(
+    x=np.random.uniform(-1.0, 1.0, N),
+    y=np.random.uniform(-1.0, 1.0, N),
+    vx=np.zeros(N),
+    vy=np.zeros(N),
+    mass=np.ones(N, dtype=np.float32),
+)
 ```
 
 Multiple tables can be created in one call:
@@ -172,7 +176,7 @@ db = ColumnEngine.truncate([
 ])
 ```
 
-For fixed-size tables with string columns, `Table.fill(...)` now batches numeric and UTF-8 `STR` data together with upfront length validation:
+For fixed-size tables with string columns, `Table.fill(...)` is the primary batch-ingest API. It batches numeric and UTF-8 `STR` data together with upfront length validation:
 
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR
@@ -193,6 +197,10 @@ tbl.fill(
     value=np.array([0.5, 1.5, 2.5], dtype=np.float64),
     name=["a", "be", "中"],
 )
+
+# If your pipeline already produced UTF-8 offsets/data buffers, the same
+# truncate table can still take the lower-level string path directly:
+# tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 ```
 
 ### Dynamic tables with `ObjectEngine.create` + `push`
