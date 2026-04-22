@@ -2,57 +2,65 @@ import unittest
 import struct
 import numpy as np
 from typing import List, Optional
-from fastdb4py import FastSerializer, Feature, I32, U32, F64, STR, REF
+from fastdb4py import FastSerializer
+from fastdb4py.decorator import feature
+from fastdb4py.type import I32, U32, F64, STR, REF
 
-class Point(Feature):
+
+@feature
+class Point:
     x: F64
     y: F64
 
-class Line(Feature):
+@feature
+class Line:
     points: List[Point]
     id: I32
 
-class Node(Feature):
+@feature
+class Node:
     id: I32
-    # next: REF # Recursive ref directly 
-    # children: List[REF] # List[Node]
-    # To support recursive types properly in Python < 3.10 without from __future__ annotations,
-    # we rely on FastSerializer's robust discovery.
-    # But explicit type hints are needed.
     pass
 
-class RecursiveNode(Feature):
+@feature
+class RecursiveNode:
     val: I32
     next: 'RecursiveNode' 
 
-class TreeNode(Feature):
+@feature
+class TreeNode:
     val: I32
     children: List['TreeNode']
 
-class User(Feature):
+@feature
+class User:
     name: STR
     age: I32
     scores: List[float]
 
-class MultiListPayload(Feature):
+@feature
+class MultiListPayload:
     ints: List[int]
     names: List[str]
     points: List[Point]
 
-class StringListOnly(Feature):
+@feature
+class StringListOnly:
     names: List[str]
 
-class NumericColumnarLists(Feature):
+@feature
+class NumericColumnarLists:
     ids: List[U32]
     values: List[F64]
 
-# Native Python type annotation classes (no TypeVar aliases)
-class NativeScalars(Feature):
+@feature
+class NativeScalars:
     count: int
     ratio: float
     label: str
 
-class NativeLists(Feature):
+@feature
+class NativeLists:
     ints: List[int]
     floats: List[float]
     names: List[str]

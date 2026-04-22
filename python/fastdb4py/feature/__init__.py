@@ -1,4 +1,5 @@
-from .feature import Feature
-from .ref_list import FeatureRefList
-from .utils import get_all_defns
-from ._schema import get_class_schema
+"""Feature subpackage — @feature decorator re-export for convenience."""
+from ..decorator import feature
+from ..registry import is_feature
+
+__all__ = ['feature', 'is_feature']

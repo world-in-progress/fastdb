@@ -4,6 +4,114 @@
 #include "gaiageo.h"
 namespace wx
 {
+    namespace
+    {
+        constexpr u64 kMaxStringFieldBytes = 0xFFFFFFFFull;
+
+        size_t field_type_storage_size(u32 ft, bool string_table_u32)
+        {
+            switch (ft)
+            {
+            case ftU8:
+                return 1;
+            case ftU16:
+                return 2;
+            case ftU32:
+                return 4;
+            case ftI32:
+                return 4;
+            case ftU8n:
+                return 1;
+            case ftU16n:
+                return 2;
+            case ftF32:
+                return 4;
+            case ftF64:
+                return 8;
+            case ftSTR:
+            case ftWSTR:
+                return string_table_u32 ? 4 : 2;
+            case ftFeatureRef:
+                return sizeof(FastVectorDbFeatureRef);
+            case ftList:
+                return 8;
+            }
+            assert(false);
+            return 0;
+        }
+
+        bool has_plain_string_field(const vector<field_desc_ex_t>& field_descs)
+        {
+            for (const auto& fd : field_descs)
+            {
+                if (fd.type == ftSTR)
+                    return true;
+            }
+            return false;
+        }
+
+        template <typename TStringFields>
+        auto* find_string_field(TStringFields& string_fields, unsigned field_id)
+        {
+            for (auto& field : string_fields)
+            {
+                if (field.field_id == field_id)
+                    return &field;
+            }
+            return static_cast<typename TStringFields::value_type*>(nullptr);
+        }
+
+        template <typename TStringFields>
+        void register_varlen_string_field(TStringFields& string_fields, u32 field_id)
+        {
+            string_fields.push_back(typename TStringFields::value_type{
+                field_id, 1, {0}, {}
+            });
+        }
+
+        template <typename TStringFields>
+        void activate_varlen_string_columns(vector<field_desc_ex_t>& field_descs,
+                                            size_t& table_line_size,
+                                            TStringFields& string_fields,
+                                            bool& enable_varlen_string_columns,
+                                            bool string_table_u32)
+        {
+            enable_varlen_string_columns = true;
+            table_line_size = 0;
+            string_fields.clear();
+            for (u32 ix = 0; ix < (u32)field_descs.size(); ++ix)
+            {
+                auto& fd = field_descs[ix];
+                fd.offset = table_line_size;
+                fd.size = (fd.type == ftSTR) ? 0 : field_type_storage_size(fd.type, string_table_u32);
+                if (fd.type == ftSTR)
+                    register_varlen_string_field(string_fields, ix);
+                table_line_size += fd.size;
+            }
+        }
+
+        template <typename TStringField>
+        bool validate_string_field_for_write(const TStringField& sfd, size_t feature_count)
+        {
+            assert(sfd.data.size() <= kMaxStringFieldBytes);
+            if (sfd.data.size() > kMaxStringFieldBytes)
+                return false;
+            assert(sfd.offsets.size() <= kMaxStringFieldBytes);
+            if (sfd.offsets.size() > kMaxStringFieldBytes)
+                return false;
+            assert(sfd.offsets.size() == feature_count + 1);
+            if (sfd.offsets.size() != feature_count + 1)
+                return false;
+            assert(!sfd.offsets.empty());
+            if (sfd.offsets.empty())
+                return false;
+            assert(sfd.offsets.back() == sfd.data.size());
+            if (sfd.offsets.back() != sfd.data.size())
+                return false;
+            return true;
+        }
+    }
+
     FastVectorDbLayerBuild::Impl::Impl(FastVectorDbBuild* db,const char *name)
     {
         m_name = name;
@@ -43,34 +151,7 @@ namespace wx
 
     size_t FastVectorDbLayerBuild::Impl::field_type_byte_size(u32 ft)
     {
-        switch (ft)
-        {
-        case ftU8:
-            return 1;
-        case ftU16:
-            return 2;
-        case ftU32:
-            return 4;
-        case ftI32:
-            return 4;
-        case ftU8n:
-            return 1;
-        case ftU16n:
-            return 2;
-        case ftF32:
-            return 4;
-        case ftF64:
-            return 8;
-        case ftSTR:
-        case ftWSTR:
-            return m_string_table_u32?4:2;
-        case ftFeatureRef:
-            return sizeof(FastVectorDbFeatureRef);
-        case ftList:
-            return 8;  // {start: u32, count: u32} stored in the feature row
-        }
-        assert(false);
-        return 0;
+        return field_type_storage_size(ft, m_string_table_u32);
     }
     const char* FastVectorDbLayerBuild::Impl::name()
     {
@@ -91,7 +172,8 @@ namespace wx
         fd.type = ft;
         fd.vmin = vmin;
         fd.vmax = vmax;
-        fd.size = field_type_byte_size(ft);
+        bool use_varlen_string = (ft == ftSTR && m_enable_varlen_string_columns);
+        fd.size = use_varlen_string ? 0 : field_type_byte_size(ft);
         if (m_field_descs.size() > 0)
         {
             fd.offset = m_field_descs.back().offset + m_field_descs.back().size;
@@ -101,6 +183,8 @@ namespace wx
             fd.offset = 0;
         }
         m_field_descs.push_back(fd);
+        if (use_varlen_string)
+            register_varlen_string_field(m_string_fields, (u32)(m_field_descs.size() - 1));
         m_table_line_size += fd.size;
         return m_field_descs.size();
     }
@@ -434,6 +518,11 @@ namespace wx
             return;
         if (!text)
             text = "";
+        if (fdx.size == 0 && find_string_field(m_string_fields, ix) != nullptr)
+        {
+            setFieldStringView(ix, text, (unsigned)strlen(text));
+            return;
+        }
         // try_emplace: single hash lookup (find+insert in one op), value = next ID if inserted.
         // Storing pointer-to-map-key avoids the separate `new string(text)` heap allocation.
         auto [it, inserted] = m_string_map.try_emplace(text, (int)m_string_table.size());
@@ -459,6 +548,126 @@ namespace wx
             m_wstring_total_size += it->first.size() * 2 + 2;
         }
         set_field_value_t(m_current_line_buffer.data(), fdx, it->second, m_string_table_u32);
+    }
+    void FastVectorDbLayerBuild::Impl::setFieldStringView(unsigned ix, const char* data, unsigned len)
+    {
+        if (ix >= m_field_descs.size())
+            return;
+        auto& fd = m_field_descs[ix];
+        if (fd.type != ftSTR)
+            return;
+        auto* sfd = find_string_field(m_string_fields, ix);
+        if (sfd == nullptr)
+            return;
+        assert(data != nullptr || len == 0);
+        if (data == nullptr && len > 0)
+            return;
+        u64 next_size = (u64)sfd->data.size() + (u64)len;
+        assert(next_size <= kMaxStringFieldBytes);
+        if (next_size > kMaxStringFieldBytes)
+            return;
+        if (data != nullptr && len > 0)
+        {
+            const u8* p = reinterpret_cast<const u8*>(data);
+            sfd->data.insert(sfd->data.end(), p, p + len);
+        }
+        sfd->offsets.push_back((u32)sfd->data.size());
+    }
+    void FastVectorDbLayerBuild::Impl::setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes)
+    {
+        auto* sfd = find_string_field(m_string_fields, field_id);
+        if (sfd == nullptr)
+            return;
+        assert(n_offsets == m_feature_count + 1);
+        if (n_offsets != m_feature_count + 1)
+            return;
+        assert(nbytes <= kMaxStringFieldBytes);
+        if (nbytes > kMaxStringFieldBytes)
+            return;
+        assert(offsets != nullptr || n_offsets == 0);
+        if (offsets == nullptr)
+            return;
+        assert(offsets[0] == 0);
+        if (offsets[0] != 0)
+            return;
+        for (unsigned i = 1; i < n_offsets; ++i)
+        {
+            assert(offsets[i - 1] <= offsets[i]);
+            if (offsets[i - 1] > offsets[i])
+                return;
+        }
+        assert((u64)offsets[n_offsets - 1] == nbytes);
+        if ((u64)offsets[n_offsets - 1] != nbytes)
+            return;
+        assert(data != nullptr || nbytes == 0);
+        if (data == nullptr && nbytes > 0)
+            return;
+        sfd->offsets.assign(offsets, offsets + n_offsets);
+        sfd->data.assign(data, data + nbytes);
+    }
+    void FastVectorDbLayerBuild::Impl::setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes)
+    {
+        if (count == 0)
+        {
+            static const u32 kEmptyOffsets[] = {0};
+            setStringColumnBulk(field_id, kEmptyOffsets, 1, nullptr, 0);
+            return;
+        }
+        if (count != m_feature_count)
+            return;
+        if (values == nullptr)
+            return;
+        vector<u32> offsets;
+        vector<u8> data;
+        offsets.reserve((size_t)count + 1);
+        data.reserve(0);
+        offsets.push_back(0);
+        for (unsigned i = 0; i < count; ++i)
+        {
+            const bool is_valid = (valid_bytes == nullptr) ? true : (valid_bytes[i] != 0);
+            const utf8_view_t& view = is_valid ? values[i] : utf8_view_t{"", 0};
+            if (view.len > 0)
+            {
+                if (view.data == nullptr)
+                    return;
+                const u8* p = reinterpret_cast<const u8*>(view.data);
+                data.insert(data.end(), p, p + view.len);
+            }
+            offsets.push_back((u32)data.size());
+        }
+        setStringColumnBulk(field_id, offsets.data(), (unsigned)offsets.size(), data.empty() ? nullptr : data.data(), (u64)data.size());
+    }
+    void FastVectorDbLayerBuild::Impl::setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes)
+    {
+        assert(field_id < m_field_descs.size());
+        if (field_id >= m_field_descs.size())
+            return;
+        auto& fd = m_field_descs[field_id];
+        assert(fd.type != ftSTR && fd.type != ftWSTR && fd.type != ftList && fd.type != ftFeatureRef);
+        if (fd.type == ftSTR || fd.type == ftWSTR || fd.type == ftList || fd.type == ftFeatureRef)
+            return;
+        assert(fd.size > 0);
+        if (fd.size == 0)
+            return;
+        if (m_feature_count == 0)
+        {
+            assert(data != nullptr || nbytes == 0);
+            if (data == nullptr && nbytes > 0)
+                return;
+            assert(nbytes == 0);
+            if (nbytes != 0)
+                return;
+            return;
+        }
+        assert(data != nullptr);
+        if (data == nullptr)
+            return;
+        assert(nbytes == (u64)m_feature_count * (u64)fd.size);
+        if (nbytes != (u64)m_feature_count * (u64)fd.size)
+            return;
+        const u8* src = reinterpret_cast<const u8*>(data);
+        for (size_t row = 0; row < m_feature_count; ++row)
+            memcpy(m_table_buffer.data() + (u64)row * m_table_line_size + fd.offset, src + (u64)row * fd.size, fd.size);
     }
     void FastVectorDbLayerBuild::Impl::post()
     {
@@ -606,8 +815,22 @@ string table:%s\n",
 
     void FastVectorDbLayerBuild::Impl::truncate(unsigned nfeatures)
     {
+        if (!m_enable_varlen_string_columns && has_plain_string_field(m_field_descs))
+        {
+            activate_varlen_string_columns(
+                m_field_descs,
+                m_table_line_size,
+                m_string_fields,
+                m_enable_varlen_string_columns,
+                m_string_table_u32);
+        }
         m_feature_count=nfeatures;
         m_table_buffer.resize(nfeatures * m_table_line_size);
+        for (auto& sfd : m_string_fields)
+        {
+            sfd.offsets.assign(nfeatures + 1, 0);
+            sfd.data.clear();
+        }
         // TODO(Dsssyc): need to recalc geometry buffer size
     }
     size_t FastVectorDbLayerBuild::Impl::get_total_size()
@@ -617,13 +840,20 @@ string table:%s\n",
             list_section_size += sizeof(u32) + sizeof(u32) + sizeof(u64); // field_index + elem_size + total_elements
             list_section_size += lfd.data.size();
         }
+        size_t string_section_size = 0;
+        for (const auto& sfd : m_string_fields) {
+            string_section_size += sizeof(u32) + sizeof(u32) + sizeof(u32) + sizeof(u64);
+            string_section_size += sfd.offsets.size() * sizeof(u32);
+            string_section_size += sfd.data.size();
+        }
         return sizeof(layer_header_t) +
                m_field_descs.size() * sizeof(field_desc_ex_t) +
                m_geometries_buffer.size() +
                m_table_buffer.size() +
                sizeof(u32) + m_string_total_size +
                sizeof(u32) + m_wstring_total_size +
-               list_section_size;
+               list_section_size +
+               string_section_size;
     }
 
     void FastVectorDbLayerBuild::Impl::write(WriteStream *stream)
@@ -694,6 +924,19 @@ string table:%s\n",
             if (!lfd.data.empty())
                 stream->write((void*)lfd.data.data(), lfd.data.size());
         }
+        // String sections follow list sections so later reader work can scan trailing column payloads in order.
+        for (const auto& sfd : m_string_fields) {
+            if (!validate_string_field_for_write(sfd, m_feature_count))
+                return;
+            stream->write((void*)&sfd.field_id, sizeof(u32));
+            stream->write((void*)&sfd.codec, sizeof(u32));
+            u32 offset_count = (u32)sfd.offsets.size();
+            u64 byte_count = (u64)sfd.data.size();
+            stream->write(&offset_count, sizeof(offset_count));
+            stream->write(&byte_count, sizeof(byte_count));
+            stream->write((void*)sfd.offsets.data(), offset_count * sizeof(u32));
+            if (!sfd.data.empty()) stream->write((void*)sfd.data.data(), sfd.data.size());
+        }
     }
 
         FastVectorDbLayerBuild::FastVectorDbLayerBuild(FastVectorDbBuild* db,const char* name)
@@ -751,6 +994,22 @@ string table:%s\n",
         void   FastVectorDbLayerBuild::setField(unsigned ix,const wchar_t* text)
         {
             impl->setField(ix,text);
+        }
+        void FastVectorDbLayerBuild::setFieldStringView(unsigned ix, const char* data, unsigned len)
+        {
+            impl->setFieldStringView(ix, data, len);
+        }
+        void FastVectorDbLayerBuild::setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes)
+        {
+            impl->setNumericColumnBulk(field_id, data, nbytes);
+        }
+        void FastVectorDbLayerBuild::setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes)
+        {
+            impl->setStringColumnBulk(field_id, offsets, n_offsets, data, nbytes);
+        }
+        void FastVectorDbLayerBuild::setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes)
+        {
+            impl->setStringColumnFromViews(field_id, values, count, valid_bytes);
         }
         void   FastVectorDbLayerBuild::addFeatureEnd()
         {

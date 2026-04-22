@@ -12,7 +12,46 @@ from .type import (
     OriginFieldType, get_origin_type, get_list_element_type,
     LIST_ELEM_CPP_TYPE, FIELD_TYPE_MAP, LIST_ELEM_ARRAY_TYPECODE,
 )
-from .feature.base import BaseFeature
+
+
+def is_feature(cls) -> bool:
+    """Check if cls was decorated with @feature.
+
+    Uses cls.__dict__.get() (not getattr) so subclasses that merely
+    inherit the marker are rejected — every class must be explicitly
+    decorated.
+    """
+    return isinstance(cls, type) and cls.__dict__.get('__fastdb_feature__', False) is True
+
+
+_class_registry: Dict[str, Type] = {}
+
+
+def register_class(cls, *, allow_replace: bool = False) -> None:
+    """Register a @feature class by name. Fails fast on collision.
+
+    Parameters
+    ----------
+    allow_replace : bool
+        If True, silently overwrite an existing entry (used by the
+        @feature decorator where redefinition is normal across modules).
+        If False (default), raise ValueError when a *different* class
+        object with the same __name__ is already registered.
+    """
+    name = cls.__name__
+    existing = _class_registry.get(name)
+    if existing is not None and existing is not cls and not allow_replace:
+        raise ValueError(
+            f"Feature class name {name!r} already registered by "
+            f"{existing.__module__}.{existing.__qualname__}. "
+            f"Conflicting: {cls.__module__}.{cls.__qualname__}"
+        )
+    _class_registry[name] = cls
+
+
+def lookup_class(name: str):
+    """Look up a @feature class by name. Returns None if not found."""
+    return _class_registry.get(name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +86,13 @@ class LayerSchema:
         'pfd_num_ids',      # numpy uint32 array
         'pfd_str_names',    # List[str]
         'pfd_str_ids',      # numpy uint32 array
+        # --- Merged from ClassSchema ---
+        'hints',                  # Dict[str, Any] — raw type hints
+        'ordered_defns',          # List[(name, OriginFieldType)]
+        'origin_hints',           # Dict[str, (OriginFieldType, int)]
+        'field_index_map',        # Dict[str, int] — name → column index
+        'column_accessor_class',  # Dynamically created ColumnAccessor type
+        'scalar_field_ids_np',    # np.ndarray int32 — scalar field IDs
     )
 
     def __init__(self, layer_name: str, fields: List[FieldDef]):
@@ -68,6 +114,13 @@ class LayerSchema:
         self.pfd_num_ids = None
         self.pfd_str_names = []
         self.pfd_str_ids = None
+        # Merged ClassSchema attributes — populated by _build_schema
+        self.hints = {}
+        self.ordered_defns = []
+        self.origin_hints = {}
+        self.field_index_map = {}
+        self.column_accessor_class = None
+        self.scalar_field_ids_np = np.array([], dtype=np.int32)
 
     def get(self, name: str) -> Optional[FieldDef]:
         return self._by_name.get(name)
@@ -87,16 +140,38 @@ _NUMERIC_FT = frozenset((
 
 
 def get_schema(cls: Type) -> LayerSchema:
-    """Return (or compute) the LayerSchema for cls. Thread-safe, cached."""
-    schema = _registry.get(cls)
-    if schema is not None:
-        return schema
+    """Return (or compute) the LayerSchema for cls. Thread-safe, cached.
+
+    Uses cls.__dict__ fast-path (~40-50ns) before falling back to
+    WeakKeyDictionary under lock.
+
+    Note: old Feature subclasses may already have a ClassSchema cached on
+    ``__fastdb_schema__`` (set by ``get_class_schema``). The isinstance
+    check ensures we skip those and build a proper LayerSchema instead,
+    stored only in the WeakKeyDictionary to avoid overwriting the old cache.
+    """
+    # Fast path: class-level cache (only if it's actually a LayerSchema)
+    cached = cls.__dict__.get('__fastdb_schema__')
+    if isinstance(cached, LayerSchema):
+        return cached
+
+    # Slow path: lock + build
     with _registry_lock:
+        cached = cls.__dict__.get('__fastdb_schema__')
+        if isinstance(cached, LayerSchema):
+            return cached
         schema = _registry.get(cls)
         if schema is not None:
             return schema
         schema = _build_schema(cls)
         _registry[cls] = schema
+        # Only store on class if __fastdb_schema__ is not already occupied
+        # by a ClassSchema from the old code path.
+        if '__fastdb_schema__' not in cls.__dict__:
+            try:
+                cls.__fastdb_schema__ = schema
+            except (TypeError, AttributeError):
+                pass
         return schema
 
 
@@ -153,6 +228,16 @@ def _build_schema(cls: Type) -> LayerSchema:
     schema.pfd_str_names = [fn for _, fn, _ in schema.str_plan]
     schema.pfd_str_ids = np.array([idx for idx, _, _ in schema.str_plan], dtype=np.uint32)
 
+    # --- Compute merged ClassSchema attributes ---
+    schema.hints = {k: v for k, v in hints.items() if not k.startswith('_')}
+    schema.ordered_defns = [(fd.name, fd.field_type) for fd in fields]
+    schema.origin_hints = {fd.name: (fd.field_type, fd.field_id) for fd in fields}
+    schema.field_index_map = {fd.name: fd.field_id for fd in fields}
+    scalar_ids = [fd.field_id for fd in fields
+                  if fd.field_type not in (OriginFieldType.ref, OriginFieldType.list,
+                                           OriginFieldType.bytes, OriginFieldType.unknown)]
+    schema.scalar_field_ids_np = np.array(scalar_ids, dtype=np.int32)
+
     return schema
 
 
@@ -160,7 +245,7 @@ def _resolve_field_type(hint) -> OriginFieldType:
     ft = get_origin_type(hint)
     if ft != OriginFieldType.unknown:
         return ft
-    if isinstance(hint, type) and issubclass(hint, BaseFeature):
+    if isinstance(hint, type) and is_feature(hint):
         return OriginFieldType.ref
     if isinstance(hint, type) and not issubclass(hint, (int, float, str, bytes, bool)):
         return OriginFieldType.ref

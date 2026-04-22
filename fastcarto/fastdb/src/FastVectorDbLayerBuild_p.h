@@ -62,6 +62,10 @@ namespace wx{
         void   setField(unsigned ix,int    value);
         void   setField(unsigned ix,const char* text);
         void   setField(unsigned ix,const wchar_t* text);
+        void   setFieldStringView(unsigned ix, const char* data, unsigned len);
+        void   setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes = nullptr);
+        void   setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes);
+        void   setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes);
         void   setField(unsigned ix,const FastVectorDbFeatureRef* ref);
         FastVectorDbFeatureRef* createFeatureRef(u32 ix);
         void   freeFeatureRef(FastVectorDbFeatureRef* ref);
@@ -138,6 +142,15 @@ namespace wx{
             vector<u8> data;      // accumulated element bytes for all features
         };
         vector<ListFieldBuildData> m_list_fields;
+
+        struct StringFieldBuildData {
+            u32         field_id;
+            u32         codec;      // 1 = plain_utf8
+            vector<u32> offsets;    // length = feature_count + 1
+            vector<u8>  data;
+        };
+        vector<StringFieldBuildData> m_string_fields;
+        bool m_enable_varlen_string_columns = false;
 
         template <class coord_type>
         friend bool build_geometry_buffer_from_buffer(vector<u8> &buffer, FastVectorDbLayerBuild::Impl &build, const char *data, size_t size, GeometryLikeFormat inputFormat, GeometryLikeEnum declType);

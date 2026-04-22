@@ -77,6 +77,36 @@
     }
 }
 
+%typemap(in) (const u32* offsets, unsigned n_offsets) (Py_buffer view) {
+    if (PyObject_GetBuffer($input, &view, PyBUF_SIMPLE) < 0) {
+        SWIG_exception_fail(SWIG_TypeError, "Expected a buffer for uint32 offsets");
+    }
+    if (view.len % sizeof(u32) != 0) {
+        PyBuffer_Release(&view);
+        SWIG_exception_fail(SWIG_ValueError, "Offset buffer size must be a multiple of 4 bytes");
+    }
+    $1 = (u32*)view.buf;
+    $2 = (unsigned)(view.len / sizeof(u32));
+}
+%typemap(freearg) (const u32* offsets, unsigned n_offsets) {
+    if (view$argnum.obj) {
+        PyBuffer_Release(&view$argnum);
+    }
+}
+
+%typemap(in) (const u8* data, u64 nbytes) (Py_buffer view) {
+    if (PyObject_GetBuffer($input, &view, PyBUF_SIMPLE) < 0) {
+        SWIG_exception_fail(SWIG_TypeError, "Expected a buffer for UTF-8 data bytes");
+    }
+    $1 = (u8*)view.buf;
+    $2 = (u64)view.len;
+}
+%typemap(freearg) (const u8* data, u64 nbytes) {
+    if (view$argnum.obj) {
+        PyBuffer_Release(&view$argnum);
+    }
+}
+
 // Exception handling for copy_to_buffer
 %typemap(out) int copy_to_buffer {
     if ($1 < 0) {
@@ -103,6 +133,7 @@
 %ignore wx::FastVectorDbFeature::FastVectorDbFeature();
 %ignore wx::FastVectorDbFeature::~FastVectorDbFeature();
 %ignore wx::FastVectorDb::load(void *pdata, size_t size, fnFreeDbBuffer fnFreeBuffer, void *cookie);
+%ignore wx::FastVectorDbLayerBuild::setNumericColumnBulk;
 %nodefaultctor FastVectorDbLayerBuild;
 %nodefaultdtor FastVectorDbLayerBuild;
 %nodefaultctor FastVectorDbFeature;
@@ -143,6 +174,11 @@
 %rename(get_field_as_int)       getFieldAsInt;       
 %rename(get_field_as_string)    getFieldAsString;       
 %rename(get_field_as_wstring)   getFieldAsWString;       
+%rename(get_field_as_string_view) getFieldAsStringView;
+%rename(get_string_column_offsets) getStringColumnOffsets;
+%rename(get_string_column_data) getStringColumnData;
+%rename(set_field_string_view) setFieldStringView;
+%rename(set_string_column_bulk) setStringColumnBulk;
 %rename(get_field_as_ref)       getFieldAsFeatureRef;   
 %rename(set_feature_cookie)     setFeatureCookie;   
 %rename(get_feature_cookie)     getFeatureCookie;   
@@ -291,6 +327,55 @@
                         )
             return __column_np_interface__.create_from_table(self,index)
     %}
+}
+
+%extend wx::FastVectorDbLayerBuild {
+    PyObject* set_numeric_column_bulk(unsigned field_id, PyObject* py_values) {
+        Py_buffer view;
+        if (PyObject_GetBuffer(py_values, &view, PyBUF_CONTIG_RO) != 0)
+            SWIG_exception_fail(SWIG_TypeError, "Expected a contiguous buffer-compatible object.");
+        $self->setNumericColumnBulk(field_id, view.buf, (u64)view.len);
+        PyBuffer_Release(&view);
+        Py_RETURN_NONE;
+    fail:
+        return NULL;
+    }
+
+    PyObject* set_string_column_from_sequence(unsigned field_id, PyObject* py_values) {
+        PyObject* seq = PySequence_Fast(py_values, "Expected a sequence of str or None");
+        if (!seq)
+            return NULL;
+        Py_ssize_t count = PySequence_Fast_GET_SIZE(seq);
+        vector<wx::utf8_view_t> views;
+        views.reserve((size_t)count);
+        for (Py_ssize_t i = 0; i < count; ++i) {
+            PyObject* item = PySequence_Fast_GET_ITEM(seq, i);
+            if (item == Py_None) {
+                views.push_back(wx::utf8_view_t{"", 0});
+                continue;
+            }
+            if (!PyUnicode_Check(item)) {
+                Py_DECREF(seq);
+                SWIG_exception_fail(SWIG_TypeError, "Expected a sequence of str or None");
+            }
+            Py_ssize_t len = 0;
+            const char* data = PyUnicode_AsUTF8AndSize(item, &len);
+            if (!data) {
+                Py_DECREF(seq);
+                return NULL;
+            }
+            if (len < 0 || len > (Py_ssize_t)UINT32_MAX) {
+                Py_DECREF(seq);
+                SWIG_exception_fail(SWIG_ValueError, "String item is too large");
+            }
+            views.push_back(wx::utf8_view_t{data, (u32)len});
+        }
+        $self->setStringColumnFromViews(field_id, views.data(), (unsigned)views.size(), nullptr);
+        Py_DECREF(seq);
+        Py_RETURN_NONE;
+    fail:
+        return NULL;
+    }
 }
 
 %extend wx::FastVectorDbLayerBuild {

@@ -29,7 +29,7 @@ from typing import List
 
 import numpy as np
 
-from fastdb4py import Feature, ORM
+from fastdb4py import feature, ColumnEngine
 from fastdb4py import U32, F64
 
 try:
@@ -44,7 +44,8 @@ except ImportError:
 # Feature class must be at module level so get_type_hints() resolves 'F64' etc.
 # ---------------------------------------------------------------------------
 
-class BenchListFeature(Feature):
+@feature
+class BenchListFeature:
     row_id: U32
     xs: List[F64]
 
@@ -88,7 +89,7 @@ def bench_fastdb(N: int, list_len: int, reps: int) -> dict:
 
     # --- build ---
     def do_build():
-        orm = ORM.create()
+        orm = ColumnEngine.create()
         for i in range(N):
             f = BenchListFeature()
             f.row_id = i
@@ -108,17 +109,18 @@ def bench_fastdb(N: int, list_len: int, reps: int) -> dict:
     try:
         # --- deserialize (load) ---
         def do_deserial():
-            h = ORM.load(shm_name)
+            h = ColumnEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ORM.load(shm_name)
+        orm2 = ColumnEngine.load(shm_name)
 
         # --- read column (access xs for all N features) ---
         def do_read():
+            tbl = orm2.table(BenchListFeature)
             total = 0.0
             for i in range(N):
-                f = orm2[BenchListFeature][BenchListFeature][i]
+                f = tbl[i]
                 xs = f.xs  # zero-copy NumPy
                 total += xs[0]
             return total
@@ -130,7 +132,7 @@ def bench_fastdb(N: int, list_len: int, reps: int) -> dict:
         else:
             # clean up shm even if deserialization failed
             try:
-                h = ORM.load(shm_name)
+                h = ColumnEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass

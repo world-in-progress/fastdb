@@ -19,20 +19,28 @@ _GETTERS = {
     OriginFieldType.u16n: 'get_field_as_int',
     OriginFieldType.f32: 'get_field_as_float',
     OriginFieldType.f64: 'get_field_as_float',
-    OriginFieldType.str: 'get_field_as_string',
     OriginFieldType.wstr: 'get_field_as_string',
 }
 
 
 def _read_field(feat: 'core.WxFeature', fd: FieldDef) -> Any:
     """Read one field value from a C++ WxFeature."""
+    if fd.field_type == OriginFieldType.str:
+        raw = feat.get_field_as_string_view(fd.field_id)
+        if raw is None:
+            return ''
+        return raw.to_bytes().decode('utf-8')
+
     getter_name = _GETTERS.get(fd.field_type)
     if getter_name is not None:
         getter = getattr(feat, getter_name)
         return getter(fd.field_id)
 
     if fd.field_type == OriginFieldType.bytes:
-        return feat.get_geometry_like_chunk()
+        raw = feat.get_geometry_like_chunk()
+        if raw is None:
+            return b''
+        return raw.to_bytes() if hasattr(raw, 'to_bytes') else bytes(raw)
 
     if fd.field_type == OriginFieldType.ref:
         return None  # REF resolved at ORM level
@@ -93,3 +101,16 @@ def copy_feature(cls: Type, layer: 'core.WxLayerTable', idx: int) -> Any:
         obj.__dict__[fd.name] = val
 
     return obj
+
+
+def bind_feature(cls: Type, db, layer: 'core.WxLayerTable', idx: int) -> Any:
+    """Return a live-mapped instance bound to the C++ backing store.
+
+    For old Feature subclasses (which expose ``map_from``), delegates to
+    ``cls.map_from(db, feat)`` so reads AND writes dispatch to C++.
+    For new ``@feature`` classes, falls back to ``copy_feature``.
+    """
+    map_from = getattr(cls, 'map_from', None)
+    if map_from is not None:
+        return map_from(db, layer.tryGetFeature(idx))
+    return copy_feature(cls, layer, idx)

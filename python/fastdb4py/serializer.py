@@ -4,9 +4,7 @@ import ctypes
 from threading import Lock
 from weakref import WeakKeyDictionary
 from typing import Type, List, Dict, Any, Tuple, get_origin, get_args
-from .feature import Feature, get_all_defns
-from .feature.feature import _origin_s as _feat_origin_s, _db_s as _feat_db_s
-from .feature._schema import get_class_schema as _get_unified_schema
+from .registry import get_schema as _get_registry_schema, is_feature as _is_registry_feature
 from .type import OriginFieldType, U32, F64
 from . import core
 
@@ -15,6 +13,14 @@ _BUFFER_LAYER_PREFIX = "__fastser_buf__|"
 _BUFFER_REF_MAGIC = 0xBF
 _CLASS_SCHEMA_CACHE_LOCK = Lock()
 _CLASS_SCHEMA_CACHE: WeakKeyDictionary = WeakKeyDictionary()
+
+def _is_feature_class(cls):
+    """Check if cls is a @feature-decorated class."""
+    return isinstance(cls, type) and _is_registry_feature(cls)
+
+def _is_feature_instance(obj):
+    """Check if obj is an instance of a @feature-decorated class."""
+    return _is_registry_feature(type(obj))
 
 # Mapping from numpy dtype to fastdb field type and short kind string
 _NUMPY_DTYPE_TO_FDB = {
@@ -69,8 +75,8 @@ class FastSerializer:
     """
     
     @staticmethod
-    def dumps(obj: Feature) -> bytes:
-        if not isinstance(obj, Feature):
+    def dumps(obj) -> bytes:
+        if not _is_feature_instance(obj):
             raise TypeError("Only fastdb4py.Feature objects can be serialized.")
             
         ctx = _DumpContext()
@@ -201,7 +207,7 @@ class FastSerializer:
                 if ft in (OriginFieldType.list, OriginFieldType.unknown):
                     if isinstance(val, list):
                         _pack_list(blob_buffer, val, hints.get(fn, Any), ctx)
-                    elif isinstance(val, Feature):
+                    elif _is_feature_instance(val):
                         temp_buf = bytearray()
                         temp_buf.extend(struct.pack('<I', 1))
                         _pack_feature_ref(temp_buf, val, ctx)
@@ -243,7 +249,7 @@ class FastSerializer:
         return mem.data().as_array(np.uint8).tobytes()
 
     @staticmethod
-    def loads(data: bytes, root_type: Type[Feature]) -> Feature:
+    def loads(data: bytes, root_type: type):
         # Zero-copy load database
         db = core.WxDatabase.load_xbuffer(data)
         if db.get_layer_count() == 0:
@@ -262,7 +268,7 @@ class FastSerializer:
         return ctx.get_object(0, 0, root_type)
 
     @staticmethod
-    def loads_shm(shm_name: str, length: int, offset: int, root_type: Type[Feature]) -> Feature:
+    def loads_shm(shm_name: str, length: int, offset: int, root_type: type):
         """Deserialize a Feature from a named shared memory segment.
 
         The database is loaded directly from the shared memory region at
@@ -314,12 +320,16 @@ class FastSerializer:
             result = ctx.get_object(0, 0, root_type)
 
             # Detach every deserialized Feature from the C++ database.
-            # All field values already live in _cache (Python-owned) and
+            # All field values already live in __dict__ (Python-owned) and
             # buffer-layer numpy arrays used .copy(), so nothing references
             # the shared memory region after this point.
             for obj in ctx.obj_cache.values():
-                _feat_origin_s.__set__(obj, None)
-                _feat_db_s.__set__(obj, None)
+                for _attr in ('_origin', '_db'):
+                    try:
+                        setattr(obj, _attr, None)
+                    except AttributeError:
+                        pass
+                    obj.__dict__.pop(_attr, None)
 
             return result
         finally:
@@ -367,21 +377,21 @@ class _DumpContext:
             if val is None:
                 continue
 
-            if kind == "ref" and isinstance(val, Feature):
+            if kind == "ref" and _is_feature_instance(val):
                 self.register(val)
             elif isinstance(val, list):
                 args = get_args(type_hint) if type_hint else None
                 inner = args[0] if args else None
                 
-                if inner and hasattr(inner, '__mro__') and issubclass(inner, Feature):
+                if inner and _is_feature_class(inner):
                      for item in val:
-                         if isinstance(item, Feature):
+                         if _is_feature_instance(item):
                              self.register(item)
-                elif val and isinstance(val[0], Feature):
+                elif val and _is_feature_instance(val[0]):
                      for item in val:
-                         if isinstance(item, Feature):
+                         if _is_feature_instance(item):
                              self.register(item)
-            elif isinstance(val, Feature):
+            elif _is_feature_instance(val):
                 self.register(val)
 
     def get_ref(self, obj):
@@ -457,9 +467,12 @@ class _LoadContext:
         obj = cls()
         self.obj_cache[key] = obj # Cache to solve cyclic references
         
-        # Fill data
-        _feat_origin_s.__set__(obj, feature_data)
-        _feat_db_s.__set__(obj, self.db)
+        # Fill data — set _origin/_db for backward compat with old Feature subclasses
+        try:
+            obj._origin = feature_data
+            obj._db = self.db
+        except AttributeError:
+            pass
         
         schema = _get_class_schema(cls)
         defns = schema["defns"]
@@ -554,7 +567,7 @@ class _LoadContext:
                     l_idx_ref, f_idx_ref = struct.unpack_from('<HI', blob_view, curr_blob_offset)
                     curr_blob_offset += 6
                     if l_idx_ref != 0xFFFF:
-                        ref_type = hints.get(fn, Feature)
+                        ref_type = hints.get(fn, object)
                         obj.__dict__[fn] = self.get_object(l_idx_ref, f_idx_ref, ref_type)
                     else:
                         obj.__dict__[fn] = None
@@ -772,7 +785,7 @@ def _pack_list(buffer, lst, type_hint, ctx):
         if isinstance(first, int): inner = int
         elif isinstance(first, float): inner = float
         elif isinstance(first, str): inner = str
-        elif isinstance(first, Feature): inner = Feature
+        elif _is_feature_instance(first): inner = type(first)
 
     if inner == int:
         buffer.extend(np.array(lst, dtype=np.dtype('<i4')).tobytes())
@@ -784,7 +797,7 @@ def _pack_list(buffer, lst, type_hint, ctx):
             buffer.extend(struct.pack('<I', len(encoded)))
             buffer.extend(encoded)
     # Feature or subclass
-    elif (hasattr(inner, '__mro__') and issubclass(inner, Feature)) or inner is Feature:
+    elif _is_feature_class(inner):
         for item in lst:
             _pack_feature_ref(buffer, item, ctx)
 
@@ -821,9 +834,8 @@ def _unpack_list(view, offset, type_hint, ctx):
             raw = bytes(view[offset:offset + byte_len])
             offset += byte_len
             lst.append(raw.decode('utf-8'))
-    # Check if inner is a Feature subclass
-    elif (hasattr(inner, '__mro__') and issubclass(inner, Feature)) or \
-         (isinstance(inner, type) and issubclass(inner, Feature)):
+    # Check if inner is a Feature class (old or new)
+    elif _is_feature_class(inner):
         for _ in range(count):
             l_idx, f_idx = struct.unpack_from('<HI', view, offset)
             offset += 6
@@ -851,8 +863,8 @@ def _unpack_list(view, offset, type_hint, ctx):
                  if l_idx == 0xFFFF:
                      lst.append(None)
                  else:
-                     # Using Feature base class
-                     lst.append(ctx.get_object(l_idx, f_idx, Feature))
+                     # Unknown feature class — pass object as fallback sentinel
+                     lst.append(ctx.get_object(l_idx, f_idx, object))
         except:
              pass
     
@@ -897,7 +909,7 @@ def _discover_types_impl(cls, type_map):
              pass
         else:
             try:
-                if issubclass(base, Feature):
+                if _is_feature_class(base):
                      _discover_types_impl(base, type_map)
             except: pass
         
@@ -910,7 +922,7 @@ def _discover_types_impl(cls, type_map):
                  pass
              else:
                  try:
-                     if issubclass(inner, Feature):
+                     if _is_feature_class(inner):
                          _discover_types_impl(inner, type_map)
                  except: pass
 
@@ -920,10 +932,10 @@ def _get_class_schema(cls):
         if schema is not None:
             return schema
 
-        # Read shared data from unified ClassSchema — no recomputation of get_type_hints().
-        base = _get_unified_schema(cls)
-        hints = base.hints
-        defns = base.ordered_defns
+        # Read shared data from registry LayerSchema — no recomputation of get_type_hints().
+        ls = _get_registry_schema(cls)
+        hints = ls.hints
+        defns = ls.ordered_defns
 
         numeric_field_kinds = {}
         numeric_fields = []

@@ -4,14 +4,26 @@ from contextlib import contextmanager
 from typing import TypeVar, Generic, Type, Generator
 
 from .. import core
-from ..feature import Feature, get_all_defns
-from ..feature._schema import get_class_schema
+from ..registry import get_schema
+from ..reader import bind_feature, MappedFeature
+from ..string_column import StringColumn, _normalize_string_values
+from ..type import OriginFieldType
 
-T = TypeVar('T', bound=Feature)
+T = TypeVar('T')
 _column_accessor_lock = Lock()
+_FILL_NUMERIC_DTYPES = {
+    OriginFieldType.u8: np.uint8,
+    OriginFieldType.u16: np.uint16,
+    OriginFieldType.u32: np.uint32,
+    OriginFieldType.i32: np.int32,
+    OriginFieldType.u8n: np.uint8,
+    OriginFieldType.u16n: np.uint16,
+    OriginFieldType.f32: np.float32,
+    OriginFieldType.f64: np.float64,
+}
 
 
-def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
+def _create_column_accessor(feature_type: Type[T], table) -> T:
     """
     Create a column accessor that provides numpy array access with proper type hints.
 
@@ -19,10 +31,10 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
     eliminating the separate WeakKeyDictionary (Cache 3).
     """
     with _column_accessor_lock:
-        schema = get_class_schema(feature_type)
+        schema = get_schema(feature_type)
         ColumnAccessorClass = schema.column_accessor_class
         if ColumnAccessorClass is not None:
-            return ColumnAccessorClass(table_origin, feature_type)
+            return ColumnAccessorClass(table, feature_type)
 
         # Get original annotations from feature_type
         original_annotations = getattr(feature_type, '__annotations__', {}).copy()
@@ -37,10 +49,10 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
             # Set the new annotations
             __annotations__ = original_annotations
 
-            def __init__(self, table_origin, feature_type):
+            def __init__(self, table, feature_type):
                 # Don't call parent __init__ to avoid initializing cache
                 # Just set internal references
-                object.__setattr__(self, '_table_origin', table_origin)
+                object.__setattr__(self, '_table', table)
                 object.__setattr__(self, '_field_index_map', _field_index_map)
                 object.__setattr__(self, '_name_cache', {})
                 object.__setattr__(self, '_cache_lock', Lock())
@@ -66,8 +78,13 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
                     if idx is None:
                         raise AttributeError(f'Field "{name}" not found in the table.')
 
-                    table_origin = object.__getattribute__(self, '_table_origin')
-                    arr = table_origin.get_column(idx).as_nparray()
+                    table = object.__getattribute__(self, '_table')
+                    table_origin = table._origin
+                    fd = schema.fields[idx]
+                    if fd.field_type == OriginFieldType.str:
+                        arr = StringColumn(table, idx, name)
+                    else:
+                        arr = table_origin.get_column(idx).as_nparray()
                     name_cache[name] = arr
                     return arr
             
@@ -83,7 +100,7 @@ def _create_column_accessor(feature_type: Type[T], table_origin) -> T:
         
         # Store the class in ClassSchema (replaces _column_accessor_cache WeakKeyDict).
         schema.column_accessor_class = ColumnAccessor
-        return ColumnAccessor(table_origin, feature_type)
+        return ColumnAccessor(table, feature_type)
 
 class Table(Generic[T]):
     def __init__(self):
@@ -92,6 +109,7 @@ class Table(Generic[T]):
         self._feature_type: Type[T] | None = None
         self._db: core.WxDatabase | core.WxDatabaseBuild = None
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
+        self._fixed_fill_handler = None
 
     @property
     def feature_count(self) -> int:
@@ -113,11 +131,11 @@ class Table(Generic[T]):
             index = self._origin.get_feature_count() + index
         
         # Get feature
-        return  self._feature_type.map_from(self._db, self._origin.tryGetFeature(index))
+        return bind_feature(self._feature_type, self._db, self._origin, index)
     
     def __iter__(self) -> Generator[T, None, None]:
         for i in range(self._origin.get_feature_count()):
-            yield self._feature_type.map_from(self._db, self._origin.tryGetFeature(i))
+            yield bind_feature(self._feature_type, self._db, self._origin, i)
     
     @staticmethod
     @contextmanager
@@ -183,47 +201,95 @@ class Table(Generic[T]):
         if table.fixed:
             table.feature_count = origin.get_feature_count()
             # Create column accessor that pretends to be T but returns numpy arrays
-            table._column = _create_column_accessor(feature_type, origin) if feature_type is not None else None
+            table._column = _create_column_accessor(feature_type, table) if feature_type is not None else None
         
         return table
+
+    def _remap(
+        self,
+        origin: core.WxLayerTable | core.WxLayerTableBuild,
+        db: core.WxDatabase | core.WxDatabaseBuild,
+    ) -> None:
+        self._db = db
+        self._origin = origin
+        if self.fixed:
+            self.feature_count = origin.get_feature_count()
+            self._column = (
+                _create_column_accessor(self._feature_type, self)
+                if self._feature_type is not None else None
+            )
+        else:
+            self._column = None
     
     def rewind(self):
         self._origin.rewind()
 
     def fill(self, **col_arrays) -> None:
-        """
-        Batch-write multiple columns from numpy arrays in a single call.
+        """Bulk-fill fixed tables with validated numeric and UTF-8 string columns.
 
-        Each keyword argument maps a field name to a numpy array whose length
-        must equal the table's feature count.
-
-        Only supported for fixed-scale tables (table.fixed == True).
-        Usage:
-            tbl.fill(x=xs, y=ys, z=zs)   # xs, ys, zs are numpy arrays of length N
+        After a successful fill(), any numpy array previously obtained from
+        ``tbl.column.<field>`` is stale and must not be reused. Always
+        re-fetch ``tbl.column.<field>`` after fill().
         """
         if not self.fixed:
             raise RuntimeError('fill() only supports fixed-scale tables.')
+        if self._fixed_fill_handler is None:
+            raise RuntimeError('fill() is unavailable for read-only fixed tables.')
+        if not col_arrays:
+            raise ValueError('fill() requires at least one column.')
+
+        expected = len(self)
+        writes = {}
         col = self._column
-        for field_name, arr in col_arrays.items():
-            getattr(col, field_name)[:] = arr
+        schema = get_schema(self._feature_type)
+        for field_name, values in col_arrays.items():
+            field_def = schema.get(field_name)
+            if field_def is None:
+                raise AttributeError(
+                    f'Field "{field_name}" not found in table "{self._feature_type.__name__}".'
+                )
+            field_type = field_def.field_type
+            if field_type == OriginFieldType.list:
+                raise TypeError(
+                    f'Field "{field_name}" does not support fill() for type "{field_type.name}".'
+                )
+
+            column = getattr(col, field_name)
+            if isinstance(column, StringColumn):
+                try:
+                    writes[field_name] = _normalize_string_values(values, expected)
+                except ValueError as exc:
+                    raise ValueError(f'{field_name} {exc}') from None
+                continue
+
+            arr = np.ascontiguousarray(values, dtype=_FILL_NUMERIC_DTYPES[field_type])
+            if len(arr) != expected:
+                raise ValueError(
+                    f'{field_name} expected {expected} rows, got {len(arr)}.'
+                )
+            writes[field_name] = arr
+
+        self._fixed_fill_handler(writes)
 
     def iter_reuse(self) -> Generator[T, None, None]:
-        """
-        High-performance iterator that reuses a single Feature wrapper instance.
+        """High-performance iterator reusing a single MappedFeature proxy.
 
         WARNING: Do NOT hold references to the yielded object across iterations.
-        The same object is mutated on each step — any reference held outside the
-        loop body will see the NEXT item's data.
-
+        The same MappedFeature wrapper is returned with its internal pointer mutated.
         Only supported for fixed-scale tables (table.fixed == True).
         """
         if not self.fixed:
             raise RuntimeError('iter_reuse() only supports fixed-scale tables.')
 
-        wrapper = self._feature_type()          # allocate once
-        object.__setattr__(wrapper, '_db', self._db)
+        schema = get_schema(self._feature_type)
         count = self._origin.get_feature_count()
-        for i in range(count):
-            object.__setattr__(wrapper, '_origin', self._origin.tryGetFeature(i))
-            object.__setattr__(wrapper, '_cache', None)
-            yield wrapper
+        if count == 0:
+            return
+
+        feat0 = self._origin.tryGetFeature(0)
+        proxy = MappedFeature(self._feature_type, feat0, schema)
+        yield proxy
+
+        for i in range(1, count):
+            object.__setattr__(proxy, '_feat', self._origin.tryGetFeature(i))
+            yield proxy

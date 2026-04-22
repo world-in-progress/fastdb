@@ -1,8 +1,53 @@
 #include "fastdb.h"
 #include "FastVectorDbLayer_p.h"
 #include "FastVectorDbLayerBuild_p.h"
+#include <limits>
 namespace wx
 {
+    namespace
+    {
+        template <typename TStringFields>
+        auto* find_string_field(TStringFields& string_fields, u32 field_id)
+        {
+            for (auto& field : string_fields)
+            {
+                if (field.field_id == field_id)
+                    return &field;
+            }
+            return static_cast<typename TStringFields::value_type*>(nullptr);
+        }
+
+        u16 count_varlen_string_fields(const field_desc_ex_t* field_descs, u16 field_count)
+        {
+            u16 count = 0;
+            for (u16 ix = 0; ix < field_count; ++ix)
+            {
+                const auto& field = field_descs[ix];
+                if (field.type == ftSTR && field.size == 0)
+                    count++;
+            }
+            return count;
+        }
+
+        bool has_remaining_bytes(const u8* ptr, const u8* end, size_t need)
+        {
+            return ptr <= end && need <= size_t(end - ptr);
+        }
+
+        bool has_remaining_bytes_u64(const u8* ptr, const u8* end, u64 need)
+        {
+            return ptr <= end && need <= u64(end - ptr);
+        }
+
+        bool try_multiply_size(size_t lhs, size_t rhs, size_t& out)
+        {
+            if (lhs != 0 && rhs > std::numeric_limits<size_t>::max() / lhs)
+                return false;
+            out = lhs * rhs;
+            return true;
+        }
+    }
+
     size_t ustring_len(const uchar_t *str)
     {
         size_t len = 0;
@@ -21,6 +66,7 @@ namespace wx
     FastVectorDbLayer::Impl::Impl(u8 *pdata, size_t size)
         :m_data(pdata), m_size(size), m_ifeature(-1)
     {
+        const u8* data_end = m_data + m_size;
          m_header = (layer_header_t *)m_data;
         m_field_descs = (field_desc_ex_t *)(m_data + sizeof(layer_header_t));
         m_data_ptr0 = m_data + sizeof(layer_header_t) + m_header->field_count * sizeof(field_desc_ex_t);
@@ -56,6 +102,29 @@ namespace wx
                 ptr += lfd.total_elements * lfd.elem_size;
                 m_list_fields.push_back(lfd);
             }
+        }
+        u16 string_field_count = count_varlen_string_fields(m_field_descs, m_header->field_count);
+        for (u16 si = 0; si < string_field_count; ++si)
+        {
+            StringFieldData sfd;
+            if (!has_remaining_bytes(ptr, data_end, sizeof(u32) + sizeof(u32) + sizeof(u32) + sizeof(u64)))
+                break;
+            sfd.field_id = *(u32*)ptr; ptr += 4;
+            sfd.codec = *(u32*)ptr; ptr += 4;
+            sfd.offset_count = *(u32*)ptr; ptr += 4;
+            sfd.byte_count = *(u64*)ptr; ptr += 8;
+            size_t offset_bytes = 0;
+            if (!try_multiply_size(size_t(sfd.offset_count), sizeof(u32), offset_bytes))
+                break;
+            if (!has_remaining_bytes(ptr, data_end, offset_bytes))
+                break;
+            sfd.offsets_ptr = sfd.offset_count ? (u32*)ptr : nullptr;
+            ptr += offset_bytes;
+            if (!has_remaining_bytes_u64(ptr, data_end, sfd.byte_count))
+                break;
+            sfd.data_ptr = sfd.byte_count ? const_cast<u8*>(ptr) : nullptr;
+            ptr += size_t(sfd.byte_count);
+            m_string_fields.push_back(sfd);
         }
     }
     FastVectorDbLayer::Impl::~Impl() {
@@ -438,6 +507,60 @@ namespace wx
         return getFieldAsWString_internal(m_ifeature,ix);
     }
 
+    chunk_data_t FastVectorDbLayer::Impl::getFieldAsStringView_internal(u32 ifeature, u32 ix)
+    {
+        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+            return {0, nullptr};
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftSTR)
+            return {0, nullptr};
+        if (fd->size == 0)
+        {
+            auto* sfd = find_string_field(m_string_fields, ix);
+            if (sfd == nullptr || ifeature + 1 >= sfd->offset_count)
+                return {0, nullptr};
+            u32 start = sfd->offsets_ptr[ifeature];
+            u32 end = sfd->offsets_ptr[ifeature + 1];
+            if (end < start || end > sfd->byte_count)
+                return {0, nullptr};
+            u8* data_ptr = sfd->data_ptr;
+            return {(size_t)(end - start), data_ptr ? (data_ptr + start) : nullptr};
+        }
+        const char* text = getFieldAsString_internal(ifeature, ix);
+        return text ? chunk_data_t{strlen(text), (u8*)text} : chunk_data_t{0, nullptr};
+    }
+
+    chunk_data_t FastVectorDbLayer::Impl::getFieldAsStringView(u32 ix)
+    {
+        return getFieldAsStringView_internal(m_ifeature, ix);
+    }
+
+    chunk_data_t FastVectorDbLayer::Impl::getStringColumnOffsets_internal(u32 ix)
+    {
+        if (ix >= m_header->field_count)
+            return {0, nullptr};
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftSTR || fd->size != 0)
+            return {0, nullptr};
+        auto* sfd = find_string_field(m_string_fields, ix);
+        if (sfd == nullptr)
+            return {0, nullptr};
+        return {size_t(sfd->offset_count) * sizeof(u32), (u8*)sfd->offsets_ptr};
+    }
+
+    chunk_data_t FastVectorDbLayer::Impl::getStringColumnData_internal(u32 ix)
+    {
+        if (ix >= m_header->field_count)
+            return {0, nullptr};
+        const field_desc_ex_t* fd = m_field_descs + ix;
+        if (fd->type != ftSTR || fd->size != 0)
+            return {0, nullptr};
+        auto* sfd = find_string_field(m_string_fields, ix);
+        if (sfd == nullptr)
+            return {0, nullptr};
+        return {(size_t)sfd->byte_count, sfd->data_ptr};
+    }
+
     void* FastVectorDbLayer::Impl::setFeatureCookie_internal(u32 ifeature,void* cookie)
     {
         u32 featureCount = m_header->feature_count;
@@ -629,6 +752,21 @@ namespace wx
     {
         return impl->getFieldAsWString(ix);
     }
+
+    chunk_data_t FastVectorDbLayer::getFieldAsStringView(u32 ix)
+    {
+        return impl->getFieldAsStringView(ix);
+    }
+
+    chunk_data_t FastVectorDbLayer::getStringColumnOffsets(u32 ix)
+    {
+        return impl->getStringColumnOffsets_internal(ix);
+    }
+
+    chunk_data_t FastVectorDbLayer::getStringColumnData(u32 ix)
+    {
+        return impl->getStringColumnData_internal(ix);
+    }
     
     u32 FastVectorDbLayer::getFeatureCount()
     {
@@ -744,6 +882,10 @@ namespace wx
     const uchar_t* FastVectorDbFeature::getFieldAsWString(u32 ix)
     {
         return impl->layer->impl->getFieldAsWString_internal(impl->ifeature,ix);
+    }
+    chunk_data_t FastVectorDbFeature::getFieldAsStringView(u32 ix)
+    {
+        return impl->layer->impl->getFieldAsStringView_internal(impl->ifeature, ix);
     }
     FastVectorDbFeatureRef* FastVectorDbFeature::getFieldAsFeatureRef(u32 ix)
     {

@@ -1,32 +1,37 @@
-import fastdb4py
 import pytest
 
-class Point(fastdb4py.Feature):
-    x: fastdb4py.F64
-    y: fastdb4py.F64
-    z: fastdb4py.F64
+from fastdb4py.decorator import feature
+from fastdb4py.column_engine import ColumnEngine
+from fastdb4py.layout import Layout
+from fastdb4py.type import F64
+
+
+@feature
+class Point:
+    x: F64
+    y: F64
+    z: F64
 
 def test_column_way():
-    db = fastdb4py.ORM.truncate([
-        fastdb4py.TableDefn(Point, 10),
-        fastdb4py.TableDefn(Point, 5, 'PointA'),
-    ])
-    
-    ps = db[Point]['PointA']
+    import numpy as np
+    db = ColumnEngine.truncate([Layout(Point, 5)])
+
+    ps = db.table(Point)
+
+    # Write via column API
+    ps.column.x[:] = np.arange(5, dtype=np.float64)
+    ps.column.y[:] = np.arange(5, dtype=np.float64) * 2
+    ps.column.z[:] = np.arange(5, dtype=np.float64) * 3
+
     for i in range(5):
-        point = ps[i]
-        point.x = i * 1.0
-        point.y = i * 2.0
-        point.z = i * 3.0
-        
-        assert point.x == pytest.approx(i * 1.0)
-        assert point.y == pytest.approx(i * 2.0)
-        assert point.z == pytest.approx(i * 3.0)
-    
+        assert ps.column.x[i] == pytest.approx(i * 1.0)
+        assert ps.column.y[i] == pytest.approx(i * 2.0)
+        assert ps.column.z[i] == pytest.approx(i * 3.0)
+
+    # Modify column in-place
     xs = ps.column.x
     for i in range(len(xs)):
         xs[i] = xs[i] + 1
-        
+
     for i in range(5):
-        point = ps[i]
-        assert point.x == pytest.approx(i * 1.0 + 1)
+        assert ps.column.x[i] == pytest.approx(i * 1.0 + 1)

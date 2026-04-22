@@ -8,27 +8,31 @@ import traceback
 from dataclasses import dataclass
 from typing import List
 
-from fastdb4py import FastSerializer, Feature, U32, F64, I32, STR
+from fastdb4py import FastSerializer, feature, U32, F64, I32, STR
 
 
-class Point(Feature):
+@feature
+class Point:
     x: F64
     y: F64
 
 
-class NumericPayload(Feature):
+@feature
+class NumericPayload:
     ids: List[U32]
     values: List[F64]
 
 
-class MixedPayload(Feature):
+@feature
+class MixedPayload:
     name: STR
     score: F64
     tags: List[str]
     points: List[Point]
 
 
-class RecursiveNode(Feature):
+@feature
+class RecursiveNode:
     val: I32
     next: 'RecursiveNode'
 

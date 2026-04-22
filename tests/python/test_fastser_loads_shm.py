@@ -6,7 +6,8 @@ import pytest
 from multiprocessing import shared_memory
 from typing import List
 
-from fastdb4py import Feature, FastSerializer
+from fastdb4py import FastSerializer
+from fastdb4py.decorator import feature
 from fastdb4py.type import F64, U32, I32, STR
 
 
@@ -14,25 +15,29 @@ from fastdb4py.type import F64, U32, I32, STR
 # Test Feature classes
 # ---------------------------------------------------------------------------
 
-class SimplePoint(Feature):
+@feature
+class SimplePoint:
     x: F64
     y: F64
     label: STR
 
 
-class NumericCloud(Feature):
+@feature
+class NumericCloud:
     name: STR
     id: U32
     positions: List[F64]
     indices: List[U32]
 
 
-class WithArray(Feature):
+@feature
+class WithArray:
     tag: STR
     weights: np.ndarray
 
 
-class Nested(Feature):
+@feature
+class Nested:
     value: F64
     child: 'Nested'
 
@@ -202,7 +207,7 @@ class TestLoadsShmDetachment:
     """After loads_shm, the Feature is fully detached from shared memory."""
 
     def test_feature_detached_from_db(self, request):
-        """_origin and _db should be None after loads_shm."""
+        """_origin and _db should not exist (or be None) after loads_shm."""
         name = _shm_name(request)
         pt = SimplePoint(x=1.0, y=2.0, label="det")
         data = FastSerializer.dumps(pt)
@@ -210,9 +215,9 @@ class TestLoadsShmDetachment:
         shm = _write_to_shm(data, name)
         try:
             loaded = FastSerializer.loads_shm(name, len(data), 0, SimplePoint)
-            assert loaded._origin is None
-            assert loaded._db is None
-            # Fields still accessible from _cache
+            assert getattr(loaded, '_origin', None) is None
+            assert getattr(loaded, '_db', None) is None
+            # Fields still accessible
             assert loaded.x == 1.0
             assert loaded.label == "det"
         finally:
@@ -228,8 +233,8 @@ class TestLoadsShmDetachment:
         shm = _write_to_shm(data, name)
         try:
             loaded = FastSerializer.loads_shm(name, len(data), 0, Nested)
-            assert loaded._origin is None
-            assert loaded.child._origin is None
+            assert getattr(loaded, '_origin', None) is None
+            assert getattr(loaded.child, '_origin', None) is None
         finally:
             shm.close()
             shm.unlink()

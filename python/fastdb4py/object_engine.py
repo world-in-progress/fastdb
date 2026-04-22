@@ -1,5 +1,5 @@
-# python/fastdb4py/orm2.py
-"""ORM2: decorator-based ORM for @feature classes."""
+# python/fastdb4py/object_engine.py
+"""ObjectEngine: OLTP/graph workloads with REF field support."""
 from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -8,55 +8,14 @@ import struct
 import numpy as np
 
 from . import core
-from .registry import get_schema, LayerSchema, FieldDef
+from .registry import get_schema, is_feature, LayerSchema, FieldDef, lookup_class
+from .layout import Layout
+from .orm.table import Table
 from .reader import map_feature, copy_feature
 from .push_compiler import (
     compile_push_fn, compile_ref_push_fn,
     make_batch_inlined_dispatch,
 )
-
-
-class _ColumnAccessor2:
-    """Zero-copy numpy column accessor for ORM2 layers."""
-    __slots__ = ('_layer', '_field_map', '_cache')
-
-    def __init__(self, layer, field_map: Dict[str, int]):
-        object.__setattr__(self, '_layer', layer)
-        object.__setattr__(self, '_field_map', field_map)
-        object.__setattr__(self, '_cache', {})
-
-    def __getattr__(self, name: str) -> np.ndarray:
-        cache = object.__getattribute__(self, '_cache')
-        arr = cache.get(name)
-        if arr is not None:
-            return arr
-        fmap = object.__getattribute__(self, '_field_map')
-        fid = fmap.get(name)
-        if fid is None:
-            raise AttributeError(f'No column "{name}"')
-        layer = object.__getattribute__(self, '_layer')
-        arr = layer.get_column(fid).as_nparray()
-        cache[name] = arr
-        return arr
-
-
-class Table2:
-    """Lightweight read-only table with columnar access for ORM2."""
-    __slots__ = ('_cls', '_layer', '_count', '_col')
-
-    def __init__(self, cls: Type, layer, count: int, schema: LayerSchema):
-        self._cls = cls
-        self._layer = layer
-        self._count = count
-        fmap = {fd.name: fd.field_id for fd in schema.fields}
-        self._col = _ColumnAccessor2(layer, fmap)
-
-    @property
-    def column(self) -> _ColumnAccessor2:
-        return self._col
-
-    def __len__(self) -> int:
-        return self._count
 
 
 @dataclass
@@ -119,19 +78,19 @@ def _topo_sort_classes(groups: Dict[Type, List[Any]]) -> List[Type]:
         names = [c.__name__ for c in missing]
         raise RuntimeError(
             f"Circular class-level REF dependency detected among: {names}. "
-            "ORM2 does not support circular class references."
+            "ObjectEngine does not support circular class references."
         )
     return result
 
 
-class ORM2:
-    """Decorator-based ORM for @feature classes.
+class ObjectEngine:
+    """Decorator-based ORM for @feature classes with REF support.
 
     Usage:
-        orm = ORM2.create()
-        orm.push(my_point)
-        orm.combine()
-        result = orm.get(MyPoint, 0, mode='copy')
+        engine = ObjectEngine.create()
+        engine.push(my_point)
+        engine.combine()
+        result = engine.get(MyPoint, 0, mode='copy')
     """
 
     def __init__(self):
@@ -142,34 +101,53 @@ class ORM2:
         self._layer_order: List[Type] = []
         self._built = False
         # Deferred batch push state
-        self._pending: List[Any] = []          # all pushed objects in push order
-        self._pushed_ids: Dict[int, bool] = {} # id(obj) -> True (dedup set)
-        self._pushed_objs: List[Any] = []      # prevent GC so id() stays unique
+        self._pending: List[Any] = []
+        self._pushed_ids: Dict[int, bool] = {}
+        self._pushed_objs: List[Any] = []
         self._pending_counts: Dict[Type, int] = defaultdict(int)
 
     @classmethod
-    def create(cls) -> 'ORM2':
+    def create(cls) -> 'ObjectEngine':
         """Start a new build session."""
         orm = cls()
         orm._db_build = core.WxDatabaseBuild()
         orm._db_build.begin("")
         return orm
 
-    def push(self, obj: Any) -> None:
-        """Queue a @feature object for batch serialization at combine() time.
+    @classmethod
+    def truncate(cls, layouts) -> 'ObjectEngine':
+        """Pre-allocate fixed-size tables. REF fields initialized to null."""
+        engine = cls()
+        engine._db_build = core.WxDatabaseBuild()
+        engine._db_build.begin("")
+        for layout in layouts:
+            if not is_feature(layout.feature_type):
+                raise TypeError(f"{layout.feature_type!r} not a @feature class")
+            schema = get_schema(layout.feature_type)
+            state = engine._ensure_layer(layout.feature_type)
+            engine._db_build.truncate(schema.layer_name, layout.capacity)
+            state._fc[0] = layout.capacity
+            state.row_count = layout.capacity
+        # Build immediately
+        mem = core.WxMemoryStream()
+        engine._db_build.post(mem)
+        buf = mem.data().as_array(np.uint8).tobytes()
+        engine._db = core.WxDatabase.load_xbuffer(buf)
+        engine._db._buffer = buf
+        engine._buffer = buf
+        engine._built = True
+        engine._db_build = None
+        return engine
 
-        Automatically handles REF and LIST[REF] fields — no manual ordering needed.
-        Object mutation after push is visible at combine() time.
-        Deduplicates by object identity (same id() → same row).
-        """
+    def push(self, obj: Any) -> None:
+        """Queue a @feature object for batch serialization at combine() time."""
         obj_id = id(obj)
         if obj_id in self._pushed_ids:
             return
         self._pushed_ids[obj_id] = True
         self._pending.append(obj)
-        self._pushed_objs.append(obj)  # prevent GC so id() stays unique
+        self._pushed_objs.append(obj)
         self._pending_counts[type(obj)] += 1
-        # Recursively enqueue REF dependencies
         schema = get_schema(type(obj))
         if schema.has_ref_fields:
             self._enqueue_deps(obj, schema)
@@ -191,9 +169,9 @@ class ORM2:
     def combine(self):
         """Finalize: batch-push all pending objects, then build read-only database."""
         if self._built:
-            raise RuntimeError("ORM2 already combined")
+            raise RuntimeError("ObjectEngine already combined")
         if self._db_build is None:
-            raise RuntimeError("ORM2 not in build mode")
+            raise RuntimeError("ObjectEngine not in build mode")
 
         # 1. Group pending objects by class
         groups: Dict[Type, List[Any]] = defaultdict(list)
@@ -204,7 +182,7 @@ class ORM2:
         sorted_classes = _topo_sort_classes(groups)
 
         # 3. Push each class in topo order
-        obj_to_row: Dict[int, tuple] = {}  # id(obj) -> (layer_idx, row_idx)
+        obj_to_row: Dict[int, tuple] = {}
         for cls in sorted_classes:
             objs = groups[cls]
             schema = get_schema(cls)
@@ -212,74 +190,9 @@ class ORM2:
             layer_build = state.build
 
             if not schema.has_ref_fields:
-                # FAST PATH: batch push via push_many_from_dicts_fc
-                batch_fn = make_batch_inlined_dispatch(
-                    schema.numeric_plan, schema.str_plan,
-                    schema.bytes_plan, schema.list_plan, state,
-                    schema.pfd_num_names, schema.pfd_num_ids,
-                    schema.pfd_str_names, schema.pfd_str_ids,
-                )
-                if batch_fn is not None:
-                    dicts = [obj.__dict__ for obj in objs]
-                    for i in range(0, len(dicts), 1024):
-                        batch_fn(dicts[i:i+1024])
-                else:
-                    # Fallback: single compiled push_fn
-                    push_fn = compile_push_fn(
-                        schema.numeric_plan, schema.str_plan,
-                        schema.bytes_plan, schema.list_plan,
-                    )
-                    for obj in objs:
-                        push_fn(obj.__dict__, layer_build)
-                state._fc[0] = len(objs)
-
-                # Record row indices
-                for row_idx, obj in enumerate(objs):
-                    obj_to_row[id(obj)] = (state.layer_idx, row_idx)
-                state.row_count = len(objs)
+                self._push_no_refs(objs, schema, state, layer_build, obj_to_row)
             else:
-                # REF PATH: pre-resolve all refs into cache copy, then use compiled fn
-                ref_push_fn = compile_ref_push_fn(
-                    schema.numeric_plan, schema.str_plan,
-                    schema.bytes_plan, schema.list_plan,
-                    [(fd.field_id, fd.name) for fd in schema.ref_fields],
-                    [(fd.field_id, fd.name) for fd in schema.list_ref_fields],
-                )
-                for obj in objs:
-                    row_idx = state.row_count
-                    cache = obj.__dict__.copy()  # COPY — don't mutate original
-                    # Resolve scalar REF fields → WxFeatureRef int
-                    for fd in schema.ref_fields:
-                        ref_obj = cache.get(fd.name)
-                        if ref_obj is not None:
-                            loc = obj_to_row.get(id(ref_obj))
-                            if loc is not None:
-                                li, ri = loc
-                                cache[fd.name] = core.WxFeatureRef.make_ref(li, ri)
-                            else:
-                                cache[fd.name] = 0
-                    # Pack LIST[REF] fields → raw bytes
-                    for fd in schema.list_ref_fields:
-                        items = cache.get(fd.name)
-                        if items:
-                            parts = []
-                            for ref_obj in items:
-                                if ref_obj is not None:
-                                    loc = obj_to_row.get(id(ref_obj))
-                                    if loc is not None:
-                                        li, ri = loc
-                                        parts.append(struct.pack('<HBH', li, ri & 0xFF, ri >> 8))
-                                    else:
-                                        parts.append(b'\x00\x00\x00\x00\x00')
-                                else:
-                                    parts.append(b'\x00\x00\x00\x00\x00')
-                            cache[fd.name] = b''.join(parts)
-                        else:
-                            cache[fd.name] = b''
-                    ref_push_fn(cache, layer_build)
-                    obj_to_row[id(obj)] = (state.layer_idx, row_idx)
-                    state.row_count += 1
-                state._fc[0] = state.row_count
+                self._push_with_refs(objs, schema, state, layer_build, obj_to_row)
 
         # 4. Finalize into read-only database
         mem = core.WxMemoryStream()
@@ -290,26 +203,84 @@ class ORM2:
         self._buffer = buf
         self._built = True
         self._db_build = None
-        # Clear pending state
         self._pending.clear()
         self._pushed_ids.clear()
         self._pending_counts.clear()
         self._pushed_objs.clear()
 
-    def get(self, cls: Type, idx: int, mode: str = 'map') -> Any:
-        """Read back a single feature.
+    def _push_no_refs(self, objs, schema, state, layer_build, obj_to_row):
+        """Fast path: batch push for classes without REF fields."""
+        batch_fn = make_batch_inlined_dispatch(
+            schema.numeric_plan, schema.str_plan,
+            schema.bytes_plan, schema.list_plan, state,
+            schema.pfd_num_names, schema.pfd_num_ids,
+            schema.pfd_str_names, schema.pfd_str_ids,
+        )
+        if batch_fn is not None:
+            dicts = [obj.__dict__ for obj in objs]
+            for i in range(0, len(dicts), 1024):
+                batch_fn(dicts[i:i + 1024])
+        else:
+            push_fn = compile_push_fn(
+                schema.numeric_plan, schema.str_plan,
+                schema.bytes_plan, schema.list_plan,
+            )
+            for obj in objs:
+                push_fn(obj.__dict__, layer_build)
+        state._fc[0] = len(objs)
+        for row_idx, obj in enumerate(objs):
+            obj_to_row[id(obj)] = (state.layer_idx, row_idx)
+        state.row_count = len(objs)
 
-        Args:
-            cls: The @feature class
-            idx: Row index
-            mode: 'map' (zero-copy proxy) or 'copy' (detached instance)
-        """
+    def _push_with_refs(self, objs, schema, state, layer_build, obj_to_row):
+        """REF path: resolve refs, then push with compiled fn."""
+        ref_push_fn = compile_ref_push_fn(
+            schema.numeric_plan, schema.str_plan,
+            schema.bytes_plan, schema.list_plan,
+            [(fd.field_id, fd.name) for fd in schema.ref_fields],
+            [(fd.field_id, fd.name) for fd in schema.list_ref_fields],
+        )
+        for obj in objs:
+            row_idx = state.row_count
+            cache = obj.__dict__.copy()
+            for fd in schema.ref_fields:
+                ref_obj = cache.get(fd.name)
+                if ref_obj is not None:
+                    loc = obj_to_row.get(id(ref_obj))
+                    if loc is not None:
+                        li, ri = loc
+                        cache[fd.name] = core.WxFeatureRef.make_ref(li, ri)
+                    else:
+                        cache[fd.name] = 0
+            for fd in schema.list_ref_fields:
+                items = cache.get(fd.name)
+                if items:
+                    parts = []
+                    for ref_obj in items:
+                        if ref_obj is not None:
+                            loc = obj_to_row.get(id(ref_obj))
+                            if loc is not None:
+                                li, ri = loc
+                                parts.append(struct.pack('<HBH', li, ri & 0xFF, ri >> 8))
+                            else:
+                                parts.append(b'\x00\x00\x00\x00\x00')
+                        else:
+                            parts.append(b'\x00\x00\x00\x00\x00')
+                    cache[fd.name] = b''.join(parts)
+                else:
+                    cache[fd.name] = b''
+            ref_push_fn(cache, layer_build)
+            obj_to_row[id(obj)] = (state.layer_idx, row_idx)
+            state.row_count += 1
+        state._fc[0] = state.row_count
+
+    def get(self, cls: Type, idx: int, mode: str = 'map') -> Any:
+        """Read back a single feature."""
         self._check_built()
         state = self._layers.get(cls)
         if state is None:
             raise KeyError(f"No layer for {cls.__name__}")
         layer = self._db.get_layer(state.layer_idx)
-
         if mode == 'copy':
             return copy_feature(cls, layer, idx)
         elif mode == 'map':
@@ -317,20 +288,14 @@ class ORM2:
         else:
             raise ValueError(f"Unknown mode: {mode!r}")
 
-    def table(self, cls: Type) -> Table2:
-        """Get a Table2 with zero-copy numpy column access.
-
-        Usage:
-            tbl = orm.table(Point)
-            xs = tbl.column.x       # numpy array, zero-copy
-            ys = tbl.column.y[:]    # slice also works
-        """
+    def table(self, cls: Type) -> Table:
+        """Get a Table with zero-copy numpy column access."""
         self._check_built()
         state = self._layers.get(cls)
         if state is None:
             raise KeyError(f"No layer for {cls.__name__}")
         layer = self._db.get_layer(state.layer_idx)
-        return Table2(cls, layer, state.row_count, state.schema)
+        return Table.map_from(cls, layer, self._db)
 
     def iter(self, cls: Type, mode: str = 'map') -> Iterator:
         """Iterate all features of a given type."""
@@ -379,7 +344,6 @@ class ORM2:
         """Publish the built database to POSIX shared memory."""
         if not self._built:
             raise RuntimeError("Call combine() before sharing")
-        
         import multiprocessing.shared_memory as shm_mod
         data = self._buffer
         seg = shm_mod.SharedMemory(name=name, create=True, size=len(data))
@@ -387,7 +351,7 @@ class ORM2:
         seg.close()
 
     @classmethod
-    def load(cls, name: str) -> 'ORM2':
+    def load(cls, name: str) -> 'ObjectEngine':
         """Load a database from POSIX shared memory."""
         import multiprocessing.shared_memory as shm_mod
         seg = shm_mod.SharedMemory(name=name, create=False)
@@ -400,22 +364,20 @@ class ORM2:
         orm._buffer = buf
         orm._built = True
 
-        # Reconstruct layer states from database
-        from .registry import _registry
         for i in range(orm._db.get_layer_count()):
             layer = orm._db.get_layer(i)
             layer_name = layer.name()
-            for registered_cls, schema in _registry.items():
-                if schema.layer_name == layer_name:
-                    state = LayerState(
-                        cls=registered_cls,
-                        schema=schema,
-                        layer_idx=i,
-                        row_count=layer.get_feature_count(),
-                    )
-                    orm._layers[registered_cls] = state
-                    orm._layer_order.append(registered_cls)
-                    break
+            registered_cls = lookup_class(layer_name)
+            if registered_cls is not None:
+                schema = get_schema(registered_cls)
+                state = LayerState(
+                    cls=registered_cls,
+                    schema=schema,
+                    layer_idx=i,
+                    row_count=layer.get_feature_count(),
+                )
+                orm._layers[registered_cls] = state
+                orm._layer_order.append(registered_cls)
         return orm
 
     @staticmethod

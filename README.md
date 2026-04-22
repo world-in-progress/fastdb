@@ -58,6 +58,39 @@ If you are working on native internals or storage layout, start with:
 
 - [`fastcarto/README.md`](fastcarto/README.md)
 
+## Python `ColumnEngine.truncate()` with `STR`
+
+`fastdb4py` `ColumnEngine.truncate()` now supports UTF-8 `STR` fields in two usage tiers:
+
+- **Default high-level path** — `tbl.fill(..., name=[...])` now routes raw strings through the native batch string-column API
+- **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
+
+For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Raw string inputs are packed inside the native batch API, while numeric columns still remain NumPy-backed after publication and string columns are exposed as `StringColumn` wrappers via `table.column.<name>`. If your input already starts as Python `str` objects, prefer this default raw path; use the prepacked path only when an upstream stage already produced UTF-8 offsets/data buffers.
+
+```python
+import numpy as np
+from fastdb4py import ColumnEngine, Layout, F64, STR, feature, pack_utf8_column
+
+@feature
+class Point:
+    x: F64
+    y: F64
+    name: STR
+
+orm = ColumnEngine.truncate([Layout(Point, 3)])
+tbl = orm.table(Point)
+
+tbl.fill(
+    x=np.array([1.0, 2.0, 3.0], dtype=np.float64),
+    y=np.array([4.0, 5.0, 6.0], dtype=np.float64),
+    name=["a", "bb", "ccc"],
+)
+
+# If you already own pre-encoded UTF-8 buffers, use the advanced path directly:
+offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "bb", "ccc"])
+tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
+```
+
 ## CLI tools
 
 `fastdb4py` ships a CLI named `fdb` for cross-language tooling. Currently it provides the `codegen` subcommand.
@@ -83,9 +116,11 @@ Features:
 Example input (`geometry.py`):
 
 ```python
-from fastdb4py import Feature, F64, STR
+from fastdb4py import feature, F64, STR
 
-class Point(Feature):
+
+@feature
+class Point:
     x: F64
     y: F64
     label: STR
@@ -113,7 +148,7 @@ export class Point extends Feature {
 | Pattern | Throughput | Notes |
 |---------|-----------|-------|
 | `table.column.x[:]` columnar read/write | **~100 ns** for any N | Zero-copy NumPy view, 1 SWIG call |
-| `Table.fill(field, array)` | **~2 µs** per column | 1 SWIG call + memcpy |
+| `Table.fill(**cols)` | **~2 µs** per column | 1 SWIG call + memcpy per written column |
 | `feature.read_all_scalars()` | **~200 ns** for 3 fields | 1 SWIG call for all scalar fields |
 | `table.iter_reuse()` row access | **~350 ns/row** | Reuses Feature wrapper, no allocation |
 | `for feat in table` row access | **~1.2 µs/row** | Allocates Feature wrapper per row |
@@ -124,7 +159,8 @@ export class Point extends Feature {
 **Recommended patterns by use case:**
 
 - **Bulk read/write of one field across all rows** → `table.column.x` (columnar, zero-copy)
-- **Bulk fill all fields from arrays** → `ORM.truncate` + `table.column.field[:] = array`
+- **Bulk fill fixed-size tables** → `ColumnEngine.truncate` + `table.fill(...)`
+- **Bulk fill pre-encoded UTF-8 buffers** → `table.column.name.fill_utf8(...)`
 - **Iterate and process all fields per row** → `table.iter_reuse()` + `feat.read_all_scalars()`
 - **Sparse random access** → `table[i].field`
 
@@ -139,26 +175,36 @@ export class Point extends Feature {
 | Module-level caches (`get_class_schema`, serializer schema) | ✅ Yes | Protected by `threading.Lock`; safe under both GIL and free-threaded builds |
 | `ColumnAccessor` column cache (`table.column.x`) | ✅ Yes | Cold path (first access) is lock-protected; hot path (cache hit) is lock-free |
 | `Feature` instances | ❌ No | Instance-level `_cache` dict is not synchronized — use external locking or one instance per thread |
-| `ORM` / `Table` instances | ❌ No | Not designed for concurrent mutation — create separate ORM instances per thread, or synchronize externally |
+| `ColumnEngine` / `ObjectEngine` / `Table` instances | ❌ No | Not designed for concurrent mutation — create separate engine instances per thread, or synchronize externally |
 | SWIG C++ calls | ✅ Yes | Long-running pure C++ operations release the GIL via `%feature("threadallow")` |
 
 ### Recommended patterns for multi-threaded code
 
 ```python
-# ✅ Good: each thread owns its own ORM view
+import threading
+import numpy as np
+from fastdb4py import ColumnEngine, Layout, feature, F64
+
+
+@feature
+class Point:
+    x: F64
+
+# ✅ Good: each thread owns its own truncate view
 def worker():
-    orm = ORM.truncate([TableDefn(Point, 1000)])
-    tbl = orm[Point][Point]
+    orm = ColumnEngine.truncate([Layout(Point, 1000)])
+    tbl = orm.table(Point)
     tbl.fill(x=np.arange(1000, dtype=np.float64))
 
-# ✅ Good: shared ORM with read-only access (after truncate/combine)
-shared_orm = ORM.truncate([TableDefn(Point, N)])
+# ✅ Good: shared truncate engine with read-only access after publication
+shared_orm = ColumnEngine.truncate([Layout(Point, N)])
 # ... fill data ...
 # Multiple threads can safely read table.column.x concurrently
 
 # ⚠️ Caution: sharing Feature instances across threads
 lock = threading.Lock()
-feat = Point(x=1.0)
+feat = Point()
+feat.x = 1.0
 with lock:           # external synchronization required
     feat.x = 2.0
 ```

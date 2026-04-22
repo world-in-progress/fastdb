@@ -4,7 +4,7 @@ import numpy as np
 from typing import List
 
 from fastdb4py.decorator import feature
-from fastdb4py.orm2 import ORM2
+from fastdb4py.object_engine import ObjectEngine
 from fastdb4py.type import F64, U32, STR
 
 
@@ -37,7 +37,7 @@ class Room:
 
 class TestFullPipeline:
     def _build_test_data(self):
-        orm = ORM2.create()
+        orm = ObjectEngine.create()
 
         v1 = Vendor(); v1.name = "SensorCorp"; v1.rating = 4.5
         v2 = Vendor(); v2.name = "DataTech"; v2.rating = 3.8
@@ -93,7 +93,7 @@ class TestFullPipeline:
 
     def test_shared_vendor_dedup(self):
         """If two devices share a vendor, push it only once."""
-        orm = ORM2.create()
+        orm = ObjectEngine.create()
         v = Vendor(); v.name = "SharedCo"; v.rating = 5.0
 
         d1 = Device(); d1.model = "A"; d1.serial = 1
@@ -115,7 +115,7 @@ class TestEdgeCases:
         class WithEmpty:
             vals: List[F64]
 
-        orm = ORM2.create()
+        orm = ObjectEngine.create()
         obj = WithEmpty(); obj.vals = []
         orm.push(obj)
         orm.combine()
@@ -124,7 +124,7 @@ class TestEdgeCases:
         assert len(result.vals) == 0 or result.vals is None or len(list(result.vals)) == 0
 
     def test_default_values(self):
-        orm = ORM2.create()
+        orm = ObjectEngine.create()
         v = Vendor()  # no fields set
         orm.push(v)
         orm.combine()
@@ -134,7 +134,7 @@ class TestEdgeCases:
 
     def test_large_batch(self):
         """Test pushing multiple items - verifies batch operations work correctly."""
-        orm = ORM2.create()
+        orm = ObjectEngine.create()
         for i in range(10):
             v = Vendor()
             v.name = f"v{i}"

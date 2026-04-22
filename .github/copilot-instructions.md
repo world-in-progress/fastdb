@@ -67,92 +67,94 @@ The C++ core is never built standalone — it is always built as part of one of 
 
 ```
 python/fastdb4py/
-├── type.py          TypeVar aliases → OriginFieldType enum
-├── feature/
-│   ├── feature.py   Feature base class (__getattr__/__setattr__ dispatch)
-│   ├── _schema.py   Unified ClassSchema + WeakKeyDictionary caches
-│   └── utils.py     parse_defns() / get_all_defns()
+├── type.py           Field aliases (`U32`, `F64`, `STR`, ...)
+├── decorator.py      `@feature` schema decorator
+├── column_engine.py  Fixed-size columnar tables via `ColumnEngine.truncate`
+├── object_engine.py  Dynamic/object-graph tables via `ObjectEngine.create`
+├── string_column.py  UTF-8 `StringColumn`, `pack_utf8_column`, `fill_utf8`
 ├── orm/
-│   ├── __init__.py  ORM lifecycle (create/truncate/load/push/share/save/close)
-│   └── table.py     Table[T] + ColumnAccessor + StridedColumn
-├── serializer.py    FastSerializer (binary object graph serialization + shared memory loads)
-├── cli.py           `fdb` CLI entry point
+│   └── table.py      `Table`, `ColumnAccessor`, and numeric/string column views
+├── serializer.py     FastSerializer (binary object graph serialization + shared memory loads)
+├── cli.py            `fdb` CLI entry point
 ├── codegen/
-│   ├── __init__.py  Exports run_codegen_ts
-│   └── ts_gen.py    Python→TypeScript code generator (CodegenContext, all phases)
-└── core/            SWIG-generated native bindings — DO NOT EDIT MANUALLY
+│   ├── __init__.py   Exports run_codegen_ts
+│   └── ts_gen.py     Python→TypeScript code generator
+├── feature/          Runtime schema/cache helpers used by the decorator/engines
+└── core/             SWIG-generated native bindings — DO NOT EDIT MANUALLY
 ```
 
 ### Build & test
 
 ```bash
-# Build C++ core + SWIG bindings
-./py_utils.sh --build          # or: uv pip install -e .
+# Rebuild and reinstall the Python binding in editable mode
+./py_utils.sh --setup          # or: uv pip install -e .
 
 # Run all Python tests
-uv run pytest
+uv run pytest -q
 
 # Single test file / function
-uv run pytest tests/python/test_column_way.py
-uv run pytest tests/python/test_column_way.py::test_basic_column_access
+uv run pytest tests/python/test_string_column.py -q
+uv run pytest tests/python/test_column_engine.py -q
 
 # Build codegen CLI (no rebuild needed — pure Python)
 uv run fdb codegen --ts <input_dir> <output_dir>
 
-# Benchmark
-uv run python tests/python/benchmark_comprehensive.py --quick
+# Benchmark the truncate/string ingest paths
+uv run python tests/python/benchmark_kostya_orm2.py --reps 3
 ```
 
 Build requires: C++17 compiler, CMake >= 3.16, SWIG >= 4.0, NumPy.
 
 ### Key patterns
 
-**Feature definition** — subclass `Feature` with TypeVar-aliased fields:
+**Feature definition** — decorate plain classes with `@feature` and use field aliases:
 ```python
-from fastdb4py import Feature, F64, U32, STR
+from fastdb4py import feature, F64, U32, STR
 
-class Point(Feature):
+@feature
+class Point:
+    row_id: U32
     x: F64
     y: F64
     label: STR
 ```
 
-**Two-mode Feature objects**:
-- Pure Python mode (`_origin is None`): reads/writes go to `_cache` dict.
-- DB-mapped mode (`_origin` set): reads/writes dispatch to C++ getters/setters via SWIG.
-- `Feature.fixed` property distinguishes modes.
-
-**Field dispatch**: `parse_defns()` introspects annotations to build `(OriginFieldType, field_index)` mapping stored in `_origin_hints` for O(1) lookup during `__getattr__`/`__setattr__`.
-
-**Zero-copy NumPy columns**: `table.column.x` returns a NumPy array backed by C++ memory via `__array_interface__` on `chunk_data_t`. `ColumnAccessor` dynamically creates accessors matching the Feature subclass fields.
-
-**Thread-safe caching**: Feature hints, field definitions, class schemas, and column accessors all use `WeakKeyDictionary` + `Lock`.
-
-**ORM lifecycle**:
+**Engine split**:
 ```python
-# Fixed-size (fastest)
-orm = ORM.truncate([TableDefn(Point, 1000)])
-tbl = orm.get(Point)
+# Fixed-size bulk ingest (fastest path for known row count)
+db = ColumnEngine.truncate([Layout(Point, 1000)])
+tbl = db.table(Point)
+tbl.fill(row_id=np.arange(1000, dtype=np.uint32), x=xs, y=ys)
 
-# Dynamic append
-orm = ORM.create()
-orm.push(Point(x=1.0, y=2.0))
-orm._combine()
-
-# Shared memory IPC
-orm.share("my_db")          # publish to POSIX shared memory
-orm2 = ORM.load("my_db")   # zero-copy cross-process access
-orm.unlink("my_db")         # release segment
+# Dynamic/object-graph ingest
+db2 = ObjectEngine.create()
+db2.push(Point(row_id=1, x=1.0, y=2.0, label="a"))
+db2.combine()
 ```
 
-**FastSerializer shared memory deserialization**:
+**Column access**:
 ```python
-# Deserialize directly from a POSIX shared memory segment (no intermediate copy)
+xs = tbl.column.x           # NumPy-backed numeric column
+labels = tbl.column.label   # StringColumn wrapper for STR fields
+```
+
+**UTF-8 string ingest tiers for `ColumnEngine.truncate`**:
+```python
+# Preferred default when you start from Python strings
+tbl.fill(row_id=ids, x=xs, y=ys, label=["a", "bb", "ccc"])
+
+# Advanced path only when you already have UTF-8 offsets/data buffers
+offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "bb", "ccc"])
+tbl.column.label.fill_utf8(offsets_u32, utf8_bytes_u8)
+```
+- `tbl.fill(..., label=[...])` now routes raw Python strings through a native C++ batch API.
+- Prefer the raw path for normal Python inputs; `pack_utf8_column(...) + fill_utf8(...)` is for pre-encoded pipelines.
+
+**Shared-memory / serializer note**:
+```python
 result = FastSerializer.loads_shm("shm_name", length, offset, RootType)
 ```
-- Accepts any buffer that was previously written to shared memory (e.g., `FastSerializer.dumps()` output published via `ORM.share()` or `multiprocessing.shared_memory`)
-- Returns fully detached Python objects — all Features have `_origin=None`, numpy arrays are copies, safe to use after shared memory is closed
-- Lifecycle: opens shm → `load_xbuffer` → deserialize → detach features → close shm
+- `loads_shm` returns detached Python objects after reading from shared memory.
 
 ### SWIG interface
 
@@ -164,13 +166,14 @@ result = FastSerializer.loads_shm("shm_name", length, offset, RootType)
 ### Testing
 
 Key test files in `tests/python/`:
-- `test_column_way.py` — ORM.truncate + columnar NumPy access
-- `test_shared_memory.py` — ORM create/push/share/load across processes
-- `test_truncate_block.py` — Truncate block operations
-- `test_fast_serializer.py` — FastSerializer (nested objects, cyclic refs, tree structures)
-- `test_fastser_buffer_layers.py` — FastSerializer `__fastser_buf__` numpy ndarray serialization
-- `test_fastser_loads_shm.py` — FastSerializer shared memory deserialization (`loads_shm`)
-- `test_codegen.py` — Python→TypeScript codegen CLI (85 tests: discovery, dep graph, generation, edge cases)
+- `test_column_engine.py` — `ColumnEngine.truncate` paths and fixed-table behavior
+- `test_string_column.py` — `StringColumn`, native raw-string batch writes, `fill_utf8(...)`
+- `test_object_engine.py` — dynamic push/combine/load flows
+- `test_shared_memory.py` — publish/load/unlink across processes
+- `test_fast_serializer.py` — FastSerializer graphs and nested structures
+- `test_fastser_buffer_layers.py` / `test_fastser_loads_shm.py` — buffer-layer and shared-memory serializer coverage
+- `test_codegen.py` — Python→TypeScript codegen CLI
+- `test_free_threading.py` — cache/thread-safety coverage
 
 ### Codegen CLI (`fdb codegen --ts`)
 

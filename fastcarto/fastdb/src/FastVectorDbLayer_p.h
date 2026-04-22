@@ -29,6 +29,9 @@ namespace wx
         int             getFieldAsInt(u32 ix);
         const char*     getFieldAsString(u32 ix);
         const uchar_t*  getFieldAsWString(u32 ix);
+        chunk_data_t    getFieldAsStringView(u32 ix);
+        chunk_data_t    getStringColumnOffsets(u32 ix);
+        chunk_data_t    getStringColumnData(u32 ix);
         FastVectorDbFeatureRef*  
                         getFieldAsFeatureRef(u32 ifield);
         void*           setFeatureCookie(void* cookie);
@@ -44,6 +47,9 @@ namespace wx
         int             getFieldAsInt_internal(u32 ifeature,u32 ix);
         const char*     getFieldAsString_internal(u32 ifeature,u32 ix);
         const uchar_t*  getFieldAsWString_internal(u32 ifeature,u32 ix);
+        chunk_data_t    getFieldAsStringView_internal(u32 ifeature, u32 ix);
+        chunk_data_t    getStringColumnOffsets_internal(u32 ix);
+        chunk_data_t    getStringColumnData_internal(u32 ix);
         FastVectorDbFeatureRef* 
                         getFieldAsFeatureRef_internal(u32 ifeature,u32 ix);
         chunk_data_t    getGeometryLikeChunk_internal(u32 ifeature);
@@ -118,6 +124,16 @@ namespace wx
             u8*   data_ptr;    // points directly into the database memory buffer
         };
         vector<ListFieldData>   m_list_fields;
+
+        struct StringFieldData {
+            u32 field_id;
+            u32 codec;
+            u32 offset_count;
+            u64 byte_count;
+            u32* offsets_ptr;
+            u8*  data_ptr;
+        };
+        vector<StringFieldData> m_string_fields;
         friend class FastVectorDbFeature;
         friend class FastVectorDb::Impl;
     };

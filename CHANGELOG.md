@@ -9,6 +9,13 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb4py -->
 ## fastdb4py (Python binding)
 
+### Removed
+- **BREAKING**: Deleted `Feature` base class, `ORM`, `ORM2`, `TableDefn`, `ClassSchema`, `FeatureRefList`, `BaseFeature`, `parse_defns`, `get_all_defns`, `get_class_schema`, `make_inlined_dispatch`, `make_batch_inlined_dispatch`, and the `orm._graph` module. Use `@feature` decorator with `ColumnEngine` (columnar/truncate workloads) or `ObjectEngine` (object-graph/serializer workloads) instead. The `feature` and `orm` subpackages now expose only the new minimal surface.
+
+### Changed
+- `@feature` decorator now accepts `np.ndarray` field annotations (handled via `FastSerializer` buffer layers).
+- `FastSerializer` no longer recognises pre-v2.0 `Feature` subclasses; only `@feature`-decorated classes are accepted.
+
 ### Added
 - `fdb codegen --ts <input_dir> <output_dir>` CLI command: auto-generates TypeScript `Feature` classes from Python Feature definitions, with full type mapping, cross-file import resolution, cycle detection (lazy refs), and topological ordering.
 - Free-threaded Python (PEP 703) support: module-level caches (`get_class_schema`, serializer schema, ColumnAccessor) are now safe under concurrent access; CI tests against Python 3.13t.
@@ -16,8 +23,11 @@ When a binding is released (tagged), its section is automatically copied to the 
 - `FastSerializer` numpy ndarray buffer layer support (`__fastser_buf__`): numpy arrays are now serialized via dedicated fastdb layers using `memcpy`-level writes and `np.frombuffer` loads, achieving 5–8× speedup over list-based paths for large arrays. Supports float64, float32, uint32, int32, uint16, uint8 dtypes and 1D/2D/3D shapes.
 - `FastSerializer.loads_shm(shm_name, length, offset, root_type)`: deserialize a Feature directly from a named shared memory segment without copying to an intermediate `bytes` object. Returns a fully detached Feature (pure Python mode) after closing the shared memory mapping.
 - **Native list columns**: `List[F64]`, `List[U32]`, `List[I32]`, `List[F32]`, `List[U8]`, `List[U16]`, and `List[SomeFeature]` are now first-class column types in the ORM. Features with list fields are stored directly in shared-memory ORM layers — no `FastSerializer` needed. Accessing `feature.my_list` returns a zero-copy NumPy array (numeric) or a lazy `FeatureRefList` (refs) backed by C++ memory. Cyclic object graphs are supported via two-pass DFS writing and back-edge patching.
+- `ColumnEngine.truncate()` now accepts `STR` fields, exposes them through a dedicated `StringColumn` wrapper with bulk `fill()` / `fill_utf8()` APIs, and lets fixed tables batch mixed numeric + `STR` payloads through `Table.fill(**cols)`.
+- Python docs and benchmark now show the two UTF-8 truncate ingest tiers: high-level `tbl.fill(..., name=[...])` and advanced `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`, with benchmark output split into raw-string vs prepacked paths.
 
 ### Performance
+- Raw `STR` writes now route `tbl.fill(..., name=[...])` through a native string-column batch API in the C++ core, reducing Python-side UTF-8 packing overhead while preserving `pack_utf8_column(...) + fill_utf8(...)` as the advanced path.
 - `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.
 - `FastSerializer` loads path: lazy initialization of auxiliary layer data, eliminated redundant schema lookups in scalar read path.
 - Overall `FastSerializer` geometric mean improvement: **32%** (44.26 → 30.09 µs across all test cases).
@@ -28,6 +38,9 @@ When a binding is released (tagged), its section is automatically copied to the 
 - Cumulative `FastSerializer` improvement on complex PointCloud benchmark: **54%** (153.93 → 70.01 µs geo-mean); loads at N=10000 is now **21× faster than pickle**.
 
 ### Fixed
+- `ColumnEngine.truncate()` now preserves later tables in mixed layouts when an earlier `STR` column is still empty at combine time.
+- `ColumnEngine.truncate()` fixed-table writes now route mixed numeric + `STR` `Table.fill(**cols)` batches through the retained truncate build, with upfront length validation, shared `StringColumn.fill()` / `fill_utf8()` plumbing, and no Python-side whole-database rebuild for string columns.
+- SWIG/Python bindings now expose UTF-8 string-column reader APIs (`get_field_as_string_view`, `get_string_column_offsets`, `get_string_column_data`) for upcoming `ColumnEngine` string-column integration work.
 - `fdb codegen --ts` no longer warns or skips when the same class name (e.g. `Point`) appears in different `.py` files. Each file is treated as an independent module; all classes are generated in their respective `.ts` files.
 - `_schema.py`: `WeakKeyDictionary` reads moved fully under lock to prevent data races in free-threaded Python; `cls.__dict__` remains the lock-free fast path.
 - `serializer.py`: `_CLASS_SCHEMA_CACHE` reads moved fully under lock (removed unsafe lock-free pre-check).
@@ -76,6 +89,10 @@ When a binding is released (tagged), its section is automatically copied to the 
 
 ### Added
 - **Native list column support**: `ftList=12` field type with backwards-compatible wire format. New public API on `FastVectorDbLayerBuild`: `add_list_field(name, element_type)`, `set_field_list_numeric(idx, data, nbytes)`, `set_field_list_refs(idx, refs, count)`, `update_feature_ref(feature_idx, field_idx, ref)`, `update_list_ref_at(feature_idx, field_idx, list_idx, ref)`. New public API on `FastVectorDbFeature`: `getFieldAsListView(idx)`, `getFieldListSize(idx)`, `getFieldListRefAt(idx, list_idx)`. Wire format: `element_type` field added in 2 previously-unused padding bytes of `field_desc_ex_t`; `n_list_fields` in `layer_header_t`; list data section appended after wstrings in each layer binary. Fully backwards-compatible — old databases with zero-filled padding read as no list data.
+
+### Fixed
+- `FastVectorDbLayer` now reads varlen UTF-8 string columns (`ftSTR + size=0`) from trailing offsets/data sections and exposes zero-copy reader buffers for per-row string views and whole-column offsets/data access.
+- Empty truncated UTF-8 string columns now serialize valid offset tables, preventing later layers from being misaligned in multi-layer databases.
 
 ### Changed
 - SWIG interface (`fastdb4py.i`): added `%feature("threadallow")` for pure C++ operations and `Py_BEGIN_ALLOW_THREADS` around `copy_to_buffer` memcpy, improving multi-threaded throughput and preparing for free-threaded Python.

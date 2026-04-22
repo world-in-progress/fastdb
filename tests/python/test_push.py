@@ -199,8 +199,8 @@ class Article:
 
 
 def test_push_numeric_list_via_orm():
-    from fastdb4py.orm2 import ORM2
-    orm = ORM2.create()
+    from fastdb4py.object_engine import ObjectEngine
+    orm = ObjectEngine.create()
     a = Article()
     a.title = "Test"
     a.scores = [1.0, 2.0, 3.0]
@@ -214,8 +214,8 @@ def test_push_numeric_list_via_orm():
 
 
 def test_push_ref_list_via_orm():
-    from fastdb4py.orm2 import ORM2
-    orm = ORM2.create()
+    from fastdb4py.object_engine import ObjectEngine
+    orm = ObjectEngine.create()
     t1 = Tag()
     t1.name = "python"
     t2 = Tag()
