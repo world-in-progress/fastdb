@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from fastdb4py import ColumnEngine, Layout, feature, F64, U32, STR, pack_utf8_column
+import fastdb4py.string_column as string_column_mod
 
 
 @feature
@@ -101,6 +102,23 @@ def test_string_column_fill_validates_payload_once(monkeypatch):
 
     assert validate_calls == [2]
     assert column.to_pylist() == ["hi", "中"]
+
+
+def test_string_column_fill_uses_shared_utf8_packer(monkeypatch):
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+    calls = []
+
+    def fake_pack(values):
+        calls.append(tuple(values))
+        return _pack_utf8(["hi", ""])
+
+    monkeypatch.setattr(string_column_mod, '_pack_utf8_values', fake_pack, raising=False)
+
+    tbl.column.name.fill(["hi", None])
+
+    assert calls == [("hi", None)]
+    assert tbl.column.name.to_pylist() == ["hi", ""]
 
 
 def test_string_column_fill_utf8_uses_unified_fixed_writer(monkeypatch):

@@ -15,25 +15,40 @@ def _check_utf8_payload_size(payload_size: int) -> None:
         raise ValueError(f'UTF-8 payload exceeds uint32 limit of {_UINT32_MAX} bytes.')
 
 
+def _pack_utf8_values(strings: Iterable[Optional[str]]) -> tuple[np.ndarray, np.ndarray]:
+    if isinstance(strings, (list, tuple)) and all(
+        value is None or isinstance(value, str) for value in strings
+    ):
+        encoded_values = [b'' if value is None else value.encode('utf-8') for value in strings]
+    else:
+        encoded_values = [
+            ('' if value is None else str(value)).encode('utf-8')
+            for value in strings
+        ]
+
+    raw = b''.join(encoded_values)
+    _check_utf8_payload_size(len(raw))
+
+    offsets = np.empty(len(encoded_values) + 1, dtype=np.uint32)
+    offsets[0] = 0
+    total = 0
+    for index, encoded in enumerate(encoded_values, start=1):
+        total += len(encoded)
+        offsets[index] = total
+
+    data_arr = np.frombuffer(raw, dtype=np.uint8)
+    offsets_arr = np.ascontiguousarray(offsets, dtype=np.uint32)
+    data_arr = np.ascontiguousarray(data_arr, dtype=np.uint8)
+    return offsets_arr, data_arr
+
+
 def pack_utf8_column(strings: Iterable[Optional[str]]) -> tuple[np.ndarray, np.ndarray]:
     """Pack an iterable of strings or None values into UTF-8 offsets and data arrays.
 
     - Coerces None to an empty string
     - Returns (offsets: np.uint32 array, data: np.uint8 array)
     """
-    raw = bytearray()
-    offsets = [0]
-    for value in strings:
-        encoded = ('' if value is None else str(value)).encode('utf-8')
-        raw.extend(encoded)
-        offsets.append(len(raw))
-    _check_utf8_payload_size(len(raw))
-    offsets_arr = np.asarray(offsets, dtype=np.uint32)
-    data_arr = np.frombuffer(bytes(raw), dtype=np.uint8)
-    # Ensure dtypes and contiguity
-    offsets_arr = np.ascontiguousarray(offsets_arr, dtype=np.uint32)
-    data_arr = np.ascontiguousarray(data_arr, dtype=np.uint8)
-    return offsets_arr, data_arr
+    return _pack_utf8_values(strings)
 
 
 class StringColumn:
@@ -81,7 +96,8 @@ class StringColumn:
         return [self.get(i) for i in range(len(self))]
 
     def fill(self, strings: Iterable[Optional[str]]) -> None:
-        offsets_arr, data_arr = self._normalize_fill_values(strings, len(self))
+        offsets_arr, data_arr = _pack_utf8_values(strings)
+        offsets_arr, data_arr = self._validate_utf8_payload(offsets_arr, data_arr, len(self))
         self._dispatch_utf8_payload(offsets_arr, data_arr)
 
     def _normalize_fill_values(
@@ -89,15 +105,7 @@ class StringColumn:
         strings: Iterable[Optional[str]],
         expected_len: int,
     ) -> tuple[np.ndarray, np.ndarray]:
-        raw = bytearray()
-        offsets = [0]
-        for value in strings:
-            encoded = ('' if value is None else str(value)).encode('utf-8')
-            raw.extend(encoded)
-            offsets.append(len(raw))
-        _check_utf8_payload_size(len(raw))
-        offsets_arr = np.asarray(offsets, dtype=np.uint32)
-        data_arr = np.frombuffer(bytes(raw), dtype=np.uint8)
+        offsets_arr, data_arr = _pack_utf8_values(strings)
         return self._validate_utf8_payload(offsets_arr, data_arr, expected_len)
 
     def _validate_utf8_payload(
