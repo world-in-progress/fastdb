@@ -193,3 +193,44 @@ def test_pack_utf8_column_coerces_none_to_empty_string():
     offsets, data = pack_utf8_column([None, 'x'])
     np.testing.assert_array_equal(offsets, np.array([0, 0, 1], dtype=np.uint32))
     np.testing.assert_array_equal(data, np.frombuffer('x'.encode('utf-8'), dtype=np.uint8))
+import fastdb4py.core as core
+
+def test_native_string_column_sequence_setter_round_trips():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
+    table_name = CEStringPoint.__name__
+    layer_build = engine._fixed_layer_builds[table_name]
+    field_index = engine._fixed_table_fields[table_name]["name"]
+
+    layer_build.set_string_column_from_sequence(field_index, ["a", "be", "中"])
+    engine._publish_fixed_snapshot()
+
+    assert engine.table(CEStringPoint).column.name.to_pylist() == ["a", "be", "中"]
+
+
+def test_table_fill_routes_strings_to_native_sequence_setter(monkeypatch):
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+    table_name = CEStringPoint.__name__
+    field_index = engine._fixed_table_fields[table_name]["name"]
+    calls = []
+
+    def fake_setter(self, got_field_index, values):
+        calls.append((got_field_index, list(values)))
+        offsets, data = _pack_utf8(["hi", ""])
+        self.set_string_column_bulk(got_field_index, offsets, data)
+
+    monkeypatch.setattr(
+        core.WxLayerTableBuild,
+        "set_string_column_from_sequence",
+        fake_setter,
+        raising=False,
+    )
+
+    tbl.fill(
+        row_id=np.array([1, 2], dtype=np.uint32),
+        x=np.array([1.0, 2.0], dtype=np.float64),
+        name=["hi", None],
+    )
+
+    assert calls == [(field_index, ["hi", None])]
+    assert tbl.column.name.to_pylist() == ["hi", ""]
