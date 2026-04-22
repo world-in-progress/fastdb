@@ -6,7 +6,7 @@ from typing import TypeVar, Generic, Type, Generator
 from .. import core
 from ..registry import get_schema
 from ..reader import bind_feature, MappedFeature
-from ..string_column import StringColumn
+from ..string_column import StringColumn, _normalize_string_values
 from ..type import OriginFieldType
 
 T = TypeVar('T')
@@ -256,7 +256,10 @@ class Table(Generic[T]):
 
             column = getattr(col, field_name)
             if isinstance(column, StringColumn):
-                writes[field_name] = column._normalize_fill_values(values, expected)
+                try:
+                    writes[field_name] = _normalize_string_values(values, expected)
+                except ValueError as exc:
+                    raise ValueError(f'{field_name} {exc}') from None
                 continue
 
             arr = np.ascontiguousarray(values, dtype=_FILL_NUMERIC_DTYPES[field_type])

@@ -15,6 +15,7 @@ from .type import OriginFieldType
 from .push_compiler import (
     make_inlined_dispatch, make_batch_inlined_dispatch,
 )
+from .string_column import _StringSequencePayload
 
 T = TypeVar('T')
 
@@ -343,7 +344,9 @@ class ColumnEngine:
         try:
             for field_name, payload in writes.items():
                 field_index = field_ids[field_name]
-                if isinstance(payload, tuple):
+                if isinstance(payload, _StringSequencePayload):
+                    layer_build.set_string_column_from_sequence(field_index, payload.values)
+                elif isinstance(payload, tuple):
                     offsets, data = payload
                     layer_build.set_string_column_bulk(field_index, offsets, data)
                 else:

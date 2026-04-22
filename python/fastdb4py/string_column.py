@@ -51,6 +51,21 @@ def pack_utf8_column(strings: Iterable[Optional[str]]) -> tuple[np.ndarray, np.n
     return _pack_utf8_values(strings)
 
 
+class _StringSequencePayload:
+    def __init__(self, values: list[str | None]):
+        self.values = values
+
+
+def _normalize_string_values(
+    strings: Iterable[Optional[str]],
+    expected_len: int,
+) -> _StringSequencePayload:
+    values = list(strings)
+    if len(values) != expected_len:
+        raise ValueError(f'expected {expected_len} rows, got {len(values)}.')
+    return _StringSequencePayload(values)
+
+
 class StringColumn:
     def __init__(self, table: 'Table', field_index: int, field_name: str):
         self._table = table
@@ -96,9 +111,8 @@ class StringColumn:
         return [self.get(i) for i in range(len(self))]
 
     def fill(self, strings: Iterable[Optional[str]]) -> None:
-        offsets_arr, data_arr = _pack_utf8_values(strings)
-        offsets_arr, data_arr = self._validate_utf8_payload(offsets_arr, data_arr, len(self))
-        self._dispatch_utf8_payload(offsets_arr, data_arr)
+        payload = _normalize_string_values(strings, len(self))
+        self._dispatch_string_payload(payload)
 
     def _normalize_fill_values(
         self,
@@ -107,6 +121,17 @@ class StringColumn:
     ) -> tuple[np.ndarray, np.ndarray]:
         offsets_arr, data_arr = _pack_utf8_values(strings)
         return self._validate_utf8_payload(offsets_arr, data_arr, expected_len)
+
+    def _dispatch_string_payload(self, payload: _StringSequencePayload) -> None:
+        fill_handler = self._table._fixed_fill_handler
+        if fill_handler is not None:
+            fill_handler({self._field_name: payload})
+            return
+
+        raise RuntimeError(
+            'StringColumn.fill() requires a writable truncate table. '
+            'Loaded read-only databases support reads only.'
+        )
 
     def _validate_utf8_payload(
         self,

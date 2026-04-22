@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from fastdb4py import ColumnEngine, Layout, feature, F64, U32, STR, pack_utf8_column
+import fastdb4py.core as core
 import fastdb4py.string_column as string_column_mod
 
 
@@ -85,39 +86,33 @@ def test_string_column_fill_coerces_none_to_empty_string():
     assert tbl.column.name.to_pylist() == ["hi", ""]
 
 
-def test_string_column_fill_validates_payload_once(monkeypatch):
+def test_normalize_string_values_wraps_raw_sequence_payload():
+    payload = string_column_mod._normalize_string_values(["hi", None], 2)
+
+    assert isinstance(payload, string_column_mod._StringSequencePayload)
+    assert payload.values == ["hi", None]
+
+
+def test_string_column_fill_routes_sequence_payload_to_fixed_handler(monkeypatch):
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
-    column = tbl.column.name
-    validate_calls = []
-    original = column._validate_utf8_payload
+    captured = []
+    original = engine._fill_fixed_table
 
-    def capture_validate(offsets, data, expected_len):
-        validate_calls.append(expected_len)
-        return original(offsets, data, expected_len)
+    def capture_fill(table_name, writes):
+        captured.append((table_name, writes))
+        return original(table_name, writes)
 
-    monkeypatch.setattr(column, '_validate_utf8_payload', capture_validate)
-
-    column.fill(["hi", "中"])
-
-    assert validate_calls == [2]
-    assert column.to_pylist() == ["hi", "中"]
-
-
-def test_string_column_fill_uses_shared_utf8_packer(monkeypatch):
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
-    tbl = engine.table(CEStringPoint)
-    calls = []
-
-    def fake_pack(values):
-        calls.append(tuple(values))
-        return _pack_utf8(["hi", ""])
-
-    monkeypatch.setattr(string_column_mod, '_pack_utf8_values', fake_pack, raising=False)
+    monkeypatch.setattr(engine, '_fill_fixed_table', capture_fill)
 
     tbl.column.name.fill(["hi", None])
 
-    assert calls == [("hi", None)]
+    assert len(captured) == 1
+    table_name, writes = captured[0]
+    assert table_name == CEStringPoint.__name__
+    payload = writes["name"]
+    assert isinstance(payload, string_column_mod._StringSequencePayload)
+    assert payload.values == ["hi", None]
     assert tbl.column.name.to_pylist() == ["hi", ""]
 
 
@@ -193,7 +188,6 @@ def test_pack_utf8_column_coerces_none_to_empty_string():
     offsets, data = pack_utf8_column([None, 'x'])
     np.testing.assert_array_equal(offsets, np.array([0, 0, 1], dtype=np.uint32))
     np.testing.assert_array_equal(data, np.frombuffer('x'.encode('utf-8'), dtype=np.uint8))
-import fastdb4py.core as core
 
 def test_native_string_column_sequence_setter_round_trips():
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
