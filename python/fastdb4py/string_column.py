@@ -7,6 +7,13 @@ import numpy as np
 if TYPE_CHECKING:
     from .orm.table import Table
 
+_UINT32_MAX = np.iinfo(np.uint32).max
+
+
+def _check_utf8_payload_size(payload_size: int) -> None:
+    if payload_size > _UINT32_MAX:
+        raise ValueError(f'UTF-8 payload exceeds uint32 limit of {_UINT32_MAX} bytes.')
+
 
 def pack_utf8_column(strings: Iterable[Optional[str]]) -> tuple[np.ndarray, np.ndarray]:
     """Pack an iterable of strings or None values into UTF-8 offsets and data arrays.
@@ -20,6 +27,7 @@ def pack_utf8_column(strings: Iterable[Optional[str]]) -> tuple[np.ndarray, np.n
         encoded = ('' if value is None else str(value)).encode('utf-8')
         raw.extend(encoded)
         offsets.append(len(raw))
+    _check_utf8_payload_size(len(raw))
     offsets_arr = np.asarray(offsets, dtype=np.uint32)
     data_arr = np.frombuffer(bytes(raw), dtype=np.uint8)
     # Ensure dtypes and contiguity
@@ -72,13 +80,13 @@ class StringColumn:
     def to_pylist(self) -> list[str]:
         return [self.get(i) for i in range(len(self))]
 
-    def fill(self, strings: Iterable[str]) -> None:
+    def fill(self, strings: Iterable[Optional[str]]) -> None:
         offsets_arr, data_arr = self._normalize_fill_values(strings, len(self))
         self._dispatch_utf8_payload(offsets_arr, data_arr)
 
     def _normalize_fill_values(
         self,
-        strings: Iterable[str],
+        strings: Iterable[Optional[str]],
         expected_len: int,
     ) -> tuple[np.ndarray, np.ndarray]:
         raw = bytearray()
@@ -87,6 +95,7 @@ class StringColumn:
             encoded = ('' if value is None else str(value)).encode('utf-8')
             raw.extend(encoded)
             offsets.append(len(raw))
+        _check_utf8_payload_size(len(raw))
         offsets_arr = np.asarray(offsets, dtype=np.uint32)
         data_arr = np.frombuffer(bytes(raw), dtype=np.uint8)
         return self._validate_utf8_payload(offsets_arr, data_arr, expected_len)

@@ -73,6 +73,17 @@ def test_table_fill_accepts_string_field_keyword():
     assert tbl.column.name.to_pylist() == ["bad"]
 
 
+def test_string_column_fill_coerces_none_to_empty_string():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    tbl = engine.table(CEStringPoint)
+    tbl.fill(
+        row_id=np.array([1, 2], dtype=np.uint32),
+        x=np.array([1.0, 2.0], dtype=np.float64),
+    )
+    tbl.column.name.fill(["hi", None])
+    assert tbl.column.name.to_pylist() == ["hi", ""]
+
+
 def test_string_column_fill_validates_payload_once(monkeypatch):
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
