@@ -134,6 +134,8 @@ Use `truncate` when the row count is known ahead of time. For fixed-size tables,
 - **Default high-level path** — `tbl.fill(..., name=[...])` now routes raw strings through the native batch string-column API
 - **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
 
+If your pipeline starts from Python `str` values, prefer the default raw path. Reach for the prepacked path only when you already have UTF-8 offsets/data buffers from an upstream step.
+
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, F64, F32
 import numpy as np
@@ -202,7 +204,7 @@ tbl.fill(
 )
 
 # If your pipeline already produced UTF-8 offsets/data buffers, use the
-# advanced prepacked path directly:
+# advanced prepacked path directly instead of re-encoding Python strings:
 offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "be", "中"])
 tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 ```

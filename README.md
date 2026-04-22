@@ -65,7 +65,7 @@ If you are working on native internals or storage layout, start with:
 - **Default high-level path** — `tbl.fill(..., name=[...])` now routes raw strings through the native batch string-column API
 - **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
 
-For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Raw string inputs are packed inside the native batch API, while numeric columns still remain NumPy-backed after publication and string columns are exposed as `StringColumn` wrappers via `table.column.<name>`.
+For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Raw string inputs are packed inside the native batch API, while numeric columns still remain NumPy-backed after publication and string columns are exposed as `StringColumn` wrappers via `table.column.<name>`. If your input already starts as Python `str` objects, prefer this default raw path; use the prepacked path only when an upstream stage already produced UTF-8 offsets/data buffers.
 
 ```python
 import numpy as np
@@ -86,7 +86,7 @@ tbl.fill(
     name=["a", "bb", "ccc"],
 )
 
-# If you already own pre-encoded UTF-8 buffers, use the advanced path:
+# If you already own pre-encoded UTF-8 buffers, use the advanced path directly:
 offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "bb", "ccc"])
 tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 ```
