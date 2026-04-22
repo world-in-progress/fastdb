@@ -613,6 +613,8 @@ namespace wx
             setStringColumnBulk(field_id, kEmptyOffsets, 1, nullptr, 0);
             return;
         }
+        if (count != m_feature_count)
+            return;
         if (values == nullptr)
             return;
         vector<u32> offsets;
