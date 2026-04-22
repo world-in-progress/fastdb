@@ -60,12 +60,16 @@ If you are working on native internals or storage layout, start with:
 
 ## Python `ColumnEngine.truncate()` with `STR`
 
-`fastdb4py` `ColumnEngine.truncate()` now supports UTF-8 `STR` fields.
-For fixed tables, the default bulk-ingest path is a single `Table.fill(...)` call that can batch numeric columns and `STR` payloads together. Numeric columns still remain NumPy-backed after publication, while string columns are exposed as `StringColumn` wrappers via `table.column.<name>`.
+`fastdb4py` `ColumnEngine.truncate()` now supports UTF-8 `STR` fields in two usage tiers:
+
+- **Default high-level path** — `tbl.fill(..., name=[...])`
+- **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
+
+For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Numeric columns still remain NumPy-backed after publication, while string columns are exposed as `StringColumn` wrappers via `table.column.<name>`.
 
 ```python
 import numpy as np
-from fastdb4py import ColumnEngine, Layout, F64, STR, feature
+from fastdb4py import ColumnEngine, Layout, F64, STR, feature, pack_utf8_column
 
 @feature
 class Point:
@@ -82,9 +86,9 @@ tbl.fill(
     name=["a", "bb", "ccc"],
 )
 
-# If you already own pre-encoded UTF-8 buffers, the string column can still
-# be filled directly:
-# tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
+# If you already own pre-encoded UTF-8 buffers, use the advanced path:
+offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "bb", "ccc"])
+tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 ```
 
 ## CLI tools

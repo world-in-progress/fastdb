@@ -24,6 +24,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - `FastSerializer.loads_shm(shm_name, length, offset, root_type)`: deserialize a Feature directly from a named shared memory segment without copying to an intermediate `bytes` object. Returns a fully detached Feature (pure Python mode) after closing the shared memory mapping.
 - **Native list columns**: `List[F64]`, `List[U32]`, `List[I32]`, `List[F32]`, `List[U8]`, `List[U16]`, and `List[SomeFeature]` are now first-class column types in the ORM. Features with list fields are stored directly in shared-memory ORM layers — no `FastSerializer` needed. Accessing `feature.my_list` returns a zero-copy NumPy array (numeric) or a lazy `FeatureRefList` (refs) backed by C++ memory. Cyclic object graphs are supported via two-pass DFS writing and back-edge patching.
 - `ColumnEngine.truncate()` now accepts `STR` fields, exposes them through a dedicated `StringColumn` wrapper with bulk `fill()` / `fill_utf8()` APIs, and lets fixed tables batch mixed numeric + `STR` payloads through `Table.fill(**cols)`.
+- Python docs and benchmark now show the two UTF-8 truncate ingest tiers: high-level `tbl.fill(..., name=[...])` and advanced `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`, with benchmark output split into raw-string vs prepacked paths.
 
 ### Performance
 - `FastSerializer` numeric list encoding/decoding now uses numpy instead of `struct.pack`/`struct.unpack`, yielding ~64% faster List[U32] dumps for N=10000.

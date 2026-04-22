@@ -129,7 +129,10 @@ The field order is part of the schema contract. It affects table layout, seriali
 
 ### Fixed-size tables with `ColumnEngine.truncate`
 
-Use `truncate` when the row count is known ahead of time. This is the fastest path for bulk ingest into fixed-size tables: `Table.fill(...)` batches numeric columns, and it can batch UTF-8 `STR` fields alongside them in the same call.
+Use `truncate` when the row count is known ahead of time. For fixed-size tables, there are two UTF-8 string-ingest tiers:
+
+- **Default high-level path** — `tbl.fill(..., name=[...])`
+- **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
 
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, F64, F32
@@ -176,10 +179,10 @@ db = ColumnEngine.truncate([
 ])
 ```
 
-For fixed-size tables with string columns, `Table.fill(...)` is the primary batch-ingest API. It batches numeric and UTF-8 `STR` data together with upfront length validation:
+For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric and UTF-8 `STR` data together with upfront length validation:
 
 ```python
-from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR
+from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR, pack_utf8_column
 import numpy as np
 
 
@@ -198,9 +201,10 @@ tbl.fill(
     name=["a", "be", "中"],
 )
 
-# If your pipeline already produced UTF-8 offsets/data buffers, the same
-# truncate table can still take the lower-level string path directly:
-# tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
+# If your pipeline already produced UTF-8 offsets/data buffers, use the
+# advanced prepacked path directly:
+offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "be", "中"])
+tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 ```
 
 ### Dynamic tables with `ObjectEngine.create` + `push`

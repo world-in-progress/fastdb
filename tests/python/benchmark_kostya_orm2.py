@@ -5,13 +5,14 @@ Inspired by Kostya's benchmarks (github.com/kostya/benchmarks).
 
 Data structure: 'Coordinate' records — row_id (u32), x/y/z (float64), name (UTF-8 string).
 
-Compares fastdb ColumnEngine in multiple modes plus ObjectEngine, PyArrow, and pickle:
-  - fastdb ColumnEngine push path            (OLAP/batch columnar, push + combine)
-  - fastdb ColumnEngine truncate + STR path  (known-size truncate + unified tbl.fill(..., name=names))
-  - fastdb ColumnEngine truncate fast path   (known-size numeric-only apples-to-apples)
-  - fastdb ObjectEngine                      (OLTP/graph, deferred batch push + combine)
-  - PyArrow                                  (columnar IPC)
-  - pickle                                   (Python native binary)
+  Compares fastdb ColumnEngine in multiple modes plus ObjectEngine, PyArrow, and pickle:
+   - fastdb ColumnEngine push path            (OLAP/batch columnar, push + combine)
+   - fastdb ColumnEngine truncate + STR path  (raw strings: known-size truncate + unified tbl.fill(..., name=names))
+   - fastdb ColumnEngine truncate + STR path  (prepacked: pack_utf8_column([...]) + tbl.column.name.fill_utf8(...))
+   - fastdb ColumnEngine truncate fast path   (known-size numeric-only apples-to-apples)
+   - fastdb ObjectEngine                      (OLTP/graph, deferred batch push + combine)
+   - PyArrow                                  (columnar IPC)
+   - pickle                                   (Python native binary)
 
 Phases measured (milliseconds, median of `reps` runs):
   build      : construct/fill N in-memory records or columns
@@ -42,7 +43,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
-from fastdb4py import feature, ColumnEngine, ObjectEngine, Layout, F64, U32, STR
+from fastdb4py import feature, ColumnEngine, ObjectEngine, Layout, F64, U32, STR, pack_utf8_column
 
 try:
     import pyarrow as pa
@@ -92,6 +93,15 @@ class CoordNumeric:
 
 def _make_name(i: int) -> str:
     return f"coord_{i % 50000:05d}"
+
+
+def _make_coord_columns(N: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, list[str]]:
+    ids = np.arange(N, dtype=np.uint32)
+    xs = np.arange(N, dtype=np.float64) * 0.1
+    ys = np.arange(N, dtype=np.float64) * 0.2
+    zs = np.arange(N, dtype=np.float64) * 0.3
+    names = [_make_name(i) for i in range(N)]
+    return ids, xs, ys, zs, names
 
 
 def _shm_write(data: bytes) -> shared_memory.SharedMemory:
@@ -472,11 +482,7 @@ def bench_column_trunc_str(N: int, reps: int) -> dict:
     shm_name = f"cets_kostya_{uuid.uuid4().hex[:8]}"
 
     def do_build():
-        ids = np.arange(N, dtype=np.uint32)
-        xs = np.arange(N, dtype=np.float64) * 0.1
-        ys = np.arange(N, dtype=np.float64) * 0.2
-        zs = np.arange(N, dtype=np.float64) * 0.3
-        names = [_make_name(i) for i in range(N)]
+        ids, xs, ys, zs, names = _make_coord_columns(N)
         orm = ColumnEngine.truncate([Layout(Coord, N)])
         tbl = orm.table(Coord)
         tbl.fill(row_id=ids, x=xs, y=ys, z=zs, name=names)
@@ -535,7 +541,87 @@ def bench_column_trunc_str(N: int, reps: int) -> dict:
 
     total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
     return {
-        "system": "column_trunc_str",
+        "system": "column_trunc_str_raw",
+        "build_ms": round(build_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
+        "deserial_ms": round(deserial_ms, 2),
+        "read_ms": round(read_ms, 2),
+        "total_ms": round(total_ms, 2),
+        "size_bytes": size_bytes,
+    }
+
+
+def bench_column_trunc_str_prepacked(N: int, reps: int) -> dict:
+    """ColumnEngine via truncate(Layout) + pack_utf8_column(...) + fill_utf8(...)."""
+    shm_name = f"cetsp_kostya_{uuid.uuid4().hex[:8]}"
+
+    def do_build():
+        ids, xs, ys, zs, names = _make_coord_columns(N)
+        offsets, data = pack_utf8_column(names)
+        orm = ColumnEngine.truncate([Layout(Coord, N)])
+        tbl = orm.table(Coord)
+        tbl.fill(row_id=ids, x=xs, y=ys, z=zs)
+        return orm, offsets, data
+
+    build_ms = _median_ms(do_build, reps)
+    orm, offsets, data = do_build()
+    tbl = orm.table(Coord)
+
+    def do_encode():
+        tbl.column.name.fill_utf8(offsets, data)
+
+    encode_ms = _median_ms(do_encode, reps)
+    do_encode()
+
+    _raw = bytes(orm._origin.buffer().as_array(np.uint8))
+
+    def do_shm():
+        s = _shm_write(_raw)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+
+    orm.share(shm_name)
+
+    try:
+        _probe = shared_memory.SharedMemory(name=shm_name)
+        size_bytes = _probe.size
+        _probe.close()
+    except Exception:
+        size_bytes = 0
+
+    orm2 = None
+    try:
+        def do_deserial():
+            h = ColumnEngine.load(shm_name)
+            h.close()
+
+        deserial_ms = _median_ms(do_deserial, reps)
+        orm2 = ColumnEngine.load(shm_name)
+
+        def do_read():
+            tbl = orm2.table(Coord)
+            cx = tbl.column.x
+            cy = tbl.column.y
+            cz = tbl.column.z
+            return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
+
+        read_ms = _median_ms(do_read, reps)
+    finally:
+        if orm2 is not None:
+            orm2.unlink()
+        else:
+            try:
+                h = ColumnEngine.load(shm_name)
+                h.unlink()
+            except Exception:
+                pass
+
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
+    return {
+        "system": "column_trunc_str_prepacked",
         "build_ms": round(build_ms, 2),
         "encode_ms": round(encode_ms, 2),
         "shm_ms": round(shm_ms, 2),
@@ -885,23 +971,26 @@ def main():
     print("  Phases (ms, median): build | encode (combine/dumps) | shm | deserialize | read sum(x+y+z)")
     print("  Throughput: million records/sec; B/rec: wire bytes per record")
     print("  Notes:")
-    print("    column_push       = ColumnEngine.create() + per-row push() + combine()")
-    print("    column_trunc_str  = ColumnEngine.truncate(Layout) + tbl.fill(..., name=names)")
+    print("    column_push            = ColumnEngine.create() + per-row push() + combine()")
+    print("    column_trunc_str_raw    = ColumnEngine.truncate(Layout) + tbl.fill(..., name=names)")
+    print("    column_trunc_str_prepacked = pack_utf8_column(names) + tbl.column.name.fill_utf8(...)")
+    print("                               (build = string prep + packing; encode = native UTF-8 ingest)")
     print("    column_truncate   = ColumnEngine.truncate(Layout) + tbl.fill(numpy)  [numeric-only fast path]")
     print("    object            = ObjectEngine.create() + per-row push() + combine()")
     print("    arrow / arrow_num = PyArrow Table + IPC stream + numpy read")
     print("    pickle / pickle_num = list[dict] + pickle.dumps/loads + dict iteration")
-    print("    truncate paths report encode_ms = 0 because the fixed buffer is already materialized during build/fill")
+    print("    raw truncate path reports encode_ms = 0; prepacked path reports native fill_utf8 in encode_ms")
     print("=" * 95)
 
     all_results = []
 
     full_benches = [
-        ("object",      bench_object_engine),
-        ("column_push", bench_column_push),
-        ("column_trunc_str", bench_column_trunc_str),
-        ("arrow",       bench_arrow),
-        ("pickle",      bench_pickle),
+        ("object",                  bench_object_engine),
+        ("column_push",             bench_column_push),
+        ("column_trunc_str_raw",    bench_column_trunc_str),
+        ("column_trunc_str_prepacked", bench_column_trunc_str_prepacked),
+        ("arrow",                   bench_arrow),
+        ("pickle",                  bench_pickle),
     ]
     numeric_benches = [
         ("column_truncate", bench_column_truncate),
@@ -923,8 +1012,8 @@ def main():
         print()
         print_table(
             full_results, N,
-            title="Section A — Full schema with STR",
-            schema_desc="row_id: U32 | x, y, z: F64 | name: STR (ColumnEngine truncate uses unified tbl.fill)",
+            title="Section A — Full schema with STR (raw vs prepacked)",
+            schema_desc="row_id: U32 | x, y, z: F64 | name: STR (raw tbl.fill vs prepacked pack_utf8_column + fill_utf8)",
         )
 
         # ---- Section B: numeric-only (apples-to-apples for ColumnEngine truncate) ----
