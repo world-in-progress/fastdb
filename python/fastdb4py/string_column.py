@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, TYPE_CHECKING
+from typing import Iterable, TYPE_CHECKING, Optional
 
 import numpy as np
 
@@ -8,8 +8,8 @@ if TYPE_CHECKING:
     from .orm.table import Table
 
 
-def pack_utf8_column(strings: Iterable[str]) -> tuple[np.ndarray, np.ndarray]:
-    """Pack an iterable of strings (or None) into UTF-8 offsets and data arrays.
+def pack_utf8_column(strings: Iterable[Optional[str]]) -> tuple[np.ndarray, np.ndarray]:
+    """Pack an iterable of strings or None values into UTF-8 offsets and data arrays.
 
     - Coerces None to an empty string
     - Returns (offsets: np.uint32 array, data: np.uint8 array)
