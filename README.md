@@ -148,7 +148,7 @@ export class Point extends Feature {
 
 `FastSerializer` is now considered a legacy object-graph serializer. It remains in the package for existing users, benchmarks, and migration work, but new C-Two integration should be based on neutral `fastdb.schema.v1` export plus explicit ColumnEngine/ObjectEngine codec profiles instead of the old FastSerializer hybrid blob protocol.
 
-For C-Two and other RPC runtimes, fastdb behaves as a provider-owned payload codec family: fastdb exports schema identity and adapters through `fastdb4py.schema` and `fastdb4py.c_two_provider`, while the runtime records an opaque codec reference and invokes encode/decode hooks without understanding fastdb internals. When C-Two is installed, `fastdb4py.c_two_provider.install_c_two_provider()` registers a fastdb-owned optional wrapper provider with `cc.use_codec(...)`; C-Two core still does not import fastdb.
+For C-Two and other RPC runtimes, fastdb behaves as a provider-owned payload codec family: fastdb exports schema identity and adapters through `fastdb4py.schema` and `fastdb4py.c_two_provider`, while the runtime records an opaque codec reference and invokes encode/decode hooks without understanding fastdb internals. When C-Two is installed, `fastdb4py.c_two_provider.install_c_two_provider()` registers a fastdb-owned optional wrapper provider with `cc.use_codec(...)`; C-Two core still does not import fastdb. The next provider-codegen step is to consume `fastdb.schema.v1` descriptors referenced by C-Two codec requirements and generate TypeScript payload helpers or explicit unsupported stubs without making fastdb a CRM IDL.
 
 ## Performance Notes
 

@@ -14,7 +14,7 @@ fastdb should expose `fastdb.schema.v1` and provider-owned codec adapters; it sh
 
 ## Current Implementation Status
 
-This document defines the target shape for the fastdb / C-Two integration. Today, fastdb has `@feature` classes, `LayerSchema`, `ColumnEngine`, `ObjectEngine`, Python/TypeScript bindings, legacy `FastSerializer`, `fastdb.schema.v1` export, strict portable schema validation, engine capability reports, opaque codec ref helpers, a dependency-neutral `FastdbCodecProvider` candidate/adapter pilot, and a fastdb-owned optional `CTwoFastdbCodecProvider` / `install_c_two_provider()` wrapper that imports C-Two only when a user explicitly installs/registers it. It still does not make C-Two import fastdb, and it does not make `FastSerializer` the provider foundation.
+This document defines the target shape for the fastdb / C-Two integration. Today, fastdb has `@feature` classes, `LayerSchema`, `ColumnEngine`, `ObjectEngine`, Python/TypeScript bindings, legacy `FastSerializer`, `fastdb.schema.v1` export, strict portable schema validation, engine capability reports, opaque codec ref helpers, a dependency-neutral `FastdbCodecProvider` candidate/adapter pilot, and a fastdb-owned optional `CTwoFastdbCodecProvider` / `install_c_two_provider()` wrapper that imports C-Two only when a user explicitly installs/registers it. It still does not make C-Two import fastdb, it does not make `FastSerializer` the provider foundation, and it does not yet generate TypeScript payload codec helpers from c-two contract descriptors.
 
 ## Neutral Schema
 
@@ -105,6 +105,14 @@ The provider package owns encode/decode/from_buffer adapters. C-Two owns adapter
 
 Because C-Two expects concrete transfer adapters at runtime, fastdb should expose a small optional wrapper such as `install_c_two_provider()` that turns dependency-neutral candidates into C-Two `@transferable(codec_ref=...)` adapter classes when C-Two is present. That wrapper belongs in fastdb or a fastdb-owned integration package, not in C-Two core.
 
+## Provider Codegen Integration
+
+C-Two codegen and fastdb codegen should compose through descriptors rather than shared runtime imports. C-Two should read `c-two.contract.v1` and generate the RPC contract skeleton, typed call surface, route identity constants, and codec requirement declarations. fastdb should read the `fastdb.schema.v1` descriptors referenced by those codec requirements and generate provider-owned TypeScript payload helpers where the schema and engine profile are supported.
+
+This means fastdb codegen should not parse CRM methods as a service IDL and should not decide route names, relay behavior, retries, or contract compatibility. Its job is narrower: map `fastdb.schema.v1` and codec ids such as `org.fastdb.columnar` or `org.fastdb.object-graph` to TypeScript feature/schema declarations, encode/decode helper placeholders, and clear unsupported diagnostics for schemas that cannot be represented by the TypeScript/WASM binding.
+
+The generated artifacts should be deterministic and hash-aware. If a C-Two descriptor says a payload requires `schema_sha256 = abc...`, the fastdb helper should either generate or select helpers for exactly that schema hash, or fail with a diagnostic that names the missing codec id and schema hash. It should not fall back to a similarly named feature class or a runtime cache.
+
 ## Implementation Order
 
 1. Add neutral schema descriptor dataclasses or plain dict builders in `fastdb4py`, with canonical JSON and hash tests.
@@ -113,6 +121,7 @@ Because C-Two expects concrete transfer adapters at runtime, fastdb should expos
 4. Update docs and examples to position FastSerializer as legacy.
 5. Add a provider prototype that emits codec refs and adapters in fastdb-owned code.
 6. Let C-Two consume only the provider output and adapter hooks; do not add fastdb imports to C-Two core.
+7. Add provider-owned codegen helpers that consume `fastdb.schema.v1` descriptors referenced by C-Two codec requirements and emit TypeScript payload helpers or explicit unsupported stubs.
 
 ## Non-Goals
 
