@@ -2,7 +2,7 @@
 
 Browser-oriented TypeScript bindings for `fastdb`, powered by WebAssembly.
 
-`fastdb4ts` brings the `fastdb` storage model to TypeScript with a browser-first API centered around typed schemas, structured table access, binary buffer transport, and graph serialization.
+`fastdb4ts` brings the `fastdb` storage model to TypeScript with a browser-first API centered around typed schemas, structured table access, and binary buffer transport.
 
 ## What this package provides
 
@@ -12,8 +12,8 @@ Browser-oriented TypeScript bindings for `fastdb`, powered by WebAssembly.
   - use `ORM`, `TableDefn`, `Table`, and column accessors
 - **Binary buffer roundtrips**
   - import/export databases as `Uint8Array` / `ArrayBuffer`
-- **Graph serialization**
-  - use `FastSerializer` for nested features, lists, and cyclic references
+- **Legacy graph serialization**
+  - `FastSerializer` remains available for existing nested-feature and cyclic-reference users, but new cross-runtime provider work should use neutral schema descriptors and explicit codec profiles
 - **Shared native semantics**
   - backed by the same C++ core as `fastdb4py`
 
@@ -26,7 +26,7 @@ Included:
 - browser-first WASM runtime
 - `Feature` + `defineSchema(...)`
 - `ORM`, `TableDefn`, `Table`, column access
-- `FastSerializer`
+- `FastSerializer` legacy compatibility APIs
 - `Uint8Array` / `ArrayBuffer` import/export
 
 Not included in the current TS package:
@@ -159,9 +159,9 @@ const copyTable = copy.table(Particle);
 console.log(copyTable.get(2).x); // 2.0
 ```
 
-## FastSerializer
+## FastSerializer Legacy Compatibility
 
-`FastSerializer` is the graph-oriented layer for feature graphs that are more naturally represented as nested objects than flat tables.
+`FastSerializer` is the legacy graph-oriented layer for feature graphs that are more naturally represented as nested objects than flat tables. It remains available for compatibility and migration tests, but it is not the foundation for new C-Two provider work.
 
 Supported scenarios include:
 
@@ -287,4 +287,3 @@ For fuller project documentation, see:
 - TypeScript/WASM binding guide: [`ts/README.md`](../README.md)
 - C++ core guide: [`fastcarto/README.md`](../../fastcarto/README.md)
 - Python binding guide: [`python/README.md`](../../python/README.md)
-

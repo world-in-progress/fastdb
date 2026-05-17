@@ -10,21 +10,22 @@ This repository now contains three closely related layers:
 
 - **C++ core** — native storage engine, binary layout, and serialization primitives
 - **`fastdb4py`** — Python bindings via SWIG, with NumPy-oriented columnar access and shared-memory IPC
-- **`fastdb4ts`** — TypeScript bindings via WebAssembly/Embind, focused on browser-friendly typed data access and serializer compatibility
+- **`fastdb4ts`** — TypeScript bindings via WebAssembly/Embind, focused on browser-friendly typed data access and schema-compatible table access
 
 **Core design goals:**
 - **Zero-copy columnar access** — efficient field-oriented access for high-volume numerical workloads
 - **Ref-graph support** — Features can reference other Features across tables, forming typed object graphs
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
-- **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and serializer semantics
-- **Buffer-protocol serialization** — numpy arrays and numeric lists stored via dedicated columnar layers with `memcpy`-level performance
-- **Schema-driven codegen** — Python Feature classes serve as the single source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
+- **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and schema semantics
+- **Schema-driven codegen** — Python `@feature` classes can serve as the source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
+- **Provider-friendly schema identity** — future `fastdb.schema.v1` descriptors should let runtimes such as C-Two treat fastdb as an opaque payload codec family rather than as a service IDL
 
 ## Documentation map
 
 - **Python binding (`fastdb4py`)**: see [`python/README.md`](python/README.md)
 - **TypeScript binding (`fastdb4ts`)**: see [`ts/README.md`](ts/README.md)
 - **C++ core (`fastcarto/fastdb`)**: see [`fastcarto/README.md`](fastcarto/README.md)
+- **C-Two provider architecture**: see [`docs/c-two-provider-architecture.md`](docs/c-two-provider-architecture.md)
 - **TypeScript/WASM analysis docs**: see [`ts/analysis/`](ts/analysis/)
 - **Codegen CLI (`fdb codegen`)**: see [CLI tools](#cli-tools) below, or the full reference in [`python/README.md`](python/README.md)
 
@@ -143,6 +144,12 @@ export class Point extends Feature {
 }
 ```
 
+## Serialization And Provider Direction
+
+`FastSerializer` is now considered a legacy object-graph serializer. It remains in the package for existing users, benchmarks, and migration work, but new C-Two integration should be based on neutral `fastdb.schema.v1` export plus explicit ColumnEngine/ObjectEngine codec profiles instead of the old FastSerializer hybrid blob protocol.
+
+For C-Two and other RPC runtimes, fastdb should behave as a provider-owned payload codec family: fastdb exports schema identity and adapters, while the runtime records an opaque codec reference and invokes encode/decode hooks without understanding fastdb internals.
+
 ## Performance Notes
 
 | Pattern | Throughput | Notes |
@@ -153,8 +160,8 @@ export class Point extends Feature {
 | `table.iter_reuse()` row access | **~350 ns/row** | Reuses Feature wrapper, no allocation |
 | `for feat in table` row access | **~1.2 µs/row** | Allocates Feature wrapper per row |
 | `feat.x` single field read (db-mapped) | **~420 ns** | 1 SWIG call |
-| `FastSerializer.dumps/loads` (Python) | **~70 µs** (complex graph) | 1.6× pickle dumps, 21× faster loads at N=10k |
-| `FastSerializer.dumps/loads` (TypeScript) | **~75 µs** (complex graph) | ~25% faster than unoptimized; TypedArray bulk writes + pre-allocated ByteWriter |
+| `FastSerializer.dumps/loads` (Python, legacy) | **~70 µs** (complex graph) | Retained for compatibility; not the foundation for new C-Two provider work |
+| `FastSerializer.dumps/loads` (TypeScript, legacy) | **~75 µs** (complex graph) | Retained for compatibility; not the foundation for new C-Two provider work |
 
 **Recommended patterns by use case:**
 
