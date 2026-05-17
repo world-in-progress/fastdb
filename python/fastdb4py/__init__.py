@@ -14,7 +14,7 @@ from .schema import (
     SCHEMA_VERSION, canonical_schema_json, columnar_capability,
     codec_ref_for_feature, export_schema, object_graph_capability, schema_sha256,
 )
-from .c_two_provider import FastdbCodecProvider
+from .c_two_provider import CTwoFastdbCodecProvider, FastdbCodecProvider, install_c_two_provider
 from .string_column import StringColumn, pack_utf8_column
 
 __all__ = [
@@ -23,7 +23,7 @@ __all__ = [
     'FastSerializer', 'pack_utf8_column',
     'SCHEMA_VERSION', 'canonical_schema_json', 'columnar_capability',
     'codec_ref_for_feature', 'export_schema', 'object_graph_capability',
-    'schema_sha256', 'FastdbCodecProvider',
+    'schema_sha256', 'CTwoFastdbCodecProvider', 'FastdbCodecProvider', 'install_c_two_provider',
     'BOOL', 'U8', 'U16', 'U32', 'I32', 'U8N', 'U16N',
     'F32', 'F64', 'STR', 'WSTR', 'REF', 'BYTES',
 ]

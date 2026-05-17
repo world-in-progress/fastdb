@@ -8,7 +8,7 @@ from fastdb4py.schema import (
     object_graph_capability,
     schema_sha256,
 )
-from fastdb4py.c_two_provider import FastdbCodecProvider
+from fastdb4py.c_two_provider import CTwoFastdbCodecProvider, FastdbCodecProvider, install_c_two_provider
 
 
 @feature
@@ -181,3 +181,48 @@ def test_fastdb_provider_object_graph_adapter_round_trips_list_refs():
     assert restored.root.child.name == 'leaf-list'
     assert len(restored.leaves) == 1
     assert restored.leaves[0].x == pytest.approx(4.0)
+
+
+def test_c_two_wrapper_provider_materializes_runtime_transferable_with_fake_c_two():
+    class FakeCC:
+        def __init__(self):
+            self.registered_provider = None
+
+        def transferable(self, *, codec_ref):
+            def decorate(cls):
+                cls.__cc_codec_ref__ = codec_ref
+                return cls
+
+            return decorate
+
+        def use_codec(self, provider):
+            self.registered_provider = provider
+            return provider
+
+    cc = FakeCC()
+    provider = CTwoFastdbCodecProvider(cc_module=cc)
+
+    candidates = provider.candidates_for_type(C2SchemaPoint)
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    transferable = candidate['transferable']
+    ref = codec_ref_for_feature(C2SchemaPoint, profile='columnar')
+    assert candidate['codec_ref'] == ref
+    assert transferable.__cc_codec_ref__ == ref
+
+    point = C2SchemaPoint(x=8.0, y=9.0, name='rpc')
+    payload = transferable.serialize(point)
+    restored = transferable.deserialize(payload)
+    from_buffer = transferable.from_buffer(memoryview(payload))
+
+    assert restored.x == pytest.approx(8.0)
+    assert restored.name == 'rpc'
+    assert from_buffer.y == pytest.approx(9.0)
+
+    same_candidate = provider.candidates_for_type(C2SchemaPoint)[0]
+    assert same_candidate['transferable'] is transferable
+
+    installed = install_c_two_provider(cc_module=cc)
+    assert isinstance(installed, CTwoFastdbCodecProvider)
+    assert cc.registered_provider is installed

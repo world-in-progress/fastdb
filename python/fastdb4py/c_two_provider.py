@@ -97,6 +97,94 @@ class FastdbCodecProvider:
         )
 
 
+class CTwoFastdbCodecProvider:
+    """C-Two-facing fastdb provider wrapper.
+
+    The base ``FastdbCodecProvider`` stays dependency-neutral. This wrapper is
+    optional glue for processes that already imported C-Two and want to install
+    fastdb adapters into ``cc.use_codec(...)``.
+    """
+
+    def __init__(
+        self,
+        *,
+        cc_module: object | None = None,
+        provider: FastdbCodecProvider | None = None,
+    ):
+        self._cc = cc_module
+        self._provider = provider or FastdbCodecProvider()
+        self._transferable_cache: dict[tuple[type, str, str | None], type] = {}
+
+    def candidates_for_type(
+        self,
+        typ: type,
+        context: object | None = None,
+    ) -> list[dict[str, Any]]:
+        candidates = self._provider.candidates_for_type(typ, context)
+        return [
+            {
+                'codec_ref': candidate['codec_ref'],
+                'profile': candidate['profile'],
+                'schema': candidate['schema'],
+                'transferable': self._transferable_for(typ, candidate),
+            }
+            for candidate in candidates
+        ]
+
+    def _transferable_for(self, typ: type, candidate: dict[str, Any]) -> type:
+        codec_ref = candidate['codec_ref']
+        key = (typ, candidate['profile'], codec_ref.get('schema_sha256'))
+        cached = self._transferable_cache.get(key)
+        if cached is not None:
+            return cached
+
+        cc = self._c_two()
+        adapter = FastdbCodecAdapter(
+            feature_type=typ,
+            profile=candidate['profile'],
+            codec_ref=codec_ref,
+        )
+
+        @cc.transferable(codec_ref=codec_ref)
+        class FastdbC2Transferable:
+            def serialize(value, _adapter=adapter) -> bytes:
+                return _adapter.serialize(value)
+
+            def deserialize(data, _adapter=adapter):
+                return _adapter.deserialize(data)
+
+            def from_buffer(data: memoryview, _adapter=adapter):
+                return _adapter.from_buffer(data)
+
+        name = f'{typ.__name__}Fastdb{candidate["profile"].replace(".", "_")}C2Transferable'
+        FastdbC2Transferable.__name__ = name
+        FastdbC2Transferable.__qualname__ = name
+        self._transferable_cache[key] = FastdbC2Transferable
+        return FastdbC2Transferable
+
+    def _c_two(self) -> object:
+        if self._cc is None:
+            import c_two as cc
+
+            self._cc = cc
+        return self._cc
+
+
+def install_c_two_provider(
+    *,
+    cc_module: object | None = None,
+    provider: FastdbCodecProvider | None = None,
+) -> CTwoFastdbCodecProvider:
+    cc = cc_module
+    if cc is None:
+        import c_two as cc_module_import
+
+        cc = cc_module_import
+    c_two_provider = CTwoFastdbCodecProvider(cc_module=cc, provider=provider)
+    cc.use_codec(c_two_provider)
+    return c_two_provider
+
+
 def _object_engine_from_bytes(payload: bytes) -> ObjectEngine:
     engine = ObjectEngine()
     engine._db = core.WxDatabase.load_xbuffer(payload)  # noqa: SLF001

@@ -14,7 +14,7 @@ fastdb should expose `fastdb.schema.v1` and provider-owned codec adapters; it sh
 
 ## Current Implementation Status
 
-This document defines the target shape for the fastdb / C-Two integration. Today, fastdb has `@feature` classes, `LayerSchema`, `ColumnEngine`, `ObjectEngine`, Python/TypeScript bindings, legacy `FastSerializer`, `fastdb.schema.v1` export, strict portable schema validation, engine capability reports, opaque codec ref helpers, and a dependency-neutral `FastdbCodecProvider` candidate/adapter pilot. It still does not make C-Two import fastdb, and it does not make `FastSerializer` the provider foundation.
+This document defines the target shape for the fastdb / C-Two integration. Today, fastdb has `@feature` classes, `LayerSchema`, `ColumnEngine`, `ObjectEngine`, Python/TypeScript bindings, legacy `FastSerializer`, `fastdb.schema.v1` export, strict portable schema validation, engine capability reports, opaque codec ref helpers, a dependency-neutral `FastdbCodecProvider` candidate/adapter pilot, and a fastdb-owned optional `CTwoFastdbCodecProvider` / `install_c_two_provider()` wrapper that imports C-Two only when a user explicitly installs/registers it. It still does not make C-Two import fastdb, and it does not make `FastSerializer` the provider foundation.
 
 ## Neutral Schema
 
@@ -102,6 +102,8 @@ For an object graph, it can return:
 ```
 
 The provider package owns encode/decode/from_buffer adapters. C-Two owns adapter invocation and transport. This keeps c-two neutral while allowing fastdb to evolve storage and schema internals.
+
+Because C-Two expects concrete transfer adapters at runtime, fastdb should expose a small optional wrapper such as `install_c_two_provider()` that turns dependency-neutral candidates into C-Two `@transferable(codec_ref=...)` adapter classes when C-Two is present. That wrapper belongs in fastdb or a fastdb-owned integration package, not in C-Two core.
 
 ## Implementation Order
 
