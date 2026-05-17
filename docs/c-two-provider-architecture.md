@@ -14,7 +14,7 @@ fastdb should expose `fastdb.schema.v1` and provider-owned codec adapters; it sh
 
 ## Current Implementation Status
 
-This document defines the target shape for the next fastdb upgrade. Today, fastdb already has `@feature` classes, `LayerSchema`, `ColumnEngine`, `ObjectEngine`, Python/TypeScript bindings, and legacy `FastSerializer`; it does not yet expose `fastdb.schema.v1`, strict portable schema export, engine capability reports, or a C-Two codec provider.
+This document defines the target shape for the fastdb / C-Two integration. Today, fastdb has `@feature` classes, `LayerSchema`, `ColumnEngine`, `ObjectEngine`, Python/TypeScript bindings, legacy `FastSerializer`, `fastdb.schema.v1` export, strict portable schema validation, engine capability reports, opaque codec ref helpers, and a dependency-neutral `FastdbCodecProvider` candidate/adapter pilot. It still does not make C-Two import fastdb, and it does not make `FastSerializer` the provider foundation.
 
 ## Neutral Schema
 
