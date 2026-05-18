@@ -14,7 +14,7 @@ fastdb should expose `fastdb.schema.v1` and provider-owned codec adapters; it sh
 
 ## Current Implementation Status
 
-This document defines the target shape for the fastdb / C-Two integration. Today, fastdb has `@feature` classes, `LayerSchema`, `ColumnEngine`, `ObjectEngine`, Python/TypeScript bindings, legacy `FastSerializer`, `fastdb.schema.v1` export, strict portable schema validation, engine capability reports, opaque codec ref helpers, a dependency-neutral `FastdbCodecProvider` candidate/adapter pilot, and a fastdb-owned optional `CTwoFastdbCodecProvider` / `install_c_two_provider()` wrapper that imports C-Two only when a user explicitly installs/registers it. It still does not make C-Two import fastdb, it does not make `FastSerializer` the provider foundation, and it does not yet generate TypeScript payload codec helpers from c-two contract descriptors.
+This document defines the target shape for the fastdb / C-Two integration. Today, fastdb has `@feature` classes, `LayerSchema`, `ColumnEngine`, `ObjectEngine`, Python/TypeScript bindings, legacy `FastSerializer`, `fastdb.schema.v1` export, strict portable schema validation, engine capability reports, opaque codec ref helpers, a dependency-neutral `FastdbCodecProvider` candidate/adapter pilot, a fastdb-owned optional `CTwoFastdbCodecProvider` / `install_c_two_provider()` wrapper that imports C-Two only when a user explicitly installs/registers it, and provider-owned TypeScript helper stub generation from C-Two codec requirements. It still does not make C-Two import fastdb, it does not make `FastSerializer` the provider foundation, and the generated TypeScript codec helpers intentionally stop at schema classes plus throwing codec stubs until the fastdb4ts runtime codec path is wired in.
 
 ## Neutral Schema
 
@@ -107,11 +107,11 @@ Because C-Two expects concrete transfer adapters at runtime, fastdb should expos
 
 ## Provider Codegen Integration
 
-C-Two codegen and fastdb codegen should compose through descriptors rather than shared runtime imports. C-Two should read `c-two.contract.v1` and generate the RPC contract skeleton, typed call surface, route identity constants, and codec requirement declarations. fastdb should read the `fastdb.schema.v1` descriptors referenced by those codec requirements and generate provider-owned TypeScript payload helpers where the schema and engine profile are supported.
+C-Two codegen and fastdb codegen compose through descriptors rather than shared runtime imports. C-Two reads `c-two.contract.v1` and generates the RPC contract skeleton, typed call surface, route identity constants, and codec requirement declarations. fastdb reads the `fastdb.schema.v1` descriptors referenced by those codec requirements and generates provider-owned TypeScript payload helpers where the schema and engine profile are supported.
 
-This means fastdb codegen should not parse CRM methods as a service IDL and should not decide route names, relay behavior, retries, or contract compatibility. Its job is narrower: map `fastdb.schema.v1` and codec ids such as `org.fastdb.columnar` or `org.fastdb.object-graph` to TypeScript feature/schema declarations, encode/decode helper placeholders, and clear unsupported diagnostics for schemas that cannot be represented by the TypeScript/WASM binding.
+This means fastdb codegen does not parse CRM methods as a service IDL and does not decide route names, relay behavior, retries, or contract compatibility. Its job is narrower: `fdb codegen --c-two-ts --schema <schema.json> <contract.json> <out.ts>` maps `fastdb.schema.v1` and codec ids such as `org.fastdb.columnar` or `org.fastdb.object-graph` to TypeScript feature/schema declarations, encode/decode helper placeholders, and clear unsupported diagnostics for schemas that cannot be represented by the TypeScript/WASM binding.
 
-The generated artifacts should be deterministic and hash-aware. If a C-Two descriptor says a payload requires `schema_sha256 = abc...`, the fastdb helper should either generate or select helpers for exactly that schema hash, or fail with a diagnostic that names the missing codec id and schema hash. It should not fall back to a similarly named feature class or a runtime cache.
+The generated artifacts are deterministic and hash-aware. If a C-Two descriptor says a payload requires `schema_sha256 = abc...`, the fastdb helper either generates/selects helpers for exactly that schema hash, or fails with a diagnostic that names the missing schema hash. It does not fall back to a similarly named feature class or a runtime cache, and it emits throwing `encode` / `decode` stubs until the TypeScript/WASM codec runtime is implemented.
 
 ## Implementation Order
 
@@ -121,7 +121,7 @@ The generated artifacts should be deterministic and hash-aware. If a C-Two descr
 4. Update docs and examples to position FastSerializer as legacy.
 5. Add a provider prototype that emits codec refs and adapters in fastdb-owned code.
 6. Let C-Two consume only the provider output and adapter hooks; do not add fastdb imports to C-Two core.
-7. Add provider-owned codegen helpers that consume `fastdb.schema.v1` descriptors referenced by C-Two codec requirements and emit TypeScript payload helpers or explicit unsupported stubs.
+7. Implemented: add provider-owned codegen helpers that consume `fastdb.schema.v1` descriptors referenced by C-Two codec requirements and emit TypeScript payload helper stubs or explicit unsupported diagnostics.
 
 ## Non-Goals
 

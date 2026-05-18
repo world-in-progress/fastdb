@@ -144,11 +144,24 @@ export class Point extends Feature {
 }
 ```
 
+### `fdb codegen --c-two-ts` — C-Two codec helper generator
+
+Generate provider-owned TypeScript helpers for fastdb payload codecs referenced by a C-Two `c-two.contract.v1` descriptor:
+
+```bash
+fdb codegen --c-two-ts \
+  --schema ./point.fastdb.schema.json \
+  ./grid.contract.json \
+  ./fastdb-c2-codecs.ts
+```
+
+The command reads only C-Two codec requirements and `fastdb.schema.v1` descriptors. It does not parse CRM methods as fastdb service definitions, does not import C-Two, and emits fastdb4ts `Feature` schema classes plus explicit codec binding stubs keyed by `schema_sha256`. Runtime `encode` / `decode` bodies currently throw until the TypeScript/WASM codec runtime is wired in, so generated helpers are honest integration placeholders rather than fake binary implementations.
+
 ## Serialization And Provider Direction
 
 `FastSerializer` is now considered a legacy object-graph serializer. It remains in the package for existing users, benchmarks, and migration work, but new C-Two integration should be based on neutral `fastdb.schema.v1` export plus explicit ColumnEngine/ObjectEngine codec profiles instead of the old FastSerializer hybrid blob protocol.
 
-For C-Two and other RPC runtimes, fastdb behaves as a provider-owned payload codec family: fastdb exports schema identity and adapters through `fastdb4py.schema` and `fastdb4py.c_two_provider`, while the runtime records an opaque codec reference and invokes encode/decode hooks without understanding fastdb internals. When C-Two is installed, `fastdb4py.c_two_provider.install_c_two_provider()` registers a fastdb-owned optional wrapper provider with `cc.use_codec(...)`; C-Two core still does not import fastdb. The next provider-codegen step is to consume `fastdb.schema.v1` descriptors referenced by C-Two codec requirements and generate TypeScript payload helpers or explicit unsupported stubs without making fastdb a CRM IDL.
+For C-Two and other RPC runtimes, fastdb behaves as a provider-owned payload codec family: fastdb exports schema identity and adapters through `fastdb4py.schema` and `fastdb4py.c_two_provider`, while the runtime records an opaque codec reference and invokes encode/decode hooks without understanding fastdb internals. When C-Two is installed, `fastdb4py.c_two_provider.install_c_two_provider()` registers a fastdb-owned optional wrapper provider with `cc.use_codec(...)`; C-Two core still does not import fastdb. Provider codegen is also fastdb-owned through `fdb codegen --c-two-ts`, which consumes `fastdb.schema.v1` descriptors referenced by C-Two codec requirements and generates TypeScript payload helper stubs without making fastdb a CRM IDL.
 
 ## Performance Notes
 

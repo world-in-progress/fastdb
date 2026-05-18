@@ -574,6 +574,19 @@ import { Point } from './geometry.js';
 
 Each `.py` file is treated as an independent module. The same class name (e.g. `Point`) may appear in multiple files — all are generated in their respective `.ts` files without conflict. Within a single file, Python's last-definition-wins rule applies.
 
+### `fdb codegen --c-two-ts` — Generate C-Two fastdb codec helper stubs
+
+When C-Two has generated a dependency-neutral TypeScript RPC skeleton from `c-two.contract.v1`, fastdb can generate provider-owned helpers for fastdb payload codec requirements:
+
+```bash
+fdb codegen --c-two-ts \
+  --schema ./point.fastdb.schema.json \
+  ./grid.contract.json \
+  ./fastdb-c2-codecs.ts
+```
+
+The command matches C-Two `CodecRef` entries by exact `schema_sha256`, emits fastdb4ts `Feature` classes from the supplied `fastdb.schema.v1` descriptors, and generates `FastdbC2CodecBinding` stubs for `org.fastdb.columnar` and `org.fastdb.object-graph`. It does not import C-Two or interpret CRM methods as fastdb services. The generated `encode` / `decode` functions intentionally throw until the TypeScript/WASM codec runtime is wired in.
+
 #### Circular references
 
 Self-referential and mutually recursive types are detected automatically and use lazy refs:
