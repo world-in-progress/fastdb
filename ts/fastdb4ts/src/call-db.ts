@@ -1358,11 +1358,20 @@ function decodeNumericListBytes(bytes: Uint8Array, item: FieldTypeDef): unknown[
   if (bytes.length % bytesPerElement !== 0) {
     throw new FastdbUsageError(`fastdb call-db list payload has ${bytes.length} byte(s), not a multiple of ${bytesPerElement}.`);
   }
-  const typed = new item.arrayCtor(bytes.buffer, bytes.byteOffset, bytes.length / bytesPerElement);
+  const source = typedArraySource(bytes);
+  const typed = new item.arrayCtor(source.buffer, source.byteOffset, bytes.length / bytesPerElement);
   if (item.kind === 'bool') {
     return Array.from(typed, (value) => coerceBoolScalar(value));
   }
   return Array.from(typed);
+}
+
+function typedArraySource(bytes: Uint8Array): { buffer: ArrayBuffer; byteOffset: number } {
+  if (bytes.buffer instanceof ArrayBuffer) {
+    return { buffer: bytes.buffer, byteOffset: bytes.byteOffset };
+  }
+  const copy = bytes.slice();
+  return { buffer: copy.buffer, byteOffset: copy.byteOffset };
 }
 
 function isSupportedNativeListKind(kind: string): boolean {
