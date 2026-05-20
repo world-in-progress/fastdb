@@ -4,7 +4,11 @@ from __future__ import annotations
 from typing import Any, Type, TYPE_CHECKING
 
 from .registry import get_schema, FieldDef
-from .type import OriginFieldType
+from .type import (
+    OriginFieldType,
+    is_native_list_storage_type,
+    native_list_storage_diagnostic,
+)
 
 if TYPE_CHECKING:
     from . import core
@@ -19,7 +23,7 @@ _GETTERS = {
     OriginFieldType.u16n: 'get_field_as_int',
     OriginFieldType.f32: 'get_field_as_float',
     OriginFieldType.f64: 'get_field_as_float',
-    OriginFieldType.wstr: 'get_field_as_string',
+    OriginFieldType.wstr: 'get_field_as_wstring',
 }
 
 
@@ -48,7 +52,12 @@ def _read_field(feat: 'core.WxFeature', fd: FieldDef) -> Any:
     if fd.field_type == OriginFieldType.list:
         import numpy as np
         from .type import LIST_ELEM_DTYPE
-        dtype_str = LIST_ELEM_DTYPE.get(fd.list_elem_type, 'float64')
+        if fd.list_elem_type == OriginFieldType.ref:
+            return []
+        if not is_native_list_storage_type(fd.list_elem_type):
+            diagnostic = native_list_storage_diagnostic(fd.name, fd.list_elem_type)
+            raise TypeError(diagnostic)
+        dtype_str = LIST_ELEM_DTYPE[fd.list_elem_type]
         try:
             chunk = feat.get_field_as_list_view(fd.field_id)
             return chunk.as_array(getattr(np, dtype_str)).copy()

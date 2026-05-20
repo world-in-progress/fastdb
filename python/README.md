@@ -181,7 +181,7 @@ db = ColumnEngine.truncate([
 ])
 ```
 
-For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric data and raw Python `STR` values together, and the raw-string path now routes through the native batch string-column API with upfront length validation:
+For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric data and raw Python `STR` values together, the raw-string path routes through the native batch string-column API with upfront length validation, scalar `BOOL` columns use the same explicit bool parser as mutable engine writes before bulk numeric storage, and ordinary `U8` columns remain numeric casts:
 
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR, pack_utf8_column
@@ -574,18 +574,9 @@ import { Point } from './geometry.js';
 
 Each `.py` file is treated as an independent module. The same class name (e.g. `Point`) may appear in multiple files — all are generated in their respective `.ts` files without conflict. Within a single file, Python's last-definition-wins rule applies.
 
-### `fdb codegen --c-two-ts` — Generate C-Two fastdb codec helper stubs
+### C-Two integration boundary
 
-When C-Two has generated a dependency-neutral TypeScript RPC skeleton from `c-two.contract.v1`, fastdb can generate provider-owned helpers for fastdb payload codec requirements:
-
-```bash
-fdb codegen --c-two-ts \
-  --schema ./point.fastdb.schema.json \
-  ./grid.contract.json \
-  ./fastdb-c2-codecs.ts
-```
-
-The command matches C-Two `CodecRef` entries by exact `schema_sha256`, emits fastdb4ts `Feature` classes from the supplied `fastdb.schema.v1` descriptors, and generates `FastdbC2CodecBinding` stubs for `org.fastdb.columnar` and `org.fastdb.object-graph`. It does not import C-Two or interpret CRM methods as fastdb services. The generated `encode` / `decode` functions intentionally throw until the TypeScript/WASM codec runtime is wired in.
+`fastdb4py` owns generic feature declarations, schema export, storage engines, and binary buffer IO. C-Two-specific FastDB call-db planning, bridge derivation, and TypeScript helper generation now live in the C-Two repository, where the CRM contract, route identity, relay behavior, scheduler policy, and memory lease semantics are defined. Use `c3 contract codegen typescript --fastdb-schema` from C-Two for C-Two client/helper generation.
 
 #### Circular references
 

@@ -32,12 +32,70 @@
 
 //%array_class(point2_t, LineString);
 
-%typemap(in)(const u8* data,size_t size){
-    if (!PyBytes_Check($input)) {
-        SWIG_exception_fail(SWIG_TypeError, "Expected a bytes object");
+%typemap(in) const wchar_t * (wchar_t *temp = NULL) {
+    if ($input == Py_None) {
+        $1 = NULL;
+    } else if (PyUnicode_Check($input)) {
+        temp = PyUnicode_AsWideCharString($input, NULL);
+        if (temp == NULL) {
+            SWIG_fail;
+        }
+        $1 = temp;
+    } else {
+        SWIG_exception_fail(SWIG_TypeError, "Expected a str object for wchar_t input");
     }
-    $1 = (unsigned char *)PyBytes_AsString($input);
-    $2 = PyBytes_Size($input);
+}
+
+%typemap(freearg) const wchar_t * {
+    if (temp$argnum != NULL) {
+        PyMem_Free(temp$argnum);
+    }
+}
+
+%typemap(out) const uchar_t * {
+    if ($1 == NULL) {
+        Py_INCREF(Py_None);
+        $result = Py_None;
+    } else {
+        size_t len = 0;
+        while ($1[len] != 0) {
+            ++len;
+        }
+        $result = PyUnicode_FromKindAndData(PyUnicode_2BYTE_KIND, $1, (Py_ssize_t)len);
+        if ($result == NULL) {
+            SWIG_fail;
+        }
+    }
+}
+
+%typemap(out) uchar_t * {
+    if ($1 == NULL) {
+        Py_INCREF(Py_None);
+        $result = Py_None;
+    } else {
+        size_t len = 0;
+        while ($1[len] != 0) {
+            ++len;
+        }
+        $result = PyUnicode_FromKindAndData(PyUnicode_2BYTE_KIND, $1, (Py_ssize_t)len);
+        if ($result == NULL) {
+            SWIG_fail;
+        }
+    }
+}
+
+%typemap(in)(const u8* data,size_t size) (Py_buffer view) {
+    if (PyObject_GetBuffer($input, &view, PyBUF_SIMPLE) < 0) {
+        SWIG_exception_fail(SWIG_TypeError, "Expected a bytes-like object");
+    }
+    $1 = (u8 *)view.buf;
+    $2 = (size_t)view.len;
+}
+
+%typemap(freearg)(const u8* data,size_t size) {
+    if (view$argnum.obj) {
+        PyBuffer_Release(&view$argnum);
+    }
 }
 
 %typemap(default) (const u8* data,size_t size) {};

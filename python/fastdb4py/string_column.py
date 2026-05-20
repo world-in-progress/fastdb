@@ -67,10 +67,11 @@ def _normalize_string_values(
 
 
 class StringColumn:
-    def __init__(self, table: 'Table', field_index: int, field_name: str):
+    def __init__(self, table: 'Table', field_index: int, field_name: str, *, wide: bool = False):
         self._table = table
         self._field_index = field_index
         self._field_name = field_name
+        self._wide = wide
 
     def __len__(self) -> int:
         return len(self._table)
@@ -101,11 +102,23 @@ class StringColumn:
             end = int(offsets[index + 1])
             return bytes(data[start:end]).decode('utf-8')
 
-        feat = self._table._origin.tryGetFeature(index)
-        raw = feat.get_field_as_string_view(self._field_index)
-        if raw is None:
-            return ''
-        return raw.to_bytes().decode('utf-8')
+        with self._table._read_lock:
+            feat = self._table._origin.tryGetFeature(index)
+            if self._wide:
+                return feat.get_field_as_wstring(self._field_index) or ''
+            raw = feat.get_field_as_string_view(self._field_index)
+            if raw is None:
+                return ''
+            return raw.to_bytes().decode('utf-8')
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self.get(i) for i in range(*index.indices(len(self)))]
+        return self.get(index)
+
+    def __iter__(self):
+        for index in range(len(self)):
+            yield self.get(index)
 
     def to_pylist(self) -> list[str]:
         return [self.get(i) for i in range(len(self))]
@@ -176,3 +189,39 @@ class StringColumn:
             'StringColumn.fill_utf8() requires a writable truncate table. '
             'Loaded read-only databases support reads only.'
         )
+
+
+class BytesColumn:
+    def __init__(self, table: 'Table', field_index: int, field_name: str):
+        self._table = table
+        self._field_index = field_index
+        self._field_name = field_name
+
+    def __len__(self) -> int:
+        return len(self._table)
+
+    def get(self, index: int) -> bytes:
+        length = len(self)
+        if index < 0:
+            index += length
+        if index < 0 or index >= length:
+            raise IndexError(f'Bytes index {index} out of range [0, {length}).')
+
+        with self._table._read_lock:
+            feat = self._table._origin.tryGetFeature(index)
+            raw = feat.get_geometry_like_chunk()
+            if raw is None:
+                return b''
+            return raw.to_bytes() if hasattr(raw, 'to_bytes') else bytes(raw)
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [self.get(i) for i in range(*index.indices(len(self)))]
+        return self.get(index)
+
+    def __iter__(self):
+        for index in range(len(self)):
+            yield self.get(index)
+
+    def to_pylist(self) -> list[bytes]:
+        return [self.get(i) for i in range(len(self))]

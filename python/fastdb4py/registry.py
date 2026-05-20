@@ -9,8 +9,9 @@ import weakref
 import numpy as np
 
 from .type import (
-    OriginFieldType, get_origin_type, get_list_element_type,
+    BOOL, OriginFieldType, get_origin_type, get_list_element_type,
     LIST_ELEM_CPP_TYPE, FIELD_TYPE_MAP, LIST_ELEM_ARRAY_TYPECODE,
+    is_native_list_storage_type, native_list_storage_diagnostic,
 )
 
 
@@ -77,6 +78,8 @@ class LayerSchema:
         'list_plan',        # List[(field_id, field_name, typecode)]
         'ref_fields',       # List[FieldDef] where field_type == ref
         'list_ref_fields',  # List[FieldDef] where list_elem_type == ref
+        'bool_field_names',  # Tuple[str, ...] where annotation is BOOL/bool
+        'bool_list_field_names',  # Tuple[str, ...] where annotation is list[BOOL/bool]
         'has_ref_fields',   # bool — any ref or list[ref] fields
         # Compiled push fns — created at combine() time, NOT at @feature time
         'push_fn',          # compiled zero-branch push function
@@ -106,6 +109,8 @@ class LayerSchema:
         self.list_plan = []
         self.ref_fields = []
         self.list_ref_fields = []
+        self.bool_field_names = ()
+        self.bool_list_field_names = ()
         self.has_ref_fields = False
         # Compiled push fns — populated later by ORM2.combine()
         self.push_fn = None
@@ -137,6 +142,33 @@ _NUMERIC_FT = frozenset((
     OriginFieldType.i32, OriginFieldType.f32, OriginFieldType.f64,
     OriginFieldType.u8n, OriginFieldType.u16n,
 ))
+
+
+def non_native_list_storage_diagnostics(schema: LayerSchema) -> list[str]:
+    diagnostics: list[str] = []
+    for field in schema.fields:
+        if field.field_type != OriginFieldType.list:
+            continue
+        if field.list_elem_type == OriginFieldType.ref:
+            continue
+        diagnostic = native_list_storage_diagnostic(field.name, field.list_elem_type)
+        if diagnostic is not None:
+            diagnostics.append(diagnostic)
+    return diagnostics
+
+
+def raw_payload_storage_diagnostics(schema: LayerSchema) -> list[str]:
+    bytes_fields = [
+        field.name
+        for field in schema.fields
+        if field.field_type == OriginFieldType.bytes
+    ]
+    if len(bytes_fields) <= 1:
+        return []
+    return [
+        'multiple bytes fields share the feature raw payload; '
+        f'found {", ".join(bytes_fields)}',
+    ]
 
 
 def get_schema(cls: Type) -> LayerSchema:
@@ -199,7 +231,10 @@ def _build_schema(cls: Type) -> LayerSchema:
         ))
         field_id += 1
 
-    schema = LayerSchema(layer_name=cls.__name__, fields=fields)
+    schema = LayerSchema(
+        layer_name=getattr(cls, '__fastdb_layer_name__', cls.__name__),
+        fields=fields,
+    )
 
     for fd in fields:
         ft = fd.field_type
@@ -214,8 +249,8 @@ def _build_schema(cls: Type) -> LayerSchema:
         elif ft == OriginFieldType.list:
             if fd.list_elem_type == OriginFieldType.ref:
                 pass  # list[ref] handled separately in combine()
-            else:
-                typecode = LIST_ELEM_ARRAY_TYPECODE.get(fd.list_elem_type, 'd')
+            elif is_native_list_storage_type(fd.list_elem_type):
+                typecode = LIST_ELEM_ARRAY_TYPECODE[fd.list_elem_type]
                 schema.list_plan.append((fd.field_id, fd.name, typecode))
         if ft == OriginFieldType.ref:
             schema.ref_fields.append(fd)
@@ -230,6 +265,16 @@ def _build_schema(cls: Type) -> LayerSchema:
 
     # --- Compute merged ClassSchema attributes ---
     schema.hints = {k: v for k, v in hints.items() if not k.startswith('_')}
+    schema.bool_field_names = tuple(
+        name
+        for name, hint in schema.hints.items()
+        if _is_bool_hint(hint)
+    )
+    schema.bool_list_field_names = tuple(
+        name
+        for name, hint in schema.hints.items()
+        if _is_bool_list_hint(hint)
+    )
     schema.ordered_defns = [(fd.name, fd.field_type) for fd in fields]
     schema.origin_hints = {fd.name: (fd.field_type, fd.field_id) for fd in fields}
     schema.field_index_map = {fd.name: fd.field_id for fd in fields}
@@ -239,6 +284,18 @@ def _build_schema(cls: Type) -> LayerSchema:
     schema.scalar_field_ids_np = np.array(scalar_ids, dtype=np.int32)
 
     return schema
+
+
+def _is_bool_hint(hint: Any) -> bool:
+    return hint is BOOL or hint is bool
+
+
+def _is_bool_list_hint(hint: Any) -> bool:
+    origin = get_origin(hint)
+    if origin is not list:
+        return False
+    args = get_args(hint)
+    return bool(args) and _is_bool_hint(args[0])
 
 
 def _resolve_field_type(hint) -> OriginFieldType:
@@ -255,7 +312,7 @@ def _resolve_field_type(hint) -> OriginFieldType:
 def _resolve_cpp_type(ft: OriginFieldType, hint) -> int:
     if ft == OriginFieldType.list:
         elem_ft = get_list_element_type(hint)
-        return LIST_ELEM_CPP_TYPE.get(elem_ft, 8)
+        return LIST_ELEM_CPP_TYPE.get(elem_ft, OriginFieldType.unknown.value)
     return ft.value
 
 

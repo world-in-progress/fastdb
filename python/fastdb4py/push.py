@@ -1,9 +1,16 @@
 """Serialize a decorated Python feature object into a WxLayerTableBuild row."""
 from __future__ import annotations
+from collections.abc import Iterable, Mapping
 from typing import Any, Callable, Optional, TYPE_CHECKING
 import numpy as np
 
-from .type import OriginFieldType, LIST_ELEM_DTYPE
+from .type import (
+    OriginFieldType,
+    LIST_ELEM_DTYPE,
+    coerce_bool_scalar,
+    is_native_list_storage_type,
+    native_list_storage_diagnostic,
+)
 from .push_compiler import (
     _c_add_begin, _c_add_end, _c_set_field, _c_set_cstr,
     _c_set_wstr, _c_set_raw, _c_set_list,
@@ -25,6 +32,36 @@ _INT_TYPES = frozenset((
 ))
 
 _FLOAT_TYPES = frozenset((OriginFieldType.f32, OriginFieldType.f64))
+_BOOL_LIST_SCALAR_TYPES = (str, bytes, bytearray, memoryview)
+
+
+def normalize_bool_cache(cache: dict[str, Any], schema: 'LayerSchema') -> dict[str, Any]:
+    bool_field_names = getattr(schema, 'bool_field_names', ())
+    bool_list_field_names = getattr(schema, 'bool_list_field_names', ())
+    if not bool_field_names and not bool_list_field_names:
+        return cache
+    normalized = dict(cache)
+    for field_name in bool_field_names:
+        normalized[field_name] = _coerce_bool_field(cache.get(field_name))
+    for field_name in bool_list_field_names:
+        normalized[field_name] = _coerce_bool_list_field(field_name, cache.get(field_name))
+    return normalized
+
+
+def _coerce_bool_field(value: Any) -> int:
+    if value is None:
+        return 0
+    return 1 if coerce_bool_scalar(value) else 0
+
+
+def _coerce_bool_list_field(field_name: str, values: Any) -> list[int]:
+    if values is None:
+        return []
+    if isinstance(values, (*_BOOL_LIST_SCALAR_TYPES, Mapping)) or not isinstance(values, Iterable):
+        raise TypeError(
+            f'fastdb bool list field {field_name!r} must be an iterable of bool items, not a scalar, bytes-like value, or mapping.',
+        )
+    return [1 if coerce_bool_scalar(value) else 0 for value in values]
 
 
 def push_feature(
@@ -39,7 +76,7 @@ def push_feature(
     WxLayerTableBuild setter. Returns row index (or -1 to indicate 
     caller should track).
     """
-    cache = obj.__dict__
+    cache = normalize_bool_cache(obj.__dict__, schema)
     _c_add_begin(layer_build)
     for fd in schema.fields:
         value = cache.get(fd.name)
@@ -97,9 +134,10 @@ def _set_list_field(layer_build, fd, value, ref_resolver=None):
         else:
             _c_set_list(layer_build, fd.field_id, b"")
         return
-    if elem_type is None:
-        return  # Unknown list type
-    dtype_str = LIST_ELEM_DTYPE.get(elem_type, 'float64')
+    if not is_native_list_storage_type(elem_type):
+        diagnostic = native_list_storage_diagnostic(fd.name, elem_type)
+        raise TypeError(diagnostic)
+    dtype_str = LIST_ELEM_DTYPE[elem_type]
     if isinstance(value, np.ndarray):
         arr = np.ascontiguousarray(value.astype(dtype_str, copy=False))
     else:

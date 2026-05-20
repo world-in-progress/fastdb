@@ -6,19 +6,25 @@ import {
 import {
   getClassSchema,
   getFieldDefinition,
+  resolveListItem,
   type ClassSchema,
   type SchemaFieldDefinition,
 } from './schema.js';
 import {
+  type FieldTypeDef,
   type RefFieldDef,
   type SchemaEntry,
+  coerceBoolScalar,
+  isListField,
   isNumericField,
   isRefField,
 } from './types.js';
-import type {
-  WxDatabaseBuildHandle,
-  WxDatabaseHandle,
-  WxFeatureHandle,
+import {
+  getInitializedFastdbModule,
+  type ChunkView,
+  type WxDatabaseBuildHandle,
+  type WxDatabaseHandle,
+  type WxFeatureHandle,
 } from './wasm-loader.js';
 
 const PROXY_SYMBOL = Symbol('fastdb4ts.proxy');
@@ -173,15 +179,58 @@ function readMappedField(feature: Feature, def: SchemaFieldDefinition): unknown 
     case 'f64':
       return origin.getFieldAsFloat(def.index);
     case 'str':
-    case 'wstr':
       return origin.getFieldAsString(def.index);
+    case 'wstr':
+      return origin.getFieldAsWString(def.index);
     case 'bytes':
-      return origin.geometryView();
+      return copyChunkToBytes(origin.geometryView());
+    case 'list':
+      return readMappedListField(origin, def);
     case 'ref':
       return feature._cache?.[def.name] ?? null;
     default:
       throw new FastdbSchemaError(`Unsupported field kind: ${(entry as SchemaEntry).kind}`);
   }
+}
+
+function copyChunkToBytes(chunk: ChunkView): Uint8Array {
+  const module = getInitializedFastdbModule();
+  return module.HEAPU8.slice(chunk.data, chunk.data + chunk.size);
+}
+
+function readMappedListField(origin: WxFeatureHandle, def: SchemaFieldDefinition): unknown[] {
+  if (!isListField(def.entry)) {
+    throw new FastdbSchemaError(`Field "${def.name}" is not a list field.`);
+  }
+  const item = resolveListItem(def.entry);
+  if (!isFieldType(item) || !item.arrayCtor) {
+    throw new FastdbSchemaError(
+      `Mapped list field "${def.name}" can only materialize numeric scalar lists through the columnar runtime.`
+    );
+  }
+  const bytes = copyChunkToBytes(origin.getFieldAsListView(def.index));
+  if (bytes.length === 0) {
+    return [];
+  }
+  const bytesPerElement = item.arrayCtor.BYTES_PER_ELEMENT;
+  if (bytes.length % bytesPerElement !== 0) {
+    throw new FastdbRuntimeError(
+      `Mapped list field "${def.name}" has ${bytes.length} byte(s), not a multiple of ${bytesPerElement}.`
+    );
+  }
+  const typed = new item.arrayCtor(
+    bytes.buffer,
+    bytes.byteOffset,
+    bytes.length / bytesPerElement
+  );
+  if (item.kind === 'bool') {
+    return Array.from(typed, (value) => coerceBoolScalar(value));
+  }
+  return Array.from(typed);
+}
+
+function isFieldType(value: unknown): value is FieldTypeDef {
+  return typeof value === 'object' && value !== null && 'kind' in value && 'originType' in value;
 }
 
 function writeMappedField(feature: Feature, def: SchemaFieldDefinition, value: unknown): void {
@@ -198,7 +247,7 @@ function writeMappedField(feature: Feature, def: SchemaFieldDefinition, value: u
     }
 
     if (entry.kind === 'bool') {
-      origin.setFieldInt(def.index, value ? 1 : 0);
+      origin.setFieldInt(def.index, coerceBoolScalar(value) ? 1 : 0);
       return;
     }
 

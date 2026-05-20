@@ -8,7 +8,15 @@ import struct
 import numpy as np
 
 from . import core
-from .registry import get_schema, is_feature, LayerSchema, FieldDef, lookup_class
+from .registry import (
+    get_schema,
+    is_feature,
+    LayerSchema,
+    FieldDef,
+    lookup_class,
+    non_native_list_storage_diagnostics,
+    raw_payload_storage_diagnostics,
+)
 from .layout import Layout
 from .orm.table import Table
 from .reader import map_feature, copy_feature
@@ -16,6 +24,7 @@ from .push_compiler import (
     compile_push_fn, compile_ref_push_fn,
     make_batch_inlined_dispatch,
 )
+from .push import normalize_bool_cache
 
 
 @dataclass
@@ -83,6 +92,29 @@ def _topo_sort_classes(groups: Dict[Type, List[Any]]) -> List[Type]:
     return result
 
 
+def _reject_non_native_lists(schema: LayerSchema, cls_name: str) -> None:
+    diagnostics = non_native_list_storage_diagnostics(schema)
+    if diagnostics:
+        raise TypeError(
+            f"ObjectEngine cannot store non-native list fields for "
+            f"{cls_name}: {'; '.join(diagnostics)}"
+        )
+
+
+def _reject_raw_payload_collisions(schema: LayerSchema, cls_name: str) -> None:
+    diagnostics = raw_payload_storage_diagnostics(schema)
+    if diagnostics:
+        raise TypeError(
+            f"ObjectEngine cannot store raw payload fields for "
+            f"{cls_name}: {'; '.join(diagnostics)}"
+        )
+
+
+def _reject_unsupported_schema(schema: LayerSchema, cls_name: str) -> None:
+    _reject_raw_payload_collisions(schema, cls_name)
+    _reject_non_native_lists(schema, cls_name)
+
+
 class ObjectEngine:
     """Decorator-based ORM for @feature classes with REF support.
 
@@ -124,6 +156,7 @@ class ObjectEngine:
             if not is_feature(layout.feature_type):
                 raise TypeError(f"{layout.feature_type!r} not a @feature class")
             schema = get_schema(layout.feature_type)
+            _reject_unsupported_schema(schema, layout.feature_type.__name__)
             state = engine._ensure_layer(layout.feature_type)
             engine._db_build.truncate(schema.layer_name, layout.capacity)
             state._fc[0] = layout.capacity
@@ -144,11 +177,12 @@ class ObjectEngine:
         obj_id = id(obj)
         if obj_id in self._pushed_ids:
             return
+        schema = get_schema(type(obj))
+        _reject_unsupported_schema(schema, type(obj).__name__)
         self._pushed_ids[obj_id] = True
         self._pending.append(obj)
         self._pushed_objs.append(obj)
         self._pending_counts[type(obj)] += 1
-        schema = get_schema(type(obj))
         if schema.has_ref_fields:
             self._enqueue_deps(obj, schema)
 
@@ -217,7 +251,7 @@ class ObjectEngine:
             schema.pfd_str_names, schema.pfd_str_ids,
         )
         if batch_fn is not None:
-            dicts = [obj.__dict__ for obj in objs]
+            dicts = [normalize_bool_cache(obj.__dict__, schema) for obj in objs]
             for i in range(0, len(dicts), 1024):
                 batch_fn(dicts[i:i + 1024])
         else:
@@ -226,7 +260,7 @@ class ObjectEngine:
                 schema.bytes_plan, schema.list_plan,
             )
             for obj in objs:
-                push_fn(obj.__dict__, layer_build)
+                push_fn(normalize_bool_cache(obj.__dict__, schema), layer_build)
         state._fc[0] = len(objs)
         for row_idx, obj in enumerate(objs):
             obj_to_row[id(obj)] = (state.layer_idx, row_idx)
@@ -269,7 +303,7 @@ class ObjectEngine:
                     cache[fd.name] = b''.join(parts)
                 else:
                     cache[fd.name] = b''
-            ref_push_fn(cache, layer_build)
+            ref_push_fn(normalize_bool_cache(cache, schema), layer_build)
             obj_to_row[id(obj)] = (state.layer_idx, row_idx)
             state.row_count += 1
         state._fc[0] = state.row_count
@@ -320,8 +354,12 @@ class ObjectEngine:
             return state
 
         schema = get_schema(cls)
+        _reject_unsupported_schema(schema, cls.__name__)
         t = self._db_build.create_layer_begin(schema.layer_name)
-        t.set_geometry_type(core.gtPoint, core.cfTx32, aabboxEnabled=True)
+        if schema.bytes_plan:
+            t.set_geometry_type(core.gtAny, core.cfTx32, aabboxEnabled=False)
+        else:
+            t.set_geometry_type(core.gtPoint, core.cfTx32, aabboxEnabled=True)
         t.set_extent(-180, -90, 180, 90)
 
         for fd in schema.fields:

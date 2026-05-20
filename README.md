@@ -18,21 +18,19 @@ This repository now contains three closely related layers:
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and schema semantics
 - **Schema-driven codegen** — Python `@feature` classes can serve as the source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
-- **Provider-friendly schema identity** — future `fastdb.schema.v1` descriptors should let runtimes such as C-Two treat fastdb as an opaque payload codec family rather than as a service IDL
+- **Portable payload primitives** — `fastdb.schema.v1`, shared binary buffers, and the `fastdb4ts` runtime let external RPC systems use FastDB as a schema-aware payload layer while those systems keep their own routing and execution semantics
 
 ## Documentation map
 
 - **Python binding (`fastdb4py`)**: see [`python/README.md`](python/README.md)
 - **TypeScript binding (`fastdb4ts`)**: see [`ts/README.md`](ts/README.md)
 - **C++ core (`fastcarto/fastdb`)**: see [`fastcarto/README.md`](fastcarto/README.md)
-- **C-Two provider architecture**: see [`docs/c-two-provider-architecture.md`](docs/c-two-provider-architecture.md)
 - **TypeScript/WASM analysis docs**: see [`ts/analysis/`](ts/analysis/)
 - **Codegen CLI (`fdb codegen`)**: see [CLI tools](#cli-tools) below, or the full reference in [`python/README.md`](python/README.md)
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for per-binding unreleased changes.  
-For historical release notes, see the [GitHub Releases](https://github.com/world-in-progress/fastdb/releases) page.
+See [CHANGELOG.md](CHANGELOG.md) for per-binding unreleased changes. For historical release notes, see the [GitHub Releases](https://github.com/world-in-progress/fastdb/releases) page.
 
 ## Installation
 
@@ -66,7 +64,7 @@ If you are working on native internals or storage layout, start with:
 - **Default high-level path** — `tbl.fill(..., name=[...])` now routes raw strings through the native batch string-column API
 - **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
 
-For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Raw string inputs are packed inside the native batch API, while numeric columns still remain NumPy-backed after publication and string columns are exposed as `StringColumn` wrappers via `table.column.<name>`. If your input already starts as Python `str` objects, prefer this default raw path; use the prepacked path only when an upstream stage already produced UTF-8 offsets/data buffers.
+For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Raw string inputs are packed inside the native batch API, scalar `BOOL` columns use the same explicit bool parser as mutable engine writes before bulk numeric storage, ordinary `U8` columns remain numeric casts, numeric columns still remain NumPy-backed after publication, and string columns are exposed as `StringColumn` wrappers via `table.column.<name>`. If your input already starts as Python `str` objects, prefer this default raw path; use the prepacked path only when an upstream stage already produced UTF-8 offsets/data buffers.
 
 ```python
 import numpy as np
@@ -144,24 +142,9 @@ export class Point extends Feature {
 }
 ```
 
-### `fdb codegen --c-two-ts` — C-Two codec helper generator
+## C-Two Integration Boundary
 
-Generate provider-owned TypeScript helpers for fastdb payload codecs referenced by a C-Two `c-two.contract.v1` descriptor:
-
-```bash
-fdb codegen --c-two-ts \
-  --schema ./point.fastdb.schema.json \
-  ./grid.contract.json \
-  ./fastdb-c2-codecs.ts
-```
-
-The command reads only C-Two codec requirements and `fastdb.schema.v1` descriptors. It does not parse CRM methods as fastdb service definitions, does not import C-Two, and emits fastdb4ts `Feature` schema classes plus explicit codec binding stubs keyed by `schema_sha256`. Runtime `encode` / `decode` bodies currently throw until the TypeScript/WASM codec runtime is wired in, so generated helpers are honest integration placeholders rather than fake binary implementations.
-
-## Serialization And Provider Direction
-
-`FastSerializer` is now considered a legacy object-graph serializer. It remains in the package for existing users, benchmarks, and migration work, but new C-Two integration should be based on neutral `fastdb.schema.v1` export plus explicit ColumnEngine/ObjectEngine codec profiles instead of the old FastSerializer hybrid blob protocol.
-
-For C-Two and other RPC runtimes, fastdb behaves as a provider-owned payload codec family: fastdb exports schema identity and adapters through `fastdb4py.schema` and `fastdb4py.c_two_provider`, while the runtime records an opaque codec reference and invokes encode/decode hooks without understanding fastdb internals. When C-Two is installed, `fastdb4py.c_two_provider.install_c_two_provider()` registers a fastdb-owned optional wrapper provider with `cc.use_codec(...)`; C-Two core still does not import fastdb. Provider codegen is also fastdb-owned through `fdb codegen --c-two-ts`, which consumes `fastdb.schema.v1` descriptors referenced by C-Two codec requirements and generates TypeScript payload helper stubs without making fastdb a CRM IDL.
+FastDB owns storage engines, schema export, binary database buffers, and generic Python/TypeScript runtime APIs. C-Two owns CRM method planning, FastDB call-db envelopes, TypeScript helper generation through `c3 contract codegen typescript --fastdb-schema`, route identity, relay behavior, scheduler policy, and memory lease semantics. The FastDB `fdb` CLI now only generates generic TypeScript feature schemas; use the C-Two repository for C-Two-specific contract and client helper generation.
 
 ## Performance Notes
 
@@ -173,8 +156,8 @@ For C-Two and other RPC runtimes, fastdb behaves as a provider-owned payload cod
 | `table.iter_reuse()` row access | **~350 ns/row** | Reuses Feature wrapper, no allocation |
 | `for feat in table` row access | **~1.2 µs/row** | Allocates Feature wrapper per row |
 | `feat.x` single field read (db-mapped) | **~420 ns** | 1 SWIG call |
-| `FastSerializer.dumps/loads` (Python, legacy) | **~70 µs** (complex graph) | Retained for compatibility; not the foundation for new C-Two provider work |
-| `FastSerializer.dumps/loads` (TypeScript, legacy) | **~75 µs** (complex graph) | Retained for compatibility; not the foundation for new C-Two provider work |
+| `FastSerializer.dumps/loads` (Python, legacy) | **~70 µs** (complex graph) | Retained for compatibility; not the foundation for new external RPC integration work |
+| `FastSerializer.dumps/loads` (TypeScript, legacy) | **~75 µs** (complex graph) | Retained for compatibility; not the foundation for new external RPC integration work |
 
 **Recommended patterns by use case:**
 
@@ -194,8 +177,9 @@ For C-Two and other RPC runtimes, fastdb behaves as a provider-owned payload cod
 |---|---|---|
 | Module-level caches (`get_class_schema`, serializer schema) | ✅ Yes | Protected by `threading.Lock`; safe under both GIL and free-threaded builds |
 | `ColumnAccessor` column cache (`table.column.x`) | ✅ Yes | Cold path (first access) is lock-protected; hot path (cache hit) is lock-free |
+| `Table` row reads (`table[i]`, iteration, `iter_reuse()`, fallback string lookup) | ✅ Yes | Per-table row materialization uses a read lock around native `tryGetFeature(...)` calls |
 | `Feature` instances | ❌ No | Instance-level `_cache` dict is not synchronized — use external locking or one instance per thread |
-| `ColumnEngine` / `ObjectEngine` / `Table` instances | ❌ No | Not designed for concurrent mutation — create separate engine instances per thread, or synchronize externally |
+| `ColumnEngine` / `ObjectEngine` / `Table` mutation | ❌ No | Not designed for concurrent mutation — create separate engine instances per thread, or synchronize externally |
 | SWIG C++ calls | ✅ Yes | Long-running pure C++ operations release the GIL via `%feature("threadallow")` |
 
 ### Recommended patterns for multi-threaded code

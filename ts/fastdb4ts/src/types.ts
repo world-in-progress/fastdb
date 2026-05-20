@@ -1,3 +1,5 @@
+import { FastdbUsageError } from './errors.js';
+
 export type TypedArrayInstance =
   | Uint8Array
   | Uint16Array
@@ -56,6 +58,38 @@ export type ListItemDef =
 
 export interface ListFieldDef extends FieldTypeDef<'list'> {
   item: ListItemDef;
+}
+
+const TRUE_BOOL_STRINGS = new Set(['1', 'true', 't', 'yes', 'y', 'on']);
+const FALSE_BOOL_STRINGS = new Set(['0', 'false', 'f', 'no', 'n', 'off']);
+
+export function coerceBoolScalar(value: unknown): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (TRUE_BOOL_STRINGS.has(normalized)) {
+      return true;
+    }
+    if (FALSE_BOOL_STRINGS.has(normalized)) {
+      return false;
+    }
+    throw new FastdbUsageError(`cannot coerce ${JSON.stringify(value)} to fastdb bool scalar; expected bool, 0/1, or true/false string.`);
+  }
+  if (typeof value === 'number') {
+    if (value === 0 || value === 1) {
+      return value === 1;
+    }
+    throw new FastdbUsageError(`cannot coerce ${String(value)} to fastdb bool scalar; expected bool, 0/1, or true/false string.`);
+  }
+  if (typeof value === 'bigint') {
+    if (value === 0n || value === 1n) {
+      return value === 1n;
+    }
+    throw new FastdbUsageError(`cannot coerce ${String(value)} to fastdb bool scalar; expected bool, 0/1, or true/false string.`);
+  }
+  throw new FastdbUsageError(`cannot coerce ${String(value)} to fastdb bool scalar; expected bool, 0/1, or true/false string.`);
 }
 
 function makeFieldType<TKind extends FieldKind>(

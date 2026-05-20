@@ -3,7 +3,7 @@ import secrets
 from fastdb4py.decorator import feature
 from fastdb4py.column_engine import ColumnEngine
 from fastdb4py.layout import Layout
-from fastdb4py.type import F64, U32, STR
+from fastdb4py.type import BOOL, BYTES, F64, U8, U32, STR
 import numpy as np
 import pytest
 
@@ -30,6 +30,42 @@ class CEOtherPoint:
 class CEListPoint:
     x: F64
     values: list[F64]
+
+
+@feature
+class CEStringListPoint:
+    names: list[STR]
+
+
+@feature
+class CENestedListPoint:
+    values: list[list[F64]]
+
+
+@feature
+class CEDoubleBytesPoint:
+    left: BYTES
+    right: BYTES
+
+
+@feature
+class CEBytesPoint:
+    data: BYTES
+
+
+@feature
+class CEBoolPoint:
+    active: BOOL
+
+
+@feature
+class CEU8Point:
+    value: U8
+
+
+@feature
+class CEBoolListPoint:
+    flags: list[BOOL]
 
 
 def test_column_engine_truncate():
@@ -59,6 +95,16 @@ def test_column_engine_rejects_ref_in_truncate():
         ColumnEngine.truncate([Layout(CENode, 10)])
 
 
+def test_column_engine_rejects_non_native_scalar_list_in_truncate():
+    with pytest.raises(TypeError, match='names: list\\[str\\].*native fixed-width list storage'):
+        ColumnEngine.truncate([Layout(CEStringListPoint, 2)])
+
+
+def test_column_engine_rejects_nested_list_in_truncate():
+    with pytest.raises(TypeError, match='values: list\\[list\\].*native fixed-width list storage'):
+        ColumnEngine.truncate([Layout(CENestedListPoint, 2)])
+
+
 def test_column_engine_create_push_combine():
     engine = ColumnEngine.create()
     engine.push(CEPoint(x=1.0, y=2.0))
@@ -68,6 +114,204 @@ def test_column_engine_create_push_combine():
     assert len(tbl) == 2
     assert tbl.column.x[0] == pytest.approx(1.0)
     assert tbl.column.x[1] == pytest.approx(3.0)
+
+
+def test_column_engine_rejects_non_native_scalar_list_in_push():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(TypeError, match='names: list\\[str\\].*native fixed-width list storage'):
+        engine.push(CEStringListPoint(names=["a", "b"]))
+
+
+def test_column_engine_rejects_non_native_scalar_list_in_push_many():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(TypeError, match='names: list\\[str\\].*native fixed-width list storage'):
+        engine.push_many([CEStringListPoint(names=["a"])])
+
+
+def test_column_engine_rejects_nested_list_in_push_many():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(TypeError, match='values: list\\[list\\].*native fixed-width list storage'):
+        engine.push_many([CENestedListPoint(values=[[1.0, 2.0]])])
+
+
+def test_column_engine_rejects_multiple_bytes_fields_in_push():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(TypeError, match='multiple bytes fields share the feature raw payload'):
+        engine.push(CEDoubleBytesPoint(left=b'a', right=b'b'))
+
+
+def test_column_engine_rejects_multiple_bytes_fields_in_push_many():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(TypeError, match='multiple bytes fields share the feature raw payload'):
+        engine.push_many([CEDoubleBytesPoint(left=b'a', right=b'b')])
+
+
+def test_column_engine_dynamic_single_bytes_field_round_trips():
+    from fastdb4py.reader import copy_feature
+
+    engine = ColumnEngine.create()
+    engine.push(CEBytesPoint(data=b'payload'))
+    engine.push(CEBytesPoint(data=b'second'))
+    engine.combine()
+
+    layer = engine._origin.get_layer(0)
+    restored = copy_feature(CEBytesPoint, layer, 0)
+    assert restored.data == b'payload'
+    restored_second = copy_feature(CEBytesPoint, layer, 1)
+    assert restored_second.data == b'second'
+
+
+def test_column_engine_bool_fields_parse_strings_without_truthiness():
+    engine = ColumnEngine.create()
+    engine.push(CEBoolPoint(active='false'))
+    engine.push(CEBoolPoint(active='true'))
+    engine.combine()
+
+    tbl = engine.table(CEBoolPoint)
+    assert tbl.column.active[0] == 0
+    assert tbl.column.active[1] == 1
+
+
+def test_column_engine_push_many_bool_fields_parse_strings_without_truthiness():
+    engine = ColumnEngine.create()
+    engine.push_many([
+        CEBoolPoint(active='false'),
+        CEBoolPoint(active='true'),
+    ])
+    engine.combine()
+
+    tbl = engine.table(CEBoolPoint)
+    assert tbl.column.active[0] == 0
+    assert tbl.column.active[1] == 1
+
+
+def test_column_engine_bool_fields_reject_ambiguous_strings():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(ValueError, match='fastdb bool scalar'):
+        engine.push(CEBoolPoint(active='maybe'))
+
+
+def test_column_engine_bool_list_fields_parse_strings_without_truthiness():
+    engine = ColumnEngine.create()
+    engine.push(CEBoolListPoint(flags=['false', 'true', 0, 1]))
+    engine.combine()
+
+    restored = engine.table(CEBoolListPoint)[0]
+    assert restored.flags.tolist() == [0, 1, 0, 1]
+
+
+def test_column_engine_bool_list_fields_reject_ambiguous_strings():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(ValueError, match='fastdb bool scalar'):
+        engine.push(CEBoolListPoint(flags=['false', 'maybe']))
+
+
+def test_column_engine_push_many_bool_fields_reject_before_partial_write():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(ValueError, match='fastdb bool scalar'):
+        engine.push_many([
+            CEBoolPoint(active='true'),
+            CEBoolPoint(active='maybe'),
+        ])
+
+    engine.push(CEBoolPoint(active='false'))
+    engine.combine()
+
+    tbl = engine.table(CEBoolPoint)
+    assert len(tbl) == 1
+    assert tbl.column.active[0] == 0
+
+
+def test_column_engine_push_many_bool_fields_reject_before_table_creation():
+    engine = ColumnEngine.create()
+
+    with pytest.raises(ValueError, match='fastdb bool scalar'):
+        engine.push_many([
+            CEBoolPoint(active='true'),
+            CEBoolPoint(active='maybe'),
+        ])
+
+    assert CEBoolPoint.__name__ not in engine._table_map
+    assert CEBoolPoint.__name__ not in engine._table_feature_types
+
+
+def test_column_engine_fixed_fill_bool_fields_parse_strings_without_truthiness():
+    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+    tbl = engine.table(CEBoolPoint)
+
+    tbl.fill(active=['false', 'true'])
+
+    assert tbl.column.active[0] == 0
+    assert tbl.column.active[1] == 1
+
+
+def test_column_engine_fixed_fill_bool_fields_reject_ambiguous_strings():
+    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+    tbl = engine.table(CEBoolPoint)
+
+    with pytest.raises(ValueError, match='fastdb bool scalar'):
+        tbl.fill(active=['true', 'maybe'])
+
+
+def test_column_engine_fixed_fill_bool_fields_treat_none_as_false():
+    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+    tbl = engine.table(CEBoolPoint)
+
+    tbl.fill(active=[None, True])
+
+    assert tbl.column.active[0] == 0
+    assert tbl.column.active[1] == 1
+
+
+def test_column_engine_fixed_fill_bool_fields_reject_scalar_string_column():
+    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+    tbl = engine.table(CEBoolPoint)
+
+    with pytest.raises(TypeError, match='iterable of bool items'):
+        tbl.fill(active='false')
+
+
+def test_column_engine_fixed_fill_bool_fields_reject_multidimensional_column():
+    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+    tbl = engine.table(CEBoolPoint)
+
+    with pytest.raises(ValueError, match='1-D column'):
+        tbl.fill(active=np.array([[True], [False]], dtype=np.bool_))
+
+
+def test_column_engine_fixed_fill_u8_fields_keep_numeric_cast_path():
+    engine = ColumnEngine.truncate([Layout(CEU8Point, 2)])
+    tbl = engine.table(CEU8Point)
+
+    tbl.fill(value=['1', '2'])
+
+    assert tbl.column.value[0] == 1
+    assert tbl.column.value[1] == 2
+
+
+def test_low_level_list_push_rejects_unknown_element_type():
+    from fastdb4py.push import _set_list_field
+    from fastdb4py.registry import FieldDef
+    from fastdb4py.type import OriginFieldType
+
+    field = FieldDef(
+        name='values',
+        field_type=OriginFieldType.list,
+        field_id=0,
+        cpp_type=0,
+        list_elem_type=None,
+    )
+
+    with pytest.raises(TypeError, match='values: list\\[None\\].*native fixed-width list storage'):
+        _set_list_field(object(), field, [1])
 
 
 def test_column_engine_push_many():
@@ -88,6 +332,65 @@ def test_column_engine_iter_reuse():
     for feat in tbl.iter_reuse():
         vals.append(feat.x)
     assert vals == [pytest.approx(float(i)) for i in range(10)]
+
+
+def test_table_getitem_rejects_negative_index_underflow():
+    engine = ColumnEngine.truncate([Layout(CEPoint, 2)])
+    tbl = engine.table(CEPoint)
+
+    with pytest.raises(IndexError, match='out of range'):
+        tbl[-3]
+
+
+def test_table_iter_reuse_locks_row_materialization(monkeypatch):
+    from fastdb4py.orm import table as table_module
+
+    class LockProbe:
+        def __init__(self):
+            self.active = False
+            self.unlocked_reads = 0
+            self.enter_count = 0
+
+        def __enter__(self):
+            self.enter_count += 1
+            self.active = True
+
+        def __exit__(self, exc_type, exc, tb):
+            self.active = False
+            return False
+
+    class FakeOrigin:
+        def __init__(self, lock: LockProbe):
+            self._lock = lock
+
+        def get_feature_count(self):
+            return 2
+
+        def tryGetFeature(self, index):
+            if not self._lock.active:
+                self._lock.unlocked_reads += 1
+            return f'feature-{index}'
+
+    class FakeMappedFeature:
+        def __init__(self, feature_type, feat, schema):
+            self._feat = feat
+
+    lock = LockProbe()
+    fake_origin = FakeOrigin(lock)
+    tbl = table_module.Table()
+    tbl._origin = fake_origin
+    tbl._feature_type = CEPoint
+    tbl._read_lock = lock
+
+    monkeypatch.setattr(table_module.core, 'WxLayerTable', FakeOrigin)
+    monkeypatch.setattr(table_module, 'get_schema', lambda feature_type: object())
+    monkeypatch.setattr(table_module, 'MappedFeature', FakeMappedFeature)
+
+    seen = [proxy._feat for proxy in tbl.iter_reuse()]
+
+    assert seen == ['feature-0', 'feature-1']
+    assert lock.enter_count == 2
+    assert lock.unlocked_reads == 0
 
 
 def test_column_engine_fill():

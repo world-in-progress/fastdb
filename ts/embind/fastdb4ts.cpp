@@ -59,6 +59,10 @@ void db_build_set_field_string(FastVectorDbBuild& db, unsigned ix, const std::st
     db.setField(ix, value.c_str());
 }
 
+void db_build_set_field_wstring(FastVectorDbBuild& db, unsigned ix, const std::wstring& value) {
+    db.setField_wstring(ix, value.c_str());
+}
+
 void db_build_set_geometry_wkt(FastVectorDbBuild& db, const std::string& value) {
     db.setGeometryWKT(value.c_str());
 }
@@ -84,6 +88,10 @@ int layer_build_add_field(FastVectorDbLayerBuild& layer, const std::string& name
     return layer.addField(name.c_str(), ft, vmin, vmax);
 }
 
+void layer_build_add_list_field(FastVectorDbLayerBuild& layer, const std::string& name, unsigned element_type) {
+    layer.add_list_field(name.c_str(), element_type);
+}
+
 void layer_build_set_geometry_type(FastVectorDbLayerBuild& layer, int geometry_type, int coordinate_type, bool aabbox_enabled) {
     layer.setGeometryType(
         static_cast<GeometryLikeEnum>(geometry_type),
@@ -94,6 +102,10 @@ void layer_build_set_geometry_type(FastVectorDbLayerBuild& layer, int geometry_t
 
 void layer_build_set_field_string(FastVectorDbLayerBuild& layer, unsigned ix, const std::string& value) {
     layer.setField(ix, value.c_str());
+}
+
+void layer_build_set_field_wstring(FastVectorDbLayerBuild& layer, unsigned ix, const std::wstring& value) {
+    layer.setField_wstring(ix, value.c_str());
 }
 
 void layer_build_set_geometry_wkt(FastVectorDbLayerBuild& layer, const std::string& value) {
@@ -175,9 +187,29 @@ std::string layer_get_field_as_string(FastVectorDbLayer& layer, u32 ix) {
     return value ? std::string(value) : std::string();
 }
 
+std::wstring uchar_to_wstring(const uchar_t* value) {
+    std::wstring out;
+    if (value == nullptr) {
+        return out;
+    }
+    while (*value != 0) {
+        out.push_back(static_cast<wchar_t>(*value));
+        ++value;
+    }
+    return out;
+}
+
+std::wstring layer_get_field_as_wstring(FastVectorDbLayer& layer, u32 ix) {
+    return uchar_to_wstring(layer.getFieldAsWString(ix));
+}
+
 std::string feature_get_field_as_string(FastVectorDbFeature& feature, u32 ix) {
     const char* value = feature.getFieldAsString(ix);
     return value ? std::string(value) : std::string();
+}
+
+std::wstring feature_get_field_as_wstring(FastVectorDbFeature& feature, u32 ix) {
+    return uchar_to_wstring(feature.getFieldAsWString(ix));
 }
 
 uintptr_t feature_cookie_get(FastVectorDbFeature& feature) {
@@ -208,6 +240,10 @@ void layer_build_set_field_ref(FastVectorDbLayerBuild& layer, unsigned ix, uintp
     layer.setField(ix, reinterpret_cast<const FastVectorDbFeatureRef*>(ref_ptr));
 }
 
+void layer_build_set_field_list_numeric(FastVectorDbLayerBuild& layer, unsigned ix, uintptr_t data_ptr, unsigned nbytes) {
+    layer.set_field_list_numeric(ix, reinterpret_cast<const void*>(data_ptr), nbytes);
+}
+
 uintptr_t layer_build_create_feature_ref(FastVectorDbLayerBuild& layer, u32 ix) {
     return reinterpret_cast<uintptr_t>(layer.createFeatureRef(ix));
 }
@@ -218,6 +254,10 @@ void layer_build_free_feature_ref(FastVectorDbLayerBuild& layer, uintptr_t ref_p
 
 uintptr_t database_try_get_feature(FastVectorDb& db, uintptr_t ref_ptr) {
     return reinterpret_cast<uintptr_t>(db.tryGetFeature(reinterpret_cast<FastVectorDbFeatureRef*>(ref_ptr)));
+}
+
+FastVectorDbFeature* database_try_get_feature_handle(FastVectorDb& db, uintptr_t ref_ptr) {
+    return db.tryGetFeature(reinterpret_cast<FastVectorDbFeatureRef*>(ref_ptr));
 }
 
 void feature_set_field_feature(FastVectorDbFeature& feature, u32 ix, uintptr_t feature_ptr) {
@@ -255,6 +295,13 @@ FastVectorDb* db_load_from_heap(uintptr_t data_ptr, size_t size) {
     return FastVectorDb::load(copied, size, free_loaded_db_buffer, nullptr);
 }
 
+FastVectorDb* db_load_from_owned_heap(uintptr_t data_ptr, size_t size) {
+    if (data_ptr == 0 && size != 0) {
+        return nullptr;
+    }
+    return FastVectorDb::load(reinterpret_cast<void*>(data_ptr), size, free_loaded_db_buffer, nullptr);
+}
+
 ChunkView db_buffer_view(FastVectorDb& db) {
     return chunk_to_view(db.buffer());
 }
@@ -269,6 +316,18 @@ ChunkView layer_geometry_view(FastVectorDbLayer& layer) {
 
 ChunkView feature_geometry_view(FastVectorDbFeature& feature) {
     return chunk_to_view(feature.getGeometryLikeChunk());
+}
+
+ChunkView feature_list_view(FastVectorDbFeature& feature, u32 ix) {
+    return chunk_to_view(feature.getFieldAsListView(ix));
+}
+
+unsigned feature_list_size(FastVectorDbFeature& feature, u32 ix) {
+    return feature.getFieldListSize(ix);
+}
+
+uintptr_t feature_list_ref_at(FastVectorDbFeature& feature, u32 ix, u32 list_idx) {
+    return reinterpret_cast<uintptr_t>(feature.getFieldListRefAt(ix, list_idx));
 }
 
 }  // namespace
@@ -308,6 +367,7 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
     constant("ftSTR", static_cast<int>(ftSTR));
     constant("ftWSTR", static_cast<int>(ftWSTR));
     constant("ftREF", static_cast<int>(ftREF));
+    constant("ftList", static_cast<int>(ftList));
 
     class_<MemoryStream>("WxMemoryStream")
         .constructor<>()
@@ -327,6 +387,7 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .function("setFieldDouble", select_overload<void(unsigned, double)>(&FastVectorDbBuild::setField))
         .function("setFieldInt", select_overload<void(unsigned, int)>(&FastVectorDbBuild::setField))
         .function("setFieldString", &db_build_set_field_string)
+        .function("setFieldWString", &db_build_set_field_wstring)
         .function("setGeometryWKT", &db_build_set_geometry_wkt)
         .function("setGeometryWKB", &db_build_set_geometry_wkb)
         .function("setGeometryRaw", &db_build_set_geometry_raw)
@@ -345,7 +406,10 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .function("setFieldDouble", select_overload<void(unsigned, double)>(&FastVectorDbLayerBuild::setField))
         .function("setFieldInt", select_overload<void(unsigned, int)>(&FastVectorDbLayerBuild::setField))
         .function("setFieldString", &layer_build_set_field_string)
+        .function("setFieldWString", &layer_build_set_field_wstring)
         .function("setFieldRef", &layer_build_set_field_ref)
+        .function("addListField", &layer_build_add_list_field)
+        .function("setFieldListNumeric", &layer_build_set_field_list_numeric)
         .function("createFeatureRef", &layer_build_create_feature_ref)
         .function("freeFeatureRef", &layer_build_free_feature_ref)
         .function("setGeometryWKT", &layer_build_set_geometry_wkt)
@@ -357,8 +421,10 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .function("getLayerCount", &FastVectorDb::getLayerCount)
         .function("getLayer", &FastVectorDb::getLayer, allow_raw_pointers())
         .function("tryGetFeature", &database_try_get_feature)
+        .function("tryGetFeatureHandle", &database_try_get_feature_handle, allow_raw_pointers())
         .function("bufferView", &db_buffer_view)
-        .class_function("loadFromHeap", &db_load_from_heap, allow_raw_pointers());
+        .class_function("loadFromHeap", &db_load_from_heap, allow_raw_pointers())
+        .class_function("loadFromOwnedHeap", &db_load_from_owned_heap, allow_raw_pointers());
 
     class_<FastVectorDbLayer>("WxLayerTable")
         .function("name", &layer_name)
@@ -379,6 +445,7 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .function("getFieldAsFloat", &FastVectorDbLayer::getFieldAsFloat)
         .function("getFieldAsInt", &FastVectorDbLayer::getFieldAsInt)
         .function("getFieldAsString", &layer_get_field_as_string)
+        .function("getFieldAsWString", &layer_get_field_as_wstring)
         .function("getFieldAsRef", &feature_ref_from_layer)
         .function("setFeatureCookie", &layer_cookie_set)
         .function("getFeatureCookie", &layer_cookie_get)
@@ -390,7 +457,11 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .function("getFieldAsFloat", &FastVectorDbFeature::getFieldAsFloat)
         .function("getFieldAsInt", &FastVectorDbFeature::getFieldAsInt)
         .function("getFieldAsString", &feature_get_field_as_string)
+        .function("getFieldAsWString", &feature_get_field_as_wstring)
         .function("getFieldAsRef", &feature_ref_from_feature)
+        .function("getFieldAsListView", &feature_list_view)
+        .function("getFieldListSize", &feature_list_size)
+        .function("getFieldListRefAt", &feature_list_ref_at)
         .function("setFeatureCookie", &feature_cookie_set)
         .function("getFeatureCookie", &feature_cookie_get)
         .function("getAddress", &feature_address)

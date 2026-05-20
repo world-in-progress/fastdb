@@ -8,13 +8,20 @@ from typing import List, TypeVar, Type
 from multiprocessing import shared_memory
 
 from . import core
-from .registry import get_schema, is_feature, LayerSchema
+from .registry import (
+    get_schema,
+    is_feature,
+    LayerSchema,
+    non_native_list_storage_diagnostics,
+    raw_payload_storage_diagnostics,
+)
 from .layout import Layout
 from .orm.table import Table
 from .type import OriginFieldType
 from .push_compiler import (
     make_inlined_dispatch, make_batch_inlined_dispatch,
 )
+from .push import normalize_bool_cache
 from .string_column import _StringSequencePayload
 
 T = TypeVar('T')
@@ -28,9 +35,17 @@ def _normalize_shm_name(shm_name: str) -> str:
     return f'Local\\{shm_name}'
 
 
-def _get_default_table_build(db: core.WxDatabaseBuild, t_name: str) -> core.WxLayerTableBuild:
+def _get_default_table_build(
+    db: core.WxDatabaseBuild,
+    t_name: str,
+    *,
+    raw_payload: bool = False,
+) -> core.WxLayerTableBuild:
     t = db.create_layer_begin(t_name)
-    t.set_geometry_type(core.gtPoint, core.cfTx32, aabboxEnabled=True)
+    if raw_payload:
+        t.set_geometry_type(core.gtAny, core.cfTx32, aabboxEnabled=False)
+    else:
+        t.set_geometry_type(core.gtPoint, core.cfTx32, aabboxEnabled=True)
     t.set_extent(-180, -90, 180, 90)
     return t
 
@@ -44,6 +59,30 @@ def _reject_ref(schema: LayerSchema, cls_name: str) -> None:
             f"{cls_name} has REF fields: {ref_names}. "
             f"Use ObjectEngine for classes with references."
         )
+
+
+def _reject_non_native_lists(schema: LayerSchema, cls_name: str) -> None:
+    diagnostics = non_native_list_storage_diagnostics(schema)
+    if diagnostics:
+        raise TypeError(
+            f"ColumnEngine cannot store non-native list fields for "
+            f"{cls_name}: {'; '.join(diagnostics)}"
+        )
+
+
+def _reject_raw_payload_collisions(schema: LayerSchema, cls_name: str) -> None:
+    diagnostics = raw_payload_storage_diagnostics(schema)
+    if diagnostics:
+        raise TypeError(
+            f"ColumnEngine cannot store raw payload fields for "
+            f"{cls_name}: {'; '.join(diagnostics)}"
+        )
+
+
+def _reject_unsupported_schema(schema: LayerSchema, cls_name: str) -> None:
+    _reject_ref(schema, cls_name)
+    _reject_raw_payload_collisions(schema, cls_name)
+    _reject_non_native_lists(schema, cls_name)
 
 
 class ColumnEngine:
@@ -60,6 +99,7 @@ class ColumnEngine:
         self._push_buf: dict = {}
         self._push_batch_fn: dict = {}
         self._push_dispatch: dict = {}
+        self._bool_push_schemas: dict = {}
 
     @property
     def fixed(self) -> bool:
@@ -91,7 +131,7 @@ class ColumnEngine:
             ft_cls = layout.feature_type
             schema = get_schema(ft_cls)
 
-            _reject_ref(schema, ft_cls.__name__)
+            _reject_unsupported_schema(schema, ft_cls.__name__)
 
             # Reject unsupported variable-length types
             for fd in schema.fields:
@@ -144,12 +184,16 @@ class ColumnEngine:
         # Fast path: batchable buffer
         buf = self._push_buf.get(cls)
         if buf is not None:
-            buf.append(feature.__dict__)
+            schema = self._bool_push_schemas.get(cls)
+            cache = normalize_bool_cache(feature.__dict__, schema) if schema is not None else feature.__dict__
+            buf.append(cache)
             return
         # Fast path: complex single dispatch
         single_fn = self._push_dispatch.get(cls)
         if single_fn is not None:
-            single_fn(feature.__dict__)
+            schema = self._bool_push_schemas.get(cls)
+            cache = normalize_bool_cache(feature.__dict__, schema) if schema is not None else feature.__dict__
+            single_fn(cache)
             return
 
         if not self._is_mutable:
@@ -170,14 +214,21 @@ class ColumnEngine:
                 f'Use @feature decorator.'
             )
         schema = get_schema(feature_type)
-        _reject_ref(schema, feature_type.__name__)
+        _reject_unsupported_schema(schema, feature_type.__name__)
+        if schema.bool_field_names or schema.bool_list_field_names:
+            self._bool_push_schemas[feature_type] = schema
+        cache = normalize_bool_cache(feature.__dict__, schema)
 
         feat_table_name = table_name if table_name else feature_type.__name__
         t_obj: Table = self._table_map.get(feat_table_name)
         if t_obj is None:
             new_table = Table.map_from(
                 feature_type,
-                _get_default_table_build(self._origin, feat_table_name),
+                _get_default_table_build(
+                    self._origin,
+                    feat_table_name,
+                    raw_payload=bool(schema.bytes_plan),
+                ),
                 self._origin,
             )
             for fd in schema.fields:
@@ -197,7 +248,7 @@ class ColumnEngine:
                 schema.bytes_plan, schema.list_plan,
             )
 
-        schema.push_fn(feature.__dict__, t_obj._origin)
+        schema.push_fn(cache, t_obj._origin)
         t_obj.feature_count += 1
 
         # Cache inlined dispatch for subsequent pushes
@@ -230,7 +281,7 @@ class ColumnEngine:
                 f'Use @feature decorator.'
             )
         schema = get_schema(feature_type)
-        _reject_ref(schema, feature_type.__name__)
+        _reject_unsupported_schema(schema, feature_type.__name__)
 
         if schema.push_fn is None:
             from .push_compiler import compile_push_fn
@@ -240,12 +291,22 @@ class ColumnEngine:
             )
 
         push_fn = schema.push_fn
+        bool_caches = None
+        if schema.bool_field_names or schema.bool_list_field_names:
+            bool_caches = [
+                normalize_bool_cache(feat.__dict__, schema)
+                for feat in features
+            ]
         feat_table_name = table_name if table_name else feature_type.__name__
         t_obj: Table = self._table_map.get(feat_table_name)
         if t_obj is None:
             new_table = Table.map_from(
                 feature_type,
-                _get_default_table_build(self._origin, feat_table_name),
+                _get_default_table_build(
+                    self._origin,
+                    feat_table_name,
+                    raw_payload=bool(schema.bytes_plan),
+                ),
                 self._origin,
             )
             for fd in schema.fields:
@@ -259,9 +320,14 @@ class ColumnEngine:
 
         t_origin = t_obj._origin
         fc = t_obj.feature_count
-        for feat in features:
-            push_fn(feat.__dict__, t_origin)
-            fc += 1
+        if bool_caches is not None:
+            for cache in bool_caches:
+                push_fn(cache, t_origin)
+                fc += 1
+        else:
+            for feat in features:
+                push_fn(feat.__dict__, t_origin)
+                fc += 1
         t_obj.feature_count = fc
 
     def _flush_push_batches(self):

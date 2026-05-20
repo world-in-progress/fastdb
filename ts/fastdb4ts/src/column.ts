@@ -78,8 +78,15 @@ export class StridedColumn {
         `Column fill length mismatch: expected ${this.length}, got ${values.length}.`
       );
     }
+    if (this.kind === this.module.ftU8n || this.kind === this.module.ftU16n) {
+      for (let i = 0; i < this.length; i += 1) {
+        this.set(i, values[i] ?? 0);
+      }
+      return;
+    }
+    const view = this.getDataView();
     for (let i = 0; i < this.length; i += 1) {
-      this.set(i, values[i] ?? 0);
+      this.writeDirect(view, this.basePtr + i * this.stride, values[i] ?? 0);
     }
   }
 
@@ -141,6 +148,34 @@ export class StridedColumn {
     // basePtr remain valid (they are indices into the linear address space), but
     // any previously captured ArrayBuffer reference becomes detached.
     return new DataView(this.module.HEAPU8.buffer);
+  }
+
+  private writeDirect(view: DataView, offset: number, value: number): void {
+    if (this.kind === this.module.ftU8) {
+      view.setUint8(offset, Math.trunc(Number(value)));
+      return;
+    }
+    if (this.kind === this.module.ftU16) {
+      view.setUint16(offset, Math.trunc(Number(value)), true);
+      return;
+    }
+    if (this.kind === this.module.ftU32) {
+      view.setUint32(offset, Math.trunc(Number(value)), true);
+      return;
+    }
+    if (this.kind === this.module.ftI32) {
+      view.setInt32(offset, Math.trunc(Number(value)), true);
+      return;
+    }
+    if (this.kind === this.module.ftF32) {
+      view.setFloat32(offset, Number(value), true);
+      return;
+    }
+    if (this.kind === this.module.ftF64) {
+      view.setFloat64(offset, Number(value), true);
+      return;
+    }
+    throw new FastdbRuntimeError(`Field index ${this.fieldIndex} is not a directly writable numeric column.`);
   }
 }
 

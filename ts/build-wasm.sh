@@ -17,6 +17,6 @@ emcmake cmake \
     -B "${BUILD_DIR}" \
     -DCMAKE_BUILD_TYPE=Release
 
-cmake --build "${BUILD_DIR}"
+cmake --build "${BUILD_DIR}" --target fastdb4ts
 
 echo "WASM build complete. Outputs are in ts/fastdb4ts/src/wasm/"
