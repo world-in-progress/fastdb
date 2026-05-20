@@ -45,28 +45,33 @@ jobs:
   build_wheels:
     needs: check_version
     if: needs.check_version.outputs.exists == 'false'
-    name: Build wheels on ${{ matrix.os }}
+    name: Build wheels on ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - label: linux-x86_64
+            os: ubuntu-latest
+            archs: x86_64
+          - label: linux-aarch64
+            os: ubuntu-24.04-arm
+            archs: aarch64
+          - label: macos
+            os: macos-latest
+            archs: x86_64 arm64
+          - label: windows
+            os: windows-latest
+            archs: AMD64
 
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up QEMU
-        if: runner.os == 'Linux'
-        uses: docker/setup-qemu-action@v4
-
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.4.0
         env:
-          # MacOS: Build for x86_64 and arm64 (Apple Silicon)
-          CIBW_ARCHS_MACOS: x86_64 arm64
-          # Linux: Build for x86_64 and aarch64 (ARM64), skip 32-bit (i686)
-          CIBW_ARCHS_LINUX: x86_64 aarch64
-          # Windows: Build only for AMD64 (64-bit), skip 32-bit (x86) to avoid build issues
-          CIBW_ARCHS_WINDOWS: AMD64
+          # Build each platform's target architecture(s); Linux aarch64 uses a native arm64 runner.
+          CIBW_ARCHS: ${{ matrix.archs }}
           # Skip musllinux
           CIBW_SKIP: "*musllinux*"
           # Ensure cmake is available in the build environment
@@ -74,7 +79,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: cibw-wheels-${{ matrix.os }}-${{ strategy.job-index }}
+          name: cibw-wheels-${{ matrix.label }}
           path: ./wheelhouse/*.whl
 
   build_sdist:
