@@ -5,8 +5,9 @@ import {
   type SchemaFieldDefinition,
 } from './schema.js';
 import { FastdbRuntimeError, FastdbUsageError } from './errors.js';
+import { loadDatabaseFromBytes, type FastdbDatabaseBytes } from './database-buffer.js';
 import { getInitializedFastdbModule, type FastdbModule, type WxLayerTableBuildHandle } from './wasm-loader.js';
-import { isListField, isRefField, type FeatureClassLike, type FieldTypeDef } from './types.js';
+import { coerceBoolScalar, isListField, isRefField, type FeatureClassLike, type FieldTypeDef } from './types.js';
 
 const NUMERIC_LIST_LAYER_PREFIX = '__fastser_list__|';
 const TEXT_ENCODER = new TextEncoder();
@@ -121,7 +122,7 @@ export class FastSerializer {
 
         switch (field.entry.kind) {
           case 'bool':
-            layer.setFieldInt(dbFieldIndex, value ? 1 : 0);
+            layer.setFieldInt(dbFieldIndex, coerceBoolScalar(value) ? 1 : 0);
             break;
           case 'u8':
           case 'u16':
@@ -164,12 +165,11 @@ export class FastSerializer {
   }
 
   static loads<T extends Feature>(
-    data: Uint8Array | ArrayBuffer,
+    data: FastdbDatabaseBytes,
     rootType: FeatureClass<T>
   ): T | null {
     const module = getInitializedFastdbModule();
-    const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
-    const db = withHeapBytes(module, bytes, (ptr, size) => module.WxDatabase.loadFromHeap(ptr, size));
+    const db = loadDatabaseFromBytes(module, data);
 
     if (db.getLayerCount() === 0) {
       return null;

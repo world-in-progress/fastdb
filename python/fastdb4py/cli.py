@@ -5,8 +5,11 @@ import sys
 
 
 def _run_codegen(args):
-    from fastdb4py.codegen import run_codegen_ts
-    run_codegen_ts(args.input_dir, args.output_dir)
+    if args.ts:
+        from fastdb4py.codegen import run_codegen_ts
+        run_codegen_ts(args.input_path, args.output_path)
+        return
+    raise ValueError('unknown codegen target')
 
 
 def main():
@@ -28,8 +31,8 @@ def main():
         action='store_true',
         help='Generate TypeScript output',
     )
-    codegen_parser.add_argument('input_dir', help='Directory of Python feature definition files')
-    codegen_parser.add_argument('output_dir', help='Directory to write generated files')
+    codegen_parser.add_argument('input_path', help='Input feature directory')
+    codegen_parser.add_argument('output_path', help='Output TypeScript directory')
     codegen_parser.set_defaults(func=_run_codegen)
 
     args = parser.parse_args()

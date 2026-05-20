@@ -16,8 +16,8 @@ The current design goals are:
   - `ORM`, `TableDefn`, `Table`, and column accessors
 - **Binary data exchange**
   - `Uint8Array` / `ArrayBuffer` in and out
-- **Graph serialization**
-  - `FastSerializer` for nested features and cyclic references
+- **Legacy graph serialization**
+  - `FastSerializer` remains available for nested features and cyclic references, but new cross-runtime provider work should use neutral schema descriptors and explicit codec profiles
 - **Browser-friendly deployment**
   - isolated WASM build path without forcing the Python build to depend on Emscripten
 
@@ -58,7 +58,7 @@ Important files:
 - `ts/fastdb4ts/src/column.ts`
   - `StridedColumn`
 - `ts/fastdb4ts/src/serializer.ts`
-  - `FastSerializer`
+  - Legacy `FastSerializer`
 - `ts/fastdb4ts/src/wasm-loader.ts`
   - module initialization and typed WASM handle definitions
 
@@ -200,9 +200,9 @@ const copyTable = copy.table(Particle);
 console.log(copyTable.get(2).x);
 ```
 
-## Serializer usage
+## Legacy serializer usage
 
-`FastSerializer` is the graph-oriented transport layer.
+`FastSerializer` is the legacy graph-oriented transport layer. It remains available for compatibility and migration tests, but it is not the foundation for new C-Two provider work.
 
 It supports:
 
@@ -292,7 +292,7 @@ Examples of deliberate differences:
 - shared memory APIs → currently omitted
 - file-centric load/save → `Uint8Array` / `ArrayBuffer` transport
 
-The goal is semantic compatibility where it matters, especially in schema layout and `FastSerializer` protocol behavior.
+The goal is semantic compatibility where it matters, especially in schema layout and legacy `FastSerializer` protocol behavior.
 
 ### Generating TypeScript schemas from Python
 

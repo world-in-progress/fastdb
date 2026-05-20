@@ -39,7 +39,7 @@ Audit performed after v0.0.1 release. Tracks identified issues, their severity, 
 
 | ID | Issue | Status | Fix |
 |----|-------|--------|-----|
-| P1-wstr-read | WSTR reads use `getFieldAsString` (same as STR) | ⏳ Deferred | Embind does not expose `getFieldAsWString`; requires WASM rebuild. In practice safe for UTF-16 data that is ASCII-compatible. |
+| P1-wstr-read | WSTR reads use `getFieldAsString` (same as STR) | ✅ Fixed | Embind now exposes `getFieldAsWString` / `setFieldWString`; mapped features, object-graph rows, and C-Two call-db retained table columns have WSTR coverage. |
 | P1-close | No `ORM.close()` for WASM resource cleanup | ✅ Fixed | `ORM.close()` deletes the database origin; idempotent |
 | P1-heapu8 | StridedColumn.basePtr could appear stale after WASM memory growth | ✅ No action needed | `basePtr` is a WASM linear-memory address (index), not a JS pointer. It remains valid after growth. `getDataView()` re-fetches `HEAPU8.buffer` each call, so always uses the current heap buffer. Added explanatory comment. |
 
@@ -62,3 +62,4 @@ Audit performed after v0.0.1 release. Tracks identified issues, their severity, 
 | `tests/ts/test_feature_write.mjs` | str/wstr write to db-mapped feature falls back to cache; close() is idempotent; ref write stores in cache |
 | `tests/ts/test_column_way.mjs` | (existing) StridedColumn get/set/fill, buffer roundtrip |
 | `tests/ts/test_fast_serializer.mjs` | (existing) FastSerializer full roundtrip, cyclic refs, numeric lists |
+| `tests/ts/test_c_two_runtime.mjs` | C-Two call-db runtime WSTR/BYTES encode/decode and retained table-column access |

@@ -1,6 +1,8 @@
 from enum import unique, IntEnum
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, NewType, get_type_hints, get_origin, get_args
+from typing import TYPE_CHECKING, Dict, Generic, NewType, TypeVar, get_type_hints, get_origin, get_args
+
+T = TypeVar('T')
 
 # A map of the enum type used in the core fastdb library
 @unique
@@ -30,6 +32,14 @@ class OriginFieldDefinition:
     type: OriginFieldType
     vmin: float = 0.0
     vmax: float = 1.0
+
+
+class Array(Generic[T]):
+    """CRM ABI marker for a homogeneous fastdb scalar array."""
+
+
+class Batch(Generic[T]):
+    """CRM ABI marker for a table-shaped batch of fastdb features."""
 
 # Field type aliases for Python-side type annotations.
 #
@@ -112,6 +122,8 @@ def get_origin_type(type_var: type) -> OriginFieldType:
         return OriginFieldType.f64
     if type_var is str:
         return OriginFieldType.str
+    if type_var is bool:
+        return OriginFieldType.u8
     return FIELD_TYPE_MAP.get(type_var, OriginFieldType.unknown)
 
 # Mapping of list element OriginFieldType → C++ element_type enum value for add_list_field.
@@ -146,6 +158,84 @@ LIST_ELEM_ARRAY_TYPECODE = {
     OriginFieldType.f64: 'd',
 }
 
+NATIVE_LIST_STORAGE_FIELD_TYPES = frozenset(LIST_ELEM_DTYPE)
+_TRUE_BOOL_STRINGS = frozenset({'1', 'true', 't', 'yes', 'y', 'on'})
+_FALSE_BOOL_STRINGS = frozenset({'0', 'false', 'f', 'no', 'n', 'off'})
+
+
+def coerce_bool_scalar(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _TRUE_BOOL_STRINGS:
+            return True
+        if normalized in _FALSE_BOOL_STRINGS:
+            return False
+        raise ValueError(
+            f'cannot coerce {value!r} to fastdb bool scalar; expected bool, 0/1, or true/false string.',
+        )
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        try:
+            return coerce_bool_scalar(bytes(value).decode('utf-8'))
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f'cannot coerce {value!r} to fastdb bool scalar; expected bool, 0/1, or true/false string.',
+            ) from exc
+    if isinstance(value, int):
+        if value in {0, 1}:
+            return bool(value)
+        raise ValueError(
+            f'cannot coerce {value!r} to fastdb bool scalar; expected bool, 0/1, or true/false string.',
+        )
+    if isinstance(value, float):
+        if value in {0.0, 1.0}:
+            return bool(value)
+        raise ValueError(
+            f'cannot coerce {value!r} to fastdb bool scalar; expected bool, 0/1, or true/false string.',
+        )
+    try:
+        if value == 0:
+            return False
+        if value == 1:
+            return True
+    except Exception:
+        pass
+    raise ValueError(
+        f'cannot coerce {value!r} to fastdb bool scalar; expected bool, 0/1, or true/false string.',
+    )
+
+_SCHEMA_KIND_BY_FIELD_TYPE = {
+    OriginFieldType.u8: 'u8',
+    OriginFieldType.u16: 'u16',
+    OriginFieldType.u32: 'u32',
+    OriginFieldType.i32: 'i32',
+    OriginFieldType.u8n: 'u8n',
+    OriginFieldType.u16n: 'u16n',
+    OriginFieldType.f32: 'f32',
+    OriginFieldType.f64: 'f64',
+    OriginFieldType.str: 'str',
+    OriginFieldType.wstr: 'wstr',
+    OriginFieldType.bytes: 'bytes',
+    OriginFieldType.ref: 'ref',
+    OriginFieldType.list: 'list',
+    OriginFieldType.unknown: 'unknown',
+}
+
+
+def is_native_list_storage_type(field_type: OriginFieldType | None) -> bool:
+    return field_type in NATIVE_LIST_STORAGE_FIELD_TYPES
+
+
+def native_list_storage_diagnostic(
+    field_name: str,
+    element_type: OriginFieldType | None,
+) -> str | None:
+    if is_native_list_storage_type(element_type):
+        return None
+    kind = _SCHEMA_KIND_BY_FIELD_TYPE.get(element_type, repr(element_type))
+    return f'{field_name}: list[{kind}] is not backed by native fixed-width list storage'
+
 def get_list_element_type(annotation) -> OriginFieldType:
     """Return the OriginFieldType of the element type inside a List[X] annotation.
 
@@ -161,6 +251,8 @@ def get_list_element_type(annotation) -> OriginFieldType:
     if not args:
         return OriginFieldType.unknown
     elem = args[0]
+    if elem is list or get_origin(elem) is list:
+        return OriginFieldType.list
     # Forward references and Feature subclasses → ref
     if isinstance(elem, str):
         return OriginFieldType.ref
@@ -175,6 +267,8 @@ def get_list_element_type(annotation) -> OriginFieldType:
         return OriginFieldType.f64
     if elem is int:
         return OriginFieldType.i32
+    if elem is bool:
+        return OriginFieldType.u8
     # Assume any remaining class is a Feature subclass → ref
     if isinstance(elem, type):
         return OriginFieldType.ref

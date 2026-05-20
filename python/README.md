@@ -181,7 +181,7 @@ db = ColumnEngine.truncate([
 ])
 ```
 
-For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric data and raw Python `STR` values together, and the raw-string path now routes through the native batch string-column API with upfront length validation:
+For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric data and raw Python `STR` values together, the raw-string path routes through the native batch string-column API with upfront length validation, scalar `BOOL` columns use the same explicit bool parser as mutable engine writes before bulk numeric storage, and ordinary `U8` columns remain numeric casts:
 
 ```python
 from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR, pack_utf8_column
@@ -573,6 +573,10 @@ import { Point } from './geometry.js';
 #### Duplicate class names across files
 
 Each `.py` file is treated as an independent module. The same class name (e.g. `Point`) may appear in multiple files — all are generated in their respective `.ts` files without conflict. Within a single file, Python's last-definition-wins rule applies.
+
+### C-Two integration boundary
+
+`fastdb4py` owns generic feature declarations, schema export, storage engines, and binary buffer IO. C-Two-specific FastDB call-db planning, bridge derivation, and TypeScript helper generation now live in the C-Two repository, where the CRM contract, route identity, relay behavior, scheduler policy, and memory lease semantics are defined. Use `c3 contract codegen typescript --fastdb-schema` from C-Two for C-Two client/helper generation.
 
 #### Circular references
 

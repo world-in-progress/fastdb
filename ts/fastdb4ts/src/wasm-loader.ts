@@ -29,7 +29,10 @@ export interface WxLayerTableBuildHandle {
   setFieldDouble(index: number, value: number): void;
   setFieldInt(index: number, value: number): void;
   setFieldString(index: number, value: string): void;
+  setFieldWString(index: number, value: string): void;
   setFieldRef(index: number, refPtr: number): void;
+  addListField(name: string, elementType: number): void;
+  setFieldListNumeric(index: number, dataPtr: number, nbytes: number): void;
   createFeatureRef(index?: number): number;
   freeFeatureRef(refPtr: number): void;
   setGeometryWKT(data: string): void;
@@ -58,6 +61,7 @@ export interface WxLayerTableHandle {
   getFieldAsFloat(index: number): number;
   getFieldAsInt(index: number): number;
   getFieldAsString(index: number): string;
+  getFieldAsWString(index: number): string;
   getFieldAsRef(index: number): number;
   setFeatureCookie(cookie: number): void;
   getFeatureCookie(): number;
@@ -71,6 +75,7 @@ export interface WxFeatureHandle {
   getFieldAsFloat(index: number): number;
   getFieldAsInt(index: number): number;
   getFieldAsString(index: number): string;
+  getFieldAsWString(index: number): string;
   getFieldAsRef(index: number): number;
   setFeatureCookie(cookie: number): void;
   getFeatureCookie(): number;
@@ -78,6 +83,9 @@ export interface WxFeatureHandle {
   setFieldDouble(index: number, value: number): void;
   setFieldInt(index: number, value: number): void;
   setFieldFeature(index: number, featurePtr: number): void;
+  getFieldListSize(index: number): number;
+  getFieldListRefAt(index: number, listIndex: number): number;
+  getFieldAsListView(index: number): ChunkView;
   getFieldsIntoHeap(fieldIdsPtr: number, nFields: number, outPtr: number): void;
   setFieldsFromHeap(fieldIdsPtr: number, valuesPtr: number, nFields: number): void;
   delete(): void;
@@ -87,12 +95,14 @@ export interface WxDatabaseHandle {
   getLayerCount(): number;
   getLayer(index: number): WxLayerTableHandle;
   tryGetFeature(refPtr: number): number;
+  tryGetFeatureHandle(refPtr: number): WxFeatureHandle | null;
   bufferView(): ChunkView;
   delete(): void;
 }
 
 export interface WxDatabaseHandleStatic {
   loadFromHeap(dataPtr: number, size: number): WxDatabaseHandle;
+  loadFromOwnedHeap(dataPtr: number, size: number): WxDatabaseHandle;
 }
 
 export interface WxDatabaseBuildHandle {
@@ -107,6 +117,7 @@ export interface WxDatabaseBuildHandle {
   setFieldDouble(index: number, value: number): void;
   setFieldInt(index: number, value: number): void;
   setFieldString(index: number, value: string): void;
+  setFieldWString(index: number, value: string): void;
   setGeometryWKT(data: string): void;
   setGeometryWKB(dataPtr: number, size: number): void;
   setGeometryRaw(dataPtr: number, size: number): void;
@@ -142,6 +153,7 @@ export interface FastdbModule {
   ftSTR: number;
   ftWSTR: number;
   ftREF: number;
+  ftList: number;
   HEAPU8: Uint8Array;
   HEAPU32: Uint32Array;
   HEAP32: Int32Array;

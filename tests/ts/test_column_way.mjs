@@ -63,3 +63,28 @@ test('orm buffer roundtrip preserves fixed table data', () => {
   assert.equal(copyTable.get(1).y, 5.5);
   assert.equal(copyTable.get(2).z, 9.5);
 });
+
+test('orm buffer roundtrip preserves multi-layer fixed table data after column fill', () => {
+  const rowCount = 16;
+  const db = ORM.truncate([
+    new TableDefn(Point, rowCount),
+    new TableDefn(Point, rowCount, 'PointA'),
+  ]);
+  const table = db.table(Point, 'PointA');
+
+  table.column.x.fill(Array.from({ length: rowCount }, (_, index) => index + 0.5));
+  table.column.y.fill(Array.from({ length: rowCount }, (_, index) => index + 1.5));
+  table.column.z.fill(Array.from({ length: rowCount }, (_, index) => index + 2.5));
+
+  const copy = ORM.fromBuffer(db.toBuffer());
+  try {
+    const copyTable = copy.table(Point, 'PointA');
+    assert.equal(copyTable.length, rowCount);
+    assert.equal(copyTable.get(rowCount - 1).x, rowCount - 1 + 0.5);
+    assert.equal(copyTable.get(rowCount - 1).y, rowCount - 1 + 1.5);
+    assert.equal(copyTable.get(rowCount - 1).z, rowCount - 1 + 2.5);
+  } finally {
+    copy.close();
+    db.close();
+  }
+});

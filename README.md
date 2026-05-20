@@ -10,15 +10,15 @@ This repository now contains three closely related layers:
 
 - **C++ core** — native storage engine, binary layout, and serialization primitives
 - **`fastdb4py`** — Python bindings via SWIG, with NumPy-oriented columnar access and shared-memory IPC
-- **`fastdb4ts`** — TypeScript bindings via WebAssembly/Embind, focused on browser-friendly typed data access and serializer compatibility
+- **`fastdb4ts`** — TypeScript bindings via WebAssembly/Embind, focused on browser-friendly typed data access and schema-compatible table access
 
 **Core design goals:**
 - **Zero-copy columnar access** — efficient field-oriented access for high-volume numerical workloads
 - **Ref-graph support** — Features can reference other Features across tables, forming typed object graphs
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
-- **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and serializer semantics
-- **Buffer-protocol serialization** — numpy arrays and numeric lists stored via dedicated columnar layers with `memcpy`-level performance
-- **Schema-driven codegen** — Python Feature classes serve as the single source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
+- **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and schema semantics
+- **Schema-driven codegen** — Python `@feature` classes can serve as the source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
+- **Portable payload primitives** — `fastdb.schema.v1`, shared binary buffers, and the `fastdb4ts` runtime let external RPC systems use FastDB as a schema-aware payload layer while those systems keep their own routing and execution semantics
 
 ## Documentation map
 
@@ -30,8 +30,7 @@ This repository now contains three closely related layers:
 
 ## Changelog
 
-See [CHANGELOG.md](CHANGELOG.md) for per-binding unreleased changes.  
-For historical release notes, see the [GitHub Releases](https://github.com/world-in-progress/fastdb/releases) page.
+See [CHANGELOG.md](CHANGELOG.md) for per-binding unreleased changes. For historical release notes, see the [GitHub Releases](https://github.com/world-in-progress/fastdb/releases) page.
 
 ## Installation
 
@@ -65,7 +64,7 @@ If you are working on native internals or storage layout, start with:
 - **Default high-level path** — `tbl.fill(..., name=[...])` now routes raw strings through the native batch string-column API
 - **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
 
-For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Raw string inputs are packed inside the native batch API, while numeric columns still remain NumPy-backed after publication and string columns are exposed as `StringColumn` wrappers via `table.column.<name>`. If your input already starts as Python `str` objects, prefer this default raw path; use the prepacked path only when an upstream stage already produced UTF-8 offsets/data buffers.
+For fixed tables, the high-level `Table.fill(...)` path batches numeric columns and `STR` payloads together. Raw string inputs are packed inside the native batch API, scalar `BOOL` columns use the same explicit bool parser as mutable engine writes before bulk numeric storage, ordinary `U8` columns remain numeric casts, numeric columns still remain NumPy-backed after publication, and string columns are exposed as `StringColumn` wrappers via `table.column.<name>`. If your input already starts as Python `str` objects, prefer this default raw path; use the prepacked path only when an upstream stage already produced UTF-8 offsets/data buffers.
 
 ```python
 import numpy as np
@@ -143,6 +142,10 @@ export class Point extends Feature {
 }
 ```
 
+## C-Two Integration Boundary
+
+FastDB owns storage engines, schema export, binary database buffers, and generic Python/TypeScript runtime APIs. C-Two owns CRM method planning, FastDB call-db envelopes, TypeScript helper generation through `c3 contract codegen typescript --fastdb-schema`, route identity, relay behavior, scheduler policy, and memory lease semantics. The FastDB `fdb` CLI now only generates generic TypeScript feature schemas; use the C-Two repository for C-Two-specific contract and client helper generation.
+
 ## Performance Notes
 
 | Pattern | Throughput | Notes |
@@ -153,8 +156,8 @@ export class Point extends Feature {
 | `table.iter_reuse()` row access | **~350 ns/row** | Reuses Feature wrapper, no allocation |
 | `for feat in table` row access | **~1.2 µs/row** | Allocates Feature wrapper per row |
 | `feat.x` single field read (db-mapped) | **~420 ns** | 1 SWIG call |
-| `FastSerializer.dumps/loads` (Python) | **~70 µs** (complex graph) | 1.6× pickle dumps, 21× faster loads at N=10k |
-| `FastSerializer.dumps/loads` (TypeScript) | **~75 µs** (complex graph) | ~25% faster than unoptimized; TypedArray bulk writes + pre-allocated ByteWriter |
+| `FastSerializer.dumps/loads` (Python, legacy) | **~70 µs** (complex graph) | Retained for compatibility; not the foundation for new external RPC integration work |
+| `FastSerializer.dumps/loads` (TypeScript, legacy) | **~75 µs** (complex graph) | Retained for compatibility; not the foundation for new external RPC integration work |
 
 **Recommended patterns by use case:**
 
@@ -174,8 +177,9 @@ export class Point extends Feature {
 |---|---|---|
 | Module-level caches (`get_class_schema`, serializer schema) | ✅ Yes | Protected by `threading.Lock`; safe under both GIL and free-threaded builds |
 | `ColumnAccessor` column cache (`table.column.x`) | ✅ Yes | Cold path (first access) is lock-protected; hot path (cache hit) is lock-free |
+| `Table` row reads (`table[i]`, iteration, `iter_reuse()`, fallback string lookup) | ✅ Yes | Per-table row materialization uses a read lock around native `tryGetFeature(...)` calls |
 | `Feature` instances | ❌ No | Instance-level `_cache` dict is not synchronized — use external locking or one instance per thread |
-| `ColumnEngine` / `ObjectEngine` / `Table` instances | ❌ No | Not designed for concurrent mutation — create separate engine instances per thread, or synchronize externally |
+| `ColumnEngine` / `ObjectEngine` / `Table` mutation | ❌ No | Not designed for concurrent mutation — create separate engine instances per thread, or synchronize externally |
 | SWIG C++ calls | ✅ Yes | Long-running pure C++ operations release the GIL via `%feature("threadallow")` |
 
 ### Recommended patterns for multi-threaded code

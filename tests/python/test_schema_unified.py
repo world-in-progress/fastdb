@@ -13,6 +13,16 @@ class SchemaTestPoint:
     name: STR
 
 
+@feature
+class SchemaStringListPoint:
+    names: list[STR]
+
+
+@feature
+class SchemaNestedListPoint:
+    values: list[list[F64]]
+
+
 def test_schema_has_hints():
     schema = get_schema(SchemaTestPoint)
     assert 'x' in schema.hints
@@ -66,3 +76,19 @@ def test_schema_cls_dict_fastpath():
     assert schema1 is schema2
     # Verify it's cached on the class
     assert hasattr(SchemaTestPoint, '__fastdb_schema__')
+
+
+def test_schema_does_not_plan_non_native_scalar_lists_as_numeric_fallback():
+    schema = get_schema(SchemaStringListPoint)
+
+    assert schema.list_plan == []
+
+
+def test_schema_preserves_nested_list_semantics_without_native_plan():
+    from fastdb4py.type import OriginFieldType
+
+    schema = get_schema(SchemaNestedListPoint)
+
+    assert schema.fields[0].field_type == OriginFieldType.list
+    assert schema.fields[0].list_elem_type == OriginFieldType.list
+    assert schema.list_plan == []

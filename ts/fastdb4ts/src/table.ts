@@ -75,6 +75,11 @@ export class Table<T extends Feature> {
           if (!def) {
             return undefined;
           }
+          if (def.entry.kind === 'list') {
+            throw new FastdbRuntimeError(
+              `Column accessor "${prop}" is a list field; read it from table rows instead of as a strided column.`
+            );
+          }
           return new StridedColumn(table.module, layer, def.index, def.entry.originType);
         },
       }

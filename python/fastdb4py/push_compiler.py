@@ -144,7 +144,8 @@ def make_inlined_dispatch(numeric_plan, str_plan, bytes_plan, list_plan, t_obj,
                            pfd_str_names, pfd_str_ids,
                            t_obj._fc)
 
-    # Fallback: per-field C extension calls    lines = ['def _dispatch(cache, _ab=_c_ab, _ae=_c_ae, _sf=_c_sf, _sfc=_c_sfc, _to=to, _t=t_obj, _SS=None):']
+    # Fallback: per-field C extension calls.
+    lines = ['def _dispatch(cache, _ab=_c_ab, _ae=_c_ae, _sf=_c_sf, _sfc=_c_sfc, _to=to, _t=t_obj, _SS=None):']
     lines.append('    _ab(_to)')
     for idx, fn in numeric_plan:
         lines.append(f'    _sf(_to, {idx}, cache.get({fn!r}) or 0)')

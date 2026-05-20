@@ -9,6 +9,7 @@ import {
   STR,
   U32,
   defineSchema,
+  getFastdbModule,
   initFastdb,
   listOf,
   ref,
@@ -57,6 +58,23 @@ test('serializer supports simple objects', () => {
   const copy = FastSerializer.loads(FastSerializer.dumps(point), Point);
   assert.equal(copy.x, 1.0);
   assert.equal(copy.y, 2.0);
+});
+
+test('serializer loads use owned WASM heap loading instead of legacy copied loading', async () => {
+  const module = await getFastdbModule();
+  assert.equal(typeof module.WxDatabase.loadFromOwnedHeap, 'function');
+
+  const originalLoadFromHeap = module.WxDatabase.loadFromHeap;
+  module.WxDatabase.loadFromHeap = () => {
+    throw new Error('legacy copied load path should not be used');
+  };
+  try {
+    const copy = FastSerializer.loads(FastSerializer.dumps(new Point({ x: 1.0, y: 2.0 })), Point);
+    assert.equal(copy.x, 1.0);
+    assert.equal(copy.y, 2.0);
+  } finally {
+    module.WxDatabase.loadFromHeap = originalLoadFromHeap;
+  }
 });
 
 test('serializer supports nested feature lists', () => {
