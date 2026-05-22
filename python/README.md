@@ -88,6 +88,56 @@ print(table[2].x)
 print(table.column.x.mean())
 ```
 
+## Backed View Lifetimes
+
+FastDB Python values have two lifetime modes. A plain `@feature` instance is owned Python data: its fields live in `__dict__`, it can be kept indefinitely, and assigning `point.x = 1.0` is ordinary Python object mutation. A row returned from a mapped `Table` is a backed feature view: schema fields read from the native table row, scalar numeric writes go back to native storage when the view is writeable, and the view is tied to a `FdbViewOwner`.
+
+Standalone FastDB tables use a trusted unchecked owner by default, so existing high-performance workflows keep raw NumPy column access:
+
+```python
+table = db.table(Point)
+raw_x = table.column.x          # NumPy view for trusted standalone use
+raw_x[:] = 1.0
+```
+
+Call-scoped integrations that reuse backing memory should pass a checked owner. Checked numeric columns return owner-bound views; `to_numpy()` returns a detached copy, while `unsafe_numpy_view()` explicitly exports the raw array and cannot be revoked after export:
+
+```python
+import fastdb4py as fdb
+
+owner = fdb.FdbViewOwner(checked=True, writeable=True)
+table = db.table(Point, owner=owner, writeable=True)
+
+row = table[0]
+row.x = 2.0                    # checked write-through to native storage
+
+col = table.column.x           # NumericColumnView, not a bare ndarray
+copy = col.to_numpy()          # detached copy
+raw = col.unsafe_numpy_view()  # trusted escape hatch
+
+fdb.invalidate(table)
+# row.x and col[0] now raise FdbViewInvalidatedError.
+# copy remains usable because it is materialized.
+```
+
+Use `fdb.materialize(value)` or `value.to_owned()` to detach FastDB-managed views before retaining data beyond the owner lifetime. `fdb.invalidate(...)` is idempotent and also works on containers such as lists, tuples, and mappings. This model is a correctness guard for stale views, not a hostile in-process sandbox; code that deliberately keeps raw arrays from `unsafe_numpy_view()` remains responsible for its own lifetime discipline.
+
+Explicit read-only views do not require a checked owner:
+
+```python
+table = db.table(Point, writeable=False)
+
+try:
+    table[0].x = 2.0
+except fdb.FdbViewWriteError:
+    pass
+
+try:
+    table.column.x[0] = 2.0
+except fdb.FdbViewWriteError:
+    pass
+```
+
 ## Field types
 
 `fastdb4py` uses binding-specific field aliases rather than plain Python primitives.
@@ -620,3 +670,4 @@ The tool is designed to be robust:
 - prefer changes in `python/fastdb4py/` unless the bridge itself must change
 - rebuild after C++ or SWIG changes
 - when the C++ core wire format changes, revalidate both Python and TypeScript bindings
+- before publishing `fastdb4py`, bump `pyproject.toml`, refresh `uv.lock`, update the `fastdb4py` changelog section, and confirm the corresponding `py/v<version>` tag does not already exist

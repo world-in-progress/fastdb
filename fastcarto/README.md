@@ -32,6 +32,10 @@ The C++ core is responsible for:
 
 If one of these behaviors changes, all higher-level bindings must be revalidated.
 
+## Integration boundary
+
+The C++ core owns generic FastDB binary, storage, table, feature, and buffer semantics. Binding layers and RPC systems may build on these semantics, but CRM contracts, route identity, relay behavior, call envelopes, generated RPC helpers, and transport-specific lease policy do not belong in the core.
+
 ## Public API shape
 
 The public API lives in:

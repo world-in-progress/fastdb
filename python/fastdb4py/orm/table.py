@@ -5,10 +5,12 @@ from contextlib import contextmanager
 from typing import TypeVar, Generic, Type, Generator
 
 from .. import core
+from ..column_view import NumericColumnView
 from ..registry import get_schema
 from ..reader import bind_feature, MappedFeature
 from ..string_column import BytesColumn, StringColumn, _normalize_string_values
 from ..type import OriginFieldType, coerce_bool_scalar
+from ..view_owner import FdbViewOwner, FdbViewWriteError, trusted_view_owner
 
 T = TypeVar('T')
 _column_accessor_lock = Lock()
@@ -106,6 +108,8 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
                 """Override to return numpy array instead of single value"""
                 # Hot path: name → array directly (1× getattribute + 1× dict.get).
                 # Cached arrays are stable: fixed-scale tables never reallocate columns.
+                table = object.__getattribute__(self, '_table')
+                table._assert_alive()
                 name_cache = object.__getattribute__(self, '_name_cache')
                 arr = name_cache.get(name)
                 if arr is not None:
@@ -123,7 +127,6 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
                     if idx is None:
                         raise AttributeError(f'Field "{name}" not found in the table.')
 
-                    table = object.__getattribute__(self, '_table')
                     table_origin = table._origin
                     fd = schema.fields[idx]
                     if fd.field_type in {OriginFieldType.str, OriginFieldType.wstr}:
@@ -137,6 +140,8 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
                                 f'Field "{name}" does not expose a fixed native column.',
                             )
                         arr = column.as_nparray()
+                        if table._fdb_owner.checked or not table._fdb_writeable:
+                            arr = NumericColumnView(table, idx, name, arr)
                     name_cache[name] = arr
                     return arr
 
@@ -163,6 +168,9 @@ class Table(Generic[T]):
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
         self._fixed_fill_handler = None
         self._read_lock = RLock()
+        self._fdb_owner: FdbViewOwner = trusted_view_owner(writeable=True)
+        self._fdb_checked = False
+        self._fdb_writeable = True
 
     @property
     def feature_count(self) -> int:
@@ -173,23 +181,48 @@ class Table(Generic[T]):
         self._fc[0] = value
 
     def __len__(self) -> int:
+        self._assert_alive()
         return self._origin.get_feature_count()
 
     def __getitem__(self, index: int) -> T:
         with self._read_lock:
+            self._assert_alive()
             count = self._origin.get_feature_count()
             if index < 0:
                 index = count + index
             if index < 0 or index >= count:
                 raise IndexError(f'Feature index {index} out of range [0, {count}).')
 
-            return bind_feature(self._feature_type, self._db, self._origin, index)
+            return bind_feature(
+                self._feature_type,
+                self._db,
+                self._origin,
+                index,
+                owner=self._fdb_owner,
+                writeable=self._fdb_writeable,
+                table=self,
+            )
 
     def __iter__(self) -> Generator[T, None, None]:
+        self._assert_alive()
         for i in range(self._origin.get_feature_count()):
             with self._read_lock:
-                item = bind_feature(self._feature_type, self._db, self._origin, i)
+                self._assert_alive()
+                item = bind_feature(
+                    self._feature_type,
+                    self._db,
+                    self._origin,
+                    i,
+                    owner=self._fdb_owner,
+                    writeable=self._fdb_writeable,
+                    table=self,
+                )
             yield item
+
+    def to_owned(self) -> list[T]:
+        from ..materialize import materialize_table
+
+        return materialize_table(self)
 
     @staticmethod
     @contextmanager
@@ -209,6 +242,7 @@ class Table(Generic[T]):
 
     @property
     def name(self) -> str:
+        self._assert_alive()
         return self._origin.name()
 
     @property
@@ -226,14 +260,17 @@ class Table(Generic[T]):
         """
         if self._column is None:
             raise RuntimeError('Table has not been mapped with a feature type.')
+        self._assert_alive()
         return self._column
 
     @property
     def row(self) -> int:
+        self._assert_alive()
         return self._origin.row()
 
     @property
     def next(self) -> bool:
+        self._assert_alive()
         return self._origin.next()
 
     @property
@@ -244,12 +281,16 @@ class Table(Generic[T]):
     def map_from(
         feature_type: Type[T] | None,
         origin: core.WxLayerTable | core.WxLayerTableBuild,
-        db: core.WxDatabase | core.WxDatabaseBuild
+        db: core.WxDatabase | core.WxDatabaseBuild,
+        *,
+        owner: FdbViewOwner | None = None,
+        writeable: bool | None = None,
     ) -> 'Table[T]':
         table = Table[T]()
         table._db = db
         table._origin = origin
         table._feature_type = feature_type
+        table._set_view_owner(owner, writeable=writeable)
 
         # Get feature count if the fastdb table has fixed scale
         if table.fixed:
@@ -266,6 +307,7 @@ class Table(Generic[T]):
     ) -> None:
         self._db = db
         self._origin = origin
+        self._fdb_owner.bump_generation()
         if self.fixed:
             self.feature_count = origin.get_feature_count()
             self._column = (
@@ -276,6 +318,7 @@ class Table(Generic[T]):
             self._column = None
 
     def rewind(self):
+        self._assert_alive()
         self._origin.rewind()
 
     def fill(self, **col_arrays) -> None:
@@ -287,6 +330,7 @@ class Table(Generic[T]):
         """
         if not self.fixed:
             raise RuntimeError('fill() only supports fixed-scale tables.')
+        self._assert_writeable()
         if self._fixed_fill_handler is None:
             raise RuntimeError('fill() is unavailable for read-only fixed tables.')
         if not col_arrays:
@@ -333,6 +377,32 @@ class Table(Generic[T]):
 
         self._fixed_fill_handler(writes)
 
+    def _set_view_owner(
+        self,
+        owner: FdbViewOwner | None,
+        *,
+        writeable: bool | None = None,
+    ) -> None:
+        if owner is None:
+            owner = trusted_view_owner(writeable=True if writeable is None else writeable)
+        self._fdb_owner = owner
+        self._fdb_checked = owner.checked
+        self._fdb_writeable = owner.writeable if writeable is None else writeable
+        if self.fixed:
+            self._column = (
+                _create_column_accessor(self._feature_type, self)
+                if self._feature_type is not None else None
+            )
+
+    def _assert_alive(self, generation: int | None = None) -> None:
+        self._fdb_owner.assert_alive(generation)
+
+    def _assert_writeable(self, generation: int | None = None) -> None:
+        self._fdb_owner.assert_alive(generation)
+        if not self._fdb_writeable:
+            raise FdbViewWriteError('FastDB table view is read-only.')
+        self._fdb_owner.assert_writeable(generation)
+
     def iter_reuse(self) -> Generator[T, None, None]:
         """High-performance iterator reusing a single MappedFeature proxy.
 
@@ -343,6 +413,7 @@ class Table(Generic[T]):
         if not self.fixed:
             raise RuntimeError('iter_reuse() only supports fixed-scale tables.')
 
+        self._assert_alive()
         schema = get_schema(self._feature_type)
         count = self._origin.get_feature_count()
         if count == 0:
@@ -350,7 +421,7 @@ class Table(Generic[T]):
 
         with self._read_lock:
             feat0 = self._origin.tryGetFeature(0)
-        proxy = MappedFeature(self._feature_type, feat0, schema)
+        proxy = MappedFeature(self._feature_type, feat0, schema, owner=self._fdb_owner)
         yield proxy
 
         for i in range(1, count):

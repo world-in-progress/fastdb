@@ -11,6 +11,10 @@ from .column_engine import ColumnEngine
 from .object_engine import ObjectEngine
 from .orm.table import Table
 from .serializer import FastSerializer
+from .materialize import materialize
+from .view_owner import (
+    FdbViewInvalidatedError, FdbViewOwner, FdbViewWriteError, invalidate,
+)
 from .schema import (
     SCHEMA_VERSION, canonical_schema_json, columnar_capability,
     codec_ref_for_feature, export_schema, object_graph_capability, schema_sha256,
@@ -20,7 +24,8 @@ from .string_column import StringColumn, pack_utf8_column
 __all__ = [
     'feature', 'is_feature', 'get_schema', 'lookup_class',
     'Layout', 'ColumnEngine', 'ObjectEngine', 'Table', 'StringColumn',
-    'FastSerializer', 'pack_utf8_column',
+    'FastSerializer', 'materialize', 'pack_utf8_column',
+    'FdbViewInvalidatedError', 'FdbViewOwner', 'FdbViewWriteError', 'invalidate',
     'SCHEMA_VERSION', 'canonical_schema_json', 'columnar_capability',
     'codec_ref_for_feature', 'export_schema', 'object_graph_capability',
     'schema_sha256',

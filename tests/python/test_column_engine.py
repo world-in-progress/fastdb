@@ -372,7 +372,7 @@ def test_table_iter_reuse_locks_row_materialization(monkeypatch):
             return f'feature-{index}'
 
     class FakeMappedFeature:
-        def __init__(self, feature_type, feat, schema):
+        def __init__(self, feature_type, feat, schema, *, owner=None):
             self._feat = feat
 
     lock = LockProbe()

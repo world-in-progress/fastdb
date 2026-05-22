@@ -57,6 +57,12 @@ If you are working on native internals or storage layout, start with:
 
 - [`fastcarto/README.md`](fastcarto/README.md)
 
+## Python Backed View Lifetimes
+
+`fastdb4py` distinguishes owned Python `@feature` objects from backed table views. Owned objects keep normal `__dict__` read/write behavior. Backed rows, checked numeric columns, `StringColumn`, and `BytesColumn` can be tied to a `FdbViewOwner`; after `fdb.invalidate(owner_or_view)`, later checked reads or writes raise `FdbViewInvalidatedError`. Standalone FastDB tables remain trusted and return raw NumPy numeric columns by default, while integrations with reusable memory leases should pass `FdbViewOwner(checked=True, ...)` and use `fdb.materialize(...)` or `value.to_owned()` before retaining data beyond the lease. See [`python/README.md#backed-view-lifetimes`](python/README.md#backed-view-lifetimes) for the Python API details.
+
+For safety-sensitive integrations, pass `writeable=False` to expose read-only backed rows and checked numeric columns. This blocks row field writes and column writes even when the owner itself is an unchecked trusted owner.
+
 ## Python `ColumnEngine.truncate()` with `STR`
 
 `fastdb4py` `ColumnEngine.truncate()` now supports UTF-8 `STR` fields in two usage tiers:
@@ -227,6 +233,8 @@ Common development commands from the repository root:
 ./py_utils.sh --clean   # remove C++ build artifacts and SWIG-generated bindings
 ./py_utils.sh --build   # build C++ core + Python bindings
 ./py_utils.sh --test    # run Python unit tests
+uv run pytest tests/python -q  # run the Python test suite directly
+uv build             # build the fastdb4py sdist + local wheel
 bash ts/build-wasm.sh   # build the WebAssembly module for fastdb4ts
 npm run test:ts         # run root TypeScript tests
 fdb codegen --ts <input_dir> <output_dir>  # generate TypeScript schemas from Python features
@@ -237,3 +245,7 @@ Build requirements depend on the layer you are working on:
 - **Python binding**: C++17 compiler, CMake >= 3.16, SWIG >= 4.0, NumPy
 - **TypeScript/WASM binding**: Emscripten, Node.js, npm
 - **Native core**: C++17 compiler and CMake
+
+### Python release checklist
+
+Before publishing `fastdb4py`, bump `[project].version` in `pyproject.toml`, refresh `uv.lock`, update the `fastdb4py` section in `CHANGELOG.md`, and verify that the release tag `py/v<version>` does not already exist. The PyPI workflow publishes only when `pyproject.toml` changes and the tag for that version is absent.

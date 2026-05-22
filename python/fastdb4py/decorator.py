@@ -48,6 +48,79 @@ def feature(cls):
     return cls
 
 
+def mapped_feature_class(cls, schema=None):
+    """Return a mapped-row subclass without slowing ordinary owned instances."""
+    mapped_cls = cls.__dict__.get('__fastdb_mapped_feature_class__')
+    if mapped_cls is not None:
+        return mapped_cls
+
+    namespace = {
+        '__module__': cls.__module__,
+        '__fastdb_feature__': True,
+        '__fastdb_feature_base__': cls,
+        '__fastdb_layer_name__': getattr(cls, '__fastdb_layer_name__', cls.__name__),
+    }
+    if schema is not None:
+        namespace['__fastdb_schema__'] = schema
+
+    mapped_cls = type(f'{cls.__name__}FastdbView', (cls,), namespace)
+    _install_feature_accessors(mapped_cls)
+    cls.__fastdb_mapped_feature_class__ = mapped_cls
+    return mapped_cls
+
+
+def _install_feature_accessors(cls) -> None:
+    """Install dual owned/mapped field access on a @feature class."""
+    if cls.__dict__.get('__fastdb_field_accessors_installed__', False):
+        return
+
+    original_getattribute = getattr(cls, '__getattribute__', object.__getattribute__)
+    original_setattr = getattr(cls, '__setattr__', object.__setattr__)
+    default_getattribute = original_getattribute is object.__getattribute__
+    default_setattr = original_setattr is object.__setattr__
+
+    def __getattribute__(self, name: str):
+        if name.startswith('_') or name in {'__class__', '__dict__'}:
+            return object.__getattribute__(self, name)
+
+        cache = object.__getattribute__(self, '__dict__')
+        backing = cache.get('_fdb_backing')
+        if backing is not None and backing.has_field(name):
+            return backing.read_field(name)
+        if default_getattribute:
+            return object.__getattribute__(self, name)
+        return original_getattribute(self, name)
+
+    if default_setattr:
+        def __setattr__(self, name: str, value):
+            if name.startswith('_'):
+                object.__setattr__(self, name, value)
+                return
+
+            cache = object.__getattribute__(self, '__dict__')
+            backing = cache.get('_fdb_backing')
+            if backing is not None and backing.has_field(name):
+                backing.write_field(name, value)
+                return
+            cache[name] = value
+    else:
+        def __setattr__(self, name: str, value):
+            if name.startswith('_'):
+                object.__setattr__(self, name, value)
+                return
+
+            cache = object.__getattribute__(self, '__dict__')
+            backing = cache.get('_fdb_backing')
+            if backing is not None and backing.has_field(name):
+                backing.write_field(name, value)
+                return
+            original_setattr(self, name, value)
+
+    cls.__getattribute__ = __getattribute__
+    cls.__setattr__ = __setattr__
+    cls.__fastdb_field_accessors_installed__ = True
+
+
 def _validate_annotations(cls):
     """Validate type annotations on a @feature class. Skips forward references."""
     try:

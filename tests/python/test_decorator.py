@@ -174,6 +174,31 @@ def test_feature_allows_slots_with_dict():
     obj = SlottedDict(x=1.0)
     assert obj.x == 1.0
 
+
+def test_feature_preserves_owned_custom_attribute_hooks():
+    events = []
+
+    @feature
+    class CustomAttributes:
+        x: F64
+
+        def __setattr__(self, name, value):
+            events.append(('set', name, value))
+            object.__setattr__(self, name, value + 1 if name == 'x' else value)
+
+        def __getattribute__(self, name):
+            if name == 'tag':
+                return 'custom'
+            return object.__getattribute__(self, name)
+
+    obj = CustomAttributes()
+    obj.x = 1.0
+
+    assert events == [('set', 'x', 1.0)]
+    assert obj.x == 2.0
+    assert obj.tag == 'custom'
+
+
 def test_feature_forward_ref_tolerance():
     """@feature should not crash on forward references in annotations."""
     @feature

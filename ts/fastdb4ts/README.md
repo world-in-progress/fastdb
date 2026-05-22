@@ -13,7 +13,7 @@ Browser-oriented TypeScript bindings for `fastdb`, powered by WebAssembly.
 - **Binary buffer roundtrips**
   - import/export databases as `Uint8Array` / `ArrayBuffer`
 - **Legacy graph serialization**
-  - `FastSerializer` remains available for existing nested-feature and cyclic-reference users, but new cross-runtime provider work should use neutral schema descriptors and explicit codec profiles
+  - `FastSerializer` remains available for existing nested-feature and cyclic-reference users, but new cross-runtime integration work should use neutral schema descriptors and explicit codec profiles
 - **Shared native semantics**
   - backed by the same C++ core as `fastdb4py`
 
@@ -33,6 +33,11 @@ Not included in the current TS package:
 
 - shared-memory IPC
 - direct filesystem persistence APIs
+- C-Two-specific CRM, route, relay, or call-db helper generation
+
+## Integration boundary
+
+`fastdb4ts` owns generic browser/WASM access to FastDB schemas and binary buffers. External RPC systems may consume those schemas and buffers, but their contract planning, route identity, relay behavior, and generated client helpers belong in those systems rather than in `fastdb4ts`.
 
 ## Installation
 
@@ -161,7 +166,7 @@ console.log(copyTable.get(2).x); // 2.0
 
 ## FastSerializer Legacy Compatibility
 
-`FastSerializer` is the legacy graph-oriented layer for feature graphs that are more naturally represented as nested objects than flat tables. It remains available for compatibility and migration tests, but it is not the foundation for new C-Two provider work.
+`FastSerializer` is the legacy graph-oriented layer for feature graphs that are more naturally represented as nested objects than flat tables. It remains available for compatibility and migration tests, but it is not the foundation for new external RPC integration work.
 
 Supported scenarios include:
 

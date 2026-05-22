@@ -10,6 +10,7 @@ Data structure: 'Coordinate' records — row_id (u32), x/y/z (float64), name (UT
     - fastdb ColumnEngine truncate + STR path  (raw strings: known-size truncate + native-backed tbl.fill(..., name=names))
     - fastdb ColumnEngine truncate + STR path  (prepacked: pack_utf8_column([...]) + tbl.column.name.fill_utf8(...))
    - fastdb ColumnEngine truncate fast path   (known-size numeric-only apples-to-apples)
+   - fastdb ColumnEngine single-value tables  (CoordId/CoordX/CoordY/CoordZ/CoordName split tables)
    - fastdb ObjectEngine                      (OLTP/graph, deferred batch push + combine)
    - PyArrow                                  (columnar IPC)
    - pickle                                   (Python native binary)
@@ -87,6 +88,36 @@ class CoordNumeric:
     z: F64
 
 
+@feature
+class CoordId:
+    """Single-value coord_id table."""
+    row_id: U32
+
+
+@feature
+class CoordX:
+    """Single-value coord_x table."""
+    x: F64
+
+
+@feature
+class CoordY:
+    """Single-value coord_y table."""
+    y: F64
+
+
+@feature
+class CoordZ:
+    """Single-value coord_z table."""
+    z: F64
+
+
+@feature
+class CoordName:
+    """Single-value coord_name table."""
+    name: STR
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -145,6 +176,18 @@ def _bytes_per_record(size_bytes: int, N: int) -> float:
     if N <= 0:
         return float("nan")
     return size_bytes / N
+
+
+def _stride_bytes(column) -> int | None:
+    strides = getattr(column, "strides", None)
+    if strides:
+        return int(strides[0])
+    unsafe_numpy_view = getattr(column, "unsafe_numpy_view", None)
+    if unsafe_numpy_view is not None:
+        arr = unsafe_numpy_view()
+        if arr.strides:
+            return int(arr.strides[0])
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -453,6 +496,10 @@ def bench_column_push(N: int, reps: int) -> dict:
             cz = tbl.column.z
             return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
 
+        probe_tbl = orm2.table(Coord)
+        x_stride = _stride_bytes(probe_tbl.column.x)
+        y_stride = _stride_bytes(probe_tbl.column.y)
+        z_stride = _stride_bytes(probe_tbl.column.z)
         read_ms = _median_ms(do_read, reps)
     finally:
         if orm2 is not None:
@@ -474,6 +521,9 @@ def bench_column_push(N: int, reps: int) -> dict:
         "read_ms": round(read_ms, 2),
         "total_ms": round(total_ms, 2),
         "size_bytes": size_bytes,
+        "x_stride_bytes": x_stride,
+        "y_stride_bytes": y_stride,
+        "z_stride_bytes": z_stride,
     }
 
 
@@ -528,6 +578,10 @@ def bench_column_trunc_str(N: int, reps: int) -> dict:
             cz = tbl.column.z
             return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
 
+        probe_tbl = orm2.table(Coord)
+        x_stride = _stride_bytes(probe_tbl.column.x)
+        y_stride = _stride_bytes(probe_tbl.column.y)
+        z_stride = _stride_bytes(probe_tbl.column.z)
         read_ms = _median_ms(do_read, reps)
     finally:
         if orm2 is not None:
@@ -549,6 +603,9 @@ def bench_column_trunc_str(N: int, reps: int) -> dict:
         "read_ms": round(read_ms, 2),
         "total_ms": round(total_ms, 2),
         "size_bytes": size_bytes,
+        "x_stride_bytes": x_stride,
+        "y_stride_bytes": y_stride,
+        "z_stride_bytes": z_stride,
     }
 
 
@@ -608,6 +665,10 @@ def bench_column_trunc_str_prepacked(N: int, reps: int) -> dict:
             cz = tbl.column.z
             return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
 
+        probe_tbl = orm2.table(Coord)
+        x_stride = _stride_bytes(probe_tbl.column.x)
+        y_stride = _stride_bytes(probe_tbl.column.y)
+        z_stride = _stride_bytes(probe_tbl.column.z)
         read_ms = _median_ms(do_read, reps)
     finally:
         if orm2 is not None:
@@ -629,6 +690,9 @@ def bench_column_trunc_str_prepacked(N: int, reps: int) -> dict:
         "read_ms": round(read_ms, 2),
         "total_ms": round(total_ms, 2),
         "size_bytes": size_bytes,
+        "x_stride_bytes": x_stride,
+        "y_stride_bytes": y_stride,
+        "z_stride_bytes": z_stride,
     }
 
 
@@ -688,6 +752,10 @@ def bench_column_truncate(N: int, reps: int) -> dict:
             cz = tbl.column.z
             return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
 
+        probe_tbl = orm2.table(CoordNumeric)
+        x_stride = _stride_bytes(probe_tbl.column.x)
+        y_stride = _stride_bytes(probe_tbl.column.y)
+        z_stride = _stride_bytes(probe_tbl.column.z)
         read_ms = _median_ms(do_read, reps)
     finally:
         if orm2 is not None:
@@ -709,6 +777,184 @@ def bench_column_truncate(N: int, reps: int) -> dict:
         "read_ms": round(read_ms, 2),
         "total_ms": round(total_ms, 2),
         "size_bytes": size_bytes,
+        "x_stride_bytes": x_stride,
+        "y_stride_bytes": y_stride,
+        "z_stride_bytes": z_stride,
+    }
+
+
+def bench_column_single_value(N: int, reps: int) -> dict:
+    """ColumnEngine as five single-field tables, including the STR name table."""
+    shm_name = f"cesv_kostya_{uuid.uuid4().hex[:8]}"
+
+    def do_build():
+        ids, xs, ys, zs, names = _make_coord_columns(N)
+        orm = ColumnEngine.truncate([
+            Layout(CoordId, N),
+            Layout(CoordX, N),
+            Layout(CoordY, N),
+            Layout(CoordZ, N),
+            Layout(CoordName, N),
+        ])
+        orm.table(CoordId).fill(row_id=ids)
+        orm.table(CoordX).fill(x=xs)
+        orm.table(CoordY).fill(y=ys)
+        orm.table(CoordZ).fill(z=zs)
+        orm.table(CoordName).fill(name=names)
+        return orm
+
+    build_ms = _median_ms(do_build, reps)
+    encode_ms = 0.0
+
+    orm = do_build()
+    _raw = bytes(orm._origin.buffer().as_array(np.uint8))
+
+    def do_shm():
+        s = _shm_write(_raw)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+
+    orm.share(shm_name)
+
+    try:
+        _probe = shared_memory.SharedMemory(name=shm_name)
+        size_bytes = _probe.size
+        _probe.close()
+    except Exception:
+        size_bytes = 0
+
+    orm2 = None
+    try:
+        def do_deserial():
+            h = ColumnEngine.load(shm_name)
+            h.close()
+
+        deserial_ms = _median_ms(do_deserial, reps)
+        orm2 = ColumnEngine.load(shm_name)
+
+        def do_read():
+            cx = orm2.table(CoordX).column.x
+            cy = orm2.table(CoordY).column.y
+            cz = orm2.table(CoordZ).column.z
+            return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
+
+        x_stride = _stride_bytes(orm2.table(CoordX).column.x)
+        y_stride = _stride_bytes(orm2.table(CoordY).column.y)
+        z_stride = _stride_bytes(orm2.table(CoordZ).column.z)
+        read_ms = _median_ms(do_read, reps)
+    finally:
+        if orm2 is not None:
+            orm2.unlink()
+        else:
+            try:
+                h = ColumnEngine.load(shm_name)
+                h.unlink()
+            except Exception:
+                pass
+
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
+    return {
+        "system": "single_value",
+        "build_ms": round(build_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
+        "deserial_ms": round(deserial_ms, 2),
+        "read_ms": round(read_ms, 2),
+        "total_ms": round(total_ms, 2),
+        "size_bytes": size_bytes,
+        "x_stride_bytes": x_stride,
+        "y_stride_bytes": y_stride,
+        "z_stride_bytes": z_stride,
+    }
+
+
+def bench_column_single_numeric(N: int, reps: int) -> dict:
+    """ColumnEngine as four single-field numeric tables."""
+    shm_name = f"cesvn_kostya_{uuid.uuid4().hex[:8]}"
+
+    def do_build():
+        ids = np.arange(N, dtype=np.uint32)
+        xs = np.arange(N, dtype=np.float64) * 0.1
+        ys = np.arange(N, dtype=np.float64) * 0.2
+        zs = np.arange(N, dtype=np.float64) * 0.3
+        orm = ColumnEngine.truncate([
+            Layout(CoordId, N),
+            Layout(CoordX, N),
+            Layout(CoordY, N),
+            Layout(CoordZ, N),
+        ])
+        orm.table(CoordId).fill(row_id=ids)
+        orm.table(CoordX).fill(x=xs)
+        orm.table(CoordY).fill(y=ys)
+        orm.table(CoordZ).fill(z=zs)
+        return orm
+
+    build_ms = _median_ms(do_build, reps)
+    encode_ms = 0.0
+
+    orm = do_build()
+    _raw = bytes(orm._origin.buffer().as_array(np.uint8))
+
+    def do_shm():
+        s = _shm_write(_raw)
+        s.close()
+        s.unlink()
+
+    shm_ms = _median_ms(do_shm, reps)
+
+    orm.share(shm_name)
+
+    try:
+        _probe = shared_memory.SharedMemory(name=shm_name)
+        size_bytes = _probe.size
+        _probe.close()
+    except Exception:
+        size_bytes = 0
+
+    orm2 = None
+    try:
+        def do_deserial():
+            h = ColumnEngine.load(shm_name)
+            h.close()
+
+        deserial_ms = _median_ms(do_deserial, reps)
+        orm2 = ColumnEngine.load(shm_name)
+
+        def do_read():
+            cx = orm2.table(CoordX).column.x
+            cy = orm2.table(CoordY).column.y
+            cz = orm2.table(CoordZ).column.z
+            return float(cx[:].sum() + cy[:].sum() + cz[:].sum())
+
+        x_stride = _stride_bytes(orm2.table(CoordX).column.x)
+        y_stride = _stride_bytes(orm2.table(CoordY).column.y)
+        z_stride = _stride_bytes(orm2.table(CoordZ).column.z)
+        read_ms = _median_ms(do_read, reps)
+    finally:
+        if orm2 is not None:
+            orm2.unlink()
+        else:
+            try:
+                h = ColumnEngine.load(shm_name)
+                h.unlink()
+            except Exception:
+                pass
+
+    total_ms = build_ms + encode_ms + shm_ms + deserial_ms + read_ms
+    return {
+        "system": "single_num",
+        "build_ms": round(build_ms, 2),
+        "encode_ms": round(encode_ms, 2),
+        "shm_ms": round(shm_ms, 2),
+        "deserial_ms": round(deserial_ms, 2),
+        "read_ms": round(read_ms, 2),
+        "total_ms": round(total_ms, 2),
+        "size_bytes": size_bytes,
+        "x_stride_bytes": x_stride,
+        "y_stride_bytes": y_stride,
+        "z_stride_bytes": z_stride,
     }
 
 
@@ -931,11 +1177,29 @@ def print_table(results: list[dict], N: int, *, title: str, schema_desc: str):
     print(f"  {sep}")
 
     _print_throughput(results, N)
+    _print_stride_notes(results)
 
     # Dual baselines: pickle (general) and arrow (columnar best-of-breed)
     for baseline in ("pickle", "pickle_num", "arrow", "arrow_num"):
         if any(r.get("system") == baseline for r in results):
             _print_ratio(results, baseline, baseline)
+
+
+def _print_stride_notes(results: list[dict]):
+    rows = [
+        r for r in results
+        if "error" not in r and r.get("x_stride_bytes") is not None
+    ]
+    if not rows:
+        return
+    print("\n  FastDB fixed-column numpy strides (bytes):")
+    for r in rows:
+        print(
+            f"    {r['system']}: "
+            f"x={r.get('x_stride_bytes')} "
+            f"y={r.get('y_stride_bytes')} "
+            f"z={r.get('z_stride_bytes')}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -976,6 +1240,8 @@ def main():
     print("    column_trunc_str_prepacked = advanced prepacked path: pack_utf8_column(names) + tbl.column.name.fill_utf8(...)")
     print("                               (raw build now includes native string packing; prepacked encode isolates fill_utf8(...))")
     print("    column_truncate   = ColumnEngine.truncate(Layout) + tbl.fill(numpy)  [numeric-only fast path]")
+    print("    single_value      = split tables: CoordId/CoordX/CoordY/CoordZ/CoordName; includes STR storage")
+    print("    single_num        = split tables: CoordId/CoordX/CoordY/CoordZ")
     print("    object            = ObjectEngine.create() + per-row push() + combine()")
     print("    arrow / arrow_num = PyArrow Table + IPC stream + numpy read")
     print("    pickle / pickle_num = list[dict] + pickle.dumps/loads + dict iteration")
@@ -989,11 +1255,13 @@ def main():
         ("column_push",             bench_column_push),
         ("column_trunc_str_raw",    bench_column_trunc_str),
         ("column_trunc_str_prepacked", bench_column_trunc_str_prepacked),
+        ("single_value",            bench_column_single_value),
         ("arrow",                   bench_arrow),
         ("pickle",                  bench_pickle),
     ]
     numeric_benches = [
         ("column_truncate", bench_column_truncate),
+        ("single_num",      bench_column_single_numeric),
         ("arrow_num",       bench_arrow_numeric),
         ("pickle_num",      bench_pickle_numeric),
     ]
@@ -1013,7 +1281,7 @@ def main():
         print_table(
             full_results, N,
             title="Section A — Full schema with STR (raw vs prepacked)",
-            schema_desc="row_id: U32 | x, y, z: F64 | name: STR (raw tbl.fill native batch API vs prepacked pack_utf8_column + fill_utf8)",
+            schema_desc="row_id: U32 | x, y, z: F64 | name: STR (single_value uses CoordId/CoordX/CoordY/CoordZ/CoordName)",
         )
 
         # ---- Section B: numeric-only (apples-to-apples for ColumnEngine truncate) ----
@@ -1030,7 +1298,7 @@ def main():
         print_table(
             num_results, N,
             title="Section B — Numeric only (apples-to-apples truncate fast path)",
-            schema_desc="row_id: U32 | x, y, z: F64",
+            schema_desc="row_id: U32 | x, y, z: F64 (single_num uses CoordId/CoordX/CoordY/CoordZ)",
         )
 
         all_results.append({

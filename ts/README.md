@@ -17,7 +17,7 @@ The current design goals are:
 - **Binary data exchange**
   - `Uint8Array` / `ArrayBuffer` in and out
 - **Legacy graph serialization**
-  - `FastSerializer` remains available for nested features and cyclic references, but new cross-runtime provider work should use neutral schema descriptors and explicit codec profiles
+  - `FastSerializer` remains available for nested features and cyclic references, but new cross-runtime integration work should use neutral schema descriptors and explicit codec profiles
 - **Browser-friendly deployment**
   - isolated WASM build path without forcing the Python build to depend on Emscripten
 
@@ -25,6 +25,7 @@ The current TypeScript binding intentionally does **not** implement:
 
 - shared-memory IPC
 - direct file persistence APIs
+- C-Two-specific CRM, route, relay, or call-db helper generation
 
 ## Directory layout
 
@@ -107,6 +108,10 @@ npm --prefix ts/fastdb4ts run build
 ```
 
 For publication, `ts/fastdb4ts/` is set up as the npm package directory.
+
+## Integration boundary
+
+`fastdb4ts` owns generic browser/WASM access to FastDB schemas and binary buffers. External RPC systems may consume those schemas and buffers, but their contract planning, route identity, relay behavior, and generated client helpers belong in those systems rather than in `fastdb4ts`.
 
 ## Quick start
 
@@ -202,7 +207,7 @@ console.log(copyTable.get(2).x);
 
 ## Legacy serializer usage
 
-`FastSerializer` is the legacy graph-oriented transport layer. It remains available for compatibility and migration tests, but it is not the foundation for new C-Two provider work.
+`FastSerializer` is the legacy graph-oriented transport layer. It remains available for compatibility and migration tests, but it is not the foundation for new external RPC integration work.
 
 It supports:
 

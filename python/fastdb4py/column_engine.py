@@ -18,6 +18,7 @@ from .registry import (
 from .layout import Layout
 from .orm.table import Table
 from .type import OriginFieldType
+from .view_owner import FdbViewOwner
 from .push_compiler import (
     make_inlined_dispatch, make_batch_inlined_dispatch,
 )
@@ -363,7 +364,14 @@ class ColumnEngine:
             self._shm = None
         self._table_map = {}
 
-    def table(self, feature_type: Type, name: str = None) -> Table:
+    def table(
+        self,
+        feature_type: Type,
+        name: str = None,
+        *,
+        owner: FdbViewOwner | None = None,
+        writeable: bool | None = None,
+    ) -> Table:
         """Get a Table for the given @feature class."""
         if not is_feature(feature_type):
             raise TypeError(
@@ -374,6 +382,14 @@ class ColumnEngine:
         cached = self._table_map.get(table_name)
         if cached is not None:
             self._table_feature_types[table_name] = feature_type
+            if owner is not None or writeable is not None:
+                return Table.map_from(
+                    feature_type,
+                    cached._origin,
+                    cached._db,
+                    owner=owner,
+                    writeable=writeable,
+                )
             self._attach_fixed_fill_handler(cached, table_name)
             return cached
         db = self._origin
@@ -382,8 +398,16 @@ class ColumnEngine:
             layer = db.get_layer(i)
             layer_name = layer.name() or (fallback_names[i] if i < len(fallback_names) else '')
             if layer_name == table_name:
-                tbl = Table.map_from(feature_type, layer, db)
+                tbl = Table.map_from(
+                    feature_type,
+                    layer,
+                    db,
+                    owner=owner,
+                    writeable=writeable,
+                )
                 self._table_feature_types[table_name] = feature_type
+                if owner is not None or writeable is not None:
+                    return tbl
                 self._attach_fixed_fill_handler(tbl, table_name)
                 self._table_map[table_name] = tbl
                 return tbl

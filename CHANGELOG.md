@@ -15,9 +15,12 @@ When a binding is released (tagged), its section is automatically copied to the 
 ### Changed
 - `@feature` decorator now accepts `np.ndarray` field annotations (handled via `FastSerializer` buffer layers).
 - `FastSerializer` no longer recognises pre-v2.0 `Feature` subclasses; only `@feature`-decorated classes are accepted.
+- Python table rows returned from `Table` now behave as backed `@feature` views instead of detached copies, so scalar numeric field writes can update native storage when the view is writeable.
 
 ### Added
 - `fdb codegen --ts <input_dir> <output_dir>` CLI command: auto-generates TypeScript `Feature` classes from Python Feature definitions, with full type mapping, cross-file import resolution, cycle detection (lazy refs), and topological ordering.
+- `FdbViewOwner`, `FdbViewInvalidatedError`, `FdbViewWriteError`, and `fdb.invalidate(...)` for explicit backed-view lifetime management in reusable-buffer integrations.
+- `fdb.materialize(...)` and `Table.to_owned()` for recursively detaching FastDB-managed table, row, column, NumPy, and bytes views before retaining data beyond a backing-buffer lifetime.
 - Free-threaded Python (PEP 703) support: module-level caches (`get_class_schema`, serializer schema, ColumnAccessor) are now safe under concurrent access; CI tests against Python 3.13t.
 - Thread-safety test suite (`test_free_threading.py`): 12 tests covering schema cache, serializer, ColumnAccessor, Feature instances, ORM lifecycle, and mixed-workload stress under concurrent threading.
 - `FastSerializer` numpy ndarray buffer layer support (`__fastser_buf__`): numpy arrays are now serialized via dedicated fastdb layers using `memcpy`-level writes and `np.frombuffer` loads, achieving 5–8× speedup over list-based paths for large arrays. Supports float64, float32, uint32, int32, uint16, uint8 dtypes and 1D/2D/3D shapes.
@@ -38,6 +41,8 @@ When a binding is released (tagged), its section is automatically copied to the 
 - Cumulative `FastSerializer` improvement on complex PointCloud benchmark: **54%** (153.93 → 70.01 µs geo-mean); loads at N=10000 is now **21× faster than pickle**.
 
 ### Fixed
+- Checked FastDB table, row, numeric-column, string-column, and bytes-column views now raise after their owner is invalidated, preventing stale child views from silently surviving a released backing buffer.
+- `table(..., writeable=False)` now enforces explicit read-only behavior for both row field writes and numeric column writes, even when no checked lifetime owner is provided.
 - `ColumnEngine.truncate()` now preserves later tables in mixed layouts when an earlier `STR` column is still empty at combine time.
 - `ColumnEngine.truncate()` fixed-table writes now route mixed numeric + `STR` `Table.fill(**cols)` batches through the retained truncate build, with upfront length validation, shared `StringColumn.fill()` / `fill_utf8()` plumbing, and no Python-side whole-database rebuild for string columns.
 - SWIG/Python bindings now expose UTF-8 string-column reader APIs (`get_field_as_string_view`, `get_string_column_offsets`, `get_string_column_data`) for upcoming `ColumnEngine` string-column integration work.

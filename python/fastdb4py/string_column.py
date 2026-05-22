@@ -4,6 +4,8 @@ from typing import Iterable, TYPE_CHECKING, Optional
 
 import numpy as np
 
+from .view_owner import FdbViewOwner, FdbViewWriteError
+
 if TYPE_CHECKING:
     from .orm.table import Table
 
@@ -72,23 +74,39 @@ class StringColumn:
         self._field_index = field_index
         self._field_name = field_name
         self._wide = wide
+        self._owner: FdbViewOwner = table._fdb_owner
+        self._writeable = table._fdb_writeable
+        self._owner_generation = table._fdb_owner.generation
+
+    def _assert_alive(self) -> None:
+        self._owner.assert_alive(self._owner_generation)
+
+    def _assert_writeable(self) -> None:
+        self._owner.assert_alive(self._owner_generation)
+        if not self._writeable:
+            raise FdbViewWriteError('FastDB string column view is read-only.')
+        self._owner.assert_writeable(self._owner_generation)
 
     def __len__(self) -> int:
+        self._assert_alive()
         return len(self._table)
 
     def _offsets(self) -> np.ndarray | None:
+        self._assert_alive()
         chunk = self._table._origin.get_string_column_offsets(self._field_index)
         if chunk is None or chunk.size == 0:
             return None
         return chunk.as_array(np.uint32)
 
     def _data(self) -> np.ndarray | None:
+        self._assert_alive()
         chunk = self._table._origin.get_string_column_data(self._field_index)
         if chunk is None or chunk.size == 0:
             return np.empty(0, dtype=np.uint8)
         return chunk.as_array(np.uint8)
 
     def get(self, index: int) -> str:
+        self._assert_alive()
         length = len(self)
         if index < 0:
             index += length
@@ -123,7 +141,11 @@ class StringColumn:
     def to_pylist(self) -> list[str]:
         return [self.get(i) for i in range(len(self))]
 
+    def to_owned(self) -> list[str]:
+        return self.to_pylist()
+
     def fill(self, strings: Iterable[Optional[str]]) -> None:
+        self._assert_writeable()
         payload = _normalize_string_values(strings, len(self))
         self._dispatch_string_payload(payload)
 
@@ -172,6 +194,7 @@ class StringColumn:
         return offsets_arr, data_arr
 
     def fill_utf8(self, offsets: np.ndarray, data: np.ndarray) -> None:
+        self._assert_writeable()
         offsets_arr, data_arr = self._validate_utf8_payload(offsets, data, len(self))
         self._dispatch_utf8_payload(offsets_arr, data_arr)
 
@@ -196,11 +219,18 @@ class BytesColumn:
         self._table = table
         self._field_index = field_index
         self._field_name = field_name
+        self._owner: FdbViewOwner = table._fdb_owner
+        self._owner_generation = table._fdb_owner.generation
+
+    def _assert_alive(self) -> None:
+        self._owner.assert_alive(self._owner_generation)
 
     def __len__(self) -> int:
+        self._assert_alive()
         return len(self._table)
 
     def get(self, index: int) -> bytes:
+        self._assert_alive()
         length = len(self)
         if index < 0:
             index += length
@@ -225,3 +255,6 @@ class BytesColumn:
 
     def to_pylist(self) -> list[bytes]:
         return [self.get(i) for i in range(len(self))]
+
+    def to_owned(self) -> list[bytes]:
+        return self.to_pylist()

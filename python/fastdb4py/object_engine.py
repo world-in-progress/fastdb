@@ -20,6 +20,7 @@ from .registry import (
 from .layout import Layout
 from .orm.table import Table
 from .reader import map_feature, copy_feature
+from .view_owner import FdbViewOwner
 from .push_compiler import (
     compile_push_fn, compile_ref_push_fn,
     make_batch_inlined_dispatch,
@@ -322,14 +323,20 @@ class ObjectEngine:
         else:
             raise ValueError(f"Unknown mode: {mode!r}")
 
-    def table(self, cls: Type) -> Table:
+    def table(
+        self,
+        cls: Type,
+        *,
+        owner: FdbViewOwner | None = None,
+        writeable: bool | None = None,
+    ) -> Table:
         """Get a Table with zero-copy numpy column access."""
         self._check_built()
         state = self._layers.get(cls)
         if state is None:
             raise KeyError(f"No layer for {cls.__name__}")
         layer = self._db.get_layer(state.layer_idx)
-        return Table.map_from(cls, layer, self._db)
+        return Table.map_from(cls, layer, self._db, owner=owner, writeable=writeable)
 
     def iter(self, cls: Type, mode: str = 'map') -> Iterator:
         """Iterate all features of a given type."""
