@@ -96,6 +96,10 @@ offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "bb", "ccc"])
 tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 ```
 
+## Python Call-DB Exact Export
+
+For integrations that already own a generic call-db binding, `try_export_call_db(binding, value)` returns an existing buffer-protocol view when a value is already backed by an exact call-db-compatible single fixed `Batch[Feature]` table. Build such tables with the target table name up front, for example `ColumnEngine.truncate([Layout(Point, n, name="return_0")])`, then call `encode_call_db(...)` only when `try_export_call_db(...)` returns `None`. FastDB owns the exact-export decision; integrations such as C-Two should pass the generic binding and logical value rather than inspecting FastDB table internals.
+
 ## CLI tools
 
 `fastdb4py` ships a CLI named `fdb` for cross-language tooling. Currently it provides the `codegen` subcommand.

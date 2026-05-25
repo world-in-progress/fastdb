@@ -90,11 +90,11 @@ Clarify in Python docs and type comments that `Batch` and `Array` are payload co
 
 ### Phase 2: Named Table Construction
 
-Extend `Layout` or `ColumnEngine.truncate(...)` to support explicit table/layer names. Add tests proving a table can be built with a call-db-compatible name and read back through ordinary `engine.table(feature_type, name=...)`.
+Status: implemented for Python `ColumnEngine.truncate(...)` via `Layout(feature_type, capacity, name=...)`, with tests proving named fixed tables can be read back through `engine.table(feature_type, name=...)`.
 
 ### Phase 3: Exact-Match Export
 
-Implement `try_export_call_db(...)` for the single fixed `Batch[T]` case. Add tests that compare exported bytes/views with the existing `encode_call_db(...)` fallback and prove no row-oriented `push_many(...)` path is used.
+Status: implemented for the single fixed `Batch[T]` case through `try_export_call_db(...)`, returning a `memoryview` over the existing backing buffer when the database contains exactly the named call-db table. Tests cover exact export, non-exact table-name miss, and `encode_call_db(...)` choosing exact export before bulk repack.
 
 ### Phase 4: Encoded Snapshot Cache
 

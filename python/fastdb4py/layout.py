@@ -12,9 +12,12 @@ class Layout:
     Args:
         feature_type: A @feature-decorated class.
         capacity: Number of rows to pre-allocate.
+        name: Optional physical table/layer name. Defaults to the feature class
+            name for compatibility with existing ColumnEngine usage.
     """
     feature_type: Type
     capacity: int
+    name: str | None = None
 
     def __post_init__(self):
         if not is_feature(self.feature_type):
@@ -24,3 +27,8 @@ class Layout:
             )
         if self.capacity < 0:
             raise ValueError(f"capacity must be non-negative, got {self.capacity}")
+        if self.name is not None:
+            if not isinstance(self.name, str):
+                raise TypeError("name must be a string when provided")
+            if not self.name:
+                raise ValueError("name must be non-empty when provided")

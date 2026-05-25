@@ -2,6 +2,7 @@ import pytest
 
 import fastdb4py as fdb
 import numpy as np
+import fastdb4py.call_db as call_db
 
 
 @fdb.feature
@@ -178,6 +179,18 @@ def _backed_points_table(count: int = 3, *, start: int = 0, prefix: str = 'point
     return table
 
 
+def _backed_points_call_table(count: int = 3, *, start: int = 0, prefix: str = 'point') -> fdb.Table[CallDbPoint]:
+    idx = np.arange(start, start + count, dtype=np.uint32)
+    engine = fdb.ColumnEngine.truncate([fdb.Layout(CallDbPoint, count, name='return_0')])
+    table = engine.table(CallDbPoint, name='return_0')
+    table.fill(
+        row_id=idx,
+        x=idx.astype(np.float64) + 0.5,
+        name=[f'{prefix}-{i}' for i in range(start, start + count)],
+    )
+    return table
+
+
 def _backed_flags_table() -> fdb.Table[CallDbFlag]:
     engine = fdb.ColumnEngine.truncate([fdb.Layout(CallDbFlag, 4)])
     table = engine.table(CallDbFlag)
@@ -222,6 +235,85 @@ def test_encode_call_db_feature_batch_uses_bulk_columns_for_backed_table(monkeyp
         raise AssertionError('backed fdb.Table call-db encoding must not use row-wise push_many')
 
     monkeypatch.setattr(fdb.ColumnEngine, 'push_many', fail_push_many)
+
+    payload = fdb.encode_call_db(binding, table)
+    view = fdb.view_call_db(binding, memoryview(payload)).logical_value()
+
+    assert list(view.column.row_id) == [0, 1, 2]
+    assert view.column.name[2] == 'point-2'
+
+
+def test_layout_can_name_fixed_table_for_call_db_payloads():
+    table = _backed_points_call_table()
+
+    assert table.name == 'return_0'
+    assert list(table.column.row_id) == [0, 1, 2]
+
+
+def test_layout_rejects_empty_call_db_table_name():
+    with pytest.raises(ValueError, match='name must be non-empty'):
+        fdb.Layout(CallDbPoint, 1, name='')
+
+
+def test_layout_rejects_non_string_call_db_table_name():
+    with pytest.raises(TypeError, match='name must be a string'):
+        fdb.Layout(CallDbPoint, 1, name=123)
+
+
+def test_try_export_call_db_returns_exact_single_batch_buffer():
+    binding = _feature_binding()
+    table = _backed_points_call_table()
+
+    exported = fdb.try_export_call_db(binding, table)
+
+    assert isinstance(exported, memoryview)
+    assert exported.obj is table._db._buffer  # noqa: SLF001
+    view = fdb.view_call_db(binding, exported).logical_value()
+    assert list(view.column.row_id) == [0, 1, 2]
+    assert view.column.name[1] == 'point-1'
+
+
+def test_try_export_call_db_rejects_non_exact_table_name():
+    binding = _feature_binding()
+
+    assert fdb.try_export_call_db(binding, _backed_points_table()) is None
+
+
+def test_try_export_call_db_returns_none_for_object_graph_profile():
+    binding = fdb.FastdbCallDbBinding(
+        codec_id='org.fastdb.call-db',
+        direction='output',
+        method='graph',
+        profile='fastdb.call.object-graph.v1',
+        schema_sha256='test-schema',
+        tables=(),
+    )
+
+    assert fdb.try_export_call_db(binding, None) is None
+
+
+def test_try_export_call_db_rejects_invalid_profile():
+    binding = fdb.FastdbCallDbBinding(
+        codec_id='org.fastdb.call-db',
+        direction='output',
+        method='bad',
+        profile='fastdb.call.unknown.v1',
+        schema_sha256='test-schema',
+        tables=(),
+    )
+
+    with pytest.raises(ValueError, match='Unsupported fastdb call-db profile'):
+        fdb.try_export_call_db(binding, None)
+
+
+def test_encode_call_db_uses_exact_export_before_bulk_repack(monkeypatch):
+    binding = _feature_binding()
+    table = _backed_points_call_table()
+
+    def fail_bulk(*args, **kwargs):
+        raise AssertionError('exact call-db tables must not be bulk-repacked')
+
+    monkeypatch.setattr(call_db, '_try_encode_feature_table_bulk', fail_bulk)
 
     payload = fdb.encode_call_db(binding, table)
     view = fdb.view_call_db(binding, memoryview(payload)).logical_value()

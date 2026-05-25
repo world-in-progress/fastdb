@@ -131,12 +131,34 @@ def encode_call_db(binding: FastdbCallDbBinding | Mapping[str, Any] | object, va
         return _encode_object_graph_call_db(normalized, values)
     _ensure_columnar_call_db(normalized)
     values = _normalize_call_values(normalized, value)
+    exported = _try_export_columnar_call_db(normalized, values)
+    if exported is not None:
+        return exported.tobytes()
     engine = ColumnEngine.create()
     for table in normalized.tables:
         _encode_call_table(engine, table, values)
     engine.combine()
     chunk = engine._origin.buffer()  # noqa: SLF001
     return chunk.to_bytes()
+
+
+def try_export_call_db(
+    binding: FastdbCallDbBinding | Mapping[str, Any] | object,
+    value: object,
+) -> memoryview | None:
+    """Return an existing call-db-compatible buffer when no repack is needed.
+
+    The first supported exact-match shape is a single fixed ``Batch[Feature]``
+    value whose backing database contains exactly the named call-db table. Other
+    shapes return ``None`` so callers can fall back to ``encode_call_db(...)``.
+    """
+    normalized = _normalize_binding(binding)
+    if normalized.profile != CALL_DB_COLUMNAR_PROFILE:
+        _validate_binding(normalized)
+        return None
+    _ensure_columnar_call_db(normalized)
+    values = _normalize_call_values(normalized, value)
+    return _try_export_columnar_call_db(normalized, values)
 
 
 def decode_call_db(
@@ -942,6 +964,55 @@ def _try_encode_feature_table_bulk(
 
     _write_fixed_table_columns(target._origin, field_ids, writes)  # noqa: SLF001
     return True
+
+
+def _try_export_columnar_call_db(
+    binding: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+) -> memoryview | None:
+    if len(binding.tables) != 1:
+        return None
+    table = binding.tables[0]
+    if table.kind != 'feature' or table.cardinality != 'many':
+        return None
+    if table.value_position is None or table.feature is None:
+        return None
+    value = values[table.value_position]
+    if not isinstance(value, Table):
+        return None
+    return _try_export_exact_feature_table(table, value)
+
+
+def _try_export_exact_feature_table(table: FastdbCallDbTable, value: Table) -> memoryview | None:
+    value._assert_alive()  # noqa: SLF001
+    if value._feature_type is not table.feature:  # noqa: SLF001
+        return None
+    if not value.fixed:
+        return None
+    if value.name != table.name:
+        return None
+    db = value._db  # noqa: SLF001
+    if not isinstance(db, core.WxDatabase):
+        return None
+    if db.get_layer_count() != 1:
+        return None
+    if db.get_layer(0).name() != table.name:
+        return None
+    return _existing_database_buffer(db)
+
+
+def _existing_database_buffer(db: core.WxDatabase) -> memoryview | None:
+    buffer = getattr(db, '_buffer', None)
+    if buffer is None:
+        return None
+    try:
+        view = buffer if isinstance(buffer, memoryview) else memoryview(buffer)
+        _ = view.nbytes
+    except ValueError as exc:
+        raise RuntimeError('FastDB call-db export buffer has been released.') from exc
+    except TypeError:
+        return None
+    return view
 
 
 def _supports_feature_table_bulk(schema: LayerSchema) -> bool:

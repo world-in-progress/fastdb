@@ -213,6 +213,8 @@ tbl.fill(
 )
 ```
 
+When a fixed table is intended to be exported through a generic call-db binding, give the layout the binding's table name at construction time, for example `Layout(Particle, N, name="return_0")`, and fetch it with `db.table(Particle, name="return_0")`. That lets `try_export_call_db(binding, table)` reuse the existing buffer for the single fixed `Batch[Feature]` case instead of repacking columns into a new call-db database.
+
 Multiple tables can be created in one call:
 
 ```python
@@ -636,9 +638,10 @@ Each `.py` file is treated as an independent module. The same class name (e.g. `
 payload = fdb.encode_call_db(binding, value)
 owned = fdb.decode_call_db(binding, payload)
 view = fdb.view_call_db(binding, payload, owner=fdb.FdbViewOwner(checked=True))
+exported = fdb.try_export_call_db(binding, value)
 ```
 
-`decode_call_db(...)` returns materialized Python values. `view_call_db(...)` returns owner-bound FastDB values for columnar call-db payloads: `Batch[Feature]` values become FastDB `Table` views, single `Feature` values become mapped feature views, and `Array[Scalar]` values become `FastdbCallDbArrayView`. Invalidating the supplied owner invalidates those retained views; use `fdb.materialize(...)` before keeping data beyond the owner lifetime. Object-graph call-db retained views currently fail deterministically; use materialized decode for object-graph payloads.
+`decode_call_db(...)` returns materialized Python values. `view_call_db(...)` returns owner-bound FastDB values for columnar call-db payloads: `Batch[Feature]` values become FastDB `Table` views, single `Feature` values become mapped feature views, and `Array[Scalar]` values become `FastdbCallDbArrayView`. `try_export_call_db(...)` returns a `memoryview` only when the value is already backed by an exact call-db-compatible buffer, currently the single fixed `Batch[Feature]` case; otherwise it returns `None` so callers can fall back to `encode_call_db(...)`. Invalidating the supplied owner invalidates those retained views; use `fdb.materialize(...)` before keeping data beyond the owner lifetime. Object-graph call-db retained views currently fail deterministically; use materialized decode for object-graph payloads.
 
 #### Circular references
 

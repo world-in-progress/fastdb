@@ -144,7 +144,7 @@ class ColumnEngine:
                         f'field types (wstr, bytes).'
                     )
 
-            table_name = ft_cls.__name__
+            table_name = layout.name or ft_cls.__name__
             engine._table_feature_types[table_name] = ft_cls
             existing = engine._table_map.get(table_name)
             if existing is not None:
