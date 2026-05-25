@@ -10,7 +10,7 @@ FastDB is a compact binary data layer for scientific-computing and RPC payload w
 - Python binding under `python/fastdb4py/`: owns Python `@feature`, `ColumnEngine`, `ObjectEngine`, `Table`, schema export, materialization, and Python-facing backed view lifetime APIs.
 - TypeScript/WASM binding under `ts/fastdb4ts/`: owns browser-side schema/runtime APIs and WASM access to the native core.
 
-FastDB is a generic data/storage project. Do not add C-Two-specific modules, providers, bridge derivation, CRM contracts, route identity, relay behavior, or C-Two codegen surfaces here. C-Two may consume FastDB schemas and buffers, but C-Two-specific RPC planning belongs in the C-Two repository.
+FastDB is a generic data/storage project. Generic call-db encode/decode/view runtime belongs here when it is independent of C-Two route identity and CRM policy. Do not add C-Two-specific modules, providers, bridge derivation, CRM contracts, route identity, relay behavior, or C-Two codegen surfaces here. C-Two may consume FastDB schemas, call-db bindings, and buffers, but C-Two-specific RPC planning belongs in the C-Two repository.
 
 ## Build, Test, And Run
 
@@ -67,7 +67,7 @@ Do not replace these FastDB-owned semantics with C-Two-owned guard wrappers. Dow
 
 ## Schema And Codegen Boundary
 
-`fastdb.schema.v1` and generic Python-to-TypeScript feature codegen belong in FastDB. C-Two contract helpers, call-db envelopes, route fingerprints, relay integration, and CRM-specific TypeScript helper generation do not belong in FastDB.
+`fastdb.schema.v1`, generic call-db runtime, and generic Python-to-TypeScript feature codegen belong in FastDB. C-Two contract helpers, CRM call-db binding derivation, route fingerprints, relay integration, and CRM-specific TypeScript helper generation do not belong in FastDB.
 
 The FastDB `fdb` CLI should remain generic. If a feature needs C-Two semantics, put it in C-Two and consume FastDB schema artifacts from there.
 

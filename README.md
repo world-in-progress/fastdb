@@ -150,7 +150,7 @@ export class Point extends Feature {
 
 ## C-Two Integration Boundary
 
-FastDB owns storage engines, schema export, binary database buffers, and generic Python/TypeScript runtime APIs. C-Two owns CRM method planning, FastDB call-db envelopes, TypeScript helper generation through `c3 contract codegen typescript --fastdb-schema`, route identity, relay behavior, scheduler policy, and memory lease semantics. The FastDB `fdb` CLI now only generates generic TypeScript feature schemas; use the C-Two repository for C-Two-specific contract and client helper generation.
+FastDB owns storage engines, schema export, binary database buffers, backed view lifetimes, and generic Python/TypeScript call-db runtime APIs. C-Two owns CRM method planning, call-db binding derivation from CRM annotations, TypeScript helper generation through `c3 contract codegen typescript --fastdb-schema`, route identity, relay behavior, scheduler policy, and memory lease semantics. The FastDB `fdb` CLI now only generates generic TypeScript feature schemas; use the C-Two repository for C-Two-specific contract and client helper generation.
 
 ## Performance Notes
 

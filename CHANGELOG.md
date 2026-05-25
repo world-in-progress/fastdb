@@ -18,6 +18,7 @@ When a binding is released (tagged), its section is automatically copied to the 
 - Python table rows returned from `Table` now behave as backed `@feature` views instead of detached copies, so scalar numeric field writes can update native storage when the view is writeable.
 
 ### Added
+- Generic Python call-db runtime APIs: `encode_call_db(...)`, `decode_call_db(...)`, `view_call_db(...)`, `FastdbCallDbBinding`, `FastdbCallDbTable`, scalar field and array item descriptors, retained `FastdbCallDbView`, and scalar `FastdbCallDbArrayView`. This gives Python parity with the existing generic TypeScript call-db runtime while keeping C-Two-specific CRM planning, route identity, bridge derivation, and helper generation outside FastDB.
 - `fdb codegen --ts <input_dir> <output_dir>` CLI command: auto-generates TypeScript `Feature` classes from Python Feature definitions, with full type mapping, cross-file import resolution, cycle detection (lazy refs), and topological ordering.
 - `FdbViewOwner`, `FdbViewInvalidatedError`, `FdbViewWriteError`, and `fdb.invalidate(...)` for explicit backed-view lifetime management in reusable-buffer integrations.
 - `fdb.materialize(...)` and `Table.to_owned()` for recursively detaching FastDB-managed table, row, column, NumPy, and bytes views before retaining data beyond a backing-buffer lifetime.

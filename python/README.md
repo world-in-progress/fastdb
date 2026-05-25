@@ -626,7 +626,19 @@ Each `.py` file is treated as an independent module. The same class name (e.g. `
 
 ### C-Two integration boundary
 
-`fastdb4py` owns generic feature declarations, schema export, storage engines, and binary buffer IO. C-Two-specific FastDB call-db planning, bridge derivation, and TypeScript helper generation now live in the C-Two repository, where the CRM contract, route identity, relay behavior, scheduler policy, and memory lease semantics are defined. Use `c3 contract codegen typescript --fastdb-schema` from C-Two for C-Two client/helper generation.
+`fastdb4py` owns generic feature declarations, schema export, storage engines, binary buffer IO, backed view lifetimes, and generic call-db encode/decode/view runtime. C-Two-specific FastDB call-db planning from CRM annotations, bridge derivation, and TypeScript helper generation live in the C-Two repository, where the CRM contract, route identity, relay behavior, scheduler policy, and memory lease semantics are defined. Use `c3 contract codegen typescript --fastdb-schema` from C-Two for C-Two client/helper generation.
+
+### Generic call-db runtime
+
+`fastdb4py` exposes generic call-db runtime helpers for integrations that already have a call-db binding descriptor:
+
+```python
+payload = fdb.encode_call_db(binding, value)
+owned = fdb.decode_call_db(binding, payload)
+view = fdb.view_call_db(binding, payload, owner=fdb.FdbViewOwner(checked=True))
+```
+
+`decode_call_db(...)` returns materialized Python values. `view_call_db(...)` returns owner-bound FastDB values for columnar call-db payloads: `Batch[Feature]` values become FastDB `Table` views, single `Feature` values become mapped feature views, and `Array[Scalar]` values become `FastdbCallDbArrayView`. Invalidating the supplied owner invalidates those retained views; use `fdb.materialize(...)` before keeping data beyond the owner lifetime. Object-graph call-db retained views currently fail deterministically; use materialized decode for object-graph payloads.
 
 #### Circular references
 
