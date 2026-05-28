@@ -213,7 +213,20 @@ tbl.fill(
 )
 ```
 
-When a fixed table is intended to be exported through a generic call-db binding, give the layout the binding's table name at construction time, for example `Layout(Particle, N, name="return_0")`, and fetch it with `db.table(Particle, name="return_0")`. That lets `try_export_call_db(binding, table)` reuse the existing buffer for the single fixed `Batch[Feature]` case instead of repacking columns into a new call-db database.
+For high-performance RPC call-envelope authoring, prefer the positional requirement API rather than naming physical tables after call slots:
+
+```python
+batch = fdb.require(fdb.batch(Particle, rows=N))
+batch.fill(
+    x=np.random.uniform(-1.0, 1.0, N),
+    y=np.random.uniform(-1.0, 1.0, N),
+    vx=np.zeros(N),
+    vy=np.zeros(N),
+    mass=np.ones(N, dtype=np.float32),
+)
+```
+
+The call-db binding descriptor supplies wire table names internally. User code should not spell `return_0`, parameter names, or slot metadata for the normal direct path.
 
 Multiple tables can be created in one call:
 

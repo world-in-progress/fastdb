@@ -12,6 +12,7 @@ from .decorator import feature
 from .materialize import materialize
 from .object_engine import LayerState, ObjectEngine
 from .orm.table import Table, _FILL_NUMERIC_DTYPES, _normalize_bool_fill_values
+from .require import _require_envelope_for, _require_index_for
 from .registry import (
     LayerSchema,
     get_schema,
@@ -29,6 +30,9 @@ from .schema import (
 )
 from .string_column import StringColumn, _StringSequencePayload
 from .type import (
+    ArrayRequirement,
+    Batch,
+    BatchRequirement,
     BOOL,
     BYTES,
     F64,
@@ -46,6 +50,11 @@ CALL_DB_CODEC_ID = 'org.fastdb.call-db'
 CALL_DB_COLUMNAR_PROFILE = 'fastdb.call.columnar.v1'
 CALL_DB_OBJECT_GRAPH_PROFILE = 'fastdb.call.object-graph.v1'
 CALL_DB_ARRAY_VALUE_FIELD = 'value'
+_CALL_DB_BINARY_MAGIC = b'FASTVectorDB0.1\x00'
+_CALL_DB_BINARY_HEADER_SIZE = 20
+_CALL_DB_LAYER_HEADER_SIZE = 144
+_CALL_DB_LAYER_NAME_SIZE = 64
+_CALL_DB_LAYER_TOTAL_SIZE_OFFSET = 136
 
 _VALID_CALL_DB_PROFILES = {
     CALL_DB_COLUMNAR_PROFILE,
@@ -74,6 +83,10 @@ _VALID_CALL_DB_SCALAR_KINDS = {
     *_SCALAR_KIND_BY_FIELD_TYPE.values(),
 }
 _MISSING = object()
+
+
+class FastdbUnsupportedDirectBuildError(RuntimeError):
+    """Raised when strict direct call-db construction cannot support a shape."""
 
 
 @dataclass(frozen=True)
@@ -122,24 +135,134 @@ class FastdbCallDbBinding:
     tables: tuple[FastdbCallDbTable, ...]
 
 
+@dataclass(frozen=True)
+class _CallDbLayerSegment:
+    data: memoryview
+    call_table_name: str | None = None
+
+
+class FastdbPreparedCallDb:
+    """Transport-neutral plan for writing a FastDB call-db payload."""
+
+    def __init__(
+        self,
+        *,
+        payload: bytes | bytearray | memoryview | None = None,
+        layers: tuple[_CallDbLayerSegment, ...] = (),
+        direct: bool = False,
+    ):
+        self.direct = direct
+        if payload is None and not layers:
+            self._payload = None
+            self._layers = ()
+            self.byte_length = _CALL_DB_BINARY_HEADER_SIZE
+            return
+        if payload is not None and layers:
+            raise ValueError('FastdbPreparedCallDb accepts either payload or layers, not both.')
+        if payload is not None:
+            self._payload = memoryview(payload).cast('B')
+            self._layers = ()
+            self.byte_length = self._payload.nbytes
+            return
+        self._payload = None
+        self._layers = layers
+        self.byte_length = _CALL_DB_BINARY_HEADER_SIZE + sum(layer.data.nbytes for layer in layers)
+
+    @property
+    def nbytes(self) -> int:
+        return self.byte_length
+
+    def write_into(self, destination: bytearray | memoryview | object) -> int:
+        dst = memoryview(destination).cast('B')
+        if dst.readonly:
+            raise TypeError('destination buffer must be writable.')
+        if dst.nbytes < self.byte_length:
+            raise ValueError(
+                f'destination buffer is too small: expected at least {self.byte_length} bytes, '
+                f'got {dst.nbytes}.',
+            )
+        if self._payload is not None:
+            dst[:self.byte_length] = self._payload
+            return self.byte_length
+        dst[:len(_CALL_DB_BINARY_MAGIC)] = _CALL_DB_BINARY_MAGIC
+        dst[16:20] = len(self._layers).to_bytes(4, 'little')
+        offset = _CALL_DB_BINARY_HEADER_SIZE
+        for layer in self._layers:
+            size = layer.data.nbytes
+            dst[offset:offset + size] = layer.data.cast('B')
+            if layer.call_table_name is not None:
+                _write_layer_name(dst[offset:offset + _CALL_DB_LAYER_NAME_SIZE], layer.call_table_name)
+            offset += size
+        return self.byte_length
+
+    def to_bytes(self) -> bytes:
+        payload = bytearray(self.byte_length)
+        self.write_into(payload)
+        return bytes(payload)
+
+    def build_with_allocator(self, allocator: object) -> object:
+        allocation = allocator.allocate(self.byte_length)
+        committed = False
+        try:
+            self.write_into(allocation.buffer)
+            result = allocation.commit()
+            committed = True
+            return result
+        finally:
+            if not committed:
+                rollback = getattr(allocation, 'rollback', None)
+                if callable(rollback):
+                    rollback()
+
+
 def encode_call_db(binding: FastdbCallDbBinding | Mapping[str, Any] | object, value: object) -> bytes:
     """Encode a generic FastDB call-db payload from a binding and logical value."""
+    return prepare_call_db(binding, value).to_bytes()
+
+
+def prepare_call_db(
+    binding: FastdbCallDbBinding | Mapping[str, Any] | object,
+    value: object,
+    *,
+    direct_required: bool = False,
+) -> FastdbPreparedCallDb:
+    """Plan a FastDB call-db payload that can be written into caller memory."""
     normalized = _normalize_binding(binding)
     if normalized.profile == CALL_DB_OBJECT_GRAPH_PROFILE:
+        if direct_required:
+            raise FastdbUnsupportedDirectBuildError(
+                'object-graph call-db payloads do not support strict direct build yet.',
+            )
         _ensure_object_graph_call_db(normalized)
         values = _normalize_call_values(normalized, value)
-        return _encode_object_graph_call_db(normalized, values)
+        return FastdbPreparedCallDb(payload=_encode_object_graph_call_db(normalized, values))
     _ensure_columnar_call_db(normalized)
     values = _normalize_call_values(normalized, value)
     exported = _try_export_columnar_call_db(normalized, values)
     if exported is not None:
-        return exported.tobytes()
+        return FastdbPreparedCallDb(payload=exported)
+    return _prepare_columnar_call_db(normalized, values, direct_required=direct_required)
+
+
+def _encode_columnar_call_db_fallback(
+    binding: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+) -> bytes:
     engine = ColumnEngine.create()
-    for table in normalized.tables:
+    for table in binding.tables:
         _encode_call_table(engine, table, values)
     engine.combine()
     chunk = engine._origin.buffer()  # noqa: SLF001
     return chunk.to_bytes()
+
+
+def encode_call_db_into(
+    binding: FastdbCallDbBinding | Mapping[str, Any] | object,
+    value: object,
+    destination: bytearray | memoryview | object,
+) -> int:
+    """Write a FastDB call-db payload into a caller-provided writable buffer."""
+    return prepare_call_db(binding, value).write_into(destination)
 
 
 def try_export_call_db(
@@ -221,7 +344,7 @@ class FastdbCallDbView:
                 raise ValueError(f'fastdb call-db table {table.name!r} is missing value_position.')
             if table.kind == 'feature':
                 if table.cardinality == 'many':
-                    values[table.value_position] = self.table(table.name)
+                    values[table.value_position] = Batch.from_table(self.table(table.name))
                 else:
                     values[table.value_position] = self.feature(table.name)
                 continue
@@ -299,9 +422,9 @@ class FastdbCallDbView:
         self._ensure_alive()
         if table.feature is None:
             raise ValueError(f'fastdb call-db table {table.name!r} is missing runtime feature.')
-        return self.engine.table(
-            table.feature,
-            name=table.name,
+        return _column_engine_table_for_call_table(
+            self.engine,
+            table,
             owner=self.owner,
             writeable=self.owner.writeable,
         )
@@ -390,9 +513,9 @@ class FastdbCallDbArrayView:
         if self.spec.feature is None:
             raise ValueError(f'fastdb call-db array table {self.spec.name!r} is missing runtime feature.')
         self.call_view._ensure_alive()
-        return self.call_view.engine.table(
-            self.spec.feature,
-            name=self.spec.name,
+        return _column_engine_table_for_call_table(
+            self.call_view.engine,
+            self.spec,
             owner=self.call_view.owner,
             writeable=self.call_view.owner.writeable,
         )
@@ -642,7 +765,7 @@ def _materialize_values(binding: FastdbCallDbBinding, engine: ColumnEngine) -> o
         if table.feature is None:
             raise ValueError(f'fastdb call-db table {table.name!r} is missing runtime feature.')
         if table.kind == 'scalars':
-            row = engine.table(table.feature, name=table.name)[0]
+            row = _column_engine_table_for_call_table(engine, table)[0]
             for field in table.fields:
                 values[field.value_position] = _materialize_scalar_value(
                     field.kind,
@@ -651,7 +774,7 @@ def _materialize_values(binding: FastdbCallDbBinding, engine: ColumnEngine) -> o
             continue
         if table.value_position is None:
             raise ValueError(f'fastdb call-db table {table.name!r} is missing value_position.')
-        fastdb_table = engine.table(table.feature, name=table.name)
+        fastdb_table = _column_engine_table_for_call_table(engine, table)
         if table.kind == 'array':
             item_kind = _array_item_kind(table)
             values[table.value_position] = [
@@ -916,6 +1039,9 @@ def _try_encode_feature_table_bulk(
     table: FastdbCallDbTable,
     value: Any,
 ) -> bool:
+    source_table = _batch_backing_table(value)
+    if source_table is not None:
+        value = source_table
     if table.feature is None or not isinstance(value, Table):
         return False
     if value._feature_type is not table.feature:  # noqa: SLF001
@@ -978,12 +1104,18 @@ def _try_export_columnar_call_db(
     if table.value_position is None or table.feature is None:
         return None
     value = values[table.value_position]
+    batch_table = _batch_backing_table(value)
+    if batch_table is not None:
+        value = batch_table
     if not isinstance(value, Table):
         return None
     return _try_export_exact_feature_table(table, value)
 
 
-def _try_export_exact_feature_table(table: FastdbCallDbTable, value: Table) -> memoryview | None:
+def _try_export_exact_feature_table(
+    table: FastdbCallDbTable,
+    value: Table,
+) -> memoryview | None:
     value._assert_alive()  # noqa: SLF001
     if value._feature_type is not table.feature:  # noqa: SLF001
         return None
@@ -996,9 +1128,295 @@ def _try_export_exact_feature_table(table: FastdbCallDbTable, value: Table) -> m
         return None
     if db.get_layer_count() != 1:
         return None
-    if db.get_layer(0).name() != table.name:
+    layer_name = db.get_layer(0).name()
+    if layer_name == table.name:
+        return _existing_database_buffer(db)
+    return None
+
+
+def _prepare_columnar_call_db(
+    binding: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+    *,
+    direct_required: bool = False,
+) -> FastdbPreparedCallDb:
+    _validate_require_envelope_binding(binding, values, direct_required=direct_required)
+    layers: list[_CallDbLayerSegment | None] = []
+    has_imported_layer = False
+    for table in binding.tables:
+        imported = _try_prepare_layer_import(table, values)
+        if imported is not None:
+            has_imported_layer = True
+            layers.append(imported)
+            continue
+        if direct_required:
+            _ensure_strict_direct_layer_buildable(table)
+        layers.append(None)
+    if not has_imported_layer and not direct_required:
+        return FastdbPreparedCallDb(payload=_encode_columnar_call_db_fallback(binding, values))
+    resolved_layers = tuple(
+        layer if layer is not None else _encode_call_table_layer(table, values)
+        for table, layer in zip(binding.tables, layers)
+    )
+    return FastdbPreparedCallDb(layers=resolved_layers, direct=True)
+
+
+def _validate_require_envelope_binding(
+    binding: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+    *,
+    direct_required: bool,
+) -> None:
+    envelope = None
+    seen_indices: set[int] = set()
+    saw_require_value = False
+    for table in binding.tables:
+        if not _is_require_aggregate_table(table):
+            continue
+        if table.value_position is None:
+            continue
+        value = values[table.value_position]
+        current_envelope = _require_envelope_for(value)
+        if current_envelope is None:
+            continue
+        saw_require_value = True
+        if envelope is None:
+            envelope = current_envelope
+        elif envelope is not current_envelope:
+            raise ValueError('call-db direct require values must come from one fdb.require envelope.')
+        index = _require_index_for(value)
+        if index is None or index < 0 or index >= len(current_envelope.specs):
+            raise ValueError('call-db direct require value is missing a valid envelope index.')
+        seen_indices.add(index)
+        _validate_require_spec_for_table(table, current_envelope.specs[index])
+
+    if not saw_require_value or envelope is None:
+        return
+    if direct_required and seen_indices != set(range(len(envelope.specs))):
+        raise ValueError('call-db direct build requires all fdb.require values from the envelope.')
+    if not direct_required:
+        return
+    for table in binding.tables:
+        if not _is_require_aggregate_table(table) or table.value_position is None:
+            continue
+        if _require_envelope_for(values[table.value_position]) is None:
+            raise ValueError(
+                'call-db direct build does not support mixed envelope and non-envelope aggregate values.',
+            )
+
+
+def _validate_require_spec_for_table(table: FastdbCallDbTable, spec: object) -> None:
+    position = table.value_position
+    if table.kind == 'feature' and table.cardinality == 'many':
+        expected = f'Batch[{table.feature.__name__}]' if table.feature is not None else 'Batch'
+        if not isinstance(spec, BatchRequirement):
+            raise ValueError(f'call-db slot {position} expected {expected}, got {_require_spec_name(spec)}.')
+        if table.feature is not spec.feature_type:
+            raise ValueError(
+                f'call-db slot {position} expected {expected}, got Batch[{spec.feature_type.__name__}].',
+            )
+        return
+    if table.kind == 'array':
+        expected_kind = _array_item_kind(table)
+        expected = f'Array[{expected_kind}]'
+        if not isinstance(spec, ArrayRequirement):
+            raise ValueError(f'call-db slot {position} expected {expected}, got {_require_spec_name(spec)}.')
+        actual_kind = _scalar_kind(spec.item_type)
+        if actual_kind != expected_kind:
+            raise ValueError(
+                f'call-db slot {position} expected {expected}, got Array[{actual_kind}].',
+            )
+
+
+def _require_spec_name(spec: object) -> str:
+    if isinstance(spec, BatchRequirement):
+        return f'Batch[{spec.feature_type.__name__}]'
+    if isinstance(spec, ArrayRequirement):
+        return f'Array[{_scalar_kind(spec.item_type)}]'
+    return type(spec).__name__
+
+
+def _is_require_aggregate_table(table: FastdbCallDbTable) -> bool:
+    return table.kind == 'array' or (table.kind == 'feature' and table.cardinality == 'many')
+
+
+def _ensure_strict_direct_layer_buildable(table: FastdbCallDbTable) -> None:
+    if table.feature is None:
+        raise ValueError(f'fastdb call-db table {table.name!r} is missing runtime feature.')
+    if table.kind == 'array':
+        _reject_variable_scalar_kind(_array_item_kind(table), table.name)
+        return
+    if table.kind == 'scalars':
+        for field in table.fields:
+            _reject_variable_scalar_kind(field.kind, f'{table.name}.{field.name}')
+        return
+    if table.kind == 'feature':
+        schema = get_schema(table.feature)
+        diagnostics = [
+            *raw_payload_storage_diagnostics(schema),
+            *non_native_list_storage_diagnostics(schema),
+        ]
+        if diagnostics:
+            raise FastdbUnsupportedDirectBuildError(
+                f'{table.name} is not strict-direct buildable: {"; ".join(diagnostics)}',
+            )
+        for field in schema.fields:
+            if field.field_type in {OriginFieldType.str, OriginFieldType.wstr, OriginFieldType.bytes}:
+                raise FastdbUnsupportedDirectBuildError(
+                    f'{table.name}.{field.name} with {field.field_type.name} '
+                    'does not support strict direct build yet.',
+                )
+            if field.field_type in {OriginFieldType.ref, OriginFieldType.list}:
+                raise FastdbUnsupportedDirectBuildError(
+                    f'{table.name}.{field.name} with {field.field_type.name} '
+                    'does not support strict direct build yet.',
+                )
+
+
+def _reject_variable_scalar_kind(kind: str | None, context: str) -> None:
+    if kind in {'str', 'wstr', 'bytes'}:
+        raise FastdbUnsupportedDirectBuildError(
+            f'{context} uses {kind}, which does not support strict direct build yet.',
+        )
+
+
+def _try_prepare_layer_import(
+    table: FastdbCallDbTable,
+    values: tuple[Any, ...],
+) -> _CallDbLayerSegment | None:
+    if table.kind != 'feature' or table.cardinality != 'many':
         return None
-    return _existing_database_buffer(db)
+    if table.value_position is None or table.feature is None:
+        return None
+    value = values[table.value_position]
+    allow_require_layer_rewrite = _require_envelope_for(value) is not None
+    batch_table = _batch_backing_table(value)
+    if batch_table is not None:
+        value = batch_table
+    if not isinstance(value, Table):
+        return None
+    value._assert_alive()  # noqa: SLF001
+    if value._feature_type is not table.feature:  # noqa: SLF001
+        return None
+    if not value.fixed:
+        return None
+    db = value._db  # noqa: SLF001
+    if not isinstance(db, core.WxDatabase):
+        return None
+    if db.get_layer_count() != 1:
+        return None
+    source_layer_name = db.get_layer(0).name()
+    call_table_name: str | None = None
+    if source_layer_name != table.name:
+        if not allow_require_layer_rewrite or source_layer_name != value.name:
+            return None
+        _validate_layer_name(table.name)
+        call_table_name = table.name
+    buffer = _existing_database_buffer(db)
+    if buffer is None:
+        return None
+    layers = _columnar_db_layer_segments(buffer)
+    if len(layers) != 1:
+        return None
+    if _layer_name(layers[0]) != source_layer_name:
+        return None
+    return _CallDbLayerSegment(data=layers[0], call_table_name=call_table_name)
+
+
+def _encode_call_table_layer(
+    table: FastdbCallDbTable,
+    values: tuple[Any, ...],
+) -> _CallDbLayerSegment:
+    engine = ColumnEngine.create()
+    _encode_call_table(engine, table, values)
+    engine.combine()
+    origin = engine._origin  # noqa: SLF001
+    if not isinstance(origin, core.WxDatabase):
+        raise RuntimeError('fastdb call-db table encoder did not produce a database.')
+    buffer = _existing_database_buffer(origin)
+    if buffer is None:
+        raise RuntimeError('fastdb call-db table encoder did not produce an exportable buffer.')
+    layers = _columnar_db_layer_segments(buffer)
+    if len(layers) != 1:
+        raise RuntimeError(
+            f'fastdb call-db table encoder expected one layer for {table.name!r}, got {len(layers)}.',
+        )
+    return _CallDbLayerSegment(data=layers[0])
+
+
+def _columnar_db_layer_segments(buffer: bytes | bytearray | memoryview) -> tuple[memoryview, ...]:
+    data = memoryview(buffer).cast('B')
+    if data.nbytes < _CALL_DB_BINARY_HEADER_SIZE:
+        raise ValueError('FastDB call-db buffer is shorter than the database header.')
+    if bytes(data[:len(_CALL_DB_BINARY_MAGIC)]) != _CALL_DB_BINARY_MAGIC:
+        raise ValueError('FastDB call-db buffer has an invalid database magic header.')
+    layer_count = int.from_bytes(data[16:20], 'little')
+    offset = _CALL_DB_BINARY_HEADER_SIZE
+    layers: list[memoryview] = []
+    for _ in range(layer_count):
+        if offset + _CALL_DB_LAYER_HEADER_SIZE > data.nbytes:
+            raise ValueError('FastDB call-db buffer has a truncated layer header.')
+        total_size = int.from_bytes(
+            data[
+                offset + _CALL_DB_LAYER_TOTAL_SIZE_OFFSET:
+                offset + _CALL_DB_LAYER_TOTAL_SIZE_OFFSET + 8
+            ],
+            'little',
+        )
+        if total_size < _CALL_DB_LAYER_HEADER_SIZE:
+            raise ValueError('FastDB call-db buffer has an invalid layer total_size.')
+        if offset + total_size > data.nbytes:
+            raise ValueError('FastDB call-db buffer has a truncated layer payload.')
+        layers.append(data[offset:offset + total_size])
+        offset += total_size
+    if offset != data.nbytes:
+        raise ValueError('FastDB call-db buffer has trailing bytes after the last layer.')
+    return tuple(layers)
+
+
+def _layer_name(layer: memoryview) -> str:
+    raw = bytes(layer[:_CALL_DB_LAYER_NAME_SIZE])
+    return raw.split(b'\x00', 1)[0].decode('utf-8')
+
+
+def _validate_layer_name(name: str) -> None:
+    encoded = name.encode('utf-8')
+    if len(encoded) >= _CALL_DB_LAYER_NAME_SIZE:
+        raise ValueError(
+            f'FastDB call-db layer name {name!r} is too long; '
+            f'encoded length must be less than {_CALL_DB_LAYER_NAME_SIZE}.',
+        )
+
+
+def _write_layer_name(destination: memoryview, name: str) -> None:
+    encoded = name.encode('utf-8')
+    _validate_layer_name(name)
+    destination[:] = b'\x00' * _CALL_DB_LAYER_NAME_SIZE
+    destination[:len(encoded)] = encoded
+
+
+def _batch_backing_table(value: object) -> Table | None:
+    if not isinstance(value, Batch):
+        return None
+    table = getattr(value, '_table', None)
+    return table if isinstance(table, Table) else None
+
+
+def _column_engine_table_for_call_table(
+    engine: ColumnEngine,
+    table: FastdbCallDbTable,
+    *,
+    owner: FdbViewOwner | None = None,
+    writeable: bool | None = None,
+) -> Table:
+    if table.feature is None:
+        raise ValueError(f'fastdb call-db table {table.name!r} is missing runtime feature.')
+    return engine.table(
+        table.feature,
+        name=table.name,
+        owner=owner,
+        writeable=writeable,
+    )
 
 
 def _existing_database_buffer(db: core.WxDatabase) -> memoryview | None:

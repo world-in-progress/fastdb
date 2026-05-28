@@ -40,6 +40,17 @@ class CallDbFlag:
     enabled: fdb.BOOL
 
 
+@fdb.feature
+class CallDbLeaf:
+    value: fdb.F64
+
+
+@fdb.feature
+class CallDbNode:
+    value: fdb.F64
+    child: CallDbLeaf
+
+
 def _feature_binding(*, cardinality='many'):
     return fdb.FastdbCallDbBinding(
         codec_id='org.fastdb.call-db',
@@ -167,6 +178,25 @@ def _bool_scalar_binding():
     )
 
 
+def _object_graph_binding():
+    return fdb.FastdbCallDbBinding(
+        codec_id='org.fastdb.call-db',
+        direction='output',
+        method='get_nodes',
+        profile='fastdb.call.object-graph.v1',
+        schema_sha256='test-schema',
+        tables=(
+            fdb.FastdbCallDbTable(
+                cardinality='many',
+                feature=CallDbNode,
+                kind='feature',
+                name='return_0',
+                value_position=0,
+            ),
+        ),
+    )
+
+
 def _backed_points_table(count: int = 3, *, start: int = 0, prefix: str = 'point') -> fdb.Table[CallDbPoint]:
     idx = np.arange(start, start + count, dtype=np.uint32)
     engine = fdb.ColumnEngine.truncate([fdb.Layout(CallDbPoint, count)])
@@ -189,6 +219,17 @@ def _backed_points_call_table(count: int = 3, *, start: int = 0, prefix: str = '
         name=[f'{prefix}-{i}' for i in range(start, start + count)],
     )
     return table
+
+
+def _allocated_points_batch(count: int = 3, *, start: int = 0, prefix: str = 'batch') -> fdb.Batch[CallDbPoint]:
+    idx = np.arange(start, start + count, dtype=np.uint32)
+    batch = fdb.Batch.allocate(CallDbPoint, count)
+    batch.fill(
+        row_id=idx,
+        x=idx.astype(np.float64) + 0.5,
+        name=[f'{prefix}-{i}' for i in range(start, start + count)],
+    )
+    return batch
 
 
 def _backed_flags_table() -> fdb.Table[CallDbFlag]:
@@ -279,6 +320,50 @@ def test_try_export_call_db_rejects_non_exact_table_name():
     assert fdb.try_export_call_db(binding, _backed_points_table()) is None
 
 
+def test_batch_allocate_columnar_prepares_through_normal_encoder():
+    binding = _feature_binding()
+    idx = np.arange(3, dtype=np.uint32)
+    batch = fdb.Batch.allocate(CallDbPoint, 3)
+    batch.fill(
+        row_id=idx,
+        x=idx.astype(np.float64) + 10.5,
+        name=['alloc-0', 'alloc-1', 'alloc-2'],
+    )
+
+    exported = fdb.try_export_call_db(binding, batch)
+    plan = fdb.prepare_call_db(binding, batch)
+    destination = bytearray(plan.nbytes)
+    plan.write_into(destination)
+
+    assert isinstance(batch, fdb.Batch)
+    assert not isinstance(batch, fdb.Table)
+    assert exported is None
+    assert plan.direct is False
+    view = fdb.view_call_db(binding, destination).logical_value()
+    assert isinstance(view, fdb.Batch)
+    assert list(view.column.row_id) == [0, 1, 2]
+    assert view.column.name[2] == 'alloc-2'
+
+
+def test_batch_from_table_mismatched_call_slot_uses_normal_encoder_without_mutating_table_name():
+    binding = _feature_binding()
+    table = _backed_points_table()
+    batch = fdb.Batch.from_table(table)
+
+    exported = fdb.try_export_call_db(binding, batch)
+    plan = fdb.prepare_call_db(binding, batch)
+    destination = bytearray(plan.nbytes)
+    plan.write_into(destination)
+
+    assert table.name == 'CallDbPoint'
+    assert exported is None
+    assert plan.direct is False
+    assert table.name == 'CallDbPoint'
+    view = fdb.view_call_db(binding, destination).logical_value()
+    assert isinstance(view, fdb.Batch)
+    assert view.column.name[1] == 'point-1'
+
+
 def test_try_export_call_db_returns_none_for_object_graph_profile():
     binding = fdb.FastdbCallDbBinding(
         codec_id='org.fastdb.call-db',
@@ -322,6 +407,24 @@ def test_encode_call_db_uses_exact_export_before_bulk_repack(monkeypatch):
     assert view.column.name[2] == 'point-2'
 
 
+def test_encode_call_db_batch_allocate_uses_normal_encoder_when_call_slot_name_differs():
+    binding = _feature_binding()
+    idx = np.arange(3, dtype=np.uint32)
+    batch = fdb.Batch.allocate(CallDbPoint, 3)
+    batch.fill(
+        row_id=idx,
+        x=idx.astype(np.float64) + 0.5,
+        name=['batch-0', 'batch-1', 'batch-2'],
+    )
+
+    payload = fdb.encode_call_db(binding, batch)
+    view = fdb.view_call_db(binding, memoryview(payload)).logical_value()
+
+    assert isinstance(view, fdb.Batch)
+    assert list(view.column.row_id) == [0, 1, 2]
+    assert view.column.name[2] == 'batch-2'
+
+
 def test_encode_call_db_feature_batch_bulk_supports_multiple_tables():
     binding = _two_feature_binding()
 
@@ -335,6 +438,39 @@ def test_encode_call_db_feature_batch_bulk_supports_multiple_tables():
     assert [row.name for row in left] == ['left-10', 'left-11']
     assert [row.row_id for row in right] == [20, 21, 22]
     assert [row.name for row in right] == ['right-20', 'right-21', 'right-22']
+
+
+def test_prepare_call_db_uses_normal_encoder_for_unbound_backed_batches():
+    binding = _two_feature_binding()
+    left_batch = _allocated_points_batch(2, start=10, prefix='left')
+    right_batch = _allocated_points_batch(3, start=20, prefix='right')
+
+    plan = fdb.prepare_call_db(binding, (left_batch, right_batch))
+    destination = bytearray(plan.nbytes)
+
+    plan.write_into(destination)
+    left, right = fdb.decode_call_db(binding, destination)
+
+    assert plan.byte_length == plan.nbytes
+    assert plan.direct is False
+    assert [row.row_id for row in left] == [10, 11]
+    assert [row.name for row in left] == ['left-10', 'left-11']
+    assert [row.row_id for row in right] == [20, 21, 22]
+    assert [row.name for row in right] == ['right-20', 'right-21', 'right-22']
+
+
+def test_encode_call_db_into_writes_to_caller_buffer_and_rejects_short_destinations():
+    binding = _array_binding()
+    reference = fdb.encode_call_db(binding, [1, 2, 3])
+    destination = bytearray(len(reference))
+
+    written = fdb.encode_call_db_into(binding, [1, 2, 3], destination)
+
+    assert written == len(reference)
+    assert bytes(destination) == reference
+    assert fdb.decode_call_db(binding, destination) == [1, 2, 3]
+    with pytest.raises(ValueError, match='destination buffer is too small'):
+        fdb.encode_call_db_into(binding, [1, 2, 3], bytearray(len(reference) - 1))
 
 
 def test_encode_call_db_feature_batch_bulk_preserves_bool_columns():
@@ -359,7 +495,7 @@ def test_encode_call_db_single_feature_preserves_backed_row():
     assert decoded.name == 'point-1'
 
 
-def test_view_call_db_feature_batch_returns_owner_bound_fastdb_table():
+def test_view_call_db_feature_batch_returns_owner_bound_fastdb_batch():
     binding = _feature_binding()
     payload = fdb.encode_call_db(binding, [
         CallDbPoint(row_id=1, x=1.5, name='alpha'),
@@ -368,12 +504,13 @@ def test_view_call_db_feature_batch_returns_owner_bound_fastdb_table():
     owner = fdb.FdbViewOwner(checked=True, writeable=False)
 
     view = fdb.view_call_db(binding, memoryview(payload), owner=owner)
-    table = view.logical_value()
-    row = table[0]
-    name_col = table.column.name
-    owned_rows = fdb.materialize(table)
+    batch = view.logical_value()
+    row = batch[0]
+    name_col = batch.column.name
+    owned_rows = fdb.materialize(batch)
 
-    assert isinstance(table, fdb.Table)
+    assert isinstance(batch, fdb.Batch)
+    assert not isinstance(batch, fdb.Table)
     assert row.name == 'alpha'
     assert name_col[1] == 'beta'
     assert [item.x for item in owned_rows] == [1.5, 2.5]
@@ -381,7 +518,7 @@ def test_view_call_db_feature_batch_returns_owner_bound_fastdb_table():
     fdb.invalidate(owner)
 
     with pytest.raises(fdb.FdbViewInvalidatedError):
-        len(table)
+        len(batch)
     with pytest.raises(fdb.FdbViewInvalidatedError):
         _ = row.x
     with pytest.raises(fdb.FdbViewInvalidatedError):
@@ -426,6 +563,30 @@ def test_view_call_db_scalar_array_is_owner_bound_and_materializable():
     with pytest.raises(fdb.FdbViewInvalidatedError):
         len(numbers)
     assert owned_numbers == [1, 2, 3]
+
+
+def test_array_allocate_encodes_scalar_array():
+    binding = _array_binding()
+    numbers = fdb.Array.allocate(fdb.I32, 3)
+    numbers.fill([1, 2, 3])
+
+    payload = fdb.encode_call_db(binding, numbers)
+
+    assert list(numbers) == [1, 2, 3]
+    assert fdb.decode_call_db(binding, payload) == [1, 2, 3]
+
+
+def test_batch_allocate_object_graph_encodes_nested_features():
+    binding = _object_graph_binding()
+    batch = fdb.Batch.allocate(CallDbNode, 0)
+    batch.append(CallDbNode(value=2.0, child=CallDbLeaf(value=1.0)))
+    batch.append(CallDbNode(value=4.0, child=CallDbLeaf(value=3.0)))
+
+    payload = fdb.encode_call_db(binding, batch)
+    decoded = fdb.decode_call_db(binding, payload)
+
+    assert [row.value for row in decoded] == [2.0, 4.0]
+    assert [row.child.value for row in decoded] == [1.0, 3.0]
 
 
 def test_decode_call_db_scalar_tuple_materializes_values():

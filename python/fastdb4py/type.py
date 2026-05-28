@@ -1,6 +1,6 @@
 from enum import unique, IntEnum
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Generic, NewType, TypeVar, get_type_hints, get_origin, get_args
+from typing import TYPE_CHECKING, Any, Dict, Generic, NewType, TypeVar, get_type_hints, get_origin, get_args
 
 T = TypeVar('T')
 
@@ -34,12 +34,252 @@ class OriginFieldDefinition:
     vmax: float = 1.0
 
 
+@dataclass(frozen=True)
+class BatchRequirement(Generic[T]):
+    feature_type: type[T]
+    rows: int
+    profile: str = 'auto'
+
+
+@dataclass(frozen=True)
+class ArrayRequirement(Generic[T]):
+    item_type: object
+    rows: int
+
+
+def batch(feature_type: type[T], *, rows: int, profile: str = 'auto') -> BatchRequirement[T]:
+    _validate_requirement_rows(rows)
+    from .registry import is_feature
+
+    if not is_feature(feature_type):
+        raise TypeError(
+            f'{getattr(feature_type, "__name__", feature_type)!r} is not a fastdb @feature class.',
+        )
+    return BatchRequirement(feature_type=feature_type, rows=rows, profile=profile)
+
+
+def array(item_type: object, *, rows: int) -> ArrayRequirement[Any]:
+    _validate_requirement_rows(rows)
+    field_type = get_origin_type(item_type)
+    if field_type in {
+        OriginFieldType.unknown,
+        OriginFieldType.ref,
+        OriginFieldType.list,
+    }:
+        raise TypeError(
+            f'{item_type!r} is not a supported fastdb scalar alias for ArrayRequirement.',
+        )
+    return ArrayRequirement(item_type=item_type, rows=rows)
+
+
+def _validate_requirement_rows(rows: int) -> None:
+    if type(rows) is not int or rows < 0:
+        raise ValueError('rows must be a non-negative integer.')
+
+
 class Array(Generic[T]):
-    """CRM ABI marker for a homogeneous fastdb scalar array."""
+    """Logical homogeneous FastDB scalar array.
+
+    ``Array[T]`` is both the public CRM ABI marker and a small runtime value for
+    authoring call payloads without touching the physical table representation.
+    """
+
+    def __init__(self, item_type: object, values: list[Any] | None = None, *, capacity: int | None = None):
+        self.item_type = item_type
+        self._values = list(values or [])
+        self._capacity = capacity
+        self._fastdb_require_envelope = None
+        self._fastdb_require_index = None
+
+    @classmethod
+    def allocate(cls, item_type: object, capacity: int) -> 'Array':
+        if type(capacity) is not int or capacity < 0:
+            raise ValueError('Array.allocate capacity must be a non-negative integer.')
+        return cls(item_type, capacity=capacity)
+
+    def fill(self, values: object) -> None:
+        if isinstance(values, (str, bytes, bytearray, memoryview)):
+            raise TypeError('Array.fill expects an iterable of scalar values.')
+        try:
+            new_values = list(values)  # type: ignore[arg-type]
+        except TypeError as exc:
+            raise TypeError('Array.fill expects an iterable of scalar values.') from exc
+        if self._capacity is not None and len(new_values) != self._capacity:
+            raise ValueError(f'Array.fill expected {self._capacity} values, got {len(new_values)}.')
+        self._values = new_values
+
+    def append(self, value: object) -> None:
+        if self._capacity is not None and len(self._values) >= self._capacity:
+            raise ValueError('Array capacity exceeded.')
+        self._values.append(value)
+
+    def extend(self, values: object) -> None:
+        for value in values:  # type: ignore[union-attr]
+            self.append(value)
+
+    def to_owned(self) -> list[Any]:
+        from .materialize import materialize
+
+        return [materialize(item) for item in self._values]
+
+    def materialize(self) -> list[Any]:
+        return self.to_owned()
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, index: int | slice) -> Any:
+        return self._values[index]
+
+    def __iter__(self):
+        return iter(self._values)
 
 
 class Batch(Generic[T]):
-    """CRM ABI marker for a table-shaped batch of fastdb features."""
+    """Logical batch of FastDB features.
+
+    ``Batch[T]`` is the public authoring/runtime surface. Columnar batches own a
+    physical ``Table`` internally; object-graph batches keep feature rows until
+    the object graph encoder consumes them.
+    """
+
+    def __init__(
+        self,
+        feature_type: type[T],
+        *,
+        profile: str,
+        table: object | None = None,
+        engine: object | None = None,
+        rows: list[T] | None = None,
+        capacity: int | None = None,
+    ):
+        self.feature_type = feature_type
+        self.profile = profile
+        self._table = table
+        self._engine = engine
+        self._rows = list(rows or [])
+        self._capacity = capacity
+        self._fastdb_require_envelope = None
+        self._fastdb_require_index = None
+
+    @classmethod
+    def allocate(cls, feature_type: type[T], capacity: int, *, profile: str = 'auto') -> 'Batch[T]':
+        if type(capacity) is not int or capacity < 0:
+            raise ValueError('Batch.allocate capacity must be a non-negative integer.')
+
+        from .column_engine import ColumnEngine
+        from .layout import Layout
+        from .registry import is_feature
+        from .schema import columnar_capability, object_graph_capability
+
+        if not is_feature(feature_type):
+            raise TypeError(f'{getattr(feature_type, "__name__", feature_type)!r} is not a fastdb @feature class.')
+
+        normalized = _normalize_batch_profile(profile)
+        if normalized == 'auto':
+            if columnar_capability(feature_type, fixed_table=True)['eligible']:
+                normalized = 'columnar'
+            elif object_graph_capability(feature_type)['eligible']:
+                normalized = 'object_graph'
+            else:
+                columnar = columnar_capability(feature_type, fixed_table=True)
+                graph = object_graph_capability(feature_type)
+                raise TypeError(
+                    f'{feature_type.__name__} is not eligible for Batch allocation: '
+                    f'columnar={columnar["diagnostics"]}; object_graph={graph["diagnostics"]}',
+                )
+
+        if normalized == 'columnar':
+            engine = ColumnEngine.truncate([Layout(feature_type, capacity)])
+            table = engine.table(feature_type)
+            return cls(feature_type, profile='columnar', table=table, engine=engine, capacity=capacity)
+        if normalized == 'object_graph':
+            capability = object_graph_capability(feature_type)
+            if not capability['eligible']:
+                raise TypeError(
+                    f'{feature_type.__name__} is not eligible for object graph Batch allocation: '
+                    f'{capability["diagnostics"]}',
+                )
+            return cls(feature_type, profile='object_graph', rows=[], capacity=capacity)
+        raise ValueError(f'Unsupported Batch profile {profile!r}.')
+
+    @classmethod
+    def from_table(cls, table: object) -> 'Batch':
+        from .orm.table import Table
+
+        if not isinstance(table, Table):
+            raise TypeError(f'Batch.from_table expected a fastdb Table, got {type(table).__name__}.')
+        feature_type = table._feature_type  # noqa: SLF001
+        if feature_type is None:
+            raise TypeError('Batch.from_table requires a Table mapped with a feature type.')
+        return cls(feature_type, profile='columnar', table=table)
+
+    @property
+    def _fastdb_table(self) -> object:
+        if self._table is None:
+            raise TypeError('This Batch is not backed by a columnar fastdb Table.')
+        return self._table
+
+    @property
+    def column(self) -> object:
+        return self._fastdb_table.column
+
+    @property
+    def name(self) -> str:
+        return self._fastdb_table.name
+
+    def fill(self, **columns: object) -> None:
+        if self._table is None:
+            raise TypeError('Batch.fill is available only for columnar Batch values.')
+        self._table.fill(**columns)
+
+    def append(self, value: T) -> None:
+        if self._table is not None:
+            raise TypeError('Columnar Batch values are fixed-size; use fill(...) for direct column writes.')
+        if self._capacity is not None and self._capacity > 0 and len(self._rows) >= self._capacity:
+            raise ValueError('Batch capacity exceeded.')
+        if not isinstance(value, self.feature_type):
+            raise TypeError(f'Batch[{self.feature_type.__name__}] expected {self.feature_type.__name__}, got {type(value).__name__}.')
+        self._rows.append(value)
+
+    def extend(self, values: object) -> None:
+        for value in values:  # type: ignore[union-attr]
+            self.append(value)
+
+    def to_owned(self) -> list[T]:
+        from .materialize import materialize
+
+        if self._table is not None:
+            return self._table.to_owned()
+        return [materialize(row) for row in self._rows]
+
+    def materialize(self) -> list[T]:
+        return self.to_owned()
+
+    def __len__(self) -> int:
+        if self._table is not None:
+            return len(self._table)
+        return len(self._rows)
+
+    def __getitem__(self, index: int | slice) -> Any:
+        if self._table is not None:
+            return self._table[index]
+        return self._rows[index]
+
+    def __iter__(self):
+        if self._table is not None:
+            return iter(self._table)
+        return iter(self._rows)
+
+
+def _normalize_batch_profile(profile: str) -> str:
+    if profile in {'auto', None}:
+        return 'auto'
+    if profile in {'columnar', 'columnar.v1', 'fastdb.call.columnar.v1'}:
+        return 'columnar'
+    if profile in {'object_graph', 'object-graph', 'object_graph.v1', 'object-graph.v1', 'fastdb.call.object-graph.v1'}:
+        return 'object_graph'
+    return profile
 
 # Field type aliases for Python-side type annotations.
 #

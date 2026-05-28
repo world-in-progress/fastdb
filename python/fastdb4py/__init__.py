@@ -1,8 +1,13 @@
 """fastdb4py — high-performance columnar storage with dual-engine architecture."""
 from .type import (
-    Array, Batch,
+    Array, ArrayRequirement, Batch, BatchRequirement, array, batch,
     BOOL, U8, U16, U32, I32, U8N, U16N,
     F32, F64, STR, WSTR, REF, BYTES
+)
+from .require import require
+from .allocator import (
+    BytearrayAllocation, BytearrayAllocator, WritableAllocation, WritableAllocator,
+    build_call_db,
 )
 from .decorator import feature
 from .registry import is_feature, get_schema, lookup_class
@@ -23,8 +28,10 @@ from .string_column import StringColumn, pack_utf8_column
 from .call_db import (
     CALL_DB_CODEC_ID, CALL_DB_COLUMNAR_PROFILE, CALL_DB_OBJECT_GRAPH_PROFILE,
     CALL_DB_SCHEMA_VERSION, FastdbCallDbArrayItem, FastdbCallDbArrayView,
-    FastdbCallDbBinding, FastdbCallDbFeatureDependency, FastdbCallDbScalarField,
-    FastdbCallDbTable, FastdbCallDbView, decode_call_db, encode_call_db,
+    FastdbCallDbBinding, FastdbCallDbFeatureDependency,
+    FastdbCallDbScalarField, FastdbCallDbTable, FastdbCallDbView,
+    FastdbPreparedCallDb, FastdbUnsupportedDirectBuildError, decode_call_db,
+    encode_call_db, encode_call_db_into, prepare_call_db,
     try_export_call_db, view_call_db,
 )
 
@@ -39,9 +46,13 @@ __all__ = [
     'CALL_DB_CODEC_ID', 'CALL_DB_COLUMNAR_PROFILE', 'CALL_DB_OBJECT_GRAPH_PROFILE',
     'CALL_DB_SCHEMA_VERSION', 'FastdbCallDbArrayItem', 'FastdbCallDbArrayView',
     'FastdbCallDbBinding', 'FastdbCallDbFeatureDependency', 'FastdbCallDbScalarField',
-    'FastdbCallDbTable', 'FastdbCallDbView', 'decode_call_db', 'encode_call_db',
-    'try_export_call_db', 'view_call_db',
-    'Array', 'Batch',
+    'FastdbCallDbTable', 'FastdbCallDbView', 'FastdbPreparedCallDb',
+    'FastdbUnsupportedDirectBuildError', 'decode_call_db', 'encode_call_db',
+    'encode_call_db_into', 'prepare_call_db', 'try_export_call_db', 'view_call_db',
+    'Array', 'ArrayRequirement', 'Batch', 'BatchRequirement', 'array', 'batch',
+    'require',
+    'BytearrayAllocation', 'BytearrayAllocator', 'WritableAllocation', 'WritableAllocator',
+    'build_call_db',
     'BOOL', 'U8', 'U16', 'U32', 'I32', 'U8N', 'U16N',
     'F32', 'F64', 'STR', 'WSTR', 'REF', 'BYTES',
 ]
