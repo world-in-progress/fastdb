@@ -28,6 +28,15 @@ from .string_column import _StringSequencePayload
 T = TypeVar('T')
 
 
+def _post_build_to_bytearray(build: object) -> bytearray:
+    size = build.byte_length()
+    buffer = bytearray(size)
+    written = build.post_into_buffer(buffer)
+    if written != size:
+        raise RuntimeError('FastDB native final backing write failed.')
+    return buffer
+
+
 def _normalize_shm_name(shm_name: str) -> str:
     if platform.system() != 'Windows':
         return shm_name
@@ -96,6 +105,7 @@ class ColumnEngine:
         self._fixed_build: core.WxDatabaseBuild | None = None
         self._fixed_layer_builds: dict[str, core.WxLayerTableBuild] = {}
         self._fixed_table_fields: dict[str, dict[str, int]] = {}
+        self._fixed_direct_fill: bool = False
         # Per-class push dispatch caches
         self._push_buf: dict = {}
         self._push_batch_fn: dict = {}
@@ -118,12 +128,11 @@ class ColumnEngine:
         return engine
 
     @staticmethod
-    def truncate(layouts: List[Layout]) -> 'ColumnEngine':
-        """Create a ColumnEngine with fixed-size pre-allocated tables.
-
-        Supports UTF-8 ``STR`` columns. ``WSTR`` and ``BYTES`` remain unsupported.
-        Rejects any class with REF fields.
-        """
+    def _prepare_truncate(
+        layouts: List[Layout],
+        *,
+        materialize_table_buffer: bool = True,
+    ) -> 'ColumnEngine':
         engine = ColumnEngine()
         engine._fixed_build = core.WxDatabaseBuild()
         engine._origin = engine._fixed_build
@@ -166,12 +175,24 @@ class ColumnEngine:
                         new_table._origin.add_list_field(fd.name, fd.cpp_type)
                     else:
                         new_table._origin.add_field(fd.name, fd.field_type.value)
+                if not materialize_table_buffer:
+                    new_table._origin._set_table_buffer_materialized(False)
                 engine._table_map[table_name] = new_table
                 engine._fixed_layer_builds[table_name] = new_table._origin
                 engine._fixed_table_fields[table_name] = field_ids
 
             engine._fixed_build.truncate(table_name, layout.capacity)
 
+        return engine
+
+    @staticmethod
+    def truncate(layouts: List[Layout]) -> 'ColumnEngine':
+        """Create a ColumnEngine with fixed-size pre-allocated tables.
+
+        Supports UTF-8 ``STR`` columns. ``WSTR`` and ``BYTES`` remain unsupported.
+        Rejects any class with REF fields.
+        """
+        engine = ColumnEngine._prepare_truncate(layouts)
         engine._publish_fixed_snapshot()
         return engine
 
@@ -353,9 +374,7 @@ class ColumnEngine:
 
         self._flush_push_batches()
 
-        memory_stream = core.WxMemoryStream()
-        self._origin.post(memory_stream)
-        buffer = memory_stream.data().as_array(np.uint8).tobytes()
+        buffer = _post_build_to_bytearray(self._origin)
         self._origin = core.WxDatabase.load_xbuffer(buffer)
         self._origin._buffer = buffer
 
@@ -383,13 +402,15 @@ class ColumnEngine:
         if cached is not None:
             self._table_feature_types[table_name] = feature_type
             if owner is not None or writeable is not None:
-                return Table.map_from(
+                tbl = Table.map_from(
                     feature_type,
                     cached._origin,
                     cached._db,
                     owner=owner,
                     writeable=writeable,
                 )
+                self._attach_owner_fixed_fill_handler(tbl, table_name)
+                return tbl
             self._attach_fixed_fill_handler(cached, table_name)
             return cached
         db = self._origin
@@ -407,14 +428,30 @@ class ColumnEngine:
                 )
                 self._table_feature_types[table_name] = feature_type
                 if owner is not None or writeable is not None:
+                    self._attach_owner_fixed_fill_handler(tbl, table_name)
                     return tbl
                 self._attach_fixed_fill_handler(tbl, table_name)
                 self._table_map[table_name] = tbl
                 return tbl
         raise KeyError(f'Table "{table_name}" not found')
 
-    def _attach_fixed_fill_handler(self, table: Table, table_name: str) -> None:
+    def _attach_owner_fixed_fill_handler(self, table: Table, table_name: str) -> None:
+        if table.fixed and self._fixed_direct_fill:
+            self._attach_fixed_fill_handler(table, table_name)
+            return
         if table.fixed and self._fixed_build is not None and self._shm is None:
+            table._fixed_fill_handler = (
+                lambda writes, _table=table: self._fill_mapped_table_and_drop_fixed_build(_table, writes)
+            )
+            return
+        self._attach_fixed_fill_handler(table, table_name)
+
+    def _attach_fixed_fill_handler(self, table: Table, table_name: str) -> None:
+        if table.fixed and self._fixed_direct_fill:
+            table._fixed_fill_handler = (
+                lambda writes, _table=table: self._fill_mapped_table_in_place(_table, writes)
+            )
+        elif table.fixed and self._fixed_build is not None and self._shm is None:
             table._fixed_fill_handler = (
                 lambda writes: self._fill_fixed_table(table_name, writes)
             )
@@ -425,6 +462,7 @@ class ColumnEngine:
         self._fixed_build = None
         self._fixed_layer_builds = {}
         self._fixed_table_fields = {}
+        self._fixed_direct_fill = False
         for table_name, table in self._table_map.items():
             self._attach_fixed_fill_handler(table, table_name)
 
@@ -462,9 +500,27 @@ class ColumnEngine:
         if self._fixed_build is None:
             raise RuntimeError('No writable fixed table build is available.')
 
-        memory_stream = core.WxMemoryStream()
-        self._fixed_build.post(memory_stream)
-        buffer = memory_stream.data().as_array(np.uint8).tobytes()
+        buffer = _post_build_to_bytearray(self._fixed_build)
+        self._publish_fixed_buffer(buffer, direct_fill=False)
+
+    def _publish_fixed_snapshot_to_buffer(self, buffer: object, *, direct_fill: bool = False) -> None:
+        if self._fixed_build is None:
+            raise RuntimeError('No writable fixed table build is available.')
+        writable = memoryview(buffer).cast('B')
+        if writable.readonly:
+            raise TypeError('fixed snapshot destination buffer must be writable.')
+        size = self._fixed_build.byte_length()
+        if writable.nbytes < size:
+            raise ValueError(
+                f'fixed snapshot destination is too small: expected at least {size} bytes, got {writable.nbytes}.',
+            )
+        written = self._fixed_build.post_into_buffer(writable)
+        if written != size:
+            raise RuntimeError('FastDB native final backing write failed.')
+        self._publish_fixed_buffer(writable[:size], direct_fill=direct_fill)
+
+    def _publish_fixed_buffer(self, buffer: object, *, direct_fill: bool) -> None:
+        self._fixed_direct_fill = direct_fill
         self._origin = core.WxDatabase.load_xbuffer(buffer)
         self._origin._buffer = buffer
 
@@ -474,6 +530,17 @@ class ColumnEngine:
                 continue
             table._remap(new_layer, self._origin)
             self._attach_fixed_fill_handler(table, table_name)
+
+    def _fill_mapped_table_in_place(self, table: Table, writes: dict[str, object]) -> None:
+        for field_name, payload in writes.items():
+            if isinstance(payload, _StringSequencePayload) or isinstance(payload, tuple):
+                raise RuntimeError('direct fixed backing writes do not support variable-size string payloads.')
+            column = getattr(table.column, field_name)
+            column[:] = payload
+
+    def _fill_mapped_table_and_drop_fixed_build(self, table: Table, writes: dict[str, object]) -> None:
+        self._fill_mapped_table_in_place(table, writes)
+        self._invalidate_fixed_writes()
 
     # ------------------------------------------------------------------
     # Persistence / sharing

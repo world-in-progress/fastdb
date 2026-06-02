@@ -66,6 +66,8 @@ namespace wx{
         void   setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes = nullptr);
         void   setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes);
         void   setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes);
+        void   setTableBufferMaterialized(bool enabled);
+        size_t tableBufferBytes();
         void   setField(unsigned ix,const FastVectorDbFeatureRef* ref);
         FastVectorDbFeatureRef* createFeatureRef(u32 ix);
         void   freeFeatureRef(FastVectorDbFeatureRef* ref);
@@ -107,8 +109,12 @@ namespace wx{
     private:
         void validate_coord(const point2_t& p);
         size_t field_type_byte_size(unsigned ft);
+        size_t table_data_size() const;
+        void ensure_table_buffer_materialized();
     private:
         vector<u8>       m_table_buffer;
+        size_t           m_table_buffer_virtual_size;
+        bool             m_table_buffer_materialized;
         vector<u8>       m_geometries_buffer;
         vector<const string*>       m_string_table;
         unordered_map<string,int>  m_string_map;

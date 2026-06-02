@@ -110,6 +110,17 @@ namespace wx
                 return false;
             return true;
         }
+
+        void write_zero_bytes(WriteStream* stream, size_t size)
+        {
+            static u8 zeros[8192] = {0};
+            while (size > 0)
+            {
+                size_t chunk = size < sizeof(zeros) ? size : sizeof(zeros);
+                stream->write(zeros, chunk);
+                size -= chunk;
+            }
+        }
     }
 
     FastVectorDbLayerBuild::Impl::Impl(FastVectorDbBuild* db,const char *name)
@@ -125,6 +136,8 @@ namespace wx
         m_geometry_type = gtAny;
         m_coord_format = cfF64;
         m_table_line_size = 0;
+        m_table_buffer_virtual_size = 0;
+        m_table_buffer_materialized = true;
         m_extent_done = false;
         m_string_table_u32=false;
         m_aabbox_enable=false;
@@ -205,6 +218,37 @@ namespace wx
         m_maxy = maxy;
         m_tcx = (maxx-minx)/0xFFFF;
         m_tcy = (maxy-miny)/0xFFFF;
+    }
+
+    void FastVectorDbLayerBuild::Impl::setTableBufferMaterialized(bool enabled)
+    {
+        if (enabled)
+        {
+            ensure_table_buffer_materialized();
+            m_table_buffer_materialized = true;
+            return;
+        }
+        if (!m_table_buffer.empty())
+            return;
+        m_table_buffer_materialized = false;
+    }
+
+    size_t FastVectorDbLayerBuild::Impl::tableBufferBytes()
+    {
+        return m_table_buffer.size();
+    }
+
+    size_t FastVectorDbLayerBuild::Impl::table_data_size() const
+    {
+        return m_table_buffer_materialized ? m_table_buffer.size() : m_table_buffer_virtual_size;
+    }
+
+    void FastVectorDbLayerBuild::Impl::ensure_table_buffer_materialized()
+    {
+        if (m_table_buffer_materialized)
+            return;
+        m_table_buffer.resize(m_table_buffer_virtual_size);
+        m_table_buffer_materialized = true;
     }
 
     void FastVectorDbLayerBuild::Impl::addFeatureBegin()
@@ -603,7 +647,14 @@ namespace wx
         if (data == nullptr && nbytes > 0)
             return;
         sfd->offsets.assign(offsets, offsets + n_offsets);
-        sfd->data.assign(data, data + nbytes);
+        if (nbytes == 0)
+        {
+            sfd->data.clear();
+        }
+        else
+        {
+            sfd->data.assign(data, data + nbytes);
+        }
     }
     void FastVectorDbLayerBuild::Impl::setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes)
     {
@@ -639,6 +690,7 @@ namespace wx
     }
     void FastVectorDbLayerBuild::Impl::setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes)
     {
+        ensure_table_buffer_materialized();
         assert(field_id < m_field_descs.size());
         if (field_id >= m_field_descs.size())
             return;
@@ -779,6 +831,7 @@ string table:%s\n",
 
     void FastVectorDbLayerBuild::Impl::update_feature_ref(u32 feat_idx, int field_id, const FastVectorDbFeatureRef* ref)
     {
+        ensure_table_buffer_materialized();
         assert(field_id >= 0 && field_id < (int)m_field_descs.size());
         const field_desc_ex_t& fd = m_field_descs[field_id];
         assert(fd.type == ftFeatureRef);
@@ -788,6 +841,7 @@ string table:%s\n",
 
     void FastVectorDbLayerBuild::Impl::update_list_ref_at(u32 feat_idx, int field_id, u32 list_idx, const FastVectorDbFeatureRef* ref)
     {
+        ensure_table_buffer_materialized();
         for (auto& lfd : m_list_fields) {
             if (lfd.field_id != field_id) continue;
             const u8* row = m_table_buffer.data() + feat_idx * m_table_line_size;
@@ -802,9 +856,11 @@ string table:%s\n",
 
     void FastVectorDbLayerBuild::Impl::addFeatureEnd()
     {
+        ensure_table_buffer_materialized();
         m_table_buffer.insert(m_table_buffer.end(), m_current_line_buffer.begin(), m_current_line_buffer.end());
         m_geometries_buffer.insert(m_geometries_buffer.end(), m_current_geom_buffer.begin(), m_current_geom_buffer.end());
         m_feature_count++;
+        m_table_buffer_virtual_size = m_table_buffer.size();
 #ifdef DEBUG
         if(m_feature_count%100==0)
         {
@@ -825,7 +881,14 @@ string table:%s\n",
                 m_string_table_u32);
         }
         m_feature_count=nfeatures;
-        m_table_buffer.resize(nfeatures * m_table_line_size);
+        m_table_buffer_virtual_size = nfeatures * m_table_line_size;
+        if (m_table_buffer_materialized)
+            m_table_buffer.resize(m_table_buffer_virtual_size);
+        else
+        {
+            m_table_buffer.clear();
+            m_table_buffer.shrink_to_fit();
+        }
         for (auto& sfd : m_string_fields)
         {
             sfd.offsets.assign(nfeatures + 1, 0);
@@ -849,7 +912,7 @@ string table:%s\n",
         return sizeof(layer_header_t) +
                m_field_descs.size() * sizeof(field_desc_ex_t) +
                m_geometries_buffer.size() +
-               m_table_buffer.size() +
+               table_data_size() +
                sizeof(u32) + m_string_total_size +
                sizeof(u32) + m_wstring_total_size +
                list_section_size +
@@ -873,7 +936,7 @@ string table:%s\n",
         lh.string_table_u32=m_string_table_u32;
         lh.n_list_fields = (u16)m_list_fields.size();
         lh.offset_table = /*sizeof(lh) + m_field_descs.size() * sizeof(field_desc_t) +*/ m_geometries_buffer.size();
-        lh.offset_strings = lh.offset_table + m_table_buffer.size();
+        lh.offset_strings = lh.offset_table + table_data_size();
         lh.offset_wstrings = lh.offset_strings + sizeof(u32) + m_string_total_size;
         lh.total_size = get_total_size();
         stream->write(&lh, sizeof(lh));
@@ -885,6 +948,8 @@ string table:%s\n",
             stream->write(m_geometries_buffer.data(), m_geometries_buffer.size());
         if (m_table_buffer.size() > 0)
             stream->write(m_table_buffer.data(), m_table_buffer.size());
+        else if (!m_table_buffer_materialized && m_table_buffer_virtual_size > 0)
+            write_zero_bytes(stream, m_table_buffer_virtual_size);
         u32 str_count = (u32)m_string_table.size();
         stream->write(&str_count, sizeof(str_count));
         for (auto pstr : m_string_table)
@@ -1011,9 +1076,22 @@ string table:%s\n",
         {
             impl->setStringColumnFromViews(field_id, values, count, valid_bytes);
         }
+        void FastVectorDbLayerBuild::setTableBufferMaterialized(bool enabled)
+        {
+            impl->setTableBufferMaterialized(enabled);
+        }
+        size_t FastVectorDbLayerBuild::tableBufferBytes()
+        {
+            return impl->tableBufferBytes();
+        }
         void   FastVectorDbLayerBuild::addFeatureEnd()
         {
             impl->addFeatureEnd();
+        }
+
+        size_t FastVectorDbLayerBuild::byteLength()
+        {
+            return impl->get_total_size();
         }
 
         void   FastVectorDbLayerBuild::setField(unsigned ix,const FastVectorDbFeatureRef* ref)

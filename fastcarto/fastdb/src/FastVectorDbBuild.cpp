@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <memory>
 #include <vector> 
 namespace wx
 {
@@ -55,6 +55,244 @@ namespace wx
     void MemoryStream::Impl::write(void *pdata, size_t size)
     {
         m_buffer.insert(m_buffer.end(), (u8*)pdata, ((u8*)pdata) + size);
+    }
+
+    FixedBufferWriteStream::FixedBufferWriteStream(void* pdata, size_t size)
+        : m_data(reinterpret_cast<u8*>(pdata)), m_size(size), m_offset(0), m_overflowed(false)
+    {
+    }
+
+    void FixedBufferWriteStream::write(void *pdata, size_t size)
+    {
+        if (m_overflowed)
+            return;
+        if (size > m_size - m_offset)
+        {
+            m_overflowed = true;
+            return;
+        }
+        if (size > 0)
+            memcpy(m_data + m_offset, pdata, size);
+        m_offset += size;
+    }
+
+    size_t FixedBufferWriteStream::bytesWritten() const
+    {
+        return m_offset;
+    }
+
+    bool FixedBufferWriteStream::overflowed() const
+    {
+        return m_overflowed;
+    }
+
+    struct HeapScratchStats
+    {
+        size_t allocation_count = 0;
+        size_t release_count = 0;
+    };
+
+    class HeapScratchAllocator::Impl
+    {
+    public:
+        Impl()
+            : stats(std::make_shared<HeapScratchStats>())
+        {
+        }
+
+        std::shared_ptr<HeapScratchStats> stats;
+    };
+
+    class HeapScratchAllocation::Impl
+    {
+    public:
+        Impl(size_t size, std::shared_ptr<HeapScratchStats> stats)
+            : buffer(size), stats(stats)
+        {
+        }
+
+        vector<u8> buffer;
+        std::shared_ptr<HeapScratchStats> stats;
+    };
+
+    HeapScratchAllocation::HeapScratchAllocation(size_t size, HeapScratchAllocator* owner)
+        : impl(new HeapScratchAllocation::Impl(
+            size,
+            owner ? owner->impl->stats : std::shared_ptr<HeapScratchStats>()
+        ))
+    {
+    }
+
+    HeapScratchAllocation::~HeapScratchAllocation()
+    {
+        if (impl->stats)
+            impl->stats->release_count++;
+        delete impl;
+    }
+
+    void* HeapScratchAllocation::data()
+    {
+        return impl->buffer.empty() ? nullptr : impl->buffer.data();
+    }
+
+    size_t HeapScratchAllocation::size() const
+    {
+        return impl->buffer.size();
+    }
+
+    HeapScratchAllocator::HeapScratchAllocator()
+        : impl(new HeapScratchAllocator::Impl())
+    {
+    }
+
+    HeapScratchAllocator::~HeapScratchAllocator()
+    {
+        delete impl;
+    }
+
+    ScratchAllocation* HeapScratchAllocator::allocate(size_t size, size_t alignment)
+    {
+        (void)alignment;
+        impl->stats->allocation_count++;
+        return new HeapScratchAllocation(size, this);
+    }
+
+    size_t HeapScratchAllocator::allocationCount() const
+    {
+        return impl->stats->allocation_count;
+    }
+
+    size_t HeapScratchAllocator::releaseCount() const
+    {
+        return impl->stats->release_count;
+    }
+
+    struct HeapFinalBackingStats
+    {
+        size_t allocation_count = 0;
+        size_t commit_count = 0;
+        size_t rollback_count = 0;
+    };
+
+    class HeapFinalBackingResource::Impl
+    {
+    public:
+        Impl()
+            : stats(std::make_shared<HeapFinalBackingStats>())
+        {
+        }
+
+        std::shared_ptr<HeapFinalBackingStats> stats;
+    };
+
+    class HeapFinalBackingAllocation::Impl
+    {
+    public:
+        Impl(size_t size, std::shared_ptr<HeapFinalBackingStats> stats)
+            : buffer(size), used_size(0), committed(false), rolled_back(false), stats(stats)
+        {
+        }
+
+        vector<u8> buffer;
+        size_t used_size;
+        bool committed;
+        bool rolled_back;
+        std::shared_ptr<HeapFinalBackingStats> stats;
+    };
+
+    HeapFinalBackingAllocation::HeapFinalBackingAllocation(size_t size, HeapFinalBackingResource* owner)
+        : impl(new HeapFinalBackingAllocation::Impl(
+            size,
+            owner ? owner->impl->stats : std::shared_ptr<HeapFinalBackingStats>()
+        ))
+    {
+    }
+
+    HeapFinalBackingAllocation::~HeapFinalBackingAllocation()
+    {
+        delete impl;
+    }
+
+    void* HeapFinalBackingAllocation::data()
+    {
+        if (impl->rolled_back)
+            return nullptr;
+        return impl->buffer.empty() ? nullptr : impl->buffer.data();
+    }
+
+    size_t HeapFinalBackingAllocation::size() const
+    {
+        return impl->buffer.size();
+    }
+
+    size_t HeapFinalBackingAllocation::usedSize() const
+    {
+        return impl->used_size;
+    }
+
+    bool HeapFinalBackingAllocation::committed() const
+    {
+        return impl->committed;
+    }
+
+    bool HeapFinalBackingAllocation::rolledBack() const
+    {
+        return impl->rolled_back;
+    }
+
+    bool HeapFinalBackingAllocation::commit(size_t used_size)
+    {
+        if (impl->rolled_back || impl->committed || used_size > impl->buffer.size())
+            return false;
+        impl->used_size = used_size;
+        impl->committed = true;
+        if (impl->stats)
+            impl->stats->commit_count++;
+        return true;
+    }
+
+    void HeapFinalBackingAllocation::rollback()
+    {
+        if (impl->committed || impl->rolled_back)
+            return;
+        impl->rolled_back = true;
+        impl->used_size = 0;
+        impl->buffer.clear();
+        impl->buffer.shrink_to_fit();
+        if (impl->stats)
+            impl->stats->rollback_count++;
+    }
+
+    HeapFinalBackingResource::HeapFinalBackingResource()
+        : impl(new HeapFinalBackingResource::Impl())
+    {
+    }
+
+    HeapFinalBackingResource::~HeapFinalBackingResource()
+    {
+        delete impl;
+    }
+
+    FinalBackingAllocation* HeapFinalBackingResource::allocate(size_t size, size_t alignment)
+    {
+        (void)alignment;
+        impl->stats->allocation_count++;
+        return new HeapFinalBackingAllocation(size, this);
+    }
+
+    size_t HeapFinalBackingResource::allocationCount() const
+    {
+        return impl->stats->allocation_count;
+    }
+
+    size_t HeapFinalBackingResource::commitCount() const
+    {
+        return impl->stats->commit_count;
+    }
+
+    size_t HeapFinalBackingResource::rollbackCount() const
+    {
+        return impl->stats->rollback_count;
     }
 
     FastVectorDbBuild::Impl::Impl(FastVectorDbBuild* thiz)
@@ -199,6 +437,64 @@ you should check and reset them before adding any feature!!\n",
             m_current_layer->impl->post();
         m_current_layer = nullptr;
     }
+    size_t FastVectorDbBuild::Impl::byteLength()
+    {
+        size_t total = 16 + sizeof(u32);
+        for (auto layer : m_layers)
+        {
+            total += layer->impl->get_total_size();
+        }
+        return total;
+    }
+    size_t FastVectorDbBuild::Impl::tableBufferBytes()
+    {
+        size_t total = 0;
+        for (auto layer : m_layers)
+        {
+            total += layer->impl->tableBufferBytes();
+        }
+        return total;
+    }
+    size_t FastVectorDbBuild::Impl::postToBuffer(void* pdata, size_t size)
+    {
+        size_t expected = byteLength();
+        if (pdata == nullptr || size < expected)
+            return 0;
+        FixedBufferWriteStream stream(pdata, size);
+        save(&stream);
+        if (stream.overflowed() || stream.bytesWritten() != expected)
+            return 0;
+        return stream.bytesWritten();
+    }
+    FinalBackingAllocation* FastVectorDbBuild::Impl::postToFinalBacking(FinalBackingResource* resource)
+    {
+        if (resource == nullptr)
+            return nullptr;
+        size_t expected = byteLength();
+        FinalBackingAllocation* allocation = resource->allocate(expected, alignof(u64));
+        if (allocation == nullptr)
+            return nullptr;
+        if (allocation->size() < expected || (expected > 0 && allocation->data() == nullptr))
+        {
+            allocation->rollback();
+            delete allocation;
+            return nullptr;
+        }
+        size_t written = postToBuffer(allocation->data(), allocation->size());
+        if (written != expected)
+        {
+            allocation->rollback();
+            delete allocation;
+            return nullptr;
+        }
+        if (!allocation->commit(written))
+        {
+            allocation->rollback();
+            delete allocation;
+            return nullptr;
+        }
+        return allocation;
+    }
     void FastVectorDbBuild::Impl::save(WriteStream *stream) 
     {
         const char magic[] = "FASTVectorDB0.1";
@@ -314,6 +610,26 @@ you should check and reset them before adding any feature!!\n",
     void FastVectorDbBuild::createLayerEnd()
     {
         impl->createLayerEnd();
+    }
+
+    size_t FastVectorDbBuild::byteLength()
+    {
+        return impl->byteLength();
+    }
+
+    size_t FastVectorDbBuild::tableBufferBytes()
+    {
+        return impl->tableBufferBytes();
+    }
+
+    size_t FastVectorDbBuild::postToBuffer(void* pdata, size_t size)
+    {
+        return impl->postToBuffer(pdata, size);
+    }
+
+    FinalBackingAllocation* FastVectorDbBuild::postToFinalBacking(FinalBackingResource* resource)
+    {
+        return impl->postToFinalBacking(resource);
     }
 
     void FastVectorDbBuild::post(WriteStream *stream)

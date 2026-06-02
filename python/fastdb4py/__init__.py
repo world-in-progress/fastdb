@@ -6,8 +6,9 @@ from .type import (
 )
 from .require import require
 from .allocator import (
-    BytearrayAllocation, BytearrayAllocator, WritableAllocation, WritableAllocator,
-    build_call_db,
+    BytearrayAllocation, BytearrayAllocator, FinalBackingAllocation,
+    FinalBackingResource, HeapFinalBackingResource, HeapScratchAllocator,
+    ScratchAllocation, ScratchAllocator, build_call_db,
 )
 from .decorator import feature
 from .registry import is_feature, get_schema, lookup_class
@@ -31,7 +32,7 @@ from .call_db import (
     FastdbCallDbBinding, FastdbCallDbFeatureDependency,
     FastdbCallDbScalarField, FastdbCallDbTable, FastdbCallDbView,
     FastdbPreparedCallDb, FastdbUnsupportedDirectBuildError, decode_call_db,
-    encode_call_db, encode_call_db_into, prepare_call_db,
+    call_db_build_context, encode_call_db, encode_call_db_into, prepare_call_db,
     try_export_call_db, view_call_db,
 )
 
@@ -47,12 +48,13 @@ __all__ = [
     'CALL_DB_SCHEMA_VERSION', 'FastdbCallDbArrayItem', 'FastdbCallDbArrayView',
     'FastdbCallDbBinding', 'FastdbCallDbFeatureDependency', 'FastdbCallDbScalarField',
     'FastdbCallDbTable', 'FastdbCallDbView', 'FastdbPreparedCallDb',
-    'FastdbUnsupportedDirectBuildError', 'decode_call_db', 'encode_call_db',
+    'FastdbUnsupportedDirectBuildError', 'call_db_build_context', 'decode_call_db', 'encode_call_db',
     'encode_call_db_into', 'prepare_call_db', 'try_export_call_db', 'view_call_db',
     'Array', 'ArrayRequirement', 'Batch', 'BatchRequirement', 'array', 'batch',
     'require',
-    'BytearrayAllocation', 'BytearrayAllocator', 'WritableAllocation', 'WritableAllocator',
-    'build_call_db',
+    'BytearrayAllocation', 'BytearrayAllocator', 'FinalBackingAllocation',
+    'FinalBackingResource', 'HeapFinalBackingResource', 'HeapScratchAllocator',
+    'ScratchAllocation', 'ScratchAllocator', 'build_call_db',
     'BOOL', 'U8', 'U16', 'U32', 'I32', 'U8N', 'U16N',
     'F32', 'F64', 'STR', 'WSTR', 'REF', 'BYTES',
 ]

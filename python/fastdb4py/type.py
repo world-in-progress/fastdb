@@ -84,10 +84,18 @@ class Array(Generic[T]):
     authoring call payloads without touching the physical table representation.
     """
 
-    def __init__(self, item_type: object, values: list[Any] | None = None, *, capacity: int | None = None):
+    def __init__(
+        self,
+        item_type: object,
+        values: list[Any] | None = None,
+        *,
+        capacity: int | None = None,
+        table: object | None = None,
+    ):
         self.item_type = item_type
         self._values = list(values or [])
         self._capacity = capacity
+        self._table = table
         self._fastdb_require_envelope = None
         self._fastdb_require_index = None
 
@@ -97,9 +105,16 @@ class Array(Generic[T]):
             raise ValueError('Array.allocate capacity must be a non-negative integer.')
         return cls(item_type, capacity=capacity)
 
+    @classmethod
+    def from_table(cls, item_type: object, table: object) -> 'Array':
+        return cls(item_type, capacity=len(table), table=table)
+
     def fill(self, values: object) -> None:
         if isinstance(values, (str, bytes, bytearray, memoryview)):
             raise TypeError('Array.fill expects an iterable of scalar values.')
+        if self._table is not None:
+            self._table.fill(value=values)
+            return
         try:
             new_values = list(values)  # type: ignore[arg-type]
         except TypeError as exc:
@@ -109,6 +124,8 @@ class Array(Generic[T]):
         self._values = new_values
 
     def append(self, value: object) -> None:
+        if self._table is not None:
+            raise TypeError('Backed Array values are fixed-size; use fill(...) for direct column writes.')
         if self._capacity is not None and len(self._values) >= self._capacity:
             raise ValueError('Array capacity exceeded.')
         self._values.append(value)
@@ -120,18 +137,27 @@ class Array(Generic[T]):
     def to_owned(self) -> list[Any]:
         from .materialize import materialize
 
+        if self._table is not None:
+            return [materialize(value) for value in self]
         return [materialize(item) for item in self._values]
 
     def materialize(self) -> list[Any]:
         return self.to_owned()
 
     def __len__(self) -> int:
+        if self._table is not None:
+            return len(self._table)
         return len(self._values)
 
     def __getitem__(self, index: int | slice) -> Any:
+        if self._table is not None:
+            column = self._table.column.value
+            return column[index]
         return self._values[index]
 
     def __iter__(self):
+        if self._table is not None:
+            return iter(self._table.column.value)
         return iter(self._values)
 
 

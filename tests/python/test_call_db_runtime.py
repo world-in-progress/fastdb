@@ -306,9 +306,13 @@ def test_try_export_call_db_returns_exact_single_batch_buffer():
     table = _backed_points_call_table()
 
     exported = fdb.try_export_call_db(binding, table)
+    plan = fdb.prepare_call_db(binding, table, direct_required=True)
 
     assert isinstance(exported, memoryview)
     assert exported.obj is table._db._buffer  # noqa: SLF001
+    assert plan.direct is True
+    assert plan.build_mode == 'exported'
+    assert plan.fallback_reason is None
     view = fdb.view_call_db(binding, exported).logical_value()
     assert list(view.column.row_id) == [0, 1, 2]
     assert view.column.name[1] == 'point-1'
@@ -453,6 +457,8 @@ def test_prepare_call_db_uses_normal_encoder_for_unbound_backed_batches():
 
     assert plan.byte_length == plan.nbytes
     assert plan.direct is False
+    assert plan.build_mode == 'fallback'
+    assert 'no importable layer' in plan.fallback_reason
     assert [row.row_id for row in left] == [10, 11]
     assert [row.name for row in left] == ['left-10', 'left-11']
     assert [row.row_id for row in right] == [20, 21, 22]
@@ -587,6 +593,68 @@ def test_batch_allocate_object_graph_encodes_nested_features():
 
     assert [row.value for row in decoded] == [2.0, 4.0]
     assert [row.child.value for row in decoded] == [1.0, 3.0]
+
+
+def test_object_graph_decode_uses_binding_dependencies_when_feature_names_collide():
+    first = {'fdb': fdb, '__name__': 'tests.first_graph'}
+    exec("""
+@fdb.feature
+class SharedLeaf:
+    value: fdb.F64
+
+@fdb.feature
+class SharedNode:
+    value: fdb.F64
+    child: SharedLeaf
+""", first)
+    FirstLeaf = first['SharedLeaf']
+    FirstNode = first['SharedNode']
+
+    binding = fdb.FastdbCallDbBinding(
+        codec_id='org.fastdb.call-db',
+        direction='output',
+        method='get_shared_nodes',
+        profile='fastdb.call.object-graph.v1',
+        schema_sha256='test-schema',
+        tables=(
+            fdb.FastdbCallDbTable(
+                cardinality='many',
+                feature=FirstNode,
+                feature_schema_dependencies=(
+                    fdb.FastdbCallDbFeatureDependency(
+                        feature=FirstLeaf,
+                        feature_schema_sha256=fdb.schema_sha256(FirstLeaf),
+                    ),
+                ),
+                kind='feature',
+                name='return_0',
+                value_position=0,
+            ),
+        ),
+    )
+
+    batch = fdb.Batch.allocate(FirstNode, 0)
+    batch.append(FirstNode(value=2.0, child=FirstLeaf(value=1.0)))
+    payload = fdb.encode_call_db(binding, batch)
+
+    second = {'fdb': fdb, '__name__': 'tests.second_graph'}
+    exec("""
+@fdb.feature
+class SharedLeaf:
+    value: fdb.F64
+
+@fdb.feature
+class SharedNode:
+    value: fdb.F64
+    child: SharedLeaf
+""", second)
+
+    decoded = fdb.decode_call_db(binding, payload)
+
+    assert type(decoded[0]) is FirstNode
+    assert type(decoded[0].child) is FirstLeaf
+    assert decoded[0].value == 2.0
+    assert decoded[0].child.value == 1.0
 
 
 def test_decode_call_db_scalar_tuple_materializes_values():

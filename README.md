@@ -100,6 +100,30 @@ tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 
 For integrations that already own a generic call-db binding, `try_export_call_db(binding, value)` returns an existing buffer-protocol view when a value is already backed by an exact call-db-compatible single fixed `Batch[Feature]` table. Build such tables with the target table name up front, for example `ColumnEngine.truncate([Layout(Point, n, name="return_0")])`, then call `encode_call_db(...)` only when `try_export_call_db(...)` returns `None`. FastDB owns the exact-export decision; integrations such as C-Two should pass the generic binding and logical value rather than inspecting FastDB table internals.
 
+## Experimental Final-Backing Builds
+
+`build_call_db(binding, value, allocator, direct_required=True)` is the experimental final-backing path for generic call-db payloads. FastDB computes one final DB byte length, asks the supplied allocator for one writable allocation, and writes the final backing without first publishing through `WxMemoryStream().data().tobytes()`. Fixed numeric call-db values use a mapped final-backing path that writes the initial C++ layout directly into the caller backing and fills columns there; prepacked string feature columns still use the C++ final writer. The allocator may be a native `fdb.HeapFinalBackingResource`, which returns a committed `FinalBackingAllocation`, or a Python allocator object that returns an allocation with `.buffer`, `.commit(used_size)`, and `.rollback()`. Native final backing resources also work for fallback prepared plans, so callers can preserve fallback semantics when `direct_required=False`. `prepare_call_db(..., direct_required=True)` is stricter: it only accepts already-backed/importable layers and will not stage temporary call-db layers under a direct label.
+
+Committed native `FinalBackingAllocation` objects can be passed directly to `decode_call_db(...)` or `view_call_db(...)`. `view_call_db(...)` keeps the allocation owner alive while checked FastDB views are active; uncommitted or rolled-back allocations cannot be read.
+
+FastDB also exposes experimental `ScratchAllocator` / `HeapScratchAllocator` names as the separate build-time scratch role. V1 keeps this role FastDB-owned and heap-backed; C-Two-style integrations should provide final backing first and should not assume dynamic builder scratch is transport memory.
+
+For resource functions that author fixed-size columnar outputs with `fdb.require(...)`, use `call_db_build_context(binding, allocator)` around the call. Inside the context, eligible fixed numeric `Batch`/`Array` slots are mapped directly over the caller allocation, and the later `build_call_db(..., direct_required=True)` commits that same allocation instead of allocating a second call-db buffer. The C++ fixed-layer builder writes the initial zero table section directly to the caller backing without retaining an equal-size table scratch vector. The allocator may be either a Python allocation protocol object or a native `fdb.HeapFinalBackingResource`; FastDB exposes only a context-scoped writable view for the native resource, while direct `resource.allocate(...)` remains hidden from Python.
+
+```python
+allocator = fdb.HeapFinalBackingResource()
+with fdb.call_db_build_context(binding, allocator):
+    cells, residual = fdb.require(
+        fdb.batch(Cell, rows=n),
+        fdb.array(fdb.F32, rows=n),
+    )
+    cells.fill(row_id=ids, x=xs, y=ys)
+    residual.fill(rs)
+    payload = fdb.build_call_db(binding, (cells, residual), allocator, direct_required=True)
+```
+
+V1 direct builds are intentionally narrow. The `build_call_db` final-writer path supports fixed columnar scalar payloads and backed `Batch[Feature]` values whose `STR` columns already have prepacked UTF-8 offsets/data. The `call_db_build_context` path is stricter and currently supports fixed numeric columnar slots only, because its final byte length must be known before user code fills the returned views. Object graph payloads, non-columnar `BatchRequirement` profiles, REF/list/bytes fields, dynamic push, scalar string arrays, and unknown-size string values use fallback, or raise `FastdbUnsupportedDirectBuildError` when `direct_required=True`.
+
 ## CLI tools
 
 `fastdb4py` ships a CLI named `fdb` for cross-language tooling. Currently it provides the `codegen` subcommand.

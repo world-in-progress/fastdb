@@ -88,6 +88,10 @@ struct
         void setField(unsigned ix, const wchar_t *text);
         void addFeatureEnd();
         void createLayerEnd();
+        size_t byteLength();
+        size_t tableBufferBytes();
+        size_t postToBuffer(void* pdata, size_t size);
+        FinalBackingAllocation* postToFinalBacking(FinalBackingResource* resource);
         void save(WriteStream *stream);
         void save(const char *filename);
 

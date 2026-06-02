@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, TypeVar, overload
 
@@ -12,14 +13,17 @@ W = TypeVar('W')
 X = TypeVar('X')
 
 RequirementSpec = BatchRequirement[Any] | ArrayRequirement[Any]
+_active_build_context: ContextVar[object | None] = ContextVar(
+    'fastdb_active_build_context',
+    default=None,
+)
 
 
 @dataclass
 class RequireEnvelope:
     specs: tuple[RequirementSpec, ...]
-    state: str = 'open'
-    generation: int = 0
     values: tuple[object, ...] = field(default_factory=tuple)
+    direct_context: object | None = None
 
     def bind_values(self, values: tuple[object, ...]) -> None:
         if len(values) != len(self.specs):
@@ -79,6 +83,10 @@ def require(*specs: RequirementSpec) -> object:
                 'fdb.require expects BatchRequirement or ArrayRequirement specs.',
             )
 
+    context = _active_build_context.get()
+    if context is not None:
+        return context.require(tuple(specs))
+
     envelope = RequireEnvelope(specs=tuple(specs))
     values = tuple(
         _value_for_spec(spec, envelope=envelope, index=index)
@@ -117,3 +125,10 @@ def _require_envelope_for(value: object) -> RequireEnvelope | None:
 def _require_index_for(value: object) -> int | None:
     index = getattr(value, '_fastdb_require_index', None)
     return index if type(index) is int else None
+
+
+def _direct_context_for(value: object) -> object | None:
+    envelope = _require_envelope_for(value)
+    if envelope is None:
+        return None
+    return envelope.direct_context

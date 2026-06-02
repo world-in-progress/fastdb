@@ -1,9 +1,12 @@
 import secrets
 
+import fastdb4py as fdb
 from fastdb4py.decorator import feature
 from fastdb4py.column_engine import ColumnEngine
+from fastdb4py import core
 from fastdb4py.layout import Layout
 from fastdb4py.type import BOOL, BYTES, F64, U8, U32, STR
+from fastdb4py.view_owner import FdbViewInvalidatedError, FdbViewOwner, invalidate
 import numpy as np
 import pytest
 
@@ -457,6 +460,19 @@ def test_table_fill_accepts_mixed_numeric_and_string_columns():
     )
 
 
+def test_owner_bound_truncated_table_preserves_direct_fill_and_lifetime():
+    engine = ColumnEngine.truncate([Layout(CEPoint, 2)])
+    owner = FdbViewOwner(checked=True, writeable=True)
+    tbl = engine.table(CEPoint, owner=owner, writeable=True)
+
+    tbl.fill(x=[1.5, 2.5], y=[3.5, 4.5])
+
+    assert tbl[0].x == 1.5
+    invalidate(owner)
+    with pytest.raises(FdbViewInvalidatedError):
+        _ = tbl[0].x
+
+
 def test_table_fill_accepts_string_only_columns():
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
@@ -464,6 +480,97 @@ def test_table_fill_accepts_string_only_columns():
     tbl.fill(name=["left", "right"])
 
     assert tbl.column.name.to_pylist() == ["left", "right"]
+
+
+def test_native_build_post_into_buffer_matches_memory_stream():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2, name='return_0')])
+    tbl = engine.table(CEStringPoint, name='return_0')
+    tbl.fill(
+        row_id=np.array([1, 2], dtype=np.uint32),
+        x=np.array([1.5, 2.5], dtype=np.float64),
+        name=['left', 'right'],
+    )
+
+    build = engine._fixed_build
+    memory_stream = core.WxMemoryStream()
+    build.post(memory_stream)
+    reference = memory_stream.data().to_bytes()
+
+    destination = bytearray(build.byte_length())
+    written = build.post_into_buffer(destination)
+
+    assert build.byte_length() == len(reference)
+    assert written == len(reference)
+    assert bytes(destination) == reference
+
+
+def test_regular_truncate_keeps_materialized_native_table_buffer():
+    engine = ColumnEngine.truncate([Layout(CEPoint, 2, name='return_0')])
+
+    assert engine._fixed_build.table_buffer_bytes() > 0
+
+
+def test_native_build_posts_through_final_backing_resource():
+    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2, name='return_0')])
+    tbl = engine.table(CEStringPoint, name='return_0')
+    tbl.fill(
+        row_id=np.array([1, 2], dtype=np.uint32),
+        x=np.array([1.5, 2.5], dtype=np.float64),
+        name=['left', 'right'],
+    )
+
+    build = engine._fixed_build
+    memory_stream = core.WxMemoryStream()
+    build.post(memory_stream)
+    reference = memory_stream.data().to_bytes()
+
+    resource = core.WxHeapFinalBackingResource()
+    allocation = build.post_to_final_backing(resource)
+
+    assert resource.allocation_count() == 1
+    assert resource.commit_count() == 1
+    assert resource.rollback_count() == 0
+    assert allocation.size() == build.byte_length()
+    assert allocation.used_size() == build.byte_length()
+    assert allocation.committed()
+    assert not allocation.rolled_back()
+    assert allocation.to_bytes() == reference
+
+
+def test_native_heap_scratch_allocator_exposes_separate_core_role():
+    allocator = fdb.HeapScratchAllocator()
+    allocation = allocator._allocate_for_context(16)
+    buffer = allocation._writable_buffer()
+
+    buffer[:4] = b'fdb!'
+
+    assert isinstance(allocation, fdb.ScratchAllocation)
+    assert isinstance(allocator, fdb.ScratchAllocator)
+    assert allocation.size() == 16
+    assert bytes(buffer[:4]) == b'fdb!'
+    assert allocator.allocation_count() == 1
+
+
+def test_native_final_backing_resource_does_not_expose_uncommitted_allocation_surface():
+    resource = core.WxHeapFinalBackingResource()
+    assert not hasattr(resource, 'allocate')
+
+    with pytest.raises(AttributeError):
+        core.WxHeapFinalBackingAllocation(8)
+
+
+def test_native_final_backing_allocation_cannot_be_read_before_commit():
+    resource = fdb.HeapFinalBackingResource()
+    allocation = resource._allocate_for_context(8)
+
+    with pytest.raises(RuntimeError, match='not committed'):
+        allocation._readonly_buffer()
+    with pytest.raises(RuntimeError, match='not committed'):
+        allocation.to_bytes()
+
+    allocation.rollback()
+    with pytest.raises(RuntimeError, match='rolled back|not committed'):
+        allocation.to_bytes()
 
 
 def test_table_fill_round_trips_empty_strings():

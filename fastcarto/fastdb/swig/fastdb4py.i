@@ -14,6 +14,9 @@
 // free-threaded Python 3.13+ (PEP 703).
 %feature("threadallow") wx::FastVectorDb::load;
 %feature("threadallow") wx::FastVectorDbBuild::post;
+%feature("threadallow") wx::FastVectorDbBuild::byteLength;
+%feature("threadallow") wx::FastVectorDbBuild::tableBufferBytes;
+%feature("threadallow") wx::FastVectorDbBuild::postToFinalBacking;
 %feature("threadallow") wx::FastVectorDbBuild::save;
 %feature("threadallow") wx::FastVectorDbBuild::truncate;
 %feature("threadallow") wx::FastVectorDbFeature::getFieldsAsDoubles;
@@ -191,7 +194,20 @@
 %ignore wx::FastVectorDbFeature::FastVectorDbFeature();
 %ignore wx::FastVectorDbFeature::~FastVectorDbFeature();
 %ignore wx::FastVectorDb::load(void *pdata, size_t size, fnFreeDbBuffer fnFreeBuffer, void *cookie);
+%ignore wx::FastVectorDbBuild::postToBuffer;
 %ignore wx::FastVectorDbLayerBuild::setNumericColumnBulk;
+%ignore wx::ScratchAllocation::data;
+%ignore wx::FinalBackingAllocation::data;
+%ignore wx::FinalBackingResource::allocate;
+%ignore wx::HeapFinalBackingResource::allocate;
+%ignore wx::HeapScratchAllocation::HeapScratchAllocation;
+%ignore wx::HeapFinalBackingAllocation::HeapFinalBackingAllocation;
+%nodefaultctor wx::ScratchAllocation;
+%nodefaultctor wx::ScratchAllocator;
+%nodefaultctor wx::HeapScratchAllocation;
+%nodefaultctor wx::FinalBackingAllocation;
+%nodefaultctor wx::FinalBackingResource;
+%nodefaultctor wx::HeapFinalBackingAllocation;
 %nodefaultctor FastVectorDbLayerBuild;
 %nodefaultdtor FastVectorDbLayerBuild;
 %nodefaultctor FastVectorDbFeature;
@@ -200,6 +216,14 @@
 %nodefaultdtor FastVectorDbLayer;
 
 %rename(WxMemoryStream)     wx::MemoryStream;
+%rename(WxScratchAllocation) wx::ScratchAllocation;
+%rename(WxScratchAllocator)   wx::ScratchAllocator;
+%rename(WxHeapScratchAllocator) wx::HeapScratchAllocator;
+%rename(WxHeapScratchAllocation) wx::HeapScratchAllocation;
+%rename(WxFinalBackingAllocation) wx::FinalBackingAllocation;
+%rename(WxFinalBackingResource)   wx::FinalBackingResource;
+%rename(WxHeapFinalBackingResource) wx::HeapFinalBackingResource;
+%rename(WxHeapFinalBackingAllocation) wx::HeapFinalBackingAllocation;
 %rename(WxLayerTable)       wx::FastVectorDbLayer;
 %rename(WxDatabase)         wx::FastVectorDb;
 %rename(WxFeature)          wx::FastVectorDbFeature;
@@ -246,6 +270,21 @@
 %rename(get_address)            getAddress;
 %rename(get_field_offset)       getFieldOffset;
 %rename(get_feature_byte_size)  getFeatureByteSize;;
+%rename(byte_length)            byteLength;
+%rename(table_buffer_bytes)     tableBufferBytes;
+%rename(_set_table_buffer_materialized) setTableBufferMaterialized;
+%rename(post_to_final_backing)  postToFinalBacking;
+%rename(used_size)              usedSize;
+%rename(rolled_back)            rolledBack;
+%rename(allocation_count)       allocationCount;
+%rename(commit_count)           commitCount;
+%rename(rollback_count)         rollbackCount;
+%rename(release_count)          releaseCount;
+%newobject wx::ScratchAllocator::allocate;
+%newobject wx::HeapScratchAllocator::allocate;
+%newobject wx::FastVectorDbBuild::postToFinalBacking;
+%newobject wx::ScratchAllocator::_allocate_for_context;
+%newobject wx::FinalBackingResource::_allocate_for_context;
 
 %rename(add_list_field)         add_list_field;
 %rename(set_field_list_numeric) set_field_list_numeric;
@@ -561,6 +600,120 @@
         }
     }
 
+}
+
+%extend wx::FastVectorDbBuild {
+    PyObject* post_into_buffer(PyObject* dest_buffer) {
+        Py_buffer view;
+        if (PyObject_GetBuffer(dest_buffer, &view, PyBUF_WRITABLE | PyBUF_SIMPLE) != 0) {
+            PyErr_SetString(PyExc_TypeError, "destination buffer must be writable");
+            return NULL;
+        }
+
+        size_t expected = $self->byteLength();
+        if ((size_t)view.len < expected) {
+            PyBuffer_Release(&view);
+            PyErr_Format(
+                PyExc_ValueError,
+                "Destination buffer too small: need %zu bytes, got %zd bytes",
+                expected,
+                view.len
+            );
+            return NULL;
+        }
+
+        size_t written = 0;
+        Py_BEGIN_ALLOW_THREADS
+        written = $self->postToBuffer(view.buf, (size_t)view.len);
+        Py_END_ALLOW_THREADS
+        PyBuffer_Release(&view);
+
+        if (written != expected) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing write failed");
+            return NULL;
+        }
+        return PyLong_FromSize_t(written);
+    }
+}
+
+%extend wx::ScratchAllocation {
+    PyObject* _writable_buffer() {
+        size_t size = $self->size();
+        void* data = $self->data();
+        if (size > 0 && data == nullptr) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB scratch allocation has no writable data");
+            return NULL;
+        }
+        return PyMemoryView_FromMemory((char*)data, (Py_ssize_t)size, PyBUF_WRITE);
+    }
+}
+
+%extend wx::ScratchAllocator {
+    wx::ScratchAllocation* _allocate_for_context(size_t size) {
+        return $self->allocate(size, alignof(u64));
+    }
+}
+
+%extend wx::FinalBackingAllocation {
+    PyObject* _writable_buffer() {
+        if ($self->committed()) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation is already committed");
+            return NULL;
+        }
+        if ($self->rolledBack()) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation is rolled back");
+            return NULL;
+        }
+        size_t size = $self->size();
+        void* data = $self->data();
+        if (size > 0 && data == nullptr) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation has no writable data");
+            return NULL;
+        }
+        return PyMemoryView_FromMemory((char*)data, (Py_ssize_t)size, PyBUF_WRITE);
+    }
+
+    PyObject* _readonly_buffer() {
+        if (!$self->committed()) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation is not committed");
+            return NULL;
+        }
+        if ($self->rolledBack()) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation is rolled back");
+            return NULL;
+        }
+        size_t size = $self->usedSize();
+        void* data = $self->data();
+        if (size > 0 && data == nullptr) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation has no committed data");
+            return NULL;
+        }
+        return PyMemoryView_FromMemory((char*)data, (Py_ssize_t)size, PyBUF_READ);
+    }
+
+    PyObject* to_bytes() {
+        if (!$self->committed()) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation is not committed");
+            return NULL;
+        }
+        if ($self->rolledBack()) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation is rolled back");
+            return NULL;
+        }
+        size_t size = $self->usedSize();
+        void* data = $self->data();
+        if (size > 0 && data == nullptr) {
+            PyErr_SetString(PyExc_RuntimeError, "FastDB final backing allocation has no committed data");
+            return NULL;
+        }
+        return PyBytes_FromStringAndSize((const char*)data, size);
+    }
+}
+
+%extend wx::FinalBackingResource {
+    wx::FinalBackingAllocation* _allocate_for_context(size_t size) {
+        return $self->allocate(size, alignof(u64));
+    }
 }
 
 %extend wx::FastVectorDbFeature {

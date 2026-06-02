@@ -9,10 +9,18 @@ import numpy as np
 from . import core
 from .column_engine import ColumnEngine, _get_default_table_build
 from .decorator import feature
+from .layout import Layout
 from .materialize import materialize
 from .object_engine import LayerState, ObjectEngine
 from .orm.table import Table, _FILL_NUMERIC_DTYPES, _normalize_bool_fill_values
-from .require import _require_envelope_for, _require_index_for
+from .require import (
+    RequireEnvelope,
+    _active_build_context,
+    _attach_require_metadata,
+    _direct_context_for,
+    _require_envelope_for,
+    _require_index_for,
+)
 from .registry import (
     LayerSchema,
     get_schema,
@@ -30,6 +38,7 @@ from .schema import (
 )
 from .string_column import StringColumn, _StringSequencePayload
 from .type import (
+    Array,
     ArrayRequirement,
     Batch,
     BatchRequirement,
@@ -42,8 +51,9 @@ from .type import (
     OriginFieldType,
     coerce_bool_scalar,
     get_origin_type,
+    _normalize_batch_profile,
 )
-from .view_owner import FdbViewOwner
+from .view_owner import FdbViewOwner, invalidate
 
 CALL_DB_SCHEMA_VERSION = 'fastdb.call-db.schema.v1'
 CALL_DB_CODEC_ID = 'org.fastdb.call-db'
@@ -105,6 +115,13 @@ class FastdbCallDbArrayItem:
 
 
 @dataclass(frozen=True)
+class _MappedFinalBackingTablePlan:
+    table: 'FastdbCallDbTable'
+    rows: int
+    writes: dict[str, object]
+
+
+@dataclass(frozen=True)
 class FastdbCallDbFeatureDependency:
     feature_schema_sha256: str
     feature: type | None = None
@@ -149,16 +166,29 @@ class FastdbPreparedCallDb:
         *,
         payload: bytes | bytearray | memoryview | None = None,
         layers: tuple[_CallDbLayerSegment, ...] = (),
+        native_build: object | None = None,
         direct: bool = False,
+        build_mode: str | None = None,
+        fallback_reason: str | None = None,
     ):
         self.direct = direct
+        self.build_mode = build_mode or ('direct' if direct else 'fallback')
+        self.fallback_reason = fallback_reason
+        self._native_build = native_build
         if payload is None and not layers:
+            if native_build is not None:
+                self._payload = None
+                self._layers = ()
+                self.byte_length = native_build.byte_length()
+                return
             self._payload = None
             self._layers = ()
             self.byte_length = _CALL_DB_BINARY_HEADER_SIZE
             return
         if payload is not None and layers:
             raise ValueError('FastdbPreparedCallDb accepts either payload or layers, not both.')
+        if native_build is not None:
+            raise ValueError('FastdbPreparedCallDb accepts native_build without payload or layers.')
         if payload is not None:
             self._payload = memoryview(payload).cast('B')
             self._layers = ()
@@ -181,6 +211,11 @@ class FastdbPreparedCallDb:
                 f'destination buffer is too small: expected at least {self.byte_length} bytes, '
                 f'got {dst.nbytes}.',
             )
+        if self._native_build is not None:
+            written = self._native_build.post_into_buffer(dst)
+            if written != self.byte_length:
+                raise RuntimeError('FastDB native final backing write failed.')
+            return written
         if self._payload is not None:
             dst[:self.byte_length] = self._payload
             return self.byte_length
@@ -201,11 +236,34 @@ class FastdbPreparedCallDb:
         return bytes(payload)
 
     def build_with_allocator(self, allocator: object) -> object:
+        if isinstance(allocator, core.WxFinalBackingResource):
+            if self._native_build is not None:
+                allocation = self._native_build.post_to_final_backing(allocator)
+                if allocation is None:
+                    raise RuntimeError('FastDB native final backing resource build failed.')
+                return allocation
+
+            allocation = _allocate_context_backing(allocator, self.byte_length)
+            committed = False
+            try:
+                self.write_into(allocation.buffer)
+                result = allocation.commit(self.byte_length)
+                committed = True
+                return result
+            finally:
+                if not committed:
+                    allocation.rollback()
+
         allocation = allocator.allocate(self.byte_length)
         committed = False
         try:
-            self.write_into(allocation.buffer)
-            result = allocation.commit()
+            if self._native_build is not None:
+                written = self._native_build.post_into_buffer(allocation.buffer)
+                if written != self.byte_length:
+                    raise RuntimeError('FastDB native final backing write failed.')
+            else:
+                self.write_into(allocation.buffer)
+            result = allocation.commit(self.byte_length)
             committed = True
             return result
         finally:
@@ -215,9 +273,289 @@ class FastdbPreparedCallDb:
                     rollback()
 
 
+class _NativeFinalBackingContextAllocation:
+    def __init__(self, resource: object, nbytes: int):
+        self._resource = resource
+        self._allocation = resource._allocate_for_context(nbytes)
+        if self._allocation is None:
+            raise RuntimeError('FastDB native final backing resource allocation failed.')
+        self._nbytes = nbytes
+        self._state = 'open'
+
+    @property
+    def buffer(self) -> memoryview:
+        self._ensure_open()
+        return self._allocation._writable_buffer()
+
+    def commit(self, used_size: int) -> object:
+        self._ensure_open()
+        if type(used_size) is not int or used_size < 0 or used_size > self._nbytes:
+            raise ValueError('used_size must fit within the native final backing allocation.')
+        if not self._allocation.commit(used_size):
+            raise RuntimeError('FastDB native final backing resource commit failed.')
+        self._state = 'committed'
+        return self._allocation
+
+    def rollback(self) -> None:
+        if self._state != 'open':
+            return
+        self._state = 'rolled_back'
+        self._allocation.rollback()
+
+    def _ensure_open(self) -> None:
+        if self._state != 'open':
+            raise RuntimeError(f'FastDB native final backing allocation is {self._state}.')
+
+
+def _allocate_context_backing(allocator: object, nbytes: int) -> object:
+    if isinstance(allocator, core.WxFinalBackingResource):
+        return _NativeFinalBackingContextAllocation(allocator, nbytes)
+    return allocator.allocate(nbytes)
+
+
+class FastdbCallDbBuildContext:
+    """Experimental call-scoped final backing context for ``fdb.require(...)``."""
+
+    def __init__(
+        self,
+        binding: FastdbCallDbBinding | Mapping[str, Any] | object,
+        allocator: object,
+    ):
+        self.binding = _normalize_binding(binding)
+        self.allocator = allocator
+        self.build_mode = 'require-context-direct'
+        self.fallback_reason: str | None = None
+        self._token = None
+        self._engine: ColumnEngine | None = None
+        self._allocation = None
+        self._envelope: RequireEnvelope | None = None
+        self._owner = FdbViewOwner(checked=True, writeable=True)
+        self._state = 'new'
+
+    def __enter__(self) -> 'FastdbCallDbBuildContext':
+        if self._state != 'new':
+            raise RuntimeError('FastdbCallDbBuildContext cannot be re-entered.')
+        if self.binding.profile == CALL_DB_OBJECT_GRAPH_PROFILE:
+            raise FastdbUnsupportedDirectBuildError(
+                'object-graph call-db payloads do not support require-context direct build.',
+            )
+        _ensure_columnar_call_db(self.binding)
+        self._token = _active_build_context.set(self)
+        self._state = 'open'
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if self._state == 'open':
+                self.rollback()
+        finally:
+            if self._token is not None:
+                _active_build_context.reset(self._token)
+                self._token = None
+
+    @property
+    def nbytes(self) -> int:
+        if self._engine is None or self._engine._fixed_build is None:  # noqa: SLF001
+            return 0
+        return self._engine._fixed_build.byte_length()  # noqa: SLF001
+
+    def require(self, specs: tuple[BatchRequirement[Any] | ArrayRequirement[Any], ...]) -> object:
+        if self._state != 'open':
+            raise RuntimeError('FastDB call-db build context is not open.')
+        if self._envelope is not None:
+            raise RuntimeError('FastDB call-db build context accepts exactly one fdb.require(...) envelope.')
+
+        aggregate_tables = tuple(
+            table for table in self.binding.tables
+            if _is_require_aggregate_table(table)
+        )
+        if len(specs) != len(aggregate_tables):
+            raise ValueError(
+                f'fdb.require spec count {len(specs)} does not match call-db aggregate slot count '
+                f'{len(aggregate_tables)}.',
+            )
+        for table, spec in zip(aggregate_tables, specs):
+            _validate_require_spec_for_table(table, spec, direct_required=True)
+
+        layouts: list[Layout] = []
+        spec_by_position = {
+            table.value_position: spec
+            for table, spec in zip(aggregate_tables, specs)
+        }
+        for table in self.binding.tables:
+            _ensure_require_context_direct_table_buildable(table)
+            layouts.append(
+                Layout(
+                    table.feature,
+                    _row_count_for_direct_context_table(table, spec_by_position),
+                    name=table.name,
+                ),
+            )
+
+        engine = ColumnEngine._prepare_truncate(  # noqa: SLF001
+            layouts,
+            materialize_table_buffer=False,
+        )
+        if engine._fixed_build is None:  # noqa: SLF001
+            raise RuntimeError('FastDB direct context did not create a fixed build.')
+        size = engine._fixed_build.byte_length()  # noqa: SLF001
+        allocation = _allocate_context_backing(self.allocator, size)
+        try:
+            engine._publish_fixed_snapshot_to_buffer(allocation.buffer, direct_fill=True)  # noqa: SLF001
+        except Exception:
+            rollback = getattr(allocation, 'rollback', None)
+            if callable(rollback):
+                rollback()
+            raise
+
+        self._engine = engine
+        self._allocation = allocation
+        envelope = RequireEnvelope(specs=specs, direct_context=self)
+        values = []
+        for index, (table, spec) in enumerate(zip(aggregate_tables, specs)):
+            table_view = engine.table(
+                table.feature,
+                name=table.name,
+                owner=self._owner,
+                writeable=True,
+            )
+            if isinstance(spec, BatchRequirement):
+                value = Batch(
+                    spec.feature_type,
+                    profile='columnar',
+                    table=table_view,
+                    engine=engine,
+                    capacity=spec.rows,
+                )
+            else:
+                value = Array.from_table(spec.item_type, table_view)
+            _attach_require_metadata(value, envelope=envelope, index=index)
+            values.append(value)
+        envelope.bind_values(tuple(values))
+        self._envelope = envelope
+        return values[0] if len(values) == 1 else tuple(values)
+
+    def commit_values(self, binding: FastdbCallDbBinding, values: tuple[Any, ...]) -> object:
+        if self._state != 'open':
+            raise RuntimeError(f'FastDB call-db build context is {self._state}.')
+        if binding != self.binding:
+            raise ValueError('FastDB call-db build context binding does not match build_call_db binding.')
+        if self._engine is None or self._allocation is None or self._envelope is None:
+            raise RuntimeError('FastDB call-db build context has no fdb.require allocation to commit.')
+        _validate_require_envelope_binding(binding, values, direct_required=True)
+
+        try:
+            for table in binding.tables:
+                if _is_require_aggregate_table(table):
+                    continue
+                self._write_non_aggregate_table(table, values)
+            result = self._allocation.commit(self.nbytes)
+            self._state = 'committed'
+            invalidate(self._owner)
+            return result
+        except Exception:
+            self.rollback()
+            raise
+
+    def rollback(self) -> None:
+        if self._state != 'open':
+            return
+        allocation = self._allocation
+        self._state = 'rolled_back'
+        if allocation is not None:
+            rollback = getattr(allocation, 'rollback', None)
+            if callable(rollback):
+                rollback()
+        invalidate(self._owner)
+
+    def _write_non_aggregate_table(self, table: FastdbCallDbTable, values: tuple[Any, ...]) -> None:
+        if self._engine is None:
+            raise RuntimeError('FastDB call-db build context has no engine.')
+        table_view = _column_engine_table_for_call_table(
+            self._engine,
+            table,
+            owner=self._owner,
+            writeable=True,
+        )
+        if table.kind == 'scalars':
+            writes = {
+                field.name: [_coerce_scalar_value(field.kind, values[field.value_position])]
+                for field in table.fields
+            }
+            table_view.fill(**writes)
+            return
+        if table.kind == 'feature' and table.cardinality == 'one':
+            if table.value_position is None:
+                raise ValueError(f'fastdb call-db table {table.name!r} is missing value_position.')
+            row = _coerce_feature_row(table.feature, values[table.value_position])
+            schema = get_schema(table.feature)
+            table_view.fill(**{
+                field.name: [getattr(row, field.name)]
+                for field in schema.fields
+            })
+            return
+        raise FastdbUnsupportedDirectBuildError(
+            f'{table.name} cannot be written by require-context direct build.',
+        )
+
+
+def call_db_build_context(
+    binding: FastdbCallDbBinding | Mapping[str, Any] | object,
+    allocator: object,
+) -> FastdbCallDbBuildContext:
+    """Create an experimental call-scoped final backing context for ``fdb.require``."""
+    return FastdbCallDbBuildContext(binding, allocator)
+
+
 def encode_call_db(binding: FastdbCallDbBinding | Mapping[str, Any] | object, value: object) -> bytes:
     """Encode a generic FastDB call-db payload from a binding and logical value."""
     return prepare_call_db(binding, value).to_bytes()
+
+
+def build_call_db_with_allocator(
+    binding: FastdbCallDbBinding | Mapping[str, Any] | object,
+    value: object,
+    allocator: object,
+    *,
+    direct_required: bool = False,
+) -> object:
+    """Build a call-db payload through a caller-provided final backing allocator."""
+    normalized = _normalize_binding(binding)
+    values = _normalize_call_values(normalized, value)
+    context = _direct_context_for_binding_values(normalized, values)
+    if not direct_required:
+        if context is not None:
+            raise ValueError(
+                'FastDB require-context values must be consumed with '
+                'build_call_db(..., direct_required=True).',
+            )
+        return _prepare_call_db_normalized(
+            normalized,
+            values,
+            direct_required=False,
+        ).build_with_allocator(allocator)
+
+    if normalized.profile == CALL_DB_OBJECT_GRAPH_PROFILE:
+        raise FastdbUnsupportedDirectBuildError(
+            'object-graph call-db payloads do not support strict direct build yet.',
+        )
+    _ensure_columnar_call_db(normalized)
+    direct_context_payload = _try_commit_require_context_direct_build(
+        normalized,
+        values,
+        allocator,
+    )
+    if direct_context_payload is not None:
+        return direct_context_payload
+    mapped_final_payload = _try_build_mapped_final_backing_columnar(
+        normalized,
+        values,
+        allocator,
+    )
+    if mapped_final_payload is not None:
+        return mapped_final_payload
+    plan = _prepare_native_columnar_call_db(normalized, values)
+    return plan.build_with_allocator(allocator)
 
 
 def prepare_call_db(
@@ -228,19 +566,40 @@ def prepare_call_db(
 ) -> FastdbPreparedCallDb:
     """Plan a FastDB call-db payload that can be written into caller memory."""
     normalized = _normalize_binding(binding)
+    values = _normalize_call_values(normalized, value)
+    if _direct_context_for_binding_values(normalized, values) is not None:
+        raise ValueError(
+            'FastDB require-context values cannot be prepared/exported without committing; '
+            'use build_call_db(..., direct_required=True).',
+        )
+    return _prepare_call_db_normalized(
+        normalized,
+        values,
+        direct_required=direct_required,
+    )
+
+
+def _prepare_call_db_normalized(
+    normalized: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+    *,
+    direct_required: bool = False,
+) -> FastdbPreparedCallDb:
     if normalized.profile == CALL_DB_OBJECT_GRAPH_PROFILE:
         if direct_required:
             raise FastdbUnsupportedDirectBuildError(
                 'object-graph call-db payloads do not support strict direct build yet.',
             )
         _ensure_object_graph_call_db(normalized)
-        values = _normalize_call_values(normalized, value)
-        return FastdbPreparedCallDb(payload=_encode_object_graph_call_db(normalized, values))
+        return FastdbPreparedCallDb(
+            payload=_encode_object_graph_call_db(normalized, values),
+            build_mode='fallback',
+            fallback_reason='object-graph call-db payloads require dynamic fallback encoding.',
+        )
     _ensure_columnar_call_db(normalized)
-    values = _normalize_call_values(normalized, value)
     exported = _try_export_columnar_call_db(normalized, values)
     if exported is not None:
-        return FastdbPreparedCallDb(payload=exported)
+        return FastdbPreparedCallDb(payload=exported, direct=True, build_mode='exported')
     return _prepare_columnar_call_db(normalized, values, direct_required=direct_required)
 
 
@@ -281,27 +640,41 @@ def try_export_call_db(
         return None
     _ensure_columnar_call_db(normalized)
     values = _normalize_call_values(normalized, value)
+    if _direct_context_for_binding_values(normalized, values) is not None:
+        raise ValueError(
+            'FastDB require-context values cannot be exported without committing; '
+            'use build_call_db(..., direct_required=True).',
+        )
     return _try_export_columnar_call_db(normalized, values)
+
+
+def _payload_buffer_and_owner(payload: object) -> tuple[memoryview, object | None]:
+    if isinstance(payload, core.WxFinalBackingAllocation):
+        return payload._readonly_buffer(), payload
+    if isinstance(payload, memoryview):
+        return payload, None
+    return memoryview(payload), None
 
 
 def decode_call_db(
     binding: FastdbCallDbBinding | Mapping[str, Any] | object,
-    payload: bytes | bytearray | memoryview,
+    payload: bytes | bytearray | memoryview | object,
 ) -> object:
     """Decode a generic FastDB call-db payload into materialized Python values."""
     normalized = _normalize_binding(binding)
+    buffer, backing_owner = _payload_buffer_and_owner(payload)
     if normalized.profile == CALL_DB_OBJECT_GRAPH_PROFILE:
         _ensure_object_graph_call_db(normalized)
-        engine = _object_engine_from_buffer(payload, normalized.tables)
+        engine = _object_engine_from_buffer(buffer, normalized.tables, backing_owner=backing_owner)
         return _materialize_values_object_graph(normalized, engine)
     _ensure_columnar_call_db(normalized)
-    engine = _column_engine_from_buffer(payload)
+    engine = _column_engine_from_buffer(buffer, backing_owner=backing_owner)
     return _materialize_values(normalized, engine)
 
 
 def view_call_db(
     binding: FastdbCallDbBinding | Mapping[str, Any] | object,
-    payload: bytes | bytearray | memoryview,
+    payload: bytes | bytearray | memoryview | object,
     *,
     owner: FdbViewOwner | None = None,
 ) -> 'FastdbCallDbView':
@@ -312,12 +685,13 @@ def view_call_db(
     _ensure_columnar_call_db(normalized)
     if owner is None:
         owner = FdbViewOwner(checked=True, writeable=False)
-    buffer = payload if isinstance(payload, memoryview) else memoryview(payload)
+    buffer, backing_owner = _payload_buffer_and_owner(payload)
     return FastdbCallDbView(
         binding=normalized,
-        engine=_column_engine_from_buffer(buffer),
+        engine=_column_engine_from_buffer(buffer, backing_owner=backing_owner),
         buffer=buffer,
         owner=owner,
+        backing_owner=backing_owner,
     )
 
 
@@ -327,6 +701,7 @@ class FastdbCallDbView:
     engine: ColumnEngine
     buffer: memoryview
     owner: FdbViewOwner
+    backing_owner: object | None = None
 
     @property
     def _fdb_owner(self) -> FdbViewOwner:
@@ -1150,15 +1525,333 @@ def _prepare_columnar_call_db(
             layers.append(imported)
             continue
         if direct_required:
-            _ensure_strict_direct_layer_buildable(table)
+            raise FastdbUnsupportedDirectBuildError(
+                f'{table.name} cannot be prepared in strict direct mode without an '
+                'existing backed layer; use build_call_db(..., allocator, '
+                'direct_required=True) for final-backing direct construction.',
+            )
         layers.append(None)
     if not has_imported_layer and not direct_required:
-        return FastdbPreparedCallDb(payload=_encode_columnar_call_db_fallback(binding, values))
+        return FastdbPreparedCallDb(
+            payload=_encode_columnar_call_db_fallback(binding, values),
+            build_mode='fallback',
+            fallback_reason='columnar call-db payload requires fallback encoding; no importable layer was available.',
+        )
     resolved_layers = tuple(
         layer if layer is not None else _encode_call_table_layer(table, values)
         for table, layer in zip(binding.tables, layers)
     )
-    return FastdbPreparedCallDb(layers=resolved_layers, direct=True)
+    return FastdbPreparedCallDb(
+        layers=resolved_layers,
+        direct=True,
+        build_mode='direct-layer-splice',
+    )
+
+
+def _prepare_native_columnar_call_db(
+    binding: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+) -> FastdbPreparedCallDb:
+    _validate_require_envelope_binding(binding, values, direct_required=True)
+    for table in binding.tables:
+        _ensure_final_backing_direct_table_buildable(table, values)
+
+    engine = ColumnEngine.create()
+    for table in binding.tables:
+        _encode_call_table(engine, table, values)
+    origin = engine._origin  # noqa: SLF001
+    if not isinstance(origin, core.WxDatabaseBuild):
+        raise RuntimeError('fastdb native final backing direct build requires a writable ColumnEngine.')
+    return FastdbPreparedCallDb(
+        native_build=origin,
+        direct=True,
+        build_mode='direct-final-backing',
+    )
+
+
+def _ensure_final_backing_direct_table_buildable(
+    table: FastdbCallDbTable,
+    values: tuple[Any, ...],
+) -> None:
+    if table.feature is None:
+        raise ValueError(f'fastdb call-db table {table.name!r} is missing runtime feature.')
+    if table.kind == 'array':
+        _reject_variable_scalar_kind(_array_item_kind(table), table.name)
+        return
+    if table.kind == 'scalars':
+        for field in table.fields:
+            _reject_variable_scalar_kind(field.kind, f'{table.name}.{field.name}')
+        return
+    if table.kind != 'feature':
+        raise ValueError(f'Unsupported fastdb call-db table kind {table.kind!r}.')
+
+    schema = get_schema(table.feature)
+    diagnostics = [
+        *raw_payload_storage_diagnostics(schema),
+        *non_native_list_storage_diagnostics(schema),
+    ]
+    if diagnostics:
+        raise FastdbUnsupportedDirectBuildError(
+            f'{table.name} is not strict-direct buildable: {"; ".join(diagnostics)}',
+        )
+    if schema.has_ref_fields or schema.list_plan or schema.bytes_plan:
+        raise FastdbUnsupportedDirectBuildError(
+            f'{table.name} is not strict-direct buildable: ref/list/bytes fields require dynamic build.',
+        )
+    string_fields = [
+        field
+        for field in schema.fields
+        if field.field_type in {OriginFieldType.str, OriginFieldType.wstr}
+    ]
+    if not string_fields:
+        return
+    if table.value_position is None:
+        raise ValueError(f'fastdb call-db table {table.name!r} is missing value_position.')
+    source = values[table.value_position]
+    source_table = _batch_backing_table(source)
+    if source_table is None and isinstance(source, Table):
+        source_table = source
+    if source_table is None:
+        raise FastdbUnsupportedDirectBuildError(
+            f'{table.name} uses string columns; strict direct build requires prepacked backed columns.',
+        )
+    source_table._assert_alive()  # noqa: SLF001
+    columns = source_table.column
+    for field in string_fields:
+        if field.field_type != OriginFieldType.str:
+            raise FastdbUnsupportedDirectBuildError(
+                f'{table.name}.{field.name} with {field.field_type.name} '
+                'does not support strict direct build yet.',
+            )
+        payload = _string_column_payload(getattr(columns, field.name))
+        if isinstance(payload, _StringSequencePayload):
+            raise FastdbUnsupportedDirectBuildError(
+                f'{table.name}.{field.name} requires prepacked UTF-8 offsets/data for strict direct build.',
+            )
+
+
+def _ensure_require_context_direct_table_buildable(table: FastdbCallDbTable) -> None:
+    if table.feature is None:
+        raise ValueError(f'fastdb call-db table {table.name!r} is missing runtime feature.')
+    if table.kind == 'array':
+        _reject_variable_scalar_kind(_array_item_kind(table), table.name)
+        return
+    if table.kind == 'scalars':
+        for field in table.fields:
+            _reject_variable_scalar_kind(field.kind, f'{table.name}.{field.name}')
+        return
+    if table.kind != 'feature':
+        raise ValueError(f'Unsupported fastdb call-db table kind {table.kind!r}.')
+    schema = get_schema(table.feature)
+    diagnostics = [
+        *raw_payload_storage_diagnostics(schema),
+        *non_native_list_storage_diagnostics(schema),
+    ]
+    if diagnostics:
+        raise FastdbUnsupportedDirectBuildError(
+            f'{table.name} is not require-context direct buildable: {"; ".join(diagnostics)}',
+        )
+    for field in schema.fields:
+        if field.field_type in {
+            OriginFieldType.str,
+            OriginFieldType.wstr,
+            OriginFieldType.bytes,
+            OriginFieldType.ref,
+            OriginFieldType.list,
+        }:
+            raise FastdbUnsupportedDirectBuildError(
+                f'{table.name}.{field.name} with {field.field_type.name} '
+                'does not support require-context direct build yet.',
+            )
+
+
+def _row_count_for_direct_context_table(
+    table: FastdbCallDbTable,
+    spec_by_position: Mapping[int | None, BatchRequirement[Any] | ArrayRequirement[Any]],
+) -> int:
+    if table.kind == 'scalars' or table.cardinality == 'one':
+        return 1
+    if table.value_position not in spec_by_position:
+        raise ValueError(f'fastdb call-db table {table.name!r} has no fdb.require spec.')
+    return spec_by_position[table.value_position].rows
+
+
+def _direct_context_for_binding_values(
+    binding: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+) -> object | None:
+    context = None
+    for table in binding.tables:
+        if not _is_require_aggregate_table(table) or table.value_position is None:
+            continue
+        current = _direct_context_for(values[table.value_position])
+        if current is None:
+            continue
+        if context is None:
+            context = current
+        elif context is not current:
+            raise ValueError('call-db direct build values come from multiple active build contexts.')
+    return context
+
+
+def _try_commit_require_context_direct_build(
+    binding: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+    allocator: object,
+) -> object | None:
+    context = _direct_context_for_binding_values(binding, values)
+    if context is None:
+        return None
+    if context.allocator is not allocator:
+        raise ValueError(
+            'FastDB require-context values must be committed with the same allocator '
+            'that created the call-db build context.',
+        )
+    return context.commit_values(binding, values)
+
+
+def _try_build_mapped_final_backing_columnar(
+    binding: FastdbCallDbBinding,
+    values: tuple[Any, ...],
+    allocator: object,
+) -> object | None:
+    _validate_require_envelope_binding(binding, values, direct_required=True)
+    table_plans: list[_MappedFinalBackingTablePlan] = []
+    layouts: list[Layout] = []
+    for table in binding.tables:
+        try:
+            _ensure_require_context_direct_table_buildable(table)
+        except FastdbUnsupportedDirectBuildError:
+            return None
+        plan = _plan_mapped_final_backing_table(table, values)
+        table_plans.append(plan)
+        layouts.append(Layout(table.feature, plan.rows, name=table.name))
+
+    engine = ColumnEngine._prepare_truncate(  # noqa: SLF001
+        layouts,
+        materialize_table_buffer=False,
+    )
+    if engine._fixed_build is None:  # noqa: SLF001
+        raise RuntimeError('FastDB mapped final backing build did not create a fixed build.')
+    if engine._fixed_build.table_buffer_bytes() != 0:  # noqa: SLF001
+        raise RuntimeError('FastDB mapped final backing build unexpectedly materialized table buffers.')
+
+    size = engine._fixed_build.byte_length()  # noqa: SLF001
+    allocation = _allocate_context_backing(allocator, size)
+    owner = FdbViewOwner(checked=True, writeable=True)
+    committed = False
+    try:
+        engine._publish_fixed_snapshot_to_buffer(allocation.buffer, direct_fill=True)  # noqa: SLF001
+        for plan in table_plans:
+            table_view = _column_engine_table_for_call_table(
+                engine,
+                plan.table,
+                owner=owner,
+                writeable=True,
+            )
+            if plan.writes:
+                table_view.fill(**plan.writes)
+        result = allocation.commit(size)
+        committed = True
+        return result
+    finally:
+        if not committed:
+            rollback = getattr(allocation, 'rollback', None)
+            if callable(rollback):
+                rollback()
+        invalidate(owner)
+
+
+def _plan_mapped_final_backing_table(
+    table: FastdbCallDbTable,
+    values: tuple[Any, ...],
+) -> _MappedFinalBackingTablePlan:
+    if table.kind == 'scalars':
+        return _MappedFinalBackingTablePlan(
+            table=table,
+            rows=1,
+            writes={
+                field.name: [_coerce_scalar_value(field.kind, values[field.value_position])]
+                for field in table.fields
+            },
+        )
+    if table.value_position is None:
+        raise ValueError(f'fastdb call-db table {table.name!r} is missing value_position.')
+    value = values[table.value_position]
+    if table.kind == 'array':
+        items = _array_table_values(table, value)
+        return _MappedFinalBackingTablePlan(
+            table=table,
+            rows=len(items),
+            writes={CALL_DB_ARRAY_VALUE_FIELD: items},
+        )
+    if table.kind == 'feature':
+        if table.cardinality == 'one':
+            row = _coerce_feature_row(table.feature, value)
+            return _MappedFinalBackingTablePlan(
+                table=table,
+                rows=1,
+                writes=_mapped_feature_row_writes(table.feature, row),
+            )
+        rows, writes = _mapped_feature_many_writes(table, value)
+        return _MappedFinalBackingTablePlan(table=table, rows=rows, writes=writes)
+    raise ValueError(f'Unsupported fastdb call-db table kind {table.kind!r}.')
+
+
+def _mapped_feature_many_writes(
+    table: FastdbCallDbTable,
+    value: object,
+) -> tuple[int, dict[str, object]]:
+    source_table = _batch_backing_table(value)
+    if source_table is not None:
+        value = source_table
+    if table.feature is not None and isinstance(value, Table):
+        if value._feature_type is table.feature and value.fixed:  # noqa: SLF001
+            return _mapped_feature_table_column_writes(table.feature, value)
+    rows = _feature_table_rows(table, value)
+    writes: dict[str, object] = {field.name: [] for field in get_schema(table.feature).fields}
+    for row in rows:
+        for field in get_schema(table.feature).fields:
+            writes[field.name].append(getattr(row, field.name))
+    return len(rows), writes
+
+
+def _mapped_feature_row_writes(feature_type: type, row: object) -> dict[str, object]:
+    return {
+        field.name: [getattr(row, field.name)]
+        for field in get_schema(feature_type).fields
+    }
+
+
+def _mapped_feature_table_column_writes(
+    feature_type: type,
+    table: Table,
+) -> tuple[int, dict[str, object]]:
+    table._assert_alive()  # noqa: SLF001
+    schema = get_schema(feature_type)
+    row_count = len(table)
+    writes: dict[str, object] = {}
+    source_columns = table.column
+    for field in schema.fields:
+        source_column = getattr(source_columns, field.name)
+        if field.name in schema.bool_field_names:
+            writes[field.name] = _normalize_bool_fill_values(
+                field.name,
+                source_column,
+                row_count,
+            )
+            continue
+        dtype = _FILL_NUMERIC_DTYPES.get(field.field_type)
+        if dtype is None:
+            raise FastdbUnsupportedDirectBuildError(
+                f'{feature_type.__name__}.{field.name} with {field.field_type.name} '
+                'does not support mapped final backing direct build.',
+            )
+        writes[field.name] = np.ascontiguousarray(
+            _numeric_column_array(source_column),
+            dtype=dtype,
+        )
+    return row_count, writes
 
 
 def _validate_require_envelope_binding(
@@ -1188,7 +1881,11 @@ def _validate_require_envelope_binding(
         if index is None or index < 0 or index >= len(current_envelope.specs):
             raise ValueError('call-db direct require value is missing a valid envelope index.')
         seen_indices.add(index)
-        _validate_require_spec_for_table(table, current_envelope.specs[index])
+        _validate_require_spec_for_table(
+            table,
+            current_envelope.specs[index],
+            direct_required=direct_required,
+        )
 
     if not saw_require_value or envelope is None:
         return
@@ -1205,7 +1902,12 @@ def _validate_require_envelope_binding(
             )
 
 
-def _validate_require_spec_for_table(table: FastdbCallDbTable, spec: object) -> None:
+def _validate_require_spec_for_table(
+    table: FastdbCallDbTable,
+    spec: object,
+    *,
+    direct_required: bool = False,
+) -> None:
     position = table.value_position
     if table.kind == 'feature' and table.cardinality == 'many':
         expected = f'Batch[{table.feature.__name__}]' if table.feature is not None else 'Batch'
@@ -1215,6 +1917,13 @@ def _validate_require_spec_for_table(table: FastdbCallDbTable, spec: object) -> 
             raise ValueError(
                 f'call-db slot {position} expected {expected}, got Batch[{spec.feature_type.__name__}].',
             )
+        if direct_required:
+            profile = _normalize_batch_profile(spec.profile)
+            if profile not in {'auto', 'columnar'}:
+                raise ValueError(
+                    f'call-db direct slot {position} expected a columnar-compatible '
+                    f'Batch profile, got {spec.profile!r}.',
+                )
         return
     if table.kind == 'array':
         expected_kind = _array_item_kind(table)
@@ -1238,39 +1947,6 @@ def _require_spec_name(spec: object) -> str:
 
 def _is_require_aggregate_table(table: FastdbCallDbTable) -> bool:
     return table.kind == 'array' or (table.kind == 'feature' and table.cardinality == 'many')
-
-
-def _ensure_strict_direct_layer_buildable(table: FastdbCallDbTable) -> None:
-    if table.feature is None:
-        raise ValueError(f'fastdb call-db table {table.name!r} is missing runtime feature.')
-    if table.kind == 'array':
-        _reject_variable_scalar_kind(_array_item_kind(table), table.name)
-        return
-    if table.kind == 'scalars':
-        for field in table.fields:
-            _reject_variable_scalar_kind(field.kind, f'{table.name}.{field.name}')
-        return
-    if table.kind == 'feature':
-        schema = get_schema(table.feature)
-        diagnostics = [
-            *raw_payload_storage_diagnostics(schema),
-            *non_native_list_storage_diagnostics(schema),
-        ]
-        if diagnostics:
-            raise FastdbUnsupportedDirectBuildError(
-                f'{table.name} is not strict-direct buildable: {"; ".join(diagnostics)}',
-            )
-        for field in schema.fields:
-            if field.field_type in {OriginFieldType.str, OriginFieldType.wstr, OriginFieldType.bytes}:
-                raise FastdbUnsupportedDirectBuildError(
-                    f'{table.name}.{field.name} with {field.field_type.name} '
-                    'does not support strict direct build yet.',
-                )
-            if field.field_type in {OriginFieldType.ref, OriginFieldType.list}:
-                raise FastdbUnsupportedDirectBuildError(
-                    f'{table.name}.{field.name} with {field.field_type.name} '
-                    'does not support strict direct build yet.',
-                )
 
 
 def _reject_variable_scalar_kind(kind: str | None, context: str) -> None:
@@ -1577,21 +2253,31 @@ def _table_like_records(value: Any) -> Iterable[Any] | None:
             return None
 
 
-def _column_engine_from_buffer(data: bytes | bytearray | memoryview) -> ColumnEngine:
+def _column_engine_from_buffer(
+    data: bytes | bytearray | memoryview,
+    *,
+    backing_owner: object | None = None,
+) -> ColumnEngine:
     engine = ColumnEngine()
     engine._origin = core.WxDatabase.load_xbuffer(data)  # noqa: SLF001
     engine._origin._buffer = data  # noqa: SLF001
+    engine._origin._buffer_owner = backing_owner  # noqa: SLF001
+    engine._buffer_owner = backing_owner  # noqa: SLF001
     return engine
 
 
 def _object_engine_from_buffer(
     data: bytes | bytearray | memoryview,
     tables: tuple[FastdbCallDbTable, ...] = (),
+    *,
+    backing_owner: object | None = None,
 ) -> ObjectEngine:
     engine = ObjectEngine()
     engine._db = core.WxDatabase.load_xbuffer(data)  # noqa: SLF001
     engine._db._buffer = data  # noqa: SLF001
+    engine._db._buffer_owner = backing_owner  # noqa: SLF001
     engine._buffer = data  # noqa: SLF001
+    engine._buffer_owner = backing_owner  # noqa: SLF001
     engine._built = True  # noqa: SLF001
 
     for index in range(engine._db.get_layer_count()):  # noqa: SLF001
@@ -1622,22 +2308,33 @@ def _bind_call_plan_layers(
         engine._db.get_layer(index).name(): index  # noqa: SLF001
         for index in range(engine._db.get_layer_count())  # noqa: SLF001
     }
+    features: list[type] = []
     for table in tables:
         if table.feature is None:
             continue
-        schema = get_schema(table.feature)
+        features.append(table.feature)
+        for dependency in table.feature_schema_dependencies:
+            if dependency.feature is not None:
+                features.append(dependency.feature)
+
+    seen: set[type] = set()
+    for feature in features:
+        if feature in seen:
+            continue
+        seen.add(feature)
+        schema = get_schema(feature)
         layer_idx = layer_indices.get(schema.layer_name)
         if layer_idx is None:
             continue
         layer = engine._db.get_layer(layer_idx)  # noqa: SLF001
-        engine._layers[table.feature] = LayerState(  # noqa: SLF001
-            cls=table.feature,
+        engine._layers[feature] = LayerState(  # noqa: SLF001
+            cls=feature,
             schema=schema,
             layer_idx=layer_idx,
             row_count=layer.get_feature_count(),
         )
-        if table.feature not in engine._layer_order:  # noqa: SLF001
-            engine._layer_order.append(table.feature)  # noqa: SLF001
+        if feature not in engine._layer_order:  # noqa: SLF001
+            engine._layer_order.append(feature)  # noqa: SLF001
 
 
 def _encode_object_graph_call_db(binding: FastdbCallDbBinding, values: tuple[Any, ...]) -> bytes:

@@ -228,6 +228,30 @@ batch.fill(
 
 The call-db binding descriptor supplies wire table names internally. User code should not spell `return_0`, parameter names, or slot metadata for the normal direct path.
 
+For integrations that can provide a final backing allocator with a writable buffer, wrap resource execution in the experimental call-db build context. The context lets `fdb.require(...)` return fixed numeric `Batch`/`Array` views mapped over the caller's final DB allocation, and `build_call_db(..., direct_required=True)` commits that same allocation. The initial C++ fixed-layer snapshot writes the zero table section directly to that allocation instead of retaining an equal-size table scratch vector:
+
+`ScratchAllocator` / `HeapScratchAllocator` are exposed separately as the experimental build-time scratch role. They are not the transport/final backing contract, and V1 does not require downstream runtimes to provide scratch memory.
+
+```python
+allocator = fdb.HeapFinalBackingResource()
+with fdb.call_db_build_context(binding, allocator):
+    particles, residual = fdb.require(
+        fdb.batch(Particle, rows=N),
+        fdb.array(fdb.F32, rows=N),
+    )
+    particles.fill(
+        x=np.random.uniform(-1.0, 1.0, N),
+        y=np.random.uniform(-1.0, 1.0, N),
+        vx=np.zeros(N),
+        vy=np.zeros(N),
+        mass=np.ones(N, dtype=np.float32),
+    )
+    residual.fill(np.zeros(N, dtype=np.float32))
+    payload = fdb.build_call_db(binding, (particles, residual), allocator, direct_required=True)
+```
+
+This context is deliberately stricter than ordinary `Batch.allocate(...)`: it rejects strings, bytes, refs, lists, object graphs, and dynamic row counts before allocation because the final byte length must be known before user code writes into the returned views.
+
 Multiple tables can be created in one call:
 
 ```python
@@ -652,9 +676,10 @@ payload = fdb.encode_call_db(binding, value)
 owned = fdb.decode_call_db(binding, payload)
 view = fdb.view_call_db(binding, payload, owner=fdb.FdbViewOwner(checked=True))
 exported = fdb.try_export_call_db(binding, value)
+payload = fdb.build_call_db(binding, value, allocator, direct_required=True)
 ```
 
-`decode_call_db(...)` returns materialized Python values. `view_call_db(...)` returns owner-bound FastDB values for columnar call-db payloads: `Batch[Feature]` values become FastDB `Table` views, single `Feature` values become mapped feature views, and `Array[Scalar]` values become `FastdbCallDbArrayView`. `try_export_call_db(...)` returns a `memoryview` only when the value is already backed by an exact call-db-compatible buffer, currently the single fixed `Batch[Feature]` case; otherwise it returns `None` so callers can fall back to `encode_call_db(...)`. Invalidating the supplied owner invalidates those retained views; use `fdb.materialize(...)` before keeping data beyond the owner lifetime. Object-graph call-db retained views currently fail deterministically; use materialized decode for object-graph payloads.
+`decode_call_db(...)` returns materialized Python values. `view_call_db(...)` returns owner-bound FastDB values for columnar call-db payloads: `Batch[Feature]` values become FastDB `Table` views, single `Feature` values become mapped feature views, and `Array[Scalar]` values become `FastdbCallDbArrayView`. Both functions accept bytes-like payloads and committed native `FinalBackingAllocation` instances; retained views keep the native allocation owner alive. `try_export_call_db(...)` returns a `memoryview` only when the value is already backed by an exact call-db-compatible buffer, currently the single fixed `Batch[Feature]` case; otherwise it returns `None` so callers can fall back to `encode_call_db(...)`. `prepare_call_db(..., direct_required=True)` only accepts already-backed/importable layers and will not stage temporary call-db layers under a direct label. `build_call_db(...)` is experimental: in strict direct mode it asks the allocator for one final backing allocation and writes the call-db payload without `WxMemoryStream().data().tobytes()`. Fixed numeric values use a mapped final-backing path that avoids a materialized C++ table-buffer scratch vector; prepacked string feature columns still use the C++ final writer. The allocator can be a native `HeapFinalBackingResource`, which returns a committed `FinalBackingAllocation`, or a Python writable allocator whose allocation supports `.buffer`, `.commit(used_size)`, and `.rollback()`. Native final backing resources also work for fallback plans when `direct_required=False`. `call_db_build_context(...)` can also use either allocator shape for fixed numeric `fdb.require(...)` outputs, mapping returned `Batch` / `Array` views directly over the one final backing allocation before commit while avoiding a materialized C++ table-buffer scratch vector for the initial fixed snapshot. The initial strict path supports fixed columnar scalar payloads plus backed `Batch[Feature]` values with prepacked UTF-8 `STR` columns; object graph payloads, REF/list/bytes fields, dynamic push, scalar string arrays, non-columnar `BatchRequirement` profiles, and unknown-size strings fall back or raise `FastdbUnsupportedDirectBuildError` before allocation. Invalidating the supplied owner invalidates retained views; use `fdb.materialize(...)` before keeping data beyond the owner lifetime. Object-graph call-db retained views currently fail deterministically; use materialized decode for object-graph payloads.
 
 #### Circular references
 

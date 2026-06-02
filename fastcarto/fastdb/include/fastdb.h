@@ -52,6 +52,7 @@ namespace wx
     class WriteStream
     {
     public:
+        virtual ~WriteStream() = default;
         virtual void write(void *pdata, size_t size) = 0;
     };
 
@@ -73,6 +74,121 @@ namespace wx
         void write(void *pdata, size_t size) override;
     private:
         Impl* impl;
+    };
+
+    class fastdb_api FixedBufferWriteStream : public WriteStream
+    {
+    public:
+        FixedBufferWriteStream(void* pdata, size_t size);
+        void write(void *pdata, size_t size) override;
+        size_t bytesWritten() const;
+        bool overflowed() const;
+    private:
+        u8* m_data;
+        size_t m_size;
+        size_t m_offset;
+        bool m_overflowed;
+    };
+
+    class fastdb_api ScratchAllocation
+    {
+    public:
+        virtual ~ScratchAllocation() = default;
+        virtual void* data() = 0;
+        virtual size_t size() const = 0;
+    };
+
+    class fastdb_api ScratchAllocator
+    {
+    public:
+        virtual ~ScratchAllocator() = default;
+        virtual ScratchAllocation* allocate(size_t size, size_t alignment) = 0;
+    };
+
+    class fastdb_api HeapScratchAllocator;
+
+    class fastdb_api HeapScratchAllocation final : public ScratchAllocation
+    {
+    public:
+        class Impl;
+    public:
+        HeapScratchAllocation(size_t size, HeapScratchAllocator* owner = nullptr);
+        ~HeapScratchAllocation() override;
+        void* data() override;
+        size_t size() const override;
+    private:
+        Impl* impl;
+    };
+
+    class fastdb_api HeapScratchAllocator final : public ScratchAllocator
+    {
+    public:
+        class Impl;
+    public:
+        HeapScratchAllocator();
+        ~HeapScratchAllocator() override;
+        ScratchAllocation* allocate(size_t size, size_t alignment) override;
+        size_t allocationCount() const;
+        size_t releaseCount() const;
+    private:
+        Impl* impl;
+        friend class HeapScratchAllocation;
+    };
+
+    class fastdb_api FinalBackingAllocation
+    {
+    public:
+        virtual ~FinalBackingAllocation() = default;
+        virtual void* data() = 0;
+        virtual size_t size() const = 0;
+        virtual size_t usedSize() const = 0;
+        virtual bool committed() const = 0;
+        virtual bool rolledBack() const = 0;
+        virtual bool commit(size_t used_size) = 0;
+        virtual void rollback() = 0;
+    };
+
+    class fastdb_api FinalBackingResource
+    {
+    public:
+        virtual ~FinalBackingResource() = default;
+        virtual FinalBackingAllocation* allocate(size_t size, size_t alignment) = 0;
+    };
+
+    class fastdb_api HeapFinalBackingResource;
+
+    class fastdb_api HeapFinalBackingAllocation final : public FinalBackingAllocation
+    {
+    public:
+        class Impl;
+    public:
+        HeapFinalBackingAllocation(size_t size, HeapFinalBackingResource* owner = nullptr);
+        ~HeapFinalBackingAllocation() override;
+        void* data() override;
+        size_t size() const override;
+        size_t usedSize() const override;
+        bool committed() const override;
+        bool rolledBack() const override;
+        bool commit(size_t used_size) override;
+        void rollback() override;
+    private:
+        Impl* impl;
+    };
+
+    class fastdb_api HeapFinalBackingResource final : public FinalBackingResource
+    {
+    public:
+        class Impl;
+    public:
+        HeapFinalBackingResource();
+        ~HeapFinalBackingResource() override;
+        FinalBackingAllocation* allocate(size_t size, size_t alignment) override;
+        size_t allocationCount() const;
+        size_t commitCount() const;
+        size_t rollbackCount() const;
+    private:
+        Impl* impl;
+        friend class HeapFinalBackingAllocation;
     };
 
     struct point2_t
@@ -151,6 +267,10 @@ namespace wx
         void addFeatureEnd();
         void createLayerEnd();
         void post(WriteStream *stream);
+        size_t byteLength();
+        size_t tableBufferBytes();
+        size_t postToBuffer(void* pdata, size_t size);
+        FinalBackingAllocation* postToFinalBacking(FinalBackingResource* resource);
         void save(const char *filename);
 
     public:
@@ -202,6 +322,8 @@ namespace wx
         void setStringColumnFromViews(unsigned field_id, const utf8_view_t* values, unsigned count, const u8* valid_bytes = nullptr);
         void setNumericColumnBulk(unsigned field_id, const void* data, u64 nbytes);
         void setStringColumnBulk(unsigned field_id, const u32* offsets, unsigned n_offsets, const u8* data, u64 nbytes);
+        void setTableBufferMaterialized(bool enabled);
+        size_t tableBufferBytes();
         void setField(unsigned ix, const FastVectorDbFeatureRef* ref);
         FastVectorDbFeatureRef* createFeatureRef(u32 ix=-1);
         void freeFeatureRef(FastVectorDbFeatureRef* ref);
@@ -212,6 +334,7 @@ namespace wx
         void set_field_list_refs(unsigned field_id, const FastVectorDbFeatureRef* refs, unsigned count);
         void update_feature_ref(unsigned feat_idx, unsigned field_id, const FastVectorDbFeatureRef* ref);
         void update_list_ref_at(unsigned feat_idx, unsigned field_id, unsigned list_idx, const FastVectorDbFeatureRef* ref);
+        size_t byteLength();
     public:
         inline void setGeometryWKT(const char *data)
         {

@@ -2,12 +2,22 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from . import core
+
+
+ScratchAllocation = core.WxScratchAllocation
+ScratchAllocator = core.WxScratchAllocator
+HeapScratchAllocator = core.WxHeapScratchAllocator
+FinalBackingAllocation = core.WxFinalBackingAllocation
+FinalBackingResource = core.WxFinalBackingResource
+HeapFinalBackingResource = core.WxHeapFinalBackingResource
+
 
 class WritableAllocation(Protocol):
     @property
     def buffer(self) -> memoryview: ...
 
-    def commit(self) -> object: ...
+    def commit(self, used_size: int) -> object: ...
 
     def rollback(self) -> None: ...
 
@@ -29,11 +39,13 @@ class BytearrayAllocation:
         self._ensure_open()
         return memoryview(self._data)
 
-    def commit(self) -> bytes:
+    def commit(self, used_size: int) -> bytes:
         self._ensure_open()
+        if type(used_size) is not int or used_size < 0 or used_size > len(self._data):
+            raise ValueError('used_size must fit within the allocation.')
         self._state = 'committed'
         self._allocator.commit_count += 1
-        return bytes(self._data)
+        return bytes(self._data[:used_size])
 
     def rollback(self) -> None:
         if self._state != 'open':
@@ -67,7 +79,11 @@ def build_call_db(
     *,
     direct_required: bool = False,
 ) -> object:
-    from .call_db import prepare_call_db
+    from .call_db import build_call_db_with_allocator
 
-    plan = prepare_call_db(binding, values, direct_required=direct_required)
-    return plan.build_with_allocator(allocator)
+    return build_call_db_with_allocator(
+        binding,
+        values,
+        allocator,
+        direct_required=direct_required,
+    )
