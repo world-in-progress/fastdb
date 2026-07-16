@@ -16,11 +16,12 @@ It is not a mechanism for shrinking the accepted milestone. Capabilities intenti
 
 ## Current implemented surface
 
-As of the issue opening:
+Current repository state:
 
 - the target architecture, owner boundary, source algebra, identity pipeline, runtime model, C ABI direction, testing obligations, and clean-cut decision are accepted documentation;
 - the first executable plan is written for the Core compiler/query contract;
-- no C++ Core `fastdb.payload.v1` parser, normalizer, JCS canonicalizer, SHA-256 identity, resolved manifest, or portable C ABI is currently shipped;
+- P1 now has pinned yyjson, double-conversion, and PicoSHA2 source snapshots plus a native CTest seam for dependency and later portable-Core tests;
+- this Task 1 infrastructure ships no portable payload API: there is still no C++ Core `fastdb.payload.v1` parser, normalizer, JCS canonicalizer, SHA-256 identity, resolved manifest, or portable C ABI;
 - no `fastdb.payload.bin.v1`, builder/plan/backing, payload owner, checked view, materialization, object-graph runtime, portable language projection, or payload code generator is currently shipped;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
@@ -56,7 +57,7 @@ Collapsing these layers into one speculative change would make review and failur
 
 | Slice | Status | Required closure evidence |
 |---|---|---|
-| P1. Core contract compiler/query ABI | Planned | Complete source algebra; strict duplicate-aware compile; normalization; JCS/SHA identity; resolved indexes/manifest/capabilities; stable error/blob/spec query C ABI; C++ facade; golden/fuzz/native CI |
+| P1. Core contract compiler/query ABI | In progress: vendored primitives and native test seam | Complete source algebra; strict duplicate-aware compile; normalization; JCS/SHA identity; resolved indexes/manifest/capabilities; stable error/blob/spec query C ABI; C++ facade; golden/fuzz/native CI |
 | P2. Record binary/runtime/lifetime | Blocked on P1 | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |

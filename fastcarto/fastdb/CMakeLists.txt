@@ -27,7 +27,16 @@ else()
 endif(is_emscripten)
 
 add_library(${PROJECT_NAME} ${BUILD_TYPE} ${SOURCES})
-target_link_libraries(${PROJECT_NAME} PRIVATE gaiageo Clipper2)
+target_link_libraries(
+    ${PROJECT_NAME}
+    PRIVATE
+        gaiageo
+        Clipper2
+        fastdb_yyjson
+        fastdb_double_conversion
+        fastdb_picosha2
+)
+fastdb_apply_sanitizers(${PROJECT_NAME})
 
 get_target_property(swig_out_dir ${PROJECT_NAME} SWIG_OUTPUT_DIR)
 

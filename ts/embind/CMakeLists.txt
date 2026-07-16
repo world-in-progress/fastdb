@@ -12,6 +12,7 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+set(BUILD_TESTING OFF CACHE BOOL "Build native tests" FORCE)
 set(BUILD_TOOLS OFF CACHE BOOL "Build CLI tools" FORCE)
 set(USE_SWIG_PYTHON OFF CACHE BOOL "use swig python wrapper" FORCE)
 set(USE_SWIG_NODE OFF CACHE BOOL "use swig node wrapper" FORCE)
