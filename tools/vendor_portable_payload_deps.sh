@@ -20,6 +20,7 @@ readonly VENDOR_ROOT="${REPOSITORY_ROOT}/fastcarto/lib"
 
 TEMP_ROOT=""
 TRANSACTION_ROOT=""
+TRANSACTION_STATE="inactive"
 MOVED_OLD_NAMES=()
 INSTALLED_NAMES=()
 
@@ -37,7 +38,9 @@ cleanup() {
     trap - EXIT INT TERM
     set +e
     if [[ -n "${TRANSACTION_ROOT}" && -d "${TRANSACTION_ROOT}" ]]; then
-        rollback_vendor_write
+        if [[ "${TRANSACTION_STATE}" == "active" ]]; then
+            rollback_vendor_write
+        fi
         rm -rf "${TRANSACTION_ROOT}"
     fi
     if [[ -n "${TEMP_ROOT}" && -d "${TEMP_ROOT}" ]]; then
@@ -75,10 +78,22 @@ clone_pinned() {
     local expected_commit="$4"
     local checkout="${CLONE_ROOT}/${name}"
 
-    git clone --quiet --depth 1 --branch "${tag}" --no-checkout \
-        "${url}" "${checkout}"
+    git init --quiet "${checkout}"
+    git -C "${checkout}" remote add origin "${url}"
+    git -C "${checkout}" fetch --quiet --depth 1 --no-tags origin \
+        "refs/tags/${tag}:refs/tags/${tag}"
+
+    local tagged_commit
+    tagged_commit="$(
+        git -C "${checkout}" rev-parse --verify \
+            "refs/tags/${tag}^{commit}"
+    )"
+    if [[ "${tagged_commit}" != "${expected_commit}" ]]; then
+        fail "${name} ${tag} resolved to ${tagged_commit}, expected ${expected_commit}"
+    fi
+
     git -C "${checkout}" -c advice.detachedHead=false checkout --quiet \
-        "${expected_commit}"
+        --detach "${tagged_commit}"
 
     local actual_commit
     actual_commit="$(git -C "${checkout}" rev-parse HEAD)"
@@ -229,6 +244,10 @@ build_snapshots() {
 }
 
 rollback_vendor_write() {
+    if [[ "${TRANSACTION_STATE}" != "active" ]]; then
+        return
+    fi
+
     local name
     for name in "${INSTALLED_NAMES[@]}"; do
         rm -rf "${VENDOR_ROOT}/${name}"
@@ -245,6 +264,7 @@ rollback_vendor_write() {
 write_snapshots() {
     TRANSACTION_ROOT="$(mktemp -d "${VENDOR_ROOT}/.portable-payload-vendor.XXXXXX")"
     mkdir -p "${TRANSACTION_ROOT}/new" "${TRANSACTION_ROOT}/old"
+    TRANSACTION_STATE="active"
 
     local name
     for name in yyjson double-conversion picosha2; do
@@ -267,10 +287,15 @@ write_snapshots() {
         fi
     done
 
-    rm -rf "${TRANSACTION_ROOT}"
-    TRANSACTION_ROOT=""
+    # This state assignment is the irrevocable commit boundary. Cleanup must
+    # never remove installed snapshots after observing the committed state,
+    # even if backup deletion fails or the process receives INT/TERM.
+    TRANSACTION_STATE="committed"
     MOVED_OLD_NAMES=()
     INSTALLED_NAMES=()
+    rm -rf "${TRANSACTION_ROOT}"
+    TRANSACTION_ROOT=""
+    TRANSACTION_STATE="inactive"
     printf 'Updated portable payload dependency snapshots.\n'
 }
 
