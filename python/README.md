@@ -2,6 +2,8 @@
 
 Python bindings for `fastdb`, built on top of the C++ core in `fastcarto/fastdb/` and exposed through SWIG.
 
+> **0.2.0 direction:** This document primarily describes the current 0.1.x binding. The accepted portable payload target makes the C++ Core the sole `fastdb.payload.v1` authority, removes public call-db APIs, and renames `ColumnEngine` to `RecordEngine` without an alias. Python annotations may remain an authoring frontend, but Python will not own canonicalization, digest, profile validation, layout, or binary decoding. See the [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
+
 This README is the binding-specific companion to the repository root `README.md`. The root document introduces the project as a whole; this document focuses on the Python-facing API, its architecture, and common usage patterns.
 
 ## What `fastdb4py` provides
@@ -30,7 +32,7 @@ The Python stack is layered:
 2. **SWIG/native bridge** — `python/fastdb4py/core/`
    - generated wrappers and compiled native extension
 3. **High-level Python API** — `python/fastdb4py/`
-   - ergonomic `@feature`, `ColumnEngine`, `ObjectEngine`, `Table`, and `FastSerializer` abstractions
+   - current 0.1.x ergonomic `@feature`, `ColumnEngine`, `ObjectEngine`, `Table`, and `FastSerializer` abstractions; the 0.2.0 portable projection is defined by the accepted design
 
 Important directories:
 
@@ -617,13 +619,13 @@ uv run pytest tests/python/test_fastser_loads_shm.py
 uv run pytest tests/python/test_codegen.py
 ```
 
-## CLI tools
+## Current 0.1.x CLI tools
 
 `fastdb4py` registers a `fdb` command-line tool through `[project.scripts]`.
 
 ### `fdb codegen --ts` — Generate TypeScript Feature classes
 
-When working with both `fastdb4py` (Python) and `fastdb4ts` (TypeScript), you can use `fdb codegen` to automatically generate TypeScript `Feature` classes from your Python definitions. Python `@feature` classes serve as the single source of truth — similar to how `.proto` files work in Protocol Buffers, but without an intermediate format.
+In the current 0.1.x flow, `fdb codegen` generates TypeScript `Feature` classes from Python definitions and treats Python `@feature` classes as its input authority. This authority is intentionally replaced by the Core-compiled payload specification in the accepted 0.2.0 design.
 
 ```bash
 fdb codegen --ts ./features/ ./ts-features/
@@ -663,13 +665,13 @@ import { Point } from './geometry.js';
 
 Each `.py` file is treated as an independent module. The same class name (e.g. `Point`) may appear in multiple files — all are generated in their respective `.ts` files without conflict. Within a single file, Python's last-definition-wins rule applies.
 
-### C-Two integration boundary
+### Accepted C-Two integration boundary
 
-`fastdb4py` owns generic feature declarations, schema export, storage engines, binary buffer IO, backed view lifetimes, and generic call-db encode/decode/view runtime. C-Two-specific FastDB call-db planning from CRM annotations, bridge derivation, and TypeScript helper generation live in the C-Two repository, where the CRM contract, route identity, relay behavior, scheduler policy, and memory lease semantics are defined. Use `c3 contract codegen typescript --fastdb-schema` from C-Two for C-Two client/helper generation.
+In the accepted 0.2.0 target, FastDB Core owns `fastdb.payload.v1`, canonical identity, storage/profile semantics, binary buffer IO, backed view lifetimes, and payload-only code generation. `fastdb4py` is an ergonomic projection and optional authoring frontend, not a schema authority. C-Two owns the outer `c-two.contract.v2`, CRM method/binding planning, bridge execution, routes, relay behavior, scheduler/transport policy, leases, and final composition through `c3`.
 
-### Generic call-db runtime
+### Legacy 0.1.x generic call-db runtime
 
-`fastdb4py` exposes generic call-db runtime helpers for integrations that already have a call-db binding descriptor:
+The current package exposes generic call-db runtime helpers for integrations that already have a call-db binding descriptor. These helpers are migration sources and are removed from the 0.2.0 target:
 
 ```python
 payload = fdb.encode_call_db(binding, value)

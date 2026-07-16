@@ -2,6 +2,8 @@
 
 TypeScript and WebAssembly bindings for `fastdb`, intended primarily for browser-side use.
 
+> **0.2.0 direction:** This document primarily describes the current 0.1.x binding. The accepted portable payload target removes the hand-written call-db semantic path and makes the same C++ Core, compiled to WebAssembly, authoritative for `fastdb.payload.v1`, canonical identity, binary validation, checked views, and materialization. See the [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
+
 This directory is the TypeScript/WASM counterpart to `python/`. Where `fastdb4py` uses SWIG and NumPy, `fastdb4ts` uses Emscripten + Embind and TypeScript-facing wrappers that mirror the high-level concepts of the Python API.
 
 ## Goals
@@ -17,11 +19,11 @@ The current design goals are:
 - **Binary data exchange**
   - `Uint8Array` / `ArrayBuffer` in and out
 - **Legacy graph serialization**
-  - `FastSerializer` remains available for nested features and cyclic references, but new cross-runtime integration work should use neutral schema descriptors and explicit codec profiles
+  - `FastSerializer` remains available for current standalone nested-feature workflows, but it is not the accepted portable RPC foundation
 - **Browser-friendly deployment**
   - isolated WASM build path without forcing the Python build to depend on Emscripten
 
-The current TypeScript binding intentionally does **not** implement:
+The current 0.1.x TypeScript binding intentionally does **not** implement:
 
 - shared-memory IPC
 - direct file persistence APIs
@@ -111,7 +113,7 @@ For publication, `ts/fastdb4ts/` is set up as the npm package directory.
 
 ## Integration boundary
 
-`fastdb4ts` owns generic browser/WASM access to FastDB schemas and binary buffers. External RPC systems may consume those schemas and buffers, but their contract planning, route identity, relay behavior, and generated client helpers belong in those systems rather than in `fastdb4ts`.
+`fastdb4ts` owns browser/WASM ergonomics and handle lifetime over the FastDB Core. In the accepted 0.2.0 target, the Core owns the portable schema, canonical identity, binary validation, and payload codegen semantics. External RPC systems may consume the resulting payload APIs, but their contract planning, route identity, relay behavior, and generated RPC helpers remain outside `fastdb4ts`.
 
 ## Quick start
 

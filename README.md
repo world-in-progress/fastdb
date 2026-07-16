@@ -6,27 +6,41 @@
 
 `fastdb` is a C++ local database library designed as a fast, lightweight, and easy-to-use data communication layer for RPC and coupled modeling in scientific computing.
 
+## Accepted 0.2.0 direction
+
+FastDB has accepted a clean-cut portable payload foundation for the 0.2.0 target. The C++ Core will become the sole authority for `fastdb.payload.v1`, RFC 8785 canonical identity, `record.v1`/`object_graph.v1`, a stable C ABI, final-backing and checked-view lifetimes, and C++/Rust/Python/TypeScript projections. C-Two will wrap that specification inside `c-two.contract.v2`; CRM, routes, transports, leases, and lifecycle remain outside FastDB.
+
+The current tree and published packages are still 0.1.x and still contain legacy `fastdb.schema.v1`, call-db, `columnar.v1`, and `ColumnEngine` surfaces. Those are implementation history to be removed or renamed during the 0.2.0 work, not APIs to extend. There will be no compatibility parser or alias in the target release.
+
+- [Accepted portable payload design](docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
+- [ADR-0001: Core authority and clean cut](docs/decisions/0001-portable-payload-core-authority.md)
+- [Issue 0001: explicitly deferred capabilities](docs/issues/0001-portable-payload-deferred-capabilities.md)
+
 This repository now contains three closely related layers:
 
 - **C++ core** — native storage engine, binary layout, and serialization primitives
-- **`fastdb4py`** — Python bindings via SWIG, with NumPy-oriented columnar access and shared-memory IPC
+- **`fastdb4py`** — Python bindings via SWIG, with NumPy-oriented strided field access and shared-memory IPC
 - **`fastdb4ts`** — TypeScript bindings via WebAssembly/Embind, focused on browser-friendly typed data access and schema-compatible table access
 
-**Core design goals:**
-- **Zero-copy columnar access** — efficient field-oriented access for high-volume numerical workloads
+**Current storage strengths and accepted direction:**
+
+- **Efficient strided field access** — the existing AoS record engine exposes fast field-oriented access without claiming Arrow-like SoA storage
 - **Ref-graph support** — Features can reference other Features across tables, forming typed object graphs
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
-- **Cross-binding consistency** — Python and TypeScript bindings share the same native storage model and schema semantics
-- **Schema-driven codegen** — Python `@feature` classes can serve as the source of truth; the `fdb codegen` CLI generates equivalent TypeScript schemas automatically
-- **Portable payload primitives** — `fastdb.schema.v1`, shared binary buffers, and the `fastdb4ts` runtime let external RPC systems use FastDB as a schema-aware payload layer while those systems keep their own routing and execution semantics
+- **Cross-binding consistency** — the 0.2.0 target makes the C++ Core, rather than a language binding, the semantic authority
+- **Schema-driven codegen** — the target Core returns deterministic C++/Rust/Python/TypeScript payload artifacts in memory
+- **Portable payload primitives** — `fastdb.payload.v1`, a stable C ABI, and checked lifetime/backing semantics form the accepted external integration layer
 
 ## Documentation map
 
 - **Python binding (`fastdb4py`)**: see [`python/README.md`](python/README.md)
 - **TypeScript binding (`fastdb4ts`)**: see [`ts/README.md`](ts/README.md)
 - **C++ core (`fastcarto/fastdb`)**: see [`fastcarto/README.md`](fastcarto/README.md)
+- **Accepted portable payload target**: see [`docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md`](docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
+- **Architecture decisions**: see [`docs/decisions/`](docs/decisions/)
+- **Known intentional limitations**: see [`docs/issues/`](docs/issues/)
 - **TypeScript/WASM analysis docs**: see [`ts/analysis/`](ts/analysis/)
-- **Codegen CLI (`fdb codegen`)**: see [CLI tools](#cli-tools) below, or the full reference in [`python/README.md`](python/README.md)
+- **Current codegen CLI (`fdb codegen`)**: see [current CLI tools](#current-01x-cli-tools) below, or the full 0.1.x reference in [`python/README.md`](python/README.md)
 
 ## Changelog
 
@@ -63,7 +77,9 @@ If you are working on native internals or storage layout, start with:
 
 For safety-sensitive integrations, pass `writeable=False` to expose read-only backed rows and checked numeric columns. This blocks row field writes and column writes even when the owner itself is an unchecked trusted owner.
 
-## Python `ColumnEngine.truncate()` with `STR`
+## Legacy 0.1.x Python `ColumnEngine.truncate()` with `STR`
+
+> This section documents current 0.1.x behavior. The accepted 0.2.0 name is `RecordEngine`, with no `ColumnEngine` alias.
 
 `fastdb4py` `ColumnEngine.truncate()` now supports UTF-8 `STR` fields in two usage tiers:
 
@@ -96,11 +112,15 @@ offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "bb", "ccc"])
 tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 ```
 
-## Python Call-DB Exact Export
+## Legacy 0.1.x Python Call-DB Exact Export
+
+> This section documents a current migration source. Public call-db runtime and binding surfaces are removed by the accepted 0.2.0 clean cut.
 
 For integrations that already own a generic call-db binding, `try_export_call_db(binding, value)` returns an existing buffer-protocol view when a value is already backed by an exact call-db-compatible single fixed `Batch[Feature]` table. Build such tables with the target table name up front, for example `ColumnEngine.truncate([Layout(Point, n, name="return_0")])`, then call `encode_call_db(...)` only when `try_export_call_db(...)` returns `None`. FastDB owns the exact-export decision; integrations such as C-Two should pass the generic binding and logical value rather than inspecting FastDB table internals.
 
-## Experimental Final-Backing Builds
+## Legacy 0.1.x Experimental Call-DB Final-Backing Builds
+
+> These mechanics are implementation inputs for the generic 0.2.0 `BuildPlan` and final-backing contract. The call-db API names do not survive the clean cut.
 
 `build_call_db(binding, value, allocator, direct_required=True)` is the experimental final-backing path for generic call-db payloads. FastDB computes one final DB byte length, asks the supplied allocator for one writable allocation, and writes the final backing without first publishing through `WxMemoryStream().data().tobytes()`. Fixed numeric call-db values use a mapped final-backing path that writes the initial C++ layout directly into the caller backing and fills columns there; prepacked string feature columns still use the C++ final writer. The allocator may be a native `fdb.HeapFinalBackingResource`, which returns a committed `FinalBackingAllocation`, or a Python allocator object that returns an allocation with `.buffer`, `.commit(used_size)`, and `.rollback()`. Native final backing resources also work for fallback prepared plans, so callers can preserve fallback semantics when `direct_required=False`. `prepare_call_db(..., direct_required=True)` is stricter: it only accepts already-backed/importable layers and will not stage temporary call-db layers under a direct label.
 
@@ -124,7 +144,7 @@ with fdb.call_db_build_context(binding, allocator):
 
 V1 direct builds are intentionally narrow. The `build_call_db` final-writer path supports fixed columnar scalar payloads and backed `Batch[Feature]` values whose `STR` columns already have prepacked UTF-8 offsets/data. The `call_db_build_context` path is stricter and currently supports fixed numeric columnar slots only, because its final byte length must be known before user code fills the returned views. Object graph payloads, non-columnar `BatchRequirement` profiles, REF/list/bytes fields, dynamic push, scalar string arrays, and unknown-size string values use fallback, or raise `FastdbUnsupportedDirectBuildError` when `direct_required=True`.
 
-## CLI tools
+## Current 0.1.x CLI tools
 
 `fastdb4py` ships a CLI named `fdb` for cross-language tooling. Currently it provides the `codegen` subcommand.
 
@@ -178,9 +198,9 @@ export class Point extends Feature {
 
 ## C-Two Integration Boundary
 
-FastDB owns storage engines, schema export, binary database buffers, backed view lifetimes, and generic Python/TypeScript call-db runtime APIs. C-Two owns CRM method planning, call-db binding derivation from CRM annotations, TypeScript helper generation through `c3 contract codegen typescript --fastdb-schema`, route identity, relay behavior, scheduler policy, and memory lease semantics. The FastDB `fdb` CLI now only generates generic TypeScript feature schemas; use the C-Two repository for C-Two-specific contract and client helper generation.
+In the accepted target, FastDB owns `fastdb.payload.v1`, canonical identity, native types/profiles, binary payloads, backing/view lifetimes, the stable C ABI, all language projections, and payload-only artifact generation. C-Two owns `c-two.contract.v2` as a super-schema, CRM method/binding planning, contract identity, routes, relay behavior, transport and lease semantics, and final artifact composition through `c3`. C-Two passes the nested FastDB value to the FastDB library rather than reimplementing it. The current call-db integration is legacy 0.1.x behavior and is removed for 0.2.0.
 
-## Performance Notes
+## Current 0.1.x Performance Notes
 
 | Pattern | Throughput | Notes |
 |---------|-----------|-------|

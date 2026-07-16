@@ -2,7 +2,9 @@
 
 This directory contains the native implementation that the higher-level bindings build on.
 
-For the `fastdb` project, `fastcarto/fastdb/` is the authoritative storage engine. Both `fastdb4py` and `fastdb4ts` rely on it for binary layout, schema representation, row access, geometry storage, and serialization behavior.
+> **0.2.0 direction:** The C++ Core will become the sole authority for `fastdb.payload.v1`, RFC 8785 canonicalization, SHA-256 identity, `fastdb.payload.bin.v1`, layout/build/open, checked lifetimes, final backing, stable errors, and payload code generation. Cross-language access uses a versioned C ABI plus a C++ RAII facade. The current native storage API remains implementation input, not the portable ABI. See the [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
+
+For the `fastdb` project, `fastcarto/fastdb/` is the authoritative storage engine. Both `fastdb4py` and `fastdb4ts` rely on it for current binary layout, row access, geometry storage, and serialization behavior. The accepted 0.2.0 work extends that authority to the portable payload schema and every cross-language semantic decision.
 
 ## What is inside `fastcarto/`
 
@@ -34,14 +36,16 @@ If one of these behaviors changes, all higher-level bindings must be revalidated
 
 ## Integration boundary
 
-The C++ core owns generic FastDB binary, storage, table, feature, and buffer semantics. Binding layers and RPC systems may build on these semantics, but CRM contracts, route identity, relay behavior, call envelopes, generated RPC helpers, and transport-specific lease policy do not belong in the core.
+The C++ core owns generic FastDB binary, storage, table, feature, buffer, and accepted portable-payload semantics. Binding layers and RPC systems build on these semantics, but CRM contracts, route identity, relay behavior, call envelopes, generated RPC helpers, and transport-specific lease policy do not belong in the core.
 
 ## Public API shape
 
-The public API lives in:
+The current 0.1.x storage API lives in:
 
 - `fastcarto/fastdb/include/fastdb.h`
 - `fastcarto/fastdb/include/fastdb-config.h`
+
+The accepted 0.2.0 portable surface adds the stable C header `fastdb_payload.h` and the C++ RAII facade `fastdb_payload.hpp`; the exact target structure is defined in the accepted design.
 
 Important public classes:
 

@@ -4,13 +4,21 @@ This file contains repository-specific guidance for Codex and other coding agent
 
 ## Project Overview
 
-FastDB is a compact binary data layer for scientific-computing and RPC payload workflows. The repository has three layers:
+FastDB is a compact binary data layer for scientific-computing and RPC payload workflows. The accepted 0.2.0 target is defined by:
 
-- C++ core under `fastcarto/fastdb/`: owns binary layout, table/feature storage, buffer ownership, and native read/write behavior.
-- Python binding under `python/fastdb4py/`: owns Python `@feature`, `ColumnEngine`, `ObjectEngine`, `Table`, schema export, materialization, and Python-facing backed view lifetime APIs.
-- TypeScript/WASM binding under `ts/fastdb4ts/`: owns browser-side schema/runtime APIs and WASM access to the native core.
+1. `docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md`
+2. `docs/decisions/0001-portable-payload-core-authority.md`
+3. `docs/issues/0001-portable-payload-deferred-capabilities.md`
 
-FastDB is a generic data/storage project. Generic call-db encode/decode/view runtime belongs here when it is independent of C-Two route identity and CRM policy. Do not add C-Two-specific modules, providers, bridge derivation, CRM contracts, route identity, relay behavior, or C-Two codegen surfaces here. C-Two may consume FastDB schemas, call-db bindings, and buffers, but C-Two-specific RPC planning belongs in the C-Two repository.
+Read those documents before portable-payload architecture or implementation work. They are normative even while the worktree still contains 0.1.x call-db and `ColumnEngine` code awaiting the clean-cut migration.
+
+The target repository layers are:
+
+- C++ Core under `fastcarto/fastdb/`: sole authority for `fastdb.payload.v1`, canonical identity, binary layout, build/open, backing, lifetime, errors, and codegen.
+- Stable C ABI under `fastcarto/fastdb/include/fastdb_payload.h`: versioned opaque-handle boundary for every native and WASM projection.
+- C++ RAII facade, Rust raw/safe crates, Python binding, and TypeScript/WASM binding: ergonomic projections over the Core, never separate semantic implementations.
+
+FastDB is a generic data/storage project. Do not add C-Two-specific modules, CRM methods/bindings, providers, bridge derivation, contract assembly, route identity, relay behavior, transport/lease policy, or C-Two codegen surfaces here. C-Two owns the `c-two.contract.v2` super-schema and delegates its nested FastDB value to this library.
 
 ## Build, Test, And Run
 
@@ -50,7 +58,7 @@ Import the package as `fastdb4py` or `import fastdb4py as fdb` in examples and t
 
 `python/fastdb4py/core/` is generated/native binding output. Prefer changes in `python/fastdb4py/` unless the SWIG bridge or C++ API itself must change.
 
-`ColumnEngine` is the columnar/batch path and does not support REF fields. `ObjectEngine` is the object-graph path and supports references. Shared table behavior belongs in `python/fastdb4py/orm/table.py`.
+The existing `ColumnEngine` is a 0.1.x AoS record path with strided field access, not true columnar storage. The accepted 0.2.0 public name is `RecordEngine`, with no compatibility alias. `ObjectEngine` remains the object-graph engine name. Do not extend `ColumnEngine` or add new `columnar.v1` surfaces while migrating. Shared standalone table behavior currently belongs in `python/fastdb4py/orm/table.py`.
 
 ## Backed View Lifetime Model
 
@@ -67,9 +75,15 @@ Do not replace these FastDB-owned semantics with C-Two-owned guard wrappers. Dow
 
 ## Schema And Codegen Boundary
 
-`fastdb.schema.v1`, generic call-db runtime, and generic Python-to-TypeScript feature codegen belong in FastDB. C-Two contract helpers, CRM call-db binding derivation, route fingerprints, relay integration, and CRM-specific TypeScript helper generation do not belong in FastDB.
+`fastdb.payload.v1`, its two profiles, RFC 8785 canonicalization, SHA-256 digest, `fastdb.payload.bin.v1`, generic payload lifetime/backing, and payload-only C++/Rust/Python/TypeScript artifact generation belong in FastDB Core.
 
-The FastDB `fdb` CLI should remain generic. If a feature needs C-Two semantics, put it in C-Two and consume FastDB schema artifacts from there.
+Bindings may offer authoring conveniences, but the final JSON is compiled by Core. They must not parse, normalize, digest, lay out, or decode the portable format independently. All public FastDB type names come from the native algebra (`str` and `wstr`, never a binding-owned `text` type).
+
+C-Two owns the outer `c-two.contract.v2`, CRM binding derivation, route fingerprints, relay integration, lease/lifecycle policy, and final multi-concern code generation through `c3`. FastDB returns an in-memory payload artifact set; it does not write C-Two's destination tree.
+
+The FastDB `fdb` CLI remains a generic diagnostic/payload tool. If a feature needs C-Two semantics, put it in C-Two and consume FastDB through the stable library boundary.
+
+The existing public call-db schemas/modules and Python/TypeScript semantic duplication are migration sources only. Do not add compatibility aliases or new users; remove them before 0.2.0 as required by ADR-0001.
 
 ## Release Process
 
@@ -86,9 +100,13 @@ The PyPI workflow publishes only when `pyproject.toml` changes and the target `p
 ## Working Rules
 
 - Read existing code before changing it.
+- For portable payload work, read the accepted design, ADR, and owner issue before writing a plan or code.
 - Prefer `rg` and `rg --files` for repository searches.
 - Use `apply_patch` for manual edits.
 - Do not revert unrelated user changes in a dirty worktree.
+- FastDB is 0.x: implement the clean target and remove the wrong abstraction rather than preserving zombie compatibility, unless the user explicitly requests a migration window.
+- Record every intentionally limited payload behavior in `docs/issues/` with rationale and closure criteria before merge.
+- Keep the C++ Core as the only parser/canonicalizer/digest/layout/binary authority; language parity is a release gate.
 - Keep Python 3.10 compatibility unless the project explicitly raises the minimum version.
 - Keep PRs scoped by layer: Python lifetime/API changes, C++ storage changes, TypeScript/WASM changes, benchmark experiments, and release metadata should be separate when practical.
-- When C++ binary layout changes, revalidate Python and TypeScript consumers together.
+- When C++ portable binary or ABI behavior changes, revalidate C++, Rust, Python, and TypeScript/WASM consumers together.
