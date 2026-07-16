@@ -4,6 +4,7 @@ set -euo pipefail
 
 readonly REAL_GIT="${FASTDB_TEST_REAL_GIT:?}"
 readonly REMOTE_ROOT="${FASTDB_TEST_REMOTE_ROOT:?}"
+readonly PIN_MISMATCH_NAME="${FASTDB_TEST_PIN_MISMATCH_NAME:-}"
 
 args=("$@")
 checkout=""
@@ -59,7 +60,9 @@ done
 
 if [[ ${is_rev_parse} -eq 1 && -n "${actual_commit}" ]]; then
     resolved_commit="$("${REAL_GIT}" "${args[@]}")"
-    if [[ "${resolved_commit}" == "${actual_commit}" ]]; then
+    if [[ "${name}" == "${PIN_MISMATCH_NAME}" ]]; then
+        printf '%s\n' "${resolved_commit}"
+    elif [[ "${resolved_commit}" == "${actual_commit}" ]]; then
         printf '%s\n' "${expected_commit}"
     else
         printf '%s\n' "${resolved_commit}"

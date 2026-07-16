@@ -35,23 +35,78 @@ fail() {
 
 cleanup() {
     local exit_status=$?
-    trap - EXIT INT TERM
+    local cleanup_failed=0
+
+    trap - EXIT
+    trap '' INT TERM HUP
     set +e
     if [[ -n "${TRANSACTION_ROOT}" && -d "${TRANSACTION_ROOT}" ]]; then
-        if [[ "${TRANSACTION_STATE}" == "active" ]]; then
-            rollback_vendor_write
-        fi
-        rm -rf "${TRANSACTION_ROOT}"
+        case "${TRANSACTION_STATE}" in
+            active)
+                if rollback_vendor_write; then
+                    if rm -rf "${TRANSACTION_ROOT}"; then
+                        TRANSACTION_ROOT=""
+                        TRANSACTION_STATE="inactive"
+                    else
+                        printf 'error: restored vendor snapshots but could not remove transaction workspace: %s\n' \
+                            "${TRANSACTION_ROOT}" >&2
+                        cleanup_failed=1
+                    fi
+                else
+                    cleanup_failed=1
+                fi
+                ;;
+            committed)
+                if rm -rf "${TRANSACTION_ROOT}"; then
+                    TRANSACTION_ROOT=""
+                    TRANSACTION_STATE="inactive"
+                else
+                    printf 'error: committed snapshots remain installed; remove stale transaction workspace manually: %s\n' \
+                        "${TRANSACTION_ROOT}" >&2
+                    cleanup_failed=1
+                fi
+                ;;
+            rolling_back|recovery_required)
+                printf 'error: vendor recovery is incomplete; transaction workspace retained at: %s\n' \
+                    "${TRANSACTION_ROOT}" >&2
+                cleanup_failed=1
+                ;;
+            rolled_back|inactive)
+                if rm -rf "${TRANSACTION_ROOT}"; then
+                    TRANSACTION_ROOT=""
+                    TRANSACTION_STATE="inactive"
+                else
+                    printf 'error: could not remove transaction workspace: %s\n' \
+                        "${TRANSACTION_ROOT}" >&2
+                    cleanup_failed=1
+                fi
+                ;;
+            *)
+                printf 'error: unknown vendor transaction state %s; workspace retained at: %s\n' \
+                    "${TRANSACTION_STATE}" "${TRANSACTION_ROOT}" >&2
+                cleanup_failed=1
+                ;;
+        esac
     fi
     if [[ -n "${TEMP_ROOT}" && -d "${TEMP_ROOT}" ]]; then
         rm -rf "${TEMP_ROOT}"
     fi
+    if [[ ${exit_status} -eq 0 && ${cleanup_failed} -ne 0 ]]; then
+        exit_status=1
+    fi
+    exit "${exit_status}"
+}
+
+signal_exit() {
+    local exit_status="$1"
+    trap '' INT TERM HUP
     exit "${exit_status}"
 }
 
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'signal_exit 130' INT
+trap 'signal_exit 143' TERM
+trap 'signal_exit 129' HUP
 
 if [[ $# -ne 1 ]]; then
     usage
@@ -248,17 +303,86 @@ rollback_vendor_write() {
         return
     fi
 
+    TRANSACTION_STATE="rolling_back"
+
+    local rollback_failed=0
     local name
-    for name in "${INSTALLED_NAMES[@]}"; do
-        rm -rf "${VENDOR_ROOT}/${name}"
-    done
-    for name in "${MOVED_OLD_NAMES[@]}"; do
-        if [[ -e "${TRANSACTION_ROOT}/old/${name}" ]]; then
-            mv "${TRANSACTION_ROOT}/old/${name}" "${VENDOR_ROOT}/${name}"
-        fi
-    done
+    local destination
+    local backup
+    local -a failed_removals=()
+
+    if [[ ${#INSTALLED_NAMES[@]} -ne 0 ]]; then
+        for name in "${INSTALLED_NAMES[@]}"; do
+            destination="${VENDOR_ROOT}/${name}"
+            if [[ ! -e "${destination}" && ! -L "${destination}" ]]; then
+                continue
+            fi
+            if ! rm -rf "${destination}" || \
+                [[ -e "${destination}" || -L "${destination}" ]]; then
+                printf 'error: failed to remove installed %s snapshot during rollback: %s\n' \
+                    "${name}" "${destination}" >&2
+                failed_removals+=("${name}")
+                rollback_failed=1
+            fi
+        done
+    fi
+
+    if [[ ${#MOVED_OLD_NAMES[@]} -ne 0 ]]; then
+        for name in "${MOVED_OLD_NAMES[@]}"; do
+            destination="${VENDOR_ROOT}/${name}"
+            backup="${TRANSACTION_ROOT}/old/${name}"
+
+            local removal_failed=0
+            if [[ ${#failed_removals[@]} -ne 0 ]]; then
+                local failed_name
+                for failed_name in "${failed_removals[@]}"; do
+                    if [[ "${failed_name}" == "${name}" ]]; then
+                        removal_failed=1
+                        break
+                    fi
+                done
+            fi
+            if [[ ${removal_failed} -ne 0 ]]; then
+                printf 'error: retained %s backup because its replacement could not be removed: %s\n' \
+                    "${name}" "${backup}" >&2
+                continue
+            fi
+
+            if [[ ! -e "${backup}" && ! -L "${backup}" ]]; then
+                printf 'error: expected rollback backup is missing for %s: %s\n' \
+                    "${name}" "${backup}" >&2
+                rollback_failed=1
+                continue
+            fi
+            if [[ -e "${destination}" || -L "${destination}" ]]; then
+                printf 'error: cannot restore %s while destination exists; backup retained at: %s\n' \
+                    "${name}" "${backup}" >&2
+                rollback_failed=1
+                continue
+            fi
+            if ! mv "${backup}" "${destination}" || \
+                [[ -e "${backup}" || -L "${backup}" || \
+                    (! -e "${destination}" && ! -L "${destination}") ]]; then
+                printf 'error: failed to restore %s snapshot; backup retained at: %s\n' \
+                    "${name}" "${backup}" >&2
+                rollback_failed=1
+            fi
+        done
+    fi
+
+    if [[ ${rollback_failed} -ne 0 ]]; then
+        TRANSACTION_STATE="recovery_required"
+        printf 'error: vendor rollback incomplete; recover remaining backups from: %s/old\n' \
+            "${TRANSACTION_ROOT}" >&2
+        printf 'error: transaction workspace retained at: %s\n' \
+            "${TRANSACTION_ROOT}" >&2
+        return 1
+    fi
+
+    TRANSACTION_STATE="rolled_back"
     MOVED_OLD_NAMES=()
     INSTALLED_NAMES=()
+    return 0
 }
 
 write_snapshots() {
@@ -276,13 +400,11 @@ write_snapshots() {
             MOVED_OLD_NAMES+=("${name}")
             if ! mv "${VENDOR_ROOT}/${name}" \
                 "${TRANSACTION_ROOT}/old/${name}"; then
-                rollback_vendor_write
                 fail "failed to stage existing ${name} snapshot"
             fi
         fi
         INSTALLED_NAMES+=("${name}")
         if ! mv "${TRANSACTION_ROOT}/new/${name}" "${VENDOR_ROOT}/${name}"; then
-            rollback_vendor_write
             fail "failed to atomically install ${name} snapshot"
         fi
     done
@@ -293,7 +415,13 @@ write_snapshots() {
     TRANSACTION_STATE="committed"
     MOVED_OLD_NAMES=()
     INSTALLED_NAMES=()
-    rm -rf "${TRANSACTION_ROOT}"
+    local cleanup_status=0
+    rm -rf "${TRANSACTION_ROOT}" || cleanup_status=$?
+    if [[ ${cleanup_status} -ne 0 ]]; then
+        printf 'error: snapshots are committed, but backup cleanup failed; new snapshots remain installed and the workspace may require removal: %s\n' \
+            "${TRANSACTION_ROOT}" >&2
+        return "${cleanup_status}"
+    fi
     TRANSACTION_ROOT=""
     TRANSACTION_STATE="inactive"
     printf 'Updated portable payload dependency snapshots.\n'
