@@ -61,3 +61,19 @@ add_fastdb_payload_test(
         fastdb_double_conversion
         fastdb_picosha2
 )
+
+add_fastdb_payload_test(
+    jcs
+    SOURCES payload/test_jcs.cpp
+    EXTRA_LIBRARIES fastdb_payload_core
+)
+target_include_directories(
+    fastdb_payload_test_jcs
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_compile_definitions(
+    fastdb_payload_test_jcs
+    PRIVATE
+        "FASTDB_PAYLOAD_JCS_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/jcs\""
+)

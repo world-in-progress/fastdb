@@ -20,13 +20,75 @@ add_source_by_dir(${PROJECT_DIR} SOURCES)
 file(GLOB_RECURSE EXCLUED_FILES ${PROJECT_DIR}/swig/*.*)
 list(REMOVE_ITEM SOURCES ${EXCLUED_FILES})
 
+file(
+    GLOB_RECURSE FASTDB_PAYLOAD_CORE_SOURCES
+    CONFIGURE_DEPENDS
+    ${PROJECT_DIR}/src/payload/*.cpp
+)
+list(REMOVE_ITEM SOURCES ${FASTDB_PAYLOAD_CORE_SOURCES})
+
+add_library(fastdb_payload_core OBJECT ${FASTDB_PAYLOAD_CORE_SOURCES})
+target_compile_features(fastdb_payload_core PRIVATE cxx_std_17)
+set_target_properties(
+    fastdb_payload_core
+    PROPERTIES
+        CXX_EXTENSIONS OFF
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(
+    fastdb_payload_core
+    PRIVATE
+        ${PROJECT_DIR}/include
+        ${PROJECT_DIR}/src
+)
+target_include_directories(
+    fastdb_payload_core
+    SYSTEM PRIVATE
+        ${LIB_DIR}/yyjson/src
+        ${LIB_DIR}/double-conversion
+        ${LIB_DIR}/picosha2
+)
+target_compile_definitions(
+    fastdb_payload_core
+    PRIVATE
+        FASTDB_PAYLOAD_BUILDING=1
+)
+if(MSVC)
+    target_compile_options(fastdb_payload_core PRIVATE /W4 /WX)
+else()
+    target_compile_options(
+        fastdb_payload_core
+        PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wconversion
+            -Werror
+    )
+endif()
+target_link_libraries(
+    fastdb_payload_core
+    PRIVATE
+        fastdb_yyjson
+        fastdb_double_conversion
+        fastdb_picosha2
+)
+fastdb_apply_sanitizers(fastdb_payload_core)
+
 if(is_emscripten)
     set(BUILD_TYPE STATIC)
 else()
     set(BUILD_TYPE SHARED)
 endif(is_emscripten)
 
-add_library(${PROJECT_NAME} ${BUILD_TYPE} ${SOURCES})
+add_library(
+    ${PROJECT_NAME}
+    ${BUILD_TYPE}
+    ${SOURCES}
+    $<TARGET_OBJECTS:fastdb_payload_core>
+)
 target_link_libraries(
     ${PROJECT_NAME}
     PRIVATE
