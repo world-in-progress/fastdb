@@ -7,10 +7,12 @@
 
 #include <array>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <variant>
 
@@ -75,6 +77,23 @@ bool fails_with(const JsonValue& value, JcsFailure expected) {
     const auto result = jcs_serialize(value);
     const auto* failure = std::get_if<JcsFailure>(&result);
     return failure != nullptr && *failure == expected;
+}
+
+template <typename Difference = std::ptrdiff_t>
+bool rejects_sha256_iterator_overflow() {
+    if constexpr (sizeof(Difference) <= sizeof(std::uint64_t)) {
+        const std::uint8_t byte = 0;
+        const std::uint64_t too_large =
+            static_cast<std::uint64_t>(std::numeric_limits<Difference>::max()) +
+            UINT64_C(1);
+        try {
+            static_cast<void>(sha256(&byte, too_large));
+        } catch (const std::length_error&) {
+            return true;
+        }
+        return false;
+    }
+    return true;
 }
 
 double double_from_bits(std::uint64_t bits) {
@@ -291,6 +310,28 @@ int test_sha256() {
     require(sha256_lower_hex(abc_digest) ==
             "ba7816bf8f01cfea414140de5dae2223"
             "b00361a396177a9cb410ff61f20015ad");
+
+    bool rejected_null = false;
+    try {
+        static_cast<void>(sha256(nullptr, UINT64_C(1)));
+    } catch (const std::invalid_argument&) {
+        rejected_null = true;
+    }
+    require(rejected_null);
+    require(rejects_sha256_iterator_overflow());
+    return EXIT_SUCCESS;
+}
+
+int test_typed_null_string_rejected() {
+    const char* typed_null = nullptr;
+    bool rejected = false;
+    try {
+        const JsonValue invalid{typed_null};
+        static_cast<void>(invalid);
+    } catch (const std::invalid_argument&) {
+        rejected = true;
+    }
+    require(rejected);
     return EXIT_SUCCESS;
 }
 
@@ -303,5 +344,6 @@ int main() {
     require(test_strict_utf8() == EXIT_SUCCESS);
     require(test_rfc_fixtures_and_number_failures() == EXIT_SUCCESS);
     require(test_sha256() == EXIT_SUCCESS);
+    require(test_typed_null_string_rejected() == EXIT_SUCCESS);
     return EXIT_SUCCESS;
 }

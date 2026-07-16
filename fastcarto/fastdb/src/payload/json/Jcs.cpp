@@ -191,34 +191,14 @@ std::optional<JcsFailure> serialize_string(std::string_view value,
     return std::nullopt;
 }
 
-std::optional<JcsFailure> serialize_value(const JsonValue& value,
-                                          std::string& output);
-
-std::optional<JcsFailure> serialize_array(const JsonValue::Array& values,
-                                          std::string& output) {
-    output.push_back('[');
-    bool first = true;
-    for (const JsonValue& value : values) {
-        if (!first) {
-            output.push_back(',');
-        }
-        first = false;
-        if (const auto failure = serialize_value(value, output)) {
-            return failure;
-        }
-    }
-    output.push_back(']');
-    return std::nullopt;
-}
-
 struct MemberReference final {
     const JsonValue::Member* member;
     std::vector<std::uint16_t> sort_key;
 };
 
-std::optional<JcsFailure> serialize_object(const JsonValue::Object& members,
-                                           std::string& output) {
-    std::vector<MemberReference> sorted;
+std::optional<JcsFailure> prepare_object(
+    const JsonValue::Object& members,
+    std::vector<MemberReference>& sorted) {
     sorted.reserve(members.size());
     for (const JsonValue::Member& member : members) {
         auto sort_key = decoded_utf16(member.first);
@@ -237,25 +217,6 @@ std::optional<JcsFailure> serialize_object(const JsonValue::Object& members,
             return JcsFailure::duplicate_member;
         }
     }
-
-    output.push_back('{');
-    bool first = true;
-    for (const MemberReference& reference : sorted) {
-        if (!first) {
-            output.push_back(',');
-        }
-        first = false;
-        if (const auto failure =
-                serialize_string(reference.member->first, output)) {
-            return failure;
-        }
-        output.push_back(':');
-        if (const auto failure =
-                serialize_value(reference.member->second, output)) {
-            return failure;
-        }
-    }
-    output.push_back('}');
     return std::nullopt;
 }
 
@@ -278,27 +239,112 @@ std::optional<JcsFailure> serialize_number(double value,
     return std::nullopt;
 }
 
+enum class FrameKind {
+    value,
+    array,
+    object,
+};
+
+struct SerializationFrame final {
+    explicit SerializationFrame(const JsonValue& initial_value)
+        : value(&initial_value) {}
+
+    FrameKind kind{FrameKind::value};
+    const JsonValue* value;
+    const JsonValue::Array* array{nullptr};
+    std::vector<MemberReference> object_members;
+    std::size_t next{0U};
+};
+
 std::optional<JcsFailure> serialize_value(const JsonValue& value,
                                           std::string& output) {
-    const JsonValue::Storage& storage = value.storage();
-    if (std::holds_alternative<std::nullptr_t>(storage)) {
-        output += "null";
-        return std::nullopt;
+    std::vector<SerializationFrame> frames;
+    frames.emplace_back(value);
+
+    while (!frames.empty()) {
+        SerializationFrame& frame = frames.back();
+        if (frame.kind == FrameKind::value) {
+            const JsonValue::Storage& storage = frame.value->storage();
+            if (std::holds_alternative<std::nullptr_t>(storage)) {
+                output += "null";
+                frames.pop_back();
+                continue;
+            }
+            if (const auto* boolean = std::get_if<bool>(&storage)) {
+                output += *boolean ? "true" : "false";
+                frames.pop_back();
+                continue;
+            }
+            if (const auto* number = std::get_if<double>(&storage)) {
+                const auto failure = serialize_number(*number, output);
+                frames.pop_back();
+                if (failure.has_value()) {
+                    return failure;
+                }
+                continue;
+            }
+            if (const auto* string = std::get_if<std::string>(&storage)) {
+                const auto failure = serialize_string(*string, output);
+                frames.pop_back();
+                if (failure.has_value()) {
+                    return failure;
+                }
+                continue;
+            }
+            if (const auto* array =
+                    std::get_if<JsonValue::Array>(&storage)) {
+                output.push_back('[');
+                frame.kind = FrameKind::array;
+                frame.value = nullptr;
+                frame.array = array;
+                continue;
+            }
+
+            const auto& object = std::get<JsonValue::Object>(storage);
+            if (const auto failure =
+                    prepare_object(object, frame.object_members)) {
+                return failure;
+            }
+            output.push_back('{');
+            frame.kind = FrameKind::object;
+            frame.value = nullptr;
+            continue;
+        }
+
+        if (frame.kind == FrameKind::array) {
+            if (frame.next == frame.array->size()) {
+                output.push_back(']');
+                frames.pop_back();
+                continue;
+            }
+            if (frame.next != 0U) {
+                output.push_back(',');
+            }
+            const JsonValue* const child = &(*frame.array)[frame.next];
+            ++frame.next;
+            frames.emplace_back(*child);
+            continue;
+        }
+
+        if (frame.next == frame.object_members.size()) {
+            output.push_back('}');
+            frames.pop_back();
+            continue;
+        }
+        if (frame.next != 0U) {
+            output.push_back(',');
+        }
+        const MemberReference& reference = frame.object_members[frame.next];
+        ++frame.next;
+        if (const auto failure =
+                serialize_string(reference.member->first, output)) {
+            return failure;
+        }
+        output.push_back(':');
+        frames.emplace_back(reference.member->second);
     }
-    if (const auto* boolean = std::get_if<bool>(&storage)) {
-        output += *boolean ? "true" : "false";
-        return std::nullopt;
-    }
-    if (const auto* number = std::get_if<double>(&storage)) {
-        return serialize_number(*number, output);
-    }
-    if (const auto* string = std::get_if<std::string>(&storage)) {
-        return serialize_string(*string, output);
-    }
-    if (const auto* array = std::get_if<JsonValue::Array>(&storage)) {
-        return serialize_array(*array, output);
-    }
-    return serialize_object(std::get<JsonValue::Object>(storage), output);
+
+    return std::nullopt;
 }
 
 }  // namespace

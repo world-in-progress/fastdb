@@ -77,3 +77,40 @@ target_compile_definitions(
     PRIVATE
         "FASTDB_PAYLOAD_JCS_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/jcs\""
 )
+
+find_package(Threads REQUIRED)
+
+add_executable(
+    fastdb_payload_test_json_depth
+    payload/test_json_depth.cpp
+)
+target_include_directories(
+    fastdb_payload_test_json_depth
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_link_libraries(
+    fastdb_payload_test_json_depth
+    PRIVATE
+        fastdb_payload_core
+        Threads::Threads
+)
+fastdb_apply_sanitizers(fastdb_payload_test_json_depth)
+
+set(FASTDB_JSON_DEPTH_TESTS
+    serialize
+    destroy
+    failure
+    copy_move
+)
+foreach(depth_test IN LISTS FASTDB_JSON_DEPTH_TESTS)
+    add_test(
+        NAME payload.json_depth.${depth_test}
+        COMMAND fastdb_payload_test_json_depth ${depth_test}
+    )
+    set_tests_properties(
+        payload.json_depth.${depth_test}
+        PROPERTIES TIMEOUT 30
+    )
+endforeach()

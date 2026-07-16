@@ -16,28 +16,34 @@ public:
     using Storage =
         std::variant<std::nullptr_t, bool, double, std::string, Array, Object>;
 
-    JsonValue() noexcept : storage_(nullptr) {}
-    JsonValue(std::nullptr_t) noexcept : storage_(nullptr) {}
-    explicit JsonValue(bool value) noexcept : storage_(value) {}
-    explicit JsonValue(double value) noexcept : storage_(value) {}
-    explicit JsonValue(std::string value) : storage_(std::move(value)) {}
-    explicit JsonValue(const char* value) : storage_(std::string(value)) {}
+    JsonValue() noexcept;
+    JsonValue(std::nullptr_t) noexcept;
+    explicit JsonValue(bool value);
+    explicit JsonValue(double value);
+    explicit JsonValue(std::string value);
+    explicit JsonValue(const char* value);
 
-    static JsonValue array(Array values) {
-        return JsonValue(Storage(std::in_place_type<Array>, std::move(values)));
-    }
+    JsonValue(const JsonValue& other) noexcept;
+    JsonValue(JsonValue&& other) noexcept;
+    ~JsonValue();
 
-    static JsonValue object(Object members) {
-        return JsonValue(
-            Storage(std::in_place_type<Object>, std::move(members)));
-    }
+    JsonValue& operator=(const JsonValue& other) noexcept;
+    JsonValue& operator=(JsonValue&& other) noexcept;
 
-    const Storage& storage() const noexcept { return storage_; }
+    static JsonValue array(Array values);
+    static JsonValue object(Object members);
+
+    const Storage& storage() const noexcept;
 
 private:
-    explicit JsonValue(Storage storage) : storage_(std::move(storage)) {}
+    struct Node;
 
-    Storage storage_;
+    explicit JsonValue(Storage storage);
+
+    static Node* retain_node(Node* node) noexcept;
+    static void release_node(Node* node) noexcept;
+
+    Node* node_{nullptr};
 };
 
 }  // namespace fastdb::payload::json
