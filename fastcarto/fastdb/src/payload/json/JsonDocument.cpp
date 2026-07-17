@@ -112,10 +112,25 @@ bool matches_at(const std::uint8_t* source,
            has_value_boundary_after(source, source_size, end);
 }
 
-bool is_symbolic_non_finite(const std::uint8_t* source,
-                            std::uint64_t source_size,
-                            std::uint64_t failure_position) noexcept {
+bool is_symbolic_non_finite_value_failure(
+    const std::uint8_t* source,
+    std::uint64_t source_size,
+    yyjson_read_code code,
+    const char* message,
+    std::uint64_t failure_position) noexcept {
     if (source == nullptr || failure_position > source_size) {
+        return false;
+    }
+    const std::string_view error_message =
+        message == nullptr ? std::string_view{} : std::string_view{message};
+    // yyjson 0.12.0 distinguishes a value position from key/trailing syntax
+    // through these pinned code/message pairs.
+    const bool value_context =
+        (code == YYJSON_READ_ERROR_UNEXPECTED_CHARACTER &&
+         error_message == "unexpected character, expected a JSON value") ||
+        (code == YYJSON_READ_ERROR_INVALID_NUMBER &&
+         error_message == "no digit after sign");
+    if (!value_context) {
         return false;
     }
     constexpr std::uint64_t maximum_token_size = UINT64_C(9);
@@ -405,8 +420,8 @@ Result<JsonDocument> JsonDocument::parse(const std::uint8_t* source,
         if (read_error.code == YYJSON_READ_ERROR_MEMORY_ALLOCATION) {
             return Result<JsonDocument>::failure(allocation_failed());
         }
-        if (is_symbolic_non_finite(
-                source, source_size,
+        if (is_symbolic_non_finite_value_failure(
+                source, source_size, read_error.code, read_error.msg,
                 static_cast<std::uint64_t>(read_error.pos))) {
             return Result<JsonDocument>::failure(
                 invalid_number("symbolic_non_finite"));

@@ -145,6 +145,12 @@ int test_strict_syntax_and_numbers() {
     require(has_error(parse("null true"), FDB_PAYLOAD_E_INVALID_JSON, "",
                       "Invalid JSON source",
                       R"({"reason":"unexpected_content"})"));
+    require(has_error(parse(R"({"x":1,NaN})"),
+                      FDB_PAYLOAD_E_INVALID_JSON, "", "Invalid JSON source",
+                      R"({"reason":"unexpected_character"})"));
+    require(has_error(parse("null NaN"), FDB_PAYLOAD_E_INVALID_JSON, "",
+                      "Invalid JSON source",
+                      R"({"reason":"unexpected_content"})"));
 
     std::string invalid_utf8 = "{\"x\":\"";
     invalid_utf8.push_back(static_cast<char>(0x80));
@@ -166,6 +172,8 @@ int test_strict_syntax_and_numbers() {
              std::string_view{"Infinity"},
              std::string_view{"-Infinity"},
              std::string_view{R"({"value":NaN})"},
+             std::string_view{R"({"value":Infinity})"},
+             std::string_view{R"({"value":-Infinity})"},
          }) {
         require(has_error(parse(symbolic), FDB_PAYLOAD_E_INVALID_NUMBER, "",
                           "JSON number is outside finite binary64 range",
