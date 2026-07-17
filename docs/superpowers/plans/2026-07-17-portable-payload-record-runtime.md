@@ -122,7 +122,7 @@ The public ABI implementation remains in `src/payload/abi/fastdb_payload.cpp` an
 
 ### Stable runtime type IDs
 
-`layout::RuntimeSchema::compile(const spec::CompiledSpec&)` assigns a finite, zero-based `uint32_t` runtime type ID to **every source `TypeNode`**, including nodes owned by unreachable components, without expanding component DAGs. `UINT32_MAX` is permanently reserved as a wire sentinel and is never a type ID. More than `UINT32_MAX` source type nodes fails before layout creation with `RESOURCE_LIMIT` at `/runtime/types`.
+`layout::RuntimeSchema::compile(const spec::CompiledSpec&)` assigns a finite, zero-based `uint32_t` runtime type ID to **every source `TypeNode`**, including nodes owned by unreachable components, without expanding component DAGs. `UINT32_MAX` is permanently reserved as a wire sentinel and is never a type ID. More than `UINT32_MAX` source type nodes fails before layout creation with `BUILDER_RESOURCE_LIMIT` at `/runtime/types`.
 
 The assignment algorithm is normative:
 
@@ -397,6 +397,9 @@ P2 adds these stable errors in addition to `2009 RUNTIME_UNAVAILABLE`:
 
 ```text
 2010 INVALID_TEXT_ENCODING
+2011 BUILDER_LENGTH_OVERFLOW
+2012 BUILDER_OUT_OF_BOUNDS
+2013 BUILDER_RESOURCE_LIMIT
 3009 NON_CANONICAL_BINARY
 3010 INVALID_BINARY_VALUE
 ```
@@ -409,15 +412,16 @@ The mapping is closed before implementation:
 | builder invalid UTF-8 or unpaired UTF-16 | `INVALID_TEXT_ENCODING` |
 | wrong builder operation/fixed-run expectation | `TYPE_MISMATCH` |
 | fixed-run zero count, invalid null/length pointer pair, non-zero flags/reserved fields | `INVALID_ARGUMENT`; undersized versioned C descriptor is `UNSUPPORTED_ABI` |
-| fixed-run span/stride/bitmap arithmetic overflow | `LENGTH_OVERFLOW` |
-| fixed-run declared span too short | `OUT_OF_BOUNDS` |
+| fixed-run span/stride/bitmap arithmetic overflow | `BUILDER_LENGTH_OVERFLOW` |
+| fixed-run declared span too short | `BUILDER_OUT_OF_BOUNDS` |
 | binary bad magic; unsupported major/minor; digest mismatch | existing `INVALID_MAGIC`; `UNSUPPORTED_BINARY_VERSION`; `DIGEST_MISMATCH` |
 | binary checked arithmetic overflow; span outside total bytes; descriptor offset violates required alignment | existing `LENGTH_OVERFLOW`; `OUT_OF_BOUNDS`; `MISALIGNED` |
 | unknown flags/kinds, wrong descriptor inventory/order/owner/type/count/stride/alignment, non-zero reserved/padding/null storage/validity tail, non-canonical NaN, or non-canonical list/pool partition | `NON_CANONICAL_BINARY` |
 | binary Boolean byte other than `0/1` or a logical descriptor value invalid for its declared type but otherwise structurally bounded | `INVALID_BINARY_VALUE` |
 | malformed UTF-8/UTF-16LE during eager or checked lazy validation | `INVALID_TEXT_ENCODING` |
 | graph reference failure in P3 | existing `INVALID_REFERENCE` (unused by record P2) |
-| caller-supplied open/builder work limit exceeded | `RESOURCE_LIMIT` for open/layout and `RESOURCE_LIMIT` for runtime-schema/builder logical limits; compile-source limits remain `SPEC_RESOURCE_LIMIT` |
+| caller-supplied binary-open or layout limit exceeded | existing `RESOURCE_LIMIT` |
+| runtime-schema or builder logical limit exceeded | `BUILDER_RESOURCE_LIMIT`; compile-source limits remain `SPEC_RESOURCE_LIMIT` |
 
 Each failure also freezes its first deterministic RFC 6901 path and canonical expected/actual or reason details in focused fixtures. `fastdb_payload.h`, `symbol_for_code`, C/C++ error parity, and the normative binary document land with the first task that can emit the code; no implementation may substitute a generic `INVALID_ARGUMENT` or `INTERNAL` for malformed caller data.
 
@@ -733,7 +737,9 @@ view kind: SEQUENCE=1, BOOL=2, U8=3, U16=4, U32=5, I32=6,
            U8N=7, U16N=8, F32=9, F64=10, STR=11, WSTR=12,
            BYTES=13, COMPONENT=14, LIST=15, REF=16
 error: RUNTIME_UNAVAILABLE=2009, INVALID_TEXT_ENCODING=2010,
-       NON_CANONICAL_BINARY=3009, INVALID_BINARY_VALUE=3010
+       BUILDER_LENGTH_OVERFLOW=2011, BUILDER_OUT_OF_BOUNDS=2012,
+       BUILDER_RESOURCE_LIMIT=2013, NON_CANONICAL_BINARY=3009,
+       INVALID_BINARY_VALUE=3010
 ```
 
 After P2, record specs report operations compile/query/build/open/view/materialize/invalidate and direct status eligible with reason `record_layout_exact`; object-graph specs remain compile/query and not-evaluated with reason `runtime_slice_not_implemented`. These manifest/capability changes do not alter payload canonical bytes or digest.
@@ -921,7 +927,7 @@ All fallible functions retain the P1 meta-contract: non-null `out_error`, clear 
 
 **Interfaces consumed:** `CompiledSpec::resolved()`, stable entry/component/field indexes, `TypeNode` bounds/nullability, shared `JsonPointer`, `Error`, and `Result`.
 
-**Interfaces produced:** the exact `ValueNode`, `BuilderLimits`, `FixedRun`, `LogicalPayload`, and internal `PayloadBuilder` contract above; reusable strict UTF-8/UTF-16 validation; exact binary64 finite/range validation seam for later quantization; additive error constants/symbols `2009 RUNTIME_UNAVAILABLE` and `2010 INVALID_TEXT_ENCODING`.
+**Interfaces produced:** the exact `ValueNode`, `BuilderLimits`, `FixedRun`, `LogicalPayload`, and internal `PayloadBuilder` contract above; reusable strict UTF-8/UTF-16 validation; exact binary64 finite/range validation seam for later quantization; additive error constants/symbols `2009 RUNTIME_UNAVAILABLE`, `2010 INVALID_TEXT_ENCODING`, `2011 BUILDER_LENGTH_OVERFLOW`, `2012 BUILDER_OUT_OF_BOUNDS`, and `2013 BUILDER_RESOURCE_LIMIT`.
 
 - [ ] Add RED tests that compile explicit record specs and exercise `PayloadBuilder` directly:
 
@@ -935,6 +941,7 @@ All fallible functions retain the P1 meta-contract: non-null `out_error`, clear 
   - entry authoring out of order while preserving stable entry roots;
   - duplicate entry, wrong cardinality count, wrong typed operation, invalid null, invalid Boolean byte, non-finite/out-of-range normalized value, invalid UTF-8, unpaired UTF-16 surrogate, missing entry/field, partial list, and mutation/re-freeze after successful freeze;
   - exact code/path/details for each failure and no arena mutation on a failed operation;
+  - exact builder-domain codes: fixed-run arithmetic overflow is `2011 BUILDER_LENGTH_OVERFLOW`, a short declared fixed-run span is `2012 BUILDER_OUT_OF_BOUNDS`, and runtime-schema/builder logical limits are `2013 BUILDER_RESOURCE_LIMIT`; none may reuse binary/open `3003 LENGTH_OVERFLOW`, `3004 OUT_OF_BOUNDS`, or `3008 RESOURCE_LIMIT`;
   - exact default limits and deterministic node/frame/root/text/wtext/opaque logical-byte charges, rejection immediately before allocation growth, and success when only the controlling limit is raised;
   - a 20,000-level nested-list build/freeze/release and high-fan-out component/list arena teardown without recursion;
   - `object_graph.v1` builder creation fails with `2009 RUNTIME_UNAVAILABLE`, not `PROFILE_VIOLATION` and not a partial builder.
@@ -1059,7 +1066,7 @@ All fallible functions retain the P1 meta-contract: non-null `out_error`, clear 
 
   Implement header/directory/fixed scalar writes in ascending offset order with bounded local buffers. Do not build a hidden full image inside `encode_record`.
 - [ ] Implement the first `open_record` as a byte-reading validator for the complete header/directory contract and the implemented fixed scalar slots. It returns a private immutable `PayloadIndex`; it never exposes a partially validated object.
-- [ ] Write the normative Markdown document in the same commit. Include the zero-based all-source runtime-ID algorithm, every offset, the seven-kind field matrix/count unit, region order/zero-length boundary, component/validity rule, pool-relative/list-relative descriptor and exact partition rule, numeric canonicality/error mapping, overflow/alignment rule, open work accounting, resource-limit behavior, and forward-compatibility rejection stated in this plan; link the design/ADR/issues and golden index.
+- [ ] Write the normative Markdown document in the same commit. Include the zero-based all-source runtime-ID algorithm, every offset, the seven-kind field matrix/count unit, region order/zero-length boundary, component/validity rule, pool-relative/list-relative descriptor and exact partition rule, numeric canonicality/error mapping, overflow/alignment rule, open work accounting, resource-limit behavior, and forward-compatibility rejection stated in this plan; explicitly keep builder/plan `2011`-`2013` failures separate from binary/layout/open `3003`, `3004`, and `3008`; link the design/ADR/issues and golden index.
 - [ ] Update packaging so the sdist includes `schemas/fastdb.payload.bin.v1.md`; inspect the archive rather than trusting the glob.
 - [ ] Update Issue 0002: the wire contract and initial encoder/open exist, but variable pools, lists, public plan/backing/owner/views, complete C ABI, and full P2 remain open.
 - [ ] Run focused/sanitizer suites, decode and hash every golden, validate the binary index as strict duplicate-free JSON, resolve Markdown links, and run `git diff --check`.
