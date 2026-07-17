@@ -586,6 +586,132 @@ int test_fixed_run_limits_precede_scratch_allocation() {
     return EXIT_SUCCESS;
 }
 
+int test_fixed_run_exact_final_frame_accounting() {
+    const auto limits_at = [](std::uint64_t maximum) {
+        BuilderLimits limits = default_builder_limits();
+        limits.max_total_builder_bytes = maximum;
+        return limits;
+    };
+    const std::array<std::uint8_t, 3> values{{UINT8_C(1), UINT8_C(2),
+                                               UINT8_C(3)}};
+    const FixedRun two{values.data(), UINT64_C(2), UINT64_C(2), UINT64_C(0),
+                       nullptr, UINT64_C(0), UINT64_C(0)};
+    const FixedRun three{values.data(), UINT64_C(3), UINT64_C(3),
+                         UINT64_C(0), nullptr, UINT64_C(0), UINT64_C(0)};
+    const std::string many_u8 =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"u8"}}],"components":[]})";
+
+    auto exact_complete_spec = compile(many_u8);
+    require(exact_complete_spec.has_value());
+    auto exact_complete = PayloadBuilder::create(
+        std::move(exact_complete_spec).value(), limits_at(UINT64_C(200)));
+    require(exact_complete.has_value());
+    require(exact_complete.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    const auto exact_complete_result = exact_complete.value().push_fixed_run(two);
+    require(exact_complete_result.has_value(),
+            exact_complete_result.has_value()
+                ? std::string_view{}
+                : exact_complete_result.error().details_json());
+    require(exact_complete.value().freeze().has_value());
+
+    auto limited_complete_spec = compile(many_u8);
+    require(limited_complete_spec.has_value());
+    auto limited_complete = PayloadBuilder::create(
+        std::move(limited_complete_spec).value(), limits_at(UINT64_C(199)));
+    require(limited_complete.has_value());
+    require(limited_complete.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(exact_error(
+        limited_complete.value().push_fixed_run(two),
+        FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, "/entries/v/0",
+        R"({"actual":"200","limit":"199","resource":"total_builder_bytes"})"));
+    require(exact_error(
+        limited_complete.value().push_fixed_run(two),
+        FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, "/entries/v/0",
+        R"({"actual":"200","limit":"199","resource":"total_builder_bytes"})"));
+
+    auto exact_partial_spec = compile(many_u8);
+    require(exact_partial_spec.has_value());
+    auto exact_partial = PayloadBuilder::create(
+        std::move(exact_partial_spec).value(), limits_at(UINT64_C(264)));
+    require(exact_partial.has_value());
+    require(exact_partial.value()
+                .begin_entry(UINT32_C(0), UINT64_C(3))
+                .has_value());
+    require(exact_partial.value().push_fixed_run(two).has_value());
+    require(exact_partial.value().push_u8(UINT8_C(3)).has_value());
+    require(exact_partial.value().freeze().has_value());
+
+    auto limited_partial_spec = compile(many_u8);
+    require(limited_partial_spec.has_value());
+    auto limited_partial = PayloadBuilder::create(
+        std::move(limited_partial_spec).value(), limits_at(UINT64_C(263)));
+    require(limited_partial.has_value());
+    require(limited_partial.value()
+                .begin_entry(UINT32_C(0), UINT64_C(3))
+                .has_value());
+    require(exact_error(
+        limited_partial.value().push_fixed_run(two),
+        FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, "/entries/v/0",
+        R"({"actual":"264","limit":"263","resource":"total_builder_bytes"})"));
+    require(exact_error(
+        limited_partial.value().push_fixed_run(two),
+        FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, "/entries/v/0",
+        R"({"actual":"264","limit":"263","resource":"total_builder_bytes"})"));
+
+    const std::string list_u8 =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})";
+    auto exact_nested_spec = compile(list_u8);
+    require(exact_nested_spec.has_value());
+    auto exact_nested = PayloadBuilder::create(
+        std::move(exact_nested_spec).value(), limits_at(UINT64_C(328)));
+    require(exact_nested.has_value());
+    require(exact_nested.value()
+                .begin_entry(UINT32_C(0), UINT64_C(1))
+                .has_value());
+    require(exact_nested.value().begin_list(UINT64_C(3)).has_value());
+    const auto exact_nested_result = exact_nested.value().push_fixed_run(three);
+    require(exact_nested_result.has_value(),
+            exact_nested_result.has_value()
+                ? std::string_view{}
+                : exact_nested_result.error().details_json());
+    require(exact_nested.value().freeze().has_value());
+
+    auto limited_nested_spec = compile(list_u8);
+    require(limited_nested_spec.has_value());
+    auto limited_nested = PayloadBuilder::create(
+        std::move(limited_nested_spec).value(), limits_at(UINT64_C(327)));
+    require(limited_nested.has_value());
+    require(limited_nested.value()
+                .begin_entry(UINT32_C(0), UINT64_C(1))
+                .has_value());
+    require(limited_nested.value().begin_list(UINT64_C(3)).has_value());
+    require(exact_error(
+        limited_nested.value().push_fixed_run(three),
+        FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, "/entries/v/0",
+        R"({"actual":"328","limit":"327","resource":"total_builder_bytes"})"));
+    require(exact_error(
+        limited_nested.value().push_fixed_run(three),
+        FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, "/entries/v/0",
+        R"({"actual":"328","limit":"327","resource":"total_builder_bytes"})"));
+
+    auto exceeded_spec = compile(many_u8);
+    require(exceeded_spec.has_value());
+    auto exceeded = PayloadBuilder::create(std::move(exceeded_spec).value());
+    require(exceeded.has_value());
+    require(exceeded.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(exact_error(
+        exceeded.value().push_fixed_run(three), FDB_PAYLOAD_E_TYPE_MISMATCH,
+        "/entries/v/1",
+        R"({"reason":"fixed_run_expectation_exhausted"})"));
+    return EXIT_SUCCESS;
+}
+
 template <typename Operation>
 int require_logical_limit_precedes_scratch(Operation&& operation,
                                             std::string_view path,
@@ -1484,13 +1610,14 @@ int test_deep_iterative_builder_and_runtime_unavailable() {
 }  // namespace
 
 int main() {
-    const std::array<int (*)(), 15> tests{{
+    const std::array<int (*)(), 16> tests{{
         test_empty_and_default_limits,
         test_shared_text_encoding_helpers,
         test_scalars_text_and_out_of_order_entries,
         test_record_batch_components_and_lists,
         test_fixed_runs_and_transactional_failures,
         test_fixed_run_limits_precede_scratch_allocation,
+        test_fixed_run_exact_final_frame_accounting,
         test_all_mutations_preflight_before_scratch_allocation,
         test_all_fixed_kinds_match_individual_authoring,
         test_normalized_boundaries_are_transactional,

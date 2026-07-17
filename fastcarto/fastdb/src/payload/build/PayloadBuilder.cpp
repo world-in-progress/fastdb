@@ -213,10 +213,15 @@ void simulate_leaf(std::vector<ExpectationFrame>& frames,
     close_completed(frames, path);
 }
 
-std::uint64_t post_frame_count_after_value(
-    const std::vector<ExpectationFrame>& frames) noexcept {
+std::uint64_t post_frame_count_after_values(
+    const std::vector<ExpectationFrame>& frames,
+    std::uint64_t consumed) noexcept {
     std::size_t post_count = frames.size();
-    if (frames.back().remaining != UINT64_C(1)) {
+    if (frames.empty() || consumed == UINT64_C(0) ||
+        consumed > frames.back().remaining) {
+        return static_cast<std::uint64_t>(post_count);
+    }
+    if (consumed < frames.back().remaining) {
         return static_cast<std::uint64_t>(post_count);
     }
     --post_count;
@@ -575,7 +580,8 @@ struct PayloadBuilder::State final {
                           std::uint64_t bits_or_offset,
                           std::uint64_t byte_length) {
         auto growth = check_growth(
-            UINT64_C(1), byte_length, post_frame_count_after_value(frames),
+            UINT64_C(1), byte_length,
+            post_frame_count_after_values(frames, UINT64_C(1)),
             current_path());
         if (!growth.has_value()) {
             return growth;
@@ -1032,7 +1038,7 @@ Result<void> PayloadBuilder::push_wstr(const std::uint16_t* units,
         }
         auto growth = state.check_growth(
             UINT64_C(1), byte_count,
-            post_frame_count_after_value(state.frames),
+            post_frame_count_after_values(state.frames, UINT64_C(1)),
             state.current_path());
         if (!growth.has_value()) {
             return growth;
@@ -1103,7 +1109,7 @@ Result<void> PayloadBuilder::begin_component_impl() {
     const std::uint64_t post_frames =
         has_fields
             ? static_cast<std::uint64_t>(state.frames.size()) + UINT64_C(1)
-            : post_frame_count_after_value(state.frames);
+            : post_frame_count_after_values(state.frames, UINT64_C(1));
     auto growth = state.check_growth(
         UINT64_C(1), UINT64_C(0), post_frames, state.current_path());
     if (!growth.has_value()) {
@@ -1182,7 +1188,7 @@ Result<void> PayloadBuilder::begin_list_impl(std::uint64_t item_count) {
     const std::uint64_t post_frames =
         has_items
             ? static_cast<std::uint64_t>(state.frames.size()) + UINT64_C(1)
-            : post_frame_count_after_value(state.frames);
+            : post_frame_count_after_values(state.frames, UINT64_C(1));
     auto growth = state.check_growth(
         UINT64_C(1), UINT64_C(0), post_frames, state.current_path());
     if (!growth.has_value()) {
@@ -1356,8 +1362,9 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
     }
     std::uint64_t post_frame_count =
         static_cast<std::uint64_t>(state.frames.size());
-    if (run.count == state.frames.back().remaining) {
-        post_frame_count = post_frame_count_after_value(state.frames);
+    if (run.count <= state.frames.back().remaining) {
+        post_frame_count =
+            post_frame_count_after_values(state.frames, run.count);
     }
     auto growth = state.check_growth(run.count, UINT64_C(0),
                                      post_frame_count,
