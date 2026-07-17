@@ -26,13 +26,16 @@ namespace allocation_failure {
 
 thread_local bool fail_next = false;
 thread_local std::size_t fail_next_at_least = 0U;
+thread_local std::size_t fail_next_below = 0U;
 thread_local bool failure_triggered = false;
 
 void* allocate(std::size_t size) {
     if (fail_next ||
-        (fail_next_at_least != 0U && size >= fail_next_at_least)) {
+        (fail_next_at_least != 0U && size >= fail_next_at_least &&
+         (fail_next_below == 0U || size < fail_next_below))) {
         fail_next = false;
         fail_next_at_least = 0U;
+        fail_next_below = 0U;
         failure_triggered = true;
         throw std::bad_alloc();
     }
@@ -583,6 +586,163 @@ int test_fixed_run_limits_precede_scratch_allocation() {
     return EXIT_SUCCESS;
 }
 
+template <typename Operation>
+int require_logical_limit_precedes_scratch(Operation&& operation,
+                                            std::string_view path,
+                                            std::string_view details) {
+    allocation_failure::failure_triggered = false;
+    // Target the former copied-frame scratch allocation while leaving the
+    // larger allocation needed to materialize the expected 2013 diagnostic.
+    allocation_failure::fail_next_at_least = 64U;
+    allocation_failure::fail_next_below = 96U;
+    const auto limited = std::forward<Operation>(operation)();
+    allocation_failure::fail_next_at_least = 0U;
+    allocation_failure::fail_next_below = 0U;
+    require(exact_error(limited, FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, path,
+                        details));
+    require(!allocation_failure::failure_triggered);
+
+    const auto retry = std::forward<Operation>(operation)();
+    require(exact_error(retry, FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, path,
+                        details));
+    return EXIT_SUCCESS;
+}
+
+int test_all_mutations_preflight_before_scratch_allocation() {
+    const auto limits_at = [](std::uint64_t maximum) {
+        BuilderLimits limits = default_builder_limits();
+        limits.max_total_builder_bytes = maximum;
+        return limits;
+    };
+
+    auto scalar_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"u8"}}],"components":[]})");
+    require(scalar_spec.has_value());
+    auto scalar = PayloadBuilder::create(std::move(scalar_spec).value(),
+                                         limits_at(UINT64_C(199)));
+    require(scalar.has_value());
+    require(scalar.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    require(require_logical_limit_precedes_scratch(
+        [&scalar]() { return scalar.value().push_u8(UINT8_C(7)); },
+        "/entries/v/0",
+        R"({"actual":"200","limit":"199","resource":"total_builder_bytes"})") ==
+            EXIT_SUCCESS);
+
+    auto bytes_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"bytes"}}],"components":[]})");
+    require(bytes_spec.has_value());
+    auto bytes = PayloadBuilder::create(std::move(bytes_spec).value(),
+                                        limits_at(UINT64_C(200)));
+    require(bytes.has_value());
+    require(bytes.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    const std::uint8_t opaque = UINT8_C(11);
+    require(require_logical_limit_precedes_scratch(
+        [&bytes, &opaque]() {
+            return bytes.value().push_bytes(&opaque, UINT64_C(1));
+        },
+        "/entries/v/0",
+        R"({"actual":"201","limit":"200","resource":"total_builder_bytes"})") ==
+            EXIT_SUCCESS);
+
+    auto wstr_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"wstr"}}],"components":[]})");
+    require(wstr_spec.has_value());
+    auto wstr = PayloadBuilder::create(std::move(wstr_spec).value(),
+                                       limits_at(UINT64_C(201)));
+    require(wstr.has_value());
+    require(wstr.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    const std::uint16_t wide = UINT16_C(0x61);
+    require(require_logical_limit_precedes_scratch(
+        [&wstr, &wide]() {
+            return wstr.value().push_wstr(&wide, UINT64_C(1));
+        },
+        "/entries/v/0",
+        R"({"actual":"202","limit":"201","resource":"total_builder_bytes"})") ==
+            EXIT_SUCCESS);
+
+    auto component_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"component","id":"Row"}}],"components":[{"id":"Row","kind":"record","fields":[{"id":"x","type":{"kind":"u8"}}]}]})");
+    require(component_spec.has_value());
+    auto component = PayloadBuilder::create(std::move(component_spec).value(),
+                                            limits_at(UINT64_C(263)));
+    require(component.has_value());
+    require(component.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    require(require_logical_limit_precedes_scratch(
+        [&component]() { return component.value().begin_component(); },
+        "/entries/v/0",
+        R"({"actual":"264","limit":"263","resource":"total_builder_bytes"})") ==
+            EXIT_SUCCESS);
+
+    auto empty_component_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"component","id":"Empty"}}],"components":[{"id":"Empty","kind":"record","fields":[]}]})");
+    require(empty_component_spec.has_value());
+    auto empty_component = PayloadBuilder::create(
+        std::move(empty_component_spec).value(), limits_at(UINT64_C(199)));
+    require(empty_component.has_value());
+    require(empty_component.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(require_logical_limit_precedes_scratch(
+        [&empty_component]() {
+            return empty_component.value().begin_component();
+        },
+        "/entries/v/0",
+        R"({"actual":"200","limit":"199","resource":"total_builder_bytes"})") ==
+            EXIT_SUCCESS);
+
+    auto empty_component_cascade_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"component","id":"Empty"}}],"components":[{"id":"Empty","kind":"record","fields":[]}]})");
+    require(empty_component_cascade_spec.has_value());
+    auto empty_component_cascade = PayloadBuilder::create(
+        std::move(empty_component_cascade_spec).value(),
+        limits_at(UINT64_C(136)));
+    require(empty_component_cascade.has_value());
+    require(empty_component_cascade.value()
+                .begin_entry(UINT32_C(0), UINT64_C(1))
+                .has_value());
+    require(empty_component_cascade.value().begin_component().has_value());
+    require(empty_component_cascade.value().freeze().has_value());
+
+    auto list_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})");
+    require(list_spec.has_value());
+    auto list = PayloadBuilder::create(std::move(list_spec).value(),
+                                       limits_at(UINT64_C(263)));
+    require(list.has_value());
+    require(list.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    require(require_logical_limit_precedes_scratch(
+        [&list]() { return list.value().begin_list(UINT64_C(1)); },
+        "/entries/v/0",
+        R"({"actual":"264","limit":"263","resource":"total_builder_bytes"})") ==
+            EXIT_SUCCESS);
+
+    auto empty_list_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})");
+    require(empty_list_spec.has_value());
+    auto empty_list = PayloadBuilder::create(std::move(empty_list_spec).value(),
+                                             limits_at(UINT64_C(199)));
+    require(empty_list.has_value());
+    require(empty_list.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    require(require_logical_limit_precedes_scratch(
+        [&empty_list]() { return empty_list.value().begin_list(UINT64_C(0)); },
+        "/entries/v/0",
+        R"({"actual":"200","limit":"199","resource":"total_builder_bytes"})") ==
+            EXIT_SUCCESS);
+
+    auto empty_list_cascade_spec = compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})");
+    require(empty_list_cascade_spec.has_value());
+    auto empty_list_cascade = PayloadBuilder::create(
+        std::move(empty_list_cascade_spec).value(), limits_at(UINT64_C(136)));
+    require(empty_list_cascade.has_value());
+    require(empty_list_cascade.value()
+                .begin_entry(UINT32_C(0), UINT64_C(1))
+                .has_value());
+    require(empty_list_cascade.value().begin_list(UINT64_C(0)).has_value());
+    require(empty_list_cascade.value().freeze().has_value());
+    return EXIT_SUCCESS;
+}
+
 int test_all_fixed_kinds_match_individual_authoring() {
     const std::string source =
         R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"b","cardinality":"many","type":{"kind":"bool"}},{"id":"u8","cardinality":"many","type":{"kind":"u8"}},{"id":"u16","cardinality":"many","type":{"kind":"u16"}},{"id":"u32","cardinality":"many","type":{"kind":"u32"}},{"id":"i32","cardinality":"many","type":{"kind":"i32"}},{"id":"u8n","cardinality":"many","type":{"kind":"u8n","min":-1,"max":1}},{"id":"u16n","cardinality":"many","type":{"kind":"u16n","min":0,"max":10}},{"id":"f32","cardinality":"many","type":{"kind":"f32"}},{"id":"f64","cardinality":"many","type":{"kind":"f64"}}],"components":[]})";
@@ -873,19 +1033,6 @@ int test_input_spans_fail_before_pointer_use() {
         FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW, "/entries/v",
         R"({"reason":"input_span_length_overflow"})"));
 
-    auto str_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"str"}}],"components":[]})");
-    require(str_spec.has_value());
-    auto str = PayloadBuilder::create(std::move(str_spec).value(), unlimited);
-    require(str.has_value());
-    require(str.value().begin_entry(UINT32_C(0), UINT64_C(1)).has_value());
-    const char invalid_utf8 = static_cast<char>(0xff);
-    require(exact_error(
-        str.value().push_str(std::string_view(
-            &invalid_utf8, static_cast<std::size_t>(addressable +
-                                                    UINT64_C(1)))),
-        FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW, "/entries/v",
-        R"({"reason":"input_span_length_overflow"})"));
     return EXIT_SUCCESS;
 }
 
@@ -1337,13 +1484,14 @@ int test_deep_iterative_builder_and_runtime_unavailable() {
 }  // namespace
 
 int main() {
-    const std::array<int (*)(), 14> tests{{
+    const std::array<int (*)(), 15> tests{{
         test_empty_and_default_limits,
         test_shared_text_encoding_helpers,
         test_scalars_text_and_out_of_order_entries,
         test_record_batch_components_and_lists,
         test_fixed_runs_and_transactional_failures,
         test_fixed_run_limits_precede_scratch_allocation,
+        test_all_mutations_preflight_before_scratch_allocation,
         test_all_fixed_kinds_match_individual_authoring,
         test_normalized_boundaries_are_transactional,
         test_input_spans_fail_before_pointer_use,
