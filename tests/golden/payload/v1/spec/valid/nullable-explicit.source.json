@@ -1,0 +1,31 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {
+      "id": "items",
+      "cardinality": "many",
+      "type": {
+        "kind": "list",
+        "nullable": false,
+        "items": {"kind": "component", "id": "Thing", "nullable": false}
+      }
+    }
+  ],
+  "components": [
+    {
+      "id": "Thing",
+      "kind": "record",
+      "fields": [
+        {
+          "id": "names",
+          "type": {
+            "kind": "list",
+            "nullable": false,
+            "items": {"kind": "str", "nullable": false}
+          }
+        }
+      ]
+    }
+  ]
+}

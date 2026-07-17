@@ -95,6 +95,23 @@ target_compile_definitions(
         "FASTDB_PAYLOAD_SCHEMA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../../schemas\""
 )
 
+add_fastdb_payload_test(
+    spec_parse
+    SOURCES payload/test_spec_parse.cpp
+    EXTRA_LIBRARIES fastdb_payload_core
+)
+target_include_directories(
+    fastdb_payload_test_spec_parse
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_compile_definitions(
+    fastdb_payload_test_spec_parse
+    PRIVATE
+        "FASTDB_PAYLOAD_SPEC_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/spec\""
+)
+
 find_package(Threads REQUIRED)
 
 add_fastdb_payload_test(
