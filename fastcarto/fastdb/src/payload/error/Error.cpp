@@ -115,13 +115,19 @@ Error Error::from_details(std::uint32_t code,
                           json::JsonValue details) {
     const std::string_view symbol = symbol_for_code(code);
     if (symbol.empty()) {
-        return internal_details_failure();
+        return internal_diagnostic_failure();
+    }
+
+    const auto serialized_message =
+        json::jcs_serialize(json::JsonValue{message});
+    if (!std::holds_alternative<std::string>(serialized_message)) {
+        return internal_diagnostic_failure();
     }
 
     auto serialized = json::jcs_serialize(details);
     auto* const details_json = std::get_if<std::string>(&serialized);
     if (details_json == nullptr) {
-        return internal_details_failure();
+        return internal_diagnostic_failure();
     }
 
     return Error(code, std::string(symbol), path.value(), std::move(message),
@@ -161,9 +167,9 @@ Error::Error(std::uint32_t code,
       message_(std::move(message)),
       details_json_(std::move(details_json)) {}
 
-Error Error::internal_details_failure() {
+Error Error::internal_diagnostic_failure() {
     return Error(FDB_PAYLOAD_E_INTERNAL, "INTERNAL", {},
-                 "Core error details canonicalization failed", "{}");
+                 "Core error diagnostic validation failed", "{}");
 }
 
 }  // namespace fastdb::payload::error

@@ -94,7 +94,7 @@ These are implementation-gate observations, not post-0.2.0 deferrals.
 
 | Slice | Status | Required closure evidence |
 |---|---|---|
-| P1. Core contract compiler/query ABI | In progress: Tasks 1-3 primitives and ABI base reviewed | Complete source algebra; strict duplicate-aware compile; normalization; resolved indexes/manifest/capabilities; complete spec compile/query C ABI; C++ facade; committed deep-object/DAG regressions; golden/fuzz/native CI |
+| P1. Core contract compiler/query ABI | In progress: Tasks 1-2 reviewed; Task 3 ABI base implemented | Complete source algebra; strict duplicate-aware compile; normalization; resolved indexes/manifest/capabilities; complete spec compile/query C ABI; C++ facade; committed deep-object/DAG regressions; golden/fuzz/native CI |
 | P2. Record binary/runtime/lifetime | Blocked on P1 | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |

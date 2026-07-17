@@ -21,6 +21,7 @@
 #include <thread>
 #include <type_traits>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -80,6 +81,13 @@ struct ErrorCase final {
     std::uint32_t code;
     std::string_view symbol;
 };
+
+std::atomic<std::uint32_t> saturation_destroy_calls{UINT32_C(0)};
+
+void record_saturation_destroy(fdb_payload_v1_error_t*) noexcept {
+    saturation_destroy_calls.fetch_add(UINT32_C(1),
+                                       std::memory_order_relaxed);
+}
 
 constexpr ErrorCase error_cases[] = {
     {FDB_PAYLOAD_E_INVALID_JSON, "INVALID_JSON"},
@@ -198,6 +206,35 @@ int test_owned_error_fields_are_exact_and_canonical() {
             "entry identifier is invalid");
     require(error_bytes(handle, fdb_payload_v1_error_details_json) ==
             "{\"a\":\"first\",\"z\":2}");
+    fdb_payload_v1_error_release(handle);
+    return EXIT_SUCCESS;
+}
+
+int test_invalid_message_fails_closed_to_valid_internal_error() {
+    Error value = Error::from_details(
+        FDB_PAYLOAD_E_INVALID_TYPE, JsonPointer{}.append("message"),
+        std::string("\xED\xA0\x80", 3),
+        JsonValue::object({JsonValue::Member{"ignored", JsonValue{true}}}));
+
+    require(value.code() == FDB_PAYLOAD_E_INTERNAL);
+    require(value.symbol() == "INTERNAL");
+    require(value.path().empty());
+    require(value.message() == "Core error diagnostic validation failed");
+    require(value.details_json() == "{}");
+
+    const auto serialized_message =
+        fastdb::payload::json::jcs_serialize(
+            JsonValue{std::string(value.message())});
+    require(std::holds_alternative<std::string>(serialized_message));
+
+    fdb_payload_v1_error_t* handle = make_error(std::move(value));
+    require(handle != nullptr);
+    require(fdb_payload_v1_error_code(handle) == FDB_PAYLOAD_E_INTERNAL);
+    require(error_bytes(handle, fdb_payload_v1_error_symbol) == "INTERNAL");
+    require(error_bytes(handle, fdb_payload_v1_error_path).empty());
+    require(error_bytes(handle, fdb_payload_v1_error_message) ==
+            "Core error diagnostic validation failed");
+    require(error_bytes(handle, fdb_payload_v1_error_details_json) == "{}");
     fdb_payload_v1_error_release(handle);
     return EXIT_SUCCESS;
 }
@@ -355,6 +392,32 @@ int test_error_lifetime_is_atomic_and_null_safe() {
     return EXIT_SUCCESS;
 }
 
+int test_max_minus_one_retain_saturates_and_release_is_a_noop() {
+    constexpr std::uint64_t immortal =
+        std::numeric_limits<std::uint64_t>::max();
+    saturation_destroy_calls.store(UINT32_C(0), std::memory_order_relaxed);
+    fdb_payload_v1_error_t probe{
+        immortal - UINT64_C(1), FDB_PAYLOAD_E_INTERNAL, {}, {}, {}, {},
+        record_saturation_destroy,
+    };
+
+    fdb_payload_v1_error_retain(&probe);
+    require(probe.references.load(std::memory_order_relaxed) == immortal);
+
+    fdb_payload_v1_error_release(&probe);
+    require(probe.references.load(std::memory_order_relaxed) == immortal);
+    require(saturation_destroy_calls.load(std::memory_order_relaxed) ==
+            UINT32_C(0));
+
+    fdb_payload_v1_error_retain(&probe);
+    require(probe.references.load(std::memory_order_relaxed) == immortal);
+    fdb_payload_v1_error_release(&probe);
+    require(probe.references.load(std::memory_order_relaxed) == immortal);
+    require(saturation_destroy_calls.load(std::memory_order_relaxed) ==
+            UINT32_C(0));
+    return EXIT_SUCCESS;
+}
+
 int test_exception_barrier_maps_all_categories() {
     fdb_payload_v1_error_t* error = nullptr;
     fdb_payload_v1_status_t status = guard_status(
@@ -440,7 +503,11 @@ int test_exception_barrier_maps_all_categories() {
 
 int main() {
     require(test_every_stable_error_symbol() == EXIT_SUCCESS);
+    require(test_max_minus_one_retain_saturates_and_release_is_a_noop() ==
+            EXIT_SUCCESS);
     require(test_owned_error_fields_are_exact_and_canonical() == EXIT_SUCCESS);
+    require(test_invalid_message_fails_closed_to_valid_internal_error() ==
+            EXIT_SUCCESS);
     require(test_jcs_failures_have_stable_codes_and_bad_details_fail_closed() ==
             EXIT_SUCCESS);
     require(test_result_contains_exactly_one_branch() == EXIT_SUCCESS);

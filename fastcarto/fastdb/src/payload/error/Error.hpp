@@ -42,7 +42,7 @@ private:
           std::string message,
           std::string details_json);
 
-    static Error internal_details_failure();
+    static Error internal_diagnostic_failure();
 
     std::uint32_t code_;
     std::string symbol_;
