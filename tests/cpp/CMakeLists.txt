@@ -80,6 +80,39 @@ target_compile_definitions(
 
 find_package(Threads REQUIRED)
 
+add_fastdb_payload_test(
+    c_header_smoke
+    SOURCES payload/test_c_header_smoke.c
+    EXTRA_LIBRARIES fastdb_payload_core
+)
+target_include_directories(
+    fastdb_payload_test_c_header_smoke
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+)
+set_target_properties(
+    fastdb_payload_test_c_header_smoke
+    PROPERTIES
+        C_EXTENSIONS OFF
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON
+        LINKER_LANGUAGE CXX
+)
+
+add_fastdb_payload_test(
+    error
+    SOURCES payload/test_error.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_error
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+
 add_executable(
     fastdb_payload_test_json_depth
     payload/test_json_depth.cpp
