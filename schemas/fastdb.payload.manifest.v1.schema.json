@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:fastdb:schema:fastdb.payload.manifest.v1",
+  "title": "FastDB portable payload resolved manifest V1",
+  "type": "object",
+  "properties": {
+    "schema": {"const": "fastdb.payload.manifest.v1"},
+    "payload": {"$ref": "#/$defs/payload"},
+    "entries": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/entry"}
+    },
+    "components": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/component"}
+    },
+    "facts": {"$ref": "#/$defs/facts"},
+    "capabilities": {"$ref": "#/$defs/capabilities"}
+  },
+  "required": [
+    "schema",
+    "payload",
+    "entries",
+    "components",
+    "facts",
+    "capabilities"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+    },
+    "index": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "schema": {"const": "fastdb.payload.v1"},
+        "profile": {"enum": ["record.v1", "object_graph.v1"]},
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": ["schema", "profile", "sha256"],
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "properties": {
+        "index": {"$ref": "#/$defs/index"},
+        "id": {"$ref": "#/$defs/id"},
+        "cardinality": {"enum": ["one", "many"]},
+        "type": {"$ref": "#/$defs/type"}
+      },
+      "required": ["index", "id", "cardinality", "type"],
+      "additionalProperties": false
+    },
+    "field": {
+      "type": "object",
+      "properties": {
+        "index": {"$ref": "#/$defs/index"},
+        "id": {"$ref": "#/$defs/id"},
+        "type": {"$ref": "#/$defs/type"}
+      },
+      "required": ["index", "id", "type"],
+      "additionalProperties": false
+    },
+    "component": {
+      "type": "object",
+      "properties": {
+        "index": {"$ref": "#/$defs/index"},
+        "id": {"$ref": "#/$defs/id"},
+        "kind": {"const": "record"},
+        "fields": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/field"}
+        }
+      },
+      "required": ["index", "id", "kind", "fields"],
+      "additionalProperties": false
+    },
+    "facts": {
+      "type": "object",
+      "properties": {
+        "has_lists": {"type": "boolean"},
+        "has_normalized_integers": {"type": "boolean"},
+        "has_nullable": {"type": "boolean"},
+        "has_references": {"type": "boolean"},
+        "has_variable_width": {"type": "boolean"}
+      },
+      "required": [
+        "has_lists",
+        "has_normalized_integers",
+        "has_nullable",
+        "has_references",
+        "has_variable_width"
+      ],
+      "additionalProperties": false
+    },
+    "direct_build": {
+      "type": "object",
+      "properties": {
+        "status": {"const": "not_evaluated"},
+        "reason": {"const": "runtime_slice_not_implemented"}
+      },
+      "required": ["status", "reason"],
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "prefixItems": [
+            {"const": "compile"},
+            {"const": "query"}
+          ],
+          "items": false,
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "codegen_targets": {
+          "type": "array",
+          "items": false,
+          "maxItems": 0
+        },
+        "direct_build": {"$ref": "#/$defs/direct_build"}
+      },
+      "required": ["operations", "codegen_targets", "direct_build"],
+      "additionalProperties": false
+    },
+    "type": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "enum": [
+                "bool", "u8", "u16", "u32", "i32", "f32", "f64",
+                "str", "wstr", "bytes"
+              ]
+            },
+            "nullable": {"type": "boolean"}
+          },
+          "required": ["kind", "nullable"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {"enum": ["u8n", "u16n"]},
+            "min": {"type": "number"},
+            "max": {"type": "number"},
+            "nullable": {"type": "boolean"}
+          },
+          "required": ["kind", "min", "max", "nullable"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {"const": "component"},
+            "id": {"$ref": "#/$defs/id"},
+            "component_index": {"$ref": "#/$defs/index"},
+            "nullable": {"type": "boolean"}
+          },
+          "required": ["kind", "id", "component_index", "nullable"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {"const": "ref"},
+            "target": {"$ref": "#/$defs/id"},
+            "target_component_index": {"$ref": "#/$defs/index"},
+            "nullable": {"type": "boolean"}
+          },
+          "required": [
+            "kind", "target", "target_component_index", "nullable"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {"const": "list"},
+            "items": {"$ref": "#/$defs/type"},
+            "nullable": {"type": "boolean"}
+          },
+          "required": ["kind", "items", "nullable"],
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

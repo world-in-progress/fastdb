@@ -5,10 +5,12 @@ Core-owned portable payload contract. They help editors and external tooling,
 but they do not replace the C++ Core's strict parser, normalization, profile
 validation, resolution, canonicalization, or digest authority.
 
-`fastdb.payload.v1.schema.json` uses JSON Schema draft 2020-12 and is embedded
-as raw UTF-8 source bytes by `tools/generate_embedded_payload_schemas.py`.
-Checked-in JSON may be formatted for review. The schema bytes returned by the
-Core are its RFC 8785 JSON Canonicalization Scheme output, and
+`fastdb.payload.v1.schema.json` and
+`fastdb.payload.manifest.v1.schema.json` use JSON Schema draft 2020-12 and are
+embedded as raw UTF-8 source bytes by
+`tools/generate_embedded_payload_schemas.py`. Checked-in JSON may be formatted
+for review. The schema bytes returned by the Core are its RFC 8785 JSON
+Canonicalization Scheme output, and
 `fastdb.payload.v1.schema.sha256` pins the SHA-256 digest of those canonical
 bytes, not the formatted source file.
 
@@ -22,6 +24,13 @@ be truthfully expressed by this schema alone:
 - component and reference target resolution;
 - acyclic by-value component containment;
 - profile legality, including rejecting references under `record.v1`.
+
+The manifest schema describes the exact Core-derived
+`fastdb.payload.manifest.v1` object. It closes every object shape and permits
+`component_index` only on `component` types and
+`target_component_index` only on `ref` types. The Core constructs and checks
+that manifest with its own table-driven contract assertions; JSON Schema is
+not a runtime parser or a second semantic authority.
 
 Regenerate the embedded source after editing a schema:
 

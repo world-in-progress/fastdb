@@ -1,0 +1,25 @@
+{
+  "schema": "fastdb.payload.golden.spec-index.v1",
+  "cases": [
+    {"name":"empty-record","source":"valid/empty-record.source.json","success":{"canonical_hex":"valid/empty-record.canonical.hex","sha256":"valid/empty-record.sha256","manifest_hex":"valid/empty-record.manifest.hex"}},
+    {"name":"record-all-types","source":"valid/record-all-types.source.json","success":{"canonical_hex":"valid/record-all-types.canonical.hex","sha256":"valid/record-all-types.sha256","manifest_hex":"valid/record-all-types.manifest.hex"}},
+    {"name":"object-graph","source":"valid/object-graph.source.json","success":{"canonical_hex":"valid/object-graph.canonical.hex","sha256":"valid/object-graph.sha256","manifest_hex":"valid/object-graph.manifest.hex"}},
+    {"name":"nullable-omitted","source":"valid/nullable-omitted.source.json","success":{"canonical_hex":"valid/nullable-omitted.canonical.hex","sha256":"valid/nullable-omitted.sha256","manifest_hex":"valid/nullable-omitted.manifest.hex"}},
+    {"name":"nullable-explicit","source":"valid/nullable-explicit.source.json","success":{"canonical_hex":"valid/nullable-explicit.canonical.hex","sha256":"valid/nullable-explicit.sha256","manifest_hex":"valid/nullable-explicit.manifest.hex"}},
+    {"name":"component-order-a","source":"valid/component-order-a.source.json","success":{"canonical_hex":"valid/component-order-a.canonical.hex","sha256":"valid/component-order-a.sha256","manifest_hex":"valid/component-order-a.manifest.hex"}},
+    {"name":"component-order-b","source":"valid/component-order-b.source.json","success":{"canonical_hex":"valid/component-order-b.canonical.hex","sha256":"valid/component-order-b.sha256","manifest_hex":"valid/component-order-b.manifest.hex"}},
+    {"name":"entry-order-a","source":"valid/entry-order-a.source.json","success":{"canonical_hex":"valid/entry-order-a.canonical.hex","sha256":"valid/entry-order-a.sha256","manifest_hex":"valid/entry-order-a.manifest.hex"}},
+    {"name":"entry-order-b","source":"valid/entry-order-b.source.json","success":{"canonical_hex":"valid/entry-order-b.canonical.hex","sha256":"valid/entry-order-b.sha256","manifest_hex":"valid/entry-order-b.manifest.hex"}},
+    {"name":"unknown-field","source":"invalid/unknown-field.source.json","error":{"expectation":"invalid/unknown-field.error.json"}},
+    {"name":"missing-field","source":"invalid/missing-field.source.json","error":{"expectation":"invalid/missing-field.error.json"}},
+    {"name":"bad-kind","source":"invalid/bad-kind.source.json","error":{"expectation":"invalid/bad-kind.error.json"}},
+    {"name":"bad-id","source":"invalid/bad-id.source.json","error":{"expectation":"invalid/bad-id.error.json"}},
+    {"name":"bad-range","source":"invalid/bad-range.source.json","error":{"expectation":"invalid/bad-range.error.json"}},
+    {"name":"duplicate-entry","source":"invalid/duplicate-entry.source.json","error":{"expectation":"invalid/duplicate-entry.error.json"}},
+    {"name":"duplicate-component","source":"invalid/duplicate-component.source.json","error":{"expectation":"invalid/duplicate-component.error.json"}},
+    {"name":"duplicate-field","source":"invalid/duplicate-field.source.json","error":{"expectation":"invalid/duplicate-field.error.json"}},
+    {"name":"unresolved-component","source":"invalid/unresolved-component.source.json","error":{"expectation":"invalid/unresolved-component.error.json"}},
+    {"name":"by-value-cycle","source":"invalid/by-value-cycle.source.json","error":{"expectation":"invalid/by-value-cycle.error.json"}},
+    {"name":"record-ref","source":"invalid/record-ref.source.json","error":{"expectation":"invalid/record-ref.error.json"}}
+  ]
+}

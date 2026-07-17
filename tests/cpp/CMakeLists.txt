@@ -133,6 +133,29 @@ set_tests_properties(payload.spec_resolve PROPERTIES TIMEOUT 60)
 find_package(Threads REQUIRED)
 
 add_fastdb_payload_test(
+    compiled_spec
+    SOURCES
+        payload/GoldenCorpus.cpp
+        payload/test_compiled_spec.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_compiled_spec
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_compile_definitions(
+    fastdb_payload_test_compiled_spec
+    PRIVATE
+        "FASTDB_PAYLOAD_SPEC_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/spec\""
+        "FASTDB_PAYLOAD_SCHEMA_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../../schemas\""
+)
+set_tests_properties(payload.compiled_spec PROPERTIES TIMEOUT 60)
+
+add_fastdb_payload_test(
     c_header_smoke
     SOURCES payload/test_c_header_smoke.c
     EXTRA_LIBRARIES fastdb_payload_core

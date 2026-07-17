@@ -1,0 +1,1 @@
+{"status":1009,"symbol":"INVALID_NUMBER","path":"/components/0/fields/0/type/max","message":"Normalized integer bounds are invalid","details_json":"{\"max\":1,\"min\":1,\"reason\":\"min_not_less_than_max\"}"}

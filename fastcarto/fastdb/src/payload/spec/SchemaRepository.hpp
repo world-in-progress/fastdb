@@ -16,6 +16,7 @@ struct SchemaArtifact final {
 class SchemaRepository final {
 public:
     static error::Result<SchemaArtifact> payload_source_schema();
+    static error::Result<SchemaArtifact> payload_manifest_schema();
 };
 
 }  // namespace fastdb::payload::spec

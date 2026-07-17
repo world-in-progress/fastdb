@@ -1,0 +1,1 @@
+{"status":1006,"symbol":"DUPLICATE_ID","path":"/entries/1/id","message":"Payload identifier is duplicated","details_json":"{\"first_declaration\":\"/entries/0/id\",\"id\":\"same\",\"reason\":\"duplicate_id\"}"}

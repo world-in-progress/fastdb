@@ -10,7 +10,7 @@
 
 ## Purpose
 
-The accepted 0.2.0 design defines a complete portable-payload foundation, while the current repository still ships the 0.1.x call-db/`ColumnEngine` implementation and has not implemented `fastdb.payload.v1`. This issue records that temporary implementation gap from the first plan through the 0.2.0 clean cut.
+The accepted 0.2.0 design defines a complete portable-payload foundation, while the current repository still ships the 0.1.x call-db/`ColumnEngine` implementation and has not exposed `fastdb.payload.v1` through a stable public library boundary. This issue records that temporary implementation gap from the first plan through the 0.2.0 clean cut.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -22,14 +22,16 @@ Current repository state:
 - the first executable plan is written for the Core compiler/query contract;
 - P1 Tasks 1 and 2 are reviewed and complete: the repository has pinned yyjson, double-conversion, and PicoSHA2 source snapshots, a native CTest seam, Core-owned immutable `JsonValue`, RFC 6901 JSON Pointer construction, RFC 8785 JCS serialization, and SHA-256 identity primitives;
 - `JsonValue` lifetime/release and JCS traversal are iterative, with committed array-focused tests at 50,000 levels for serialization, destruction, failure cleanup, and copy/move lifetime behavior;
-- at the start of Task 3, strict source parsing/compiler semantics, the stable public C ABI, binary/runtime behavior, bindings, and code generation were all still absent;
+- at the start of Task 3, strict source parsing/compiler semantics, the stable public C ABI, binary/runtime behavior, bindings, and code generation were all still absent; Tasks 3-7 have since built only the reviewed or author-verified P1 Core layers described below;
 - P1 Task 3 now ships only the pure-C ABI base: exact-width constants and V1 struct initializers, opaque spec/blob/error declarations, ABI version query, immutable owned blob/error handles, atomic retain/release, stable error field queries, and an exception-to-owned-error boundary;
 - P1 Task 4 adds strict duplicate-aware JSON document parsing, iterative source/value/depth enforcement, borrowed source-order cursors, generic audited-document conversion for schema/JCS uses, and a Core-owned repository for the embedded `fastdb.payload.v1` source schema's JCS bytes and SHA-256 digest;
 - P1 Task 5 is independently reviewed and complete: Core now has a move-only typed source model and duplicate-safe cursor parser for the complete V1 type algebra, exact object shapes and local ID syntax, finite normalized bounds, explicit `nullable: false` insertion, source-order preservation, and pre-growth entry/component/field count limits; nested-list parsing, normalized emission, and ownership teardown are iterative, and a shared mutable JSON Pointer builder keeps successful deep audit/typed-parse path state linear while materializing immutable RFC 6901 paths only for diagnostics;
 - P1 Task 6 is independently reviewed and complete: the Core-internal resolver consumes the move-only Task 5 source model, rejects duplicate entry/component/field IDs in the required source order, sorts components by ASCII ID, assigns stable entry/component/field indexes, retains source IDs while resolving component/ref targets, rejects deterministic by-value cycles and `record.v1` references, and preserves original source JSON Pointers in all diagnostics after sorting;
 - Task 6 also derives the exact five semantic facts and their single Core-owned `uint64_t` mask, including transitive by-value component variable width while keeping a bare `ref` fixed-width. Resolver type walks, cycle DFS, fact propagation, and cleanup are iterative; committed regressions cover 20,000 nested lists, a 20,000-component acyclic chain, and a 12,000-component cycle under explicit allocation bounds;
-- Task 6 produces sorted normalized source JSON without derived indexes or facts, but remains an internal resolution stage: no Task 5/6 model or resolver symbol crosses the public C ABI, and compiled identity, manifest/capabilities, or a public spec handle are not yet implemented;
-- the Task 3 ABI base does **not** expose `fdb_payload_v1_spec_compile_json` or any spec query family. Tasks 5 and 6 now provide the internal typed parse and resolved model, but not a compiled-spec pipeline or public entry point; canonical compiled identity, manifest/capabilities, and the complete public spec compile/query ABI remain absent until later P1 tasks;
+- Task 7's author implementation now completes the Core-internal compiler/identity stage: an immutable shared `CompiledSpec` runs the one strict document -> typed parse/normalization -> resolution -> normalized Core JCS -> SHA-256 -> manifest pipeline, owns deterministic sorted-vector ID indexes, and publishes only const internal reads. Its payload identity is over normalized canonical payload bytes alone;
+- Task 7 also adds the exact closed `fastdb.payload.manifest.v1` schema, deterministic raw-schema embedding, Core-JCS/Core-SHA-256 source and manifest schema artifacts, the exact resolved manifest and P1 capability facts, and an explicit ordered 20-case golden corpus. The manifest reports only `compile,query`, no codegen targets, and direct build `not_evaluated/runtime_slice_not_implemented`; it does not claim `eligible:false` or binary/layout support;
+- the Task 7 implementation passes its focused corpus, native Debug/Release/ASan+UBSan suites, Python/package and TypeScript/WASM gates, independent pinned-JCS source-schema check, corpus inventory audit, and deep-list resource probes, but is still awaiting independent review. Tasks 1-6 remain the independently reviewed boundary until that review completes;
+- the Task 3 ABI base still does **not** expose `fdb_payload_v1_spec_compile_json` or any spec query family. Task 7's compiler, identity, manifest, schema artifacts, capability facts, and lookup state are Core-internal inputs for Task 8; no public spec handle or stable compile/query library boundary exists yet;
 - no `fastdb.payload.bin.v1`, builder/plan/backing, payload owner, checked view, materialization, object-graph runtime, portable language projection, or payload code generator is currently shipped;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
@@ -37,7 +39,7 @@ The repository therefore must not claim that the portable payload foundation or 
 
 ## Current limit
 
-Users and downstream repositories cannot yet compile or consume `fastdb.payload.v1` through a stable library boundary. C-Two cannot safely wrap the planned FastDB sub-spec without either depending on unimplemented interfaces or recreating FastDB semantics, which is forbidden. Toodle consequently cannot treat this target design as a working structured-payload substrate yet.
+Users and downstream repositories cannot yet compile or consume `fastdb.payload.v1` through a stable library boundary. The internal Task 7 compiler is not authorization to depend on private headers. C-Two cannot safely wrap the planned FastDB sub-spec until Task 8 exposes the Core-owned public contract; recreating FastDB semantics remains forbidden. Toodle consequently cannot treat this target design as a working structured-payload substrate yet.
 
 Raw-file/object bytes remain correctly outside FastDB in file/object storage. This implementation gap does not change that owner boundary and is not a reason to route raw files through the existing call-db path.
 
@@ -89,29 +91,32 @@ These are implementation-gate observations, not post-0.2.0 deferrals.
 
 ### Planned schema manifest globs
 
-**Closed by Task 4:** The repository now contains
+**Closed by Task 4 and extended by Task 7:** The repository now contains
 `schemas/fastdb.payload.v1.schema.json`, its Core-JCS digest pin
-`schemas/fastdb.payload.v1.schema.sha256`, and `schemas/README.md`. The source
-schema is also embedded as raw bytes by the deterministic standard-library-only
+`schemas/fastdb.payload.v1.schema.sha256`,
+`schemas/fastdb.payload.manifest.v1.schema.json`, and `schemas/README.md`. Both
+schemas are embedded as raw bytes by the deterministic standard-library-only
 generator.
 
 **Evidence:** `uv build` produced `dist/fastdb4py-0.1.22.tar.gz` and the local
 wheel without any no-match warning for `schemas/*.json`, `*.sha256`, or `*.md`.
-The sdist inventory contains all three exact paths. The separately tracked SWIG
-325/451 diagnostics above remain present and open; they were not normalized as
-part of this closure.
+The current sdist inventory contains all four exact paths. The separately
+tracked SWIG 325/451 diagnostics above remain present and open; they were not
+normalized as part of this closure.
 `python3 tools/generate_embedded_payload_schemas.py --check` passes, and
-`payload.json_document` verifies that the embedded raw
-schema parses through `JsonDocument`, Core JCS/SHA-256 matches the checked-in
-pin, and the schema declares draft 2020-12 with a closed root shape. The pin was
-independently produced from 2,074 canonical bytes by the verification-only
-Python `rfc8785` 0.1.4 implementation before comparison with the Core result.
+`payload.json_document` and `payload.compiled_spec` verify that the embedded raw
+schemas parse through `JsonDocument`, Core JCS/SHA-256 matches the checked-in
+source-schema pin, and both schemas declare their exact draft/id and closed
+shapes. The pin has also been rechecked from 2,074 canonical bytes with the
+official JCS reference at commit
+`19d51d7fe467d4706a3ff08adf8a748f29fc21e0` before comparison with the Core
+result.
 
 ## Program checklist
 
 | Slice | Status | Required closure evidence |
 |---|---|---|
-| P1. Core contract compiler/query ABI | In progress: Tasks 1-6 independently reviewed and complete | Compiled identity/manifest/capabilities; complete spec compile/query C ABI; C++ facade; committed deep-object/DAG regressions; golden/fuzz/native CI |
+| P1. Core contract compiler/query ABI | In progress: Tasks 1-6 independently reviewed; Task 7 internal compiler/identity/manifest implementation passes author gates and awaits independent review | Independent Task 7 review; complete Task 8 spec compile/query C ABI and C++ facade; committed deep-object/DAG regressions; fuzz/native CI |
 | P2. Record binary/runtime/lifetime | Blocked on P1 | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |

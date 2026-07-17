@@ -15,6 +15,10 @@ SCHEMAS = (
         ROOT / "schemas/fastdb.payload.v1.schema.json",
         "kFastdbPayloadV1Schema",
     ),
+    (
+        ROOT / "schemas/fastdb.payload.manifest.v1.schema.json",
+        "kFastdbPayloadManifestV1Schema",
+    ),
 )
 
 

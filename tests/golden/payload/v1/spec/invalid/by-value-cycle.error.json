@@ -1,0 +1,1 @@
+{"status":1005,"symbol":"INVALID_TYPE","path":"/components/0/fields/0/type","message":"Payload by-value component containment is cyclic","details_json":"{\"cycle\":[\"A\",\"A\"],\"reason\":\"by_value_cycle\"}"}
