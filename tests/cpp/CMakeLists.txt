@@ -175,6 +175,34 @@ set_target_properties(
 )
 
 add_fastdb_payload_test(
+    spec_abi
+    SOURCES payload/test_spec_abi.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_spec_abi
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+set_tests_properties(payload.spec_abi PROPERTIES TIMEOUT 120)
+
+add_fastdb_payload_test(
+    cpp_facade
+    SOURCES payload/test_cpp_facade.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_cpp_facade
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+)
+
+add_fastdb_payload_test(
     error
     SOURCES payload/test_error.cpp
     EXTRA_LIBRARIES

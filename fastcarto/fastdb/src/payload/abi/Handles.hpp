@@ -4,6 +4,7 @@
 
 #include "payload/error/Error.hpp"
 #include "payload/error/Result.hpp"
+#include "payload/spec/CompiledSpec.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -62,6 +63,14 @@ void release_reference(Handle* handle, Destroy&& destroy) noexcept {
 }
 
 }  // namespace fastdb::payload::abi::detail
+
+struct fdb_payload_v1_spec final {
+    explicit fdb_payload_v1_spec(fastdb::payload::spec::CompiledSpec value)
+        : compiled(std::move(value)) {}
+
+    std::atomic<std::uint64_t> references{UINT64_C(1)};
+    const fastdb::payload::spec::CompiledSpec compiled;
+};
 
 struct fdb_payload_v1_blob final {
     explicit fdb_payload_v1_blob(std::vector<std::uint8_t> value)

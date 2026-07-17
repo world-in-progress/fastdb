@@ -10,7 +10,12 @@
 
 ## Purpose
 
-The accepted 0.2.0 design defines a complete portable-payload foundation, while the current repository still ships the 0.1.x call-db/`ColumnEngine` implementation and has not exposed `fastdb.payload.v1` through a stable public library boundary. This issue records that temporary implementation gap from the first plan through the 0.2.0 clean cut.
+The accepted 0.2.0 design defines a complete portable-payload foundation,
+while the current repository exposes only the P1 compiler/query boundary and
+still ships the 0.1.x call-db/`ColumnEngine` implementation. It has not closed
+P1 review/CI hardening or implemented the P2-P5 runtime, language-parity,
+codegen, clean-cut, and release work. This issue records that temporary gap
+from the first plan through the 0.2.0 clean cut.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -31,7 +36,10 @@ Current repository state:
 - P1 Task 7 is independently reviewed and complete: the Core-internal compiler/identity stage uses an immutable shared `CompiledSpec` that runs the one strict document -> typed parse/normalization -> resolution -> normalized Core JCS -> SHA-256 -> manifest pipeline, owns deterministic sorted-vector ID indexes, and publishes only const internal reads. Its payload identity is over normalized canonical payload bytes alone;
 - Task 7 also adds the exact closed `fastdb.payload.manifest.v1` schema, deterministic raw-schema embedding, Core-JCS/Core-SHA-256 source and manifest schema artifacts, the exact resolved manifest and P1 capability facts, and an explicit ordered 20-case golden corpus. The manifest reports only `compile,query`, no codegen targets, and direct build `not_evaluated/runtime_slice_not_implemented`; it does not claim `eligible:false` or binary/layout support;
 - the Task 7 implementation and independent review pass the focused corpus, native Debug/Release/ASan+UBSan suites, Python/package and TypeScript/WASM gates, independent pinned-JCS source-schema and full golden reconstruction, external Draft 2020-12 manifest validation, corpus inventory audit, allocation-failure sweep, and deep/wide resource probes. Tasks 1-7 are now the independently reviewed P1 boundary;
-- the Task 3 ABI base still does **not** expose `fdb_payload_v1_spec_compile_json` or any spec query family. Task 7's compiler, identity, manifest, schema artifacts, capability facts, and lookup state are Core-internal inputs for Task 8; no public spec handle or stable compile/query library boundary exists yet;
+- P1 Task 8 is implemented and awaiting independent review: the pure-C surface now has exactly 33 `fdb_payload_v1_*` exports, including `fdb_payload_v1_spec_compile_json`, atomic opaque spec lifetime, canonical/manifest/digest/profile/capability queries, stable entry/component/field count-ID-index queries, and source-schema bytes/digest;
+- Task 8 projects the reviewed Task 7 `CompiledSpec` and `SchemaRepository` directly. Its 80-byte options and 72-byte capabilities prefixes accept larger future tails without reading or writing them, reject unsupported V1 fields, clear value outputs before ordinary failure, preserve owned error/status equality, validate exact ASCII ID spans, and return independently owned blobs;
+- Task 8 also adds the standalone header-only C++17 `fastdb::payload::v1` RAII facade. It performs only C-ABI calls, retain/release ownership, copied-error translation, and typed byte/query ergonomics; it has no parser, canonicalizer, digest, manifest builder, schema model, binary reader, or downstream contract behavior;
+- Task 8 author verification passes the pure-C link smoke, exact 33-symbol audit, Debug/Release/ASan+UBSan native suites, a 16-thread full immutable-query test under ThreadSanitizer, allocation-failure publication/retry and live-allocation balance checks, guarded/canary future-prefix tests, C++/C byte-for-byte parity, direct arm64/x86_64/wasm32 C11 header compilation, Python/package regression, and TypeScript/WASM regression. This is implementation evidence, not an independent Task 8 review decision;
 - no `fastdb.payload.bin.v1`, builder/plan/backing, payload owner, checked view, materialization, object-graph runtime, portable language projection, or payload code generator is currently shipped;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
@@ -39,7 +47,14 @@ The repository therefore must not claim that the portable payload foundation or 
 
 ## Current limit
 
-Users and downstream repositories cannot yet compile or consume `fastdb.payload.v1` through a stable library boundary. The internal Task 7 compiler is not authorization to depend on private headers. C-Two cannot safely wrap the planned FastDB sub-spec until Task 8 exposes the Core-owned public contract; recreating FastDB semantics remains forbidden. Toodle consequently cannot treat this target design as a working structured-payload substrate yet.
+Users and downstream repositories can now compile and query
+`fastdb.payload.v1` through the implemented C ABI or C++ facade, subject to the
+open independent Task 8 review. They still cannot build, open, view,
+materialize, invalidate, or generate a portable payload, and no Rust, Python,
+or TypeScript/WASM portable projection exists. C-Two may not replace those
+missing owner slices or depend on FastDB private headers; recreating FastDB
+semantics remains forbidden. Toodle consequently cannot yet treat the full
+structured-payload substrate as implemented.
 
 Raw-file/object bytes remain correctly outside FastDB in file/object storage. This implementation gap does not change that owner boundary and is not a reason to route raw files through the existing call-db path.
 
@@ -116,7 +131,7 @@ result.
 
 | Slice | Status | Required closure evidence |
 |---|---|---|
-| P1. Core contract compiler/query ABI | In progress: Tasks 1-7 independently reviewed and complete | Complete Task 8 spec compile/query C ABI and C++ facade; committed deep-object/DAG regressions; fuzz/native CI |
+| P1. Core contract compiler/query ABI | In progress: Tasks 1-7 independently reviewed; Task 8 implemented awaiting independent review | Close Task 8 review; commit deep-object/DAG regressions; complete Task 9 fuzz, exact ABI allowlist, native CI, packaging, and final docs |
 | P2. Record binary/runtime/lifetime | Blocked on P1 | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
