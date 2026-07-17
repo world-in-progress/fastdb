@@ -21,6 +21,7 @@ using fastdb::payload::json::JsonValue;
 using fastdb::payload::json::jcs_serialize;
 
 constexpr std::size_t kDepth = 50000U;
+constexpr std::size_t kSharedChildFanOut = 50000U;
 
 JsonValue nest_arrays(JsonValue leaf) {
     JsonValue nested = std::move(leaf);
@@ -29,6 +30,17 @@ JsonValue nest_arrays(JsonValue leaf) {
         wrapper.reserve(1U);
         wrapper.push_back(std::move(nested));
         nested = JsonValue::array(std::move(wrapper));
+    }
+    return nested;
+}
+
+JsonValue nest_objects(JsonValue leaf) {
+    JsonValue nested = std::move(leaf);
+    for (std::size_t depth = 0; depth < kDepth; ++depth) {
+        JsonValue::Object wrapper;
+        wrapper.reserve(1U);
+        wrapper.emplace_back("k", std::move(nested));
+        nested = JsonValue::object(std::move(wrapper));
     }
     return nested;
 }
@@ -44,6 +56,24 @@ int require_deep_serialization(const JsonValue& value,
         require((*serialized)[index] == '[');
         require((*serialized)[serialized->size() - index - 1U] == ']');
     }
+    return EXIT_SUCCESS;
+}
+
+int require_deep_object_serialization(const JsonValue& value,
+                                      std::string_view leaf) {
+    constexpr std::string_view prefix = R"({"k":)";
+    const auto result = jcs_serialize(value);
+    const auto* serialized = std::get_if<std::string>(&result);
+    require(serialized != nullptr);
+    require(serialized->size() == kDepth * (prefix.size() + 1U) +
+                                      leaf.size());
+    for (std::size_t depth = 0; depth < kDepth; ++depth) {
+        require(serialized->compare(depth * prefix.size(), prefix.size(),
+                                    prefix) == 0);
+        require((*serialized)[serialized->size() - depth - 1U] == '}');
+    }
+    require(serialized->compare(kDepth * prefix.size(), leaf.size(), leaf) ==
+            0);
     return EXIT_SUCCESS;
 }
 
@@ -116,6 +146,117 @@ int copy_and_move_deep_tree() {
     return EXIT_SUCCESS;
 }
 
+int serialize_deep_object_tree() {
+    const JsonValue value = nest_objects(JsonValue{"leaf"});
+    require(require_deep_object_serialization(value, "\"leaf\"") ==
+            EXIT_SUCCESS);
+    return EXIT_SUCCESS;
+}
+
+int destroy_deep_object_tree() {
+    {
+        const JsonValue value = nest_objects(JsonValue{true});
+        require(std::holds_alternative<JsonValue::Object>(value.storage()));
+    }
+    return EXIT_SUCCESS;
+}
+
+int unwind_deep_object_leaf_failure() {
+    const JsonValue value =
+        nest_objects(JsonValue{std::numeric_limits<double>::quiet_NaN()});
+    const auto result = jcs_serialize(value);
+    const auto* failure = std::get_if<JcsFailure>(&result);
+    require(failure != nullptr);
+    require(*failure == JcsFailure::non_finite_number);
+    return EXIT_SUCCESS;
+}
+
+JsonValue shared_child_parent(const JsonValue& child) {
+    JsonValue::Object parent;
+    parent.reserve(1U);
+    parent.emplace_back("child", child);
+    return JsonValue::object(std::move(parent));
+}
+
+int require_shared_child_parent(const JsonValue& value) {
+    constexpr std::string_view expected =
+        R"({"child":{"payload":["shared",42,true]}})";
+    const auto result = jcs_serialize(value);
+    const auto* serialized = std::get_if<std::string>(&result);
+    require(serialized != nullptr);
+    require(*serialized == expected);
+    return EXIT_SUCCESS;
+}
+
+int copy_move_release_shared_child_dag() {
+    JsonValue::Array child_values;
+    child_values.reserve(3U);
+    child_values.emplace_back("shared");
+    child_values.emplace_back(42.0);
+    child_values.emplace_back(true);
+
+    JsonValue::Object child_members;
+    child_members.reserve(1U);
+    child_members.emplace_back(
+        "payload", JsonValue::array(std::move(child_values)));
+    JsonValue shared_child = JsonValue::object(std::move(child_members));
+
+    std::vector<JsonValue> parents;
+    parents.reserve(kSharedChildFanOut);
+    for (std::size_t index = 0; index < kSharedChildFanOut; ++index) {
+        parents.push_back(shared_child_parent(shared_child));
+    }
+
+    std::vector<JsonValue> copied_parents;
+    copied_parents.reserve(kSharedChildFanOut / 5U);
+    for (std::size_t index = 0; index < kSharedChildFanOut; index += 5U) {
+        copied_parents.push_back(parents[index]);
+    }
+
+    std::vector<JsonValue> moved_parents;
+    moved_parents.reserve(kSharedChildFanOut / 2U);
+    for (std::size_t index = 0; index < kSharedChildFanOut; index += 2U) {
+        moved_parents.push_back(std::move(parents[index]));
+    }
+
+    shared_child = JsonValue{};
+    for (std::size_t index = 1U; index < kSharedChildFanOut; index += 4U) {
+        parents[index] = JsonValue{};
+    }
+    for (std::size_t remaining = kSharedChildFanOut; remaining > 0U;
+         --remaining) {
+        const std::size_t index = remaining - 1U;
+        if (index % 2U != 0U) {
+            parents[index] = JsonValue{};
+        }
+    }
+    parents.clear();
+
+    require(!moved_parents.empty());
+    require(!copied_parents.empty());
+    require(require_shared_child_parent(moved_parents.front()) ==
+            EXIT_SUCCESS);
+    require(require_shared_child_parent(copied_parents.back()) ==
+            EXIT_SUCCESS);
+
+    JsonValue survivor = copied_parents.back();
+    for (JsonValue& parent : moved_parents) {
+        parent = JsonValue{};
+    }
+    for (std::size_t remaining = copied_parents.size(); remaining > 0U;
+         --remaining) {
+        copied_parents[remaining - 1U] = JsonValue{};
+    }
+    moved_parents.clear();
+    copied_parents.clear();
+
+    JsonValue survivor_copy = survivor;
+    JsonValue survivor_moved = std::move(survivor_copy);
+    survivor = JsonValue{};
+    require(require_shared_child_parent(survivor_moved) == EXIT_SUCCESS);
+    return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main(int argument_count, char** arguments) {
@@ -132,6 +273,18 @@ int main(int argument_count, char** arguments) {
     }
     if (mode == "copy_move") {
         return copy_and_move_deep_tree();
+    }
+    if (mode == "object_serialize") {
+        return serialize_deep_object_tree();
+    }
+    if (mode == "object_destroy") {
+        return destroy_deep_object_tree();
+    }
+    if (mode == "object_failure") {
+        return unwind_deep_object_leaf_failure();
+    }
+    if (mode == "shared_child_dag") {
+        return copy_move_release_shared_child_dag();
     }
     return EXIT_FAILURE;
 }

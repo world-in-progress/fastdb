@@ -6,15 +6,34 @@
 
 `fastdb` is a C++ local database library designed as a fast, lightweight, and easy-to-use data communication layer for RPC and coupled modeling in scientific computing.
 
-## Accepted 0.2.0 direction
+## Portable payload status and 0.2.0 direction
 
-FastDB has accepted a clean-cut portable payload foundation for the 0.2.0 target. The C++ Core will become the sole authority for `fastdb.payload.v1`, RFC 8785 canonical identity, `record.v1`/`object_graph.v1`, a stable C ABI, final-backing and checked-view lifetimes, and C++/Rust/Python/TypeScript projections. C-Two will wrap that specification inside `c-two.contract.v2`; CRM, routes, transports, leases, and lifecycle remain outside FastDB.
+The current tree implements the P1 `fastdb.payload.v1` compiler/query Core. A
+pure-C ABI with exactly 33 `fdb_payload_v1_*` exports and a header-only C++17
+RAII facade expose Core-owned canonical JSON, SHA-256 identity, manifest,
+profile, capabilities, stable indexes, source-schema facts, and owned errors.
+The strict compiler supports the complete declared V1 source algebra and both
+profiles at compile time.
 
-The current tree and published packages are still 0.1.x and still contain legacy `fastdb.schema.v1`, call-db, `columnar.v1`, and `ColumnEngine` surfaces. Those are implementation history to be removed or renamed during the 0.2.0 work, not APIs to extend. There will be no compatibility parser or alias in the target release.
+P1 does not define `fastdb.payload.bin.v1` and cannot build, open, view,
+materialize, or invalidate portable payload values. Rust, Python, and official
+TypeScript/WASM portable projections and Core-owned four-language code
+generation are also not implemented. Those non-deferrable P2-P5 gaps and the
+pending independent P1 final review are tracked in [Issue
+0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
+
+The current package version and published packages remain 0.1.x and still
+contain legacy `fastdb.schema.v1`, call-db, `columnar.v1`, and `ColumnEngine`
+surfaces. They are migration inputs to be removed or renamed during the planned
+0.2.0 clean cut, not APIs to extend. There will be no compatibility parser or
+alias in the target release. Capabilities deliberately deferred beyond 0.2.0
+are tracked separately in [Issue
+0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
 
 - [Accepted portable payload design](docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
 - [ADR-0001: Core authority and clean cut](docs/decisions/0001-portable-payload-core-authority.md)
-- [Issue 0001: explicitly deferred capabilities](docs/issues/0001-portable-payload-deferred-capabilities.md)
+- [Issue 0002: current implementation status](docs/issues/0002-portable-payload-foundation-implementation-status.md)
+- [Issue 0001: post-0.2 deferrals](docs/issues/0001-portable-payload-deferred-capabilities.md)
 
 This repository now contains three closely related layers:
 
@@ -29,7 +48,7 @@ This repository now contains three closely related layers:
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — the 0.2.0 target makes the C++ Core, rather than a language binding, the semantic authority
 - **Schema-driven codegen** — the target Core returns deterministic C++/Rust/Python/TypeScript payload artifacts in memory
-- **Portable payload primitives** — `fastdb.payload.v1`, a stable C ABI, and checked lifetime/backing semantics form the accepted external integration layer
+- **Portable payload compiler/query** — P1 provides `fastdb.payload.v1` canonical identity and the stable C/C++ query boundary; portable binary, backing, and checked lifetime behavior remain P2-P5 work
 
 ## Documentation map
 

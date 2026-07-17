@@ -10,12 +10,12 @@
 
 ## Purpose
 
-The accepted 0.2.0 design defines a complete portable-payload foundation,
-while the current repository exposes only the P1 compiler/query boundary and
-still ships the 0.1.x call-db/`ColumnEngine` implementation. It has not closed
-P1 review/CI hardening or implemented the P2-P5 runtime, language-parity,
-codegen, clean-cut, and release work. This issue records that temporary gap
-from the first plan through the 0.2.0 clean cut.
+The accepted 0.2.0 design defines a complete portable-payload foundation. The
+current repository implements the P1 compiler/query boundary and still ships
+the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 awaits independent
+final review and its first hosted CI execution; P2-P5 runtime,
+language-parity, codegen, clean-cut, and release work is not implemented. This
+issue records that temporary gap through the 0.2.0 clean cut.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -26,7 +26,7 @@ Current repository state:
 - the target architecture, owner boundary, source algebra, identity pipeline, runtime model, C ABI direction, testing obligations, and clean-cut decision are accepted documentation;
 - the first executable plan is written for the Core compiler/query contract;
 - P1 Tasks 1 and 2 are reviewed and complete: the repository has pinned yyjson, double-conversion, and PicoSHA2 source snapshots, a native CTest seam, Core-owned immutable `JsonValue`, RFC 6901 JSON Pointer construction, RFC 8785 JCS serialization, and SHA-256 identity primitives;
-- `JsonValue` lifetime/release and JCS traversal are iterative, with committed array-focused tests at 50,000 levels for serialization, destruction, failure cleanup, and copy/move lifetime behavior;
+- `JsonValue` lifetime/release and JCS traversal are iterative, with committed 50,000-level array and object tests for serialization, destruction, and failure cleanup, plus high-fan-out shared-child copy/move/release coverage;
 - at the start of Task 3, strict source parsing/compiler semantics, the stable public C ABI, binary/runtime behavior, bindings, and code generation were all still absent; Tasks 3-7 have since built only the independently reviewed P1 layers described below;
 - P1 Task 3 now ships only the pure-C ABI base: exact-width constants and V1 struct initializers, opaque spec/blob/error declarations, ABI version query, immutable owned blob/error handles, atomic retain/release, stable error field queries, and an exception-to-owned-error boundary;
 - P1 Task 4 adds strict duplicate-aware JSON document parsing, iterative source/value/depth enforcement, borrowed source-order cursors, generic audited-document conversion for schema/JCS uses, and a Core-owned repository for the embedded `fastdb.payload.v1` source schema's JCS bytes and SHA-256 digest;
@@ -40,10 +40,14 @@ Current repository state:
 - Task 8 projects the reviewed Task 7 `CompiledSpec` and `SchemaRepository` directly. Its 80-byte options and 72-byte capabilities prefixes accept larger future tails without reading or writing them, reject unsupported V1 fields, clear value outputs before ordinary failure, preserve owned error/status equality, validate exact ASCII ID spans, and return independently owned blobs;
 - Task 8 also adds the standalone header-only C++17 `fastdb::payload::v1` RAII facade. It performs only C-ABI calls, retain/release ownership, copied-error translation, and typed byte/query ergonomics; it has no parser, canonicalizer, digest, manifest builder, schema model, binary reader, or downstream contract behavior;
 - the Task 8 implementation and independent review pass the pure-C link smoke, exact 33-declaration/definition/export audit, Debug/Release/ASan+UBSan native suites, a 16-thread all-ID/index immutable-query test under ThreadSanitizer, allocation-failure publication/retry and live-allocation balance checks, guarded/canary future-prefix tests, C++/C byte-for-byte parity, direct arm64/x86_64/wasm32 C11 header compilation, Python/package regression, and TypeScript/WASM regression. Tasks 1-8 are now the independently reviewed P1 boundary;
+- P1 Task 9 is implemented for independent final review: committed adjacent-shape regressions close the deep-object/shared-child observation; an exact sorted 33-symbol allowlist and executable symbol-diff gate freeze the public ABI; the Clang libFuzzer harness queries the complete required compiled-spec surface on success and owned diagnostics on failure; native Debug/Release/sanitizer gates, package inventories, and shipped-state documentation are defined;
+- the GitHub Actions definition now targets the documented standard `ubuntu-24.04` x64 and `macos-15` arm64 runners, asserts the actual architecture, and includes required native and Linux sanitizer/fuzz jobs in the aggregate result. No push is authorized in Task 9, so the first hosted execution remains pending and is not represented as a local pass;
 - no `fastdb.payload.bin.v1`, builder/plan/backing, payload owner, checked view, materialization, object-graph runtime, portable language projection, or payload code generator is currently shipped;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
-The repository therefore must not claim that the portable payload foundation or FastDB 0.2.0 is implemented.
+The P1 compiler/query slice is implemented and awaits independent final review.
+The repository must not claim that the complete portable payload foundation or
+FastDB 0.2.0 is implemented.
 
 ## Current limit
 
@@ -78,31 +82,171 @@ Collapsing these layers into one speculative change would make review and failur
 - No package version may be raised to 0.2.0 and no release note may claim the foundation while any P1-P5 non-deferrable gate remains open.
 - Each merged slice must update this issue's current surface, remaining impact, and checklist in the same change.
 
+## Remaining P2-P5 gaps
+
+### P2 record binary, runtime, and lifetime
+
+**Current limit:** P1 compiles and queries a specification but defines no
+`fastdb.payload.bin.v1` byte layout and cannot build, open, retain, view,
+materialize, or invalidate a portable payload. `PayloadBuilder`, `BuildPlan`,
+final-backing callbacks, direct/staged execution, and `PayloadOwner` do not
+exist.
+
+**Reason:** Binary and lifetime behavior must be designed from the frozen P1
+resolved model and must land atomically with its normative byte-layout document
+and deterministic goldens.
+
+**Impact:** A C or C++ caller can inspect contract facts but cannot author or
+consume portable runtime values. Existing 0.1.x database/call-db bytes are not a
+substitute for the new portable format.
+
+**Next owner slice:** FastDB P2.
+
+**Closure criteria:** Publish the exact `fastdb.payload.bin.v1` layout and
+goldens; implement the complete legal non-`ref` algebra through builder, plan,
+backing, build/open, owner, checked view, materialize, and invalidate; pass
+deterministic, malformed-input, backing-failure, lifetime, sanitizer, and
+cross-platform gates.
+
+### P3 object-graph runtime
+
+**Current limit:** P1 validates `object_graph.v1` specifications at compile
+time, but there are no runtime object pools, roots, object IDs, shared
+references, cycles, graph build/open, graph views, or graph materialization.
+
+**Reason:** Graph storage and reference validation must reuse P2's normative
+binary, backing, owner, and invalidation contracts rather than create a second
+runtime.
+
+**Impact:** Graph-shaped contracts can be identified and queried but no graph
+payload can be executed or exchanged.
+
+**Next owner slice:** FastDB P3 after P2 closes.
+
+**Closure criteria:** Implement ordinary graph build/open/view/materialize and
+invalidation for pools, roots, lists, shared refs, and cycles; reject malformed
+IDs/references deterministically; pass graph goldens and sanitizer gates. Only
+Issue 0001 D1 may remain outside direct dynamic construction.
+
+### P4 language projections and payload code generation
+
+**Current limit:** The P1 C ABI and query-only C++ facade exist, but no Rust,
+Python, or TypeScript/WASM portable-payload projection exists, and the Core
+does not generate C++, Rust, Python, or TypeScript payload artifacts. Existing
+hand-written 0.1.x call-db layers are migration inputs, not projections of P1.
+
+**Reason:** Safe binding lifetimes, value parity, and generated APIs depend on
+the frozen P2/P3 runtime ABI and binary meaning.
+
+**Impact:** Portable compile/query is available only through C and C++; no
+supported language binding can yet build/open/view/materialize the shared
+golden corpus or consume a Core-owned generated artifact set.
+
+**Next owner slice:** FastDB P4 after P2 and P3 close.
+
+**Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
+the same Core ABI and pass canonical, binary, value, error, lifetime, and
+direct/staged parity; Core-owned four-target in-memory artifact generation is
+deterministic and generated outputs compile or import without downstream
+semantics.
+
+### P5 clean cut, release, and downstream composition
+
+**Current limit:** Public call-db, `fastdb.schema.v1`, `columnar.v1`, and
+`ColumnEngine` remain in the 0.1.x package surface. Package metadata remains
+0.1.x; no 0.2.0 release, tag, publication, or C-Two composition proof exists.
+
+**Reason:** The obsolete surfaces cannot be removed until P1-P4 provide the
+complete replacement and parity evidence. Downstream composition belongs in
+C-Two only after FastDB freezes its owner boundary.
+
+**Impact:** Users must treat those old APIs as migration inputs and must not
+extend them as portable authority. FastDB cannot claim 0.2.0 readiness, and
+C-Two cannot fill the missing FastDB slices in its own repository.
+
+**Next owner slice:** FastDB P5, followed by a separate C-Two-owned composition
+task.
+
+**Closure criteria:** Remove the obsolete public authority without aliases or
+compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
+clean-cut, parity, and release gates at 0.2.0; then prove C-Two delegates the
+nested spec and composes artifacts without duplicating FastDB semantics.
+
 ## P1 observations that remain open
 
 These are implementation-gate observations, not post-0.2.0 deferrals.
 
-### Deep object and shared-child regression coverage
-
-**Current limit:** The committed 50,000-level regression matrix is array-focused. During Task 2 review, deep-object traversal and shared-child DAG lifetime behavior passed reviewer-only probes, but those probes are not committed tests.
-
-**Reason:** Task 2 closed the concrete recursive destruction and JCS traversal failures with the smallest durable array-chain matrix. The reviewer then checked adjacent object and shared-node shapes without expanding that reviewed task after its implementation gate.
-
-**Impact:** The iterative algorithms have direct review evidence for those adjacent shapes, but the repository would not automatically catch a future regression that affects only deep objects or repeated references to one immutable child.
-
-**Closure criteria:** Before the P1 final gate, commit regression tests that exercise deep object serialization/destruction and shared-child DAG copy/move/release behavior at a depth and fan-out sufficient to fail a recursive or double-release implementation. Run them in Debug, Release, and the native sanitizer job.
-
 ### Pre-existing SWIG diagnostics
 
-**Current limit:** The Python wheel build succeeds while SWIG reports `Warning 325` for nested `TileBox` (line 582), `HandleTileAction` (588), `TakeResult` (595), `TileDataHandle` (622), `TileDbBox` (631), and the second `TakeResult` (637) in `fastcarto/fastdb/include/fastdb.h`; it also reports `Warning 451` for the settable `const char *` member at line 206.
+**Current limit:** The Python wheel build succeeds with the exact seven legacy
+SWIG diagnostics enumerated in [Issue 0003](0003-legacy-swig-diagnostics.md).
 
-**Reason:** These diagnostics come from the legacy 0.1.x SWIG input surface: SWIG does not project those nested declarations, and its generated setter cannot prove ownership for the character pointer. Task 3 does not add `fastdb_payload.h` to that SWIG surface.
+**Reason:** These diagnostics come from the legacy 0.1.x SWIG input surface;
+Task 9 classifies them but does not redesign that API.
 
-**Impact:** Existing wheels still build, and the new payload C ABI is unaffected, but ignored nested declarations and an ownership warning remain noisy enough to conceal a new binding regression.
+**Impact:** Existing wheels still build and the P1 C ABI is unaffected, but no
+new warning may be accepted implicitly. Issue 0003 is the exact owner for the
+residual cleanup and package-warning gate.
 
-**Closure criteria:** Before the P1 final gate, either fix the legacy SWIG declarations/typemaps and require a quiet build, or open an exact owner issue that enumerates each accepted residual diagnostic with its rationale, impact, and closure gate. No new SWIG warning may be normalized into this list implicitly.
+**Closure criteria:** Close Issue 0003 through the legacy/P5 clean-cut criteria,
+or earlier if a listed warning blocks a required package build.
+
+### Hosted native CI evidence
+
+**Current limit:** Task 9 defines the required runner labels, architecture
+assertions, native matrix, sanitizer suite, default-schedule fuzz smoke, and
+aggregate-result handling, but the branch has not been pushed and no hosted run
+exists yet.
+
+**Reason:** Push, tag, publication, and release operations are outside Task 9
+authorization.
+
+**Impact:** Local author evidence validates the workflow structure and the
+underlying commands, while Linux x86-64 and macOS arm64 hosted outcomes remain
+pending. A workflow definition is not a hosted pass.
+
+**Closure criteria:** The first authorized GitHub Actions execution must show
+successful `native_tests` matrix legs and `native_sanitizers`; any runner-image
+or command failure must be fixed and re-run before P1 receives hosted evidence.
+
+### Local macOS libFuzzer schedule evidence
+
+**Current limit:** On Darwin 25.5.0 arm64, Homebrew LLVM 22.1.6 with matching
+libc++, ASan, and libFuzzer aborts inside libFuzzer's own
+`InputCorpus::AddRareFeature`, through libc++
+`__uninitialized_allocator_relocate`, with an ASan heap-buffer-overflow while
+loading the seed corpus under its default entropic power schedule. The stack
+has not entered a FastDB input failure. LLVM 21.1.7 instead spins during ASan
+shadow initialization on this OS.
+
+**Reason:** This is a local compiler-runtime compatibility limit. Task 9 does
+not change Core or harness behavior to mask it.
+
+**Impact:** Each of the four tracked seeds is executed separately through the
+ASan+UBSan harness, and the same matching LLVM 22 build completes 10,000
+coverage-guided runs with libFuzzer's supported `-entropic=0` schedule. This is
+valid local product evidence with an explicit schedule limit, not a
+default-schedule pass and not a FastDB defect. The Linux hosted sanitizer job
+retains the exact default schedule for its 1,000-run smoke.
+
+**Closure criteria:** Obtain a successful default-schedule run on the hosted
+Linux job and retain the local adjusted-schedule evidence; refresh the local
+default-schedule run when a compatible macOS LLVM runtime is available.
 
 ## P1 observations closed during implementation
+
+### Deep object and shared-child regression coverage
+
+**Closed by Task 9:** `payload.json_depth.object_serialize`,
+`payload.json_depth.object_destroy`, and `payload.json_depth.object_failure`
+exercise a 50,000-level object chain. `payload.json_depth.shared_child_dag`
+copies, moves, and releases 50,000 independent parents sharing one immutable
+child in varied order, then proves a retained survivor remains queryable.
+
+**Evidence:** These named CTest cases run in ordinary Debug, Release, and
+sanitizer suites and are deep/wide enough to expose recursive traversal or
+destruction, double release, use-after-free, and reference-imbalance
+regressions.
 
 ### Planned schema manifest globs
 
@@ -131,7 +275,7 @@ result.
 
 | Slice | Status | Required closure evidence |
 |---|---|---|
-| P1. Core contract compiler/query ABI | In progress: Tasks 1-8 independently reviewed | Commit deep-object/DAG regressions; complete Task 9 fuzz, exact ABI allowlist, native CI, packaging, and final docs |
+| P1. Core contract compiler/query ABI | Implemented; Task 9 independent final review and first hosted execution pending | Accept the Task 9 implementation after fresh spec/quality review; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Blocked on P1 | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |

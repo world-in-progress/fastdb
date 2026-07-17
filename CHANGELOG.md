@@ -96,6 +96,25 @@ When a binding is released (tagged), its section is automatically copied to the 
 ## fastdb C++ core
 
 ### Added
+- P1 `fastdb.payload.v1` compile/query support in the C++ Core, exposed through
+  an exact 33-symbol pure-C `fdb_payload_v1_*` ABI and a header-only C++17 RAII
+  facade. The shipped P1 facts are strict source validation, normalized RFC
+  8785 canonical JSON, SHA-256 identity, manifest/profile/capability/index
+  queries, source-schema bytes/digest, and stable owned diagnostics.
+- Native ABI allowlist, deep object/shared-child lifetime regressions, a
+  Clang/ASan/UBSan libFuzzer compiler harness and seed corpus, and GitHub
+  Actions definitions for Linux x86-64, macOS arm64, and Linux sanitizer/fuzz
+  gates.
+
+P1 does not ship `fastdb.payload.bin.v1`, portable build/open/view/
+materialize/invalidate behavior, Rust/Python/TypeScript-WASM portable
+projections, or payload code generation. Those are non-deferrable P2-P5 work
+tracked in [Issue 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
+The public call-db/`ColumnEngine` surface remains 0.1.x migration input until
+the planned 0.2.0 clean cut; this change does not bump a package version or
+claim a 0.2.0 release. Only capabilities deliberately deferred beyond 0.2.0
+belong to [Issue 0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
+
 - **Native list column support**: `ftList=12` field type with backwards-compatible wire format. New public API on `FastVectorDbLayerBuild`: `add_list_field(name, element_type)`, `set_field_list_numeric(idx, data, nbytes)`, `set_field_list_refs(idx, refs, count)`, `update_feature_ref(feature_idx, field_idx, ref)`, `update_list_ref_at(feature_idx, field_idx, list_idx, ref)`. New public API on `FastVectorDbFeature`: `getFieldAsListView(idx)`, `getFieldListSize(idx)`, `getFieldListRefAt(idx, list_idx)`. Wire format: `element_type` field added in 2 previously-unused padding bytes of `field_desc_ex_t`; `n_list_fields` in `layer_header_t`; list data section appended after wstrings in each layer binary. Fully backwards-compatible — old databases with zero-filled padding read as no list data.
 
 ### Fixed

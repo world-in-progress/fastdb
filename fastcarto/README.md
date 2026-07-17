@@ -2,7 +2,14 @@
 
 This directory contains the native implementation that the higher-level bindings build on.
 
-> **0.2.0 direction:** The C++ Core will become the sole authority for `fastdb.payload.v1`, RFC 8785 canonicalization, SHA-256 identity, `fastdb.payload.bin.v1`, layout/build/open, checked lifetimes, final backing, stable errors, and payload code generation. Cross-language access uses a versioned C ABI plus a C++ RAII facade. The current native storage API remains implementation input, not the portable ABI. See the [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
+> **Portable payload status:** The C++ Core now owns the P1
+> `fastdb.payload.v1` compiler, RFC 8785 canonicalization, SHA-256 identity,
+> manifest/index/capability facts, stable owned errors, and the exact 33-symbol
+> C query ABI plus C++17 RAII facade. P1 does not include
+> `fastdb.payload.bin.v1`, layout/build/open, checked lifetimes, final backing,
+> language projections, or payload code generation. See the [current status
+> issue](../docs/issues/0002-portable-payload-foundation-implementation-status.md)
+> and [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
 
 For the `fastdb` project, `fastcarto/fastdb/` is the authoritative storage engine. Both `fastdb4py` and `fastdb4ts` rely on it for current binary layout, row access, geometry storage, and serialization behavior. The accepted 0.2.0 work extends that authority to the portable payload schema and every cross-language semantic decision.
 
@@ -45,7 +52,9 @@ The current 0.1.x storage API lives in:
 - `fastcarto/fastdb/include/fastdb.h`
 - `fastcarto/fastdb/include/fastdb-config.h`
 
-The accepted 0.2.0 portable surface adds the stable C header `fastdb_payload.h` and the C++ RAII facade `fastdb_payload.hpp`; the exact target structure is defined in the accepted design.
+The implemented P1 portable surface adds the stable C header
+`fastdb_payload.h` and the query-only C++ RAII facade `fastdb_payload.hpp`.
+Later runtime/lifetime families remain required by the accepted 0.2.0 design.
 
 Important public classes:
 

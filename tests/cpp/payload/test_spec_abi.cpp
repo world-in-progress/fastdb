@@ -20,6 +20,22 @@
 #include <utility>
 #include <vector>
 
+#if defined(__SANITIZE_ADDRESS__)
+#define FASTDB_PAYLOAD_TEST_HAS_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define FASTDB_PAYLOAD_TEST_HAS_ASAN 1
+#endif
+#endif
+
+#ifndef FASTDB_PAYLOAD_TEST_HAS_ASAN
+#define FASTDB_PAYLOAD_TEST_HAS_ASAN 0
+#endif
+
+#if FASTDB_PAYLOAD_TEST_HAS_ASAN
+#include <sanitizer/asan_interface.h>
+#endif
+
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/mman.h>
 #include <unistd.h>
@@ -36,6 +52,80 @@ namespace {
 std::atomic<std::int64_t> fail_after{-1};
 std::atomic<bool> fail_forever{false};
 std::atomic<std::uint64_t> live_allocations{UINT64_C(0)};
+
+constexpr std::size_t kAllocationRegistryCapacity = 1U << 16U;
+static_assert((kAllocationRegistryCapacity &
+               (kAllocationRegistryCapacity - 1U)) == 0U);
+
+// Sanitizer runtimes may route a deallocation through the replacement delete
+// even when the matching allocation bypassed the replacement new. Track the
+// pointers observed by this injector so only its own allocations affect the
+// balance assertions. The fixed table and spin lock cannot allocate.
+std::array<void*, kAllocationRegistryCapacity> allocation_registry{};
+std::atomic_flag allocation_registry_lock = ATOMIC_FLAG_INIT;
+
+void lock_allocation_registry() noexcept {
+    while (allocation_registry_lock.test_and_set(std::memory_order_acquire)) {
+    }
+}
+
+void unlock_allocation_registry() noexcept {
+    allocation_registry_lock.clear(std::memory_order_release);
+}
+
+bool register_allocation_unlocked(void* value) noexcept {
+    const std::size_t mask = kAllocationRegistryCapacity - 1U;
+    const std::size_t start =
+        (reinterpret_cast<std::uintptr_t>(value) >> 4U) & mask;
+    for (std::size_t offset = 0; offset < kAllocationRegistryCapacity;
+         ++offset) {
+        const std::size_t index = (start + offset) & mask;
+        if (allocation_registry[index] == nullptr) {
+            allocation_registry[index] = value;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool register_allocation(void* value) noexcept {
+    lock_allocation_registry();
+    const bool registered = register_allocation_unlocked(value);
+    unlock_allocation_registry();
+    return registered;
+}
+
+bool unregister_allocation(void* value) noexcept {
+    const std::size_t mask = kAllocationRegistryCapacity - 1U;
+    const std::size_t start =
+        (reinterpret_cast<std::uintptr_t>(value) >> 4U) & mask;
+    lock_allocation_registry();
+    for (std::size_t offset = 0; offset < kAllocationRegistryCapacity;
+         ++offset) {
+        const std::size_t index = (start + offset) & mask;
+        void* const entry = allocation_registry[index];
+        if (entry == nullptr) {
+            unlock_allocation_registry();
+            return false;
+        }
+        if (entry == value) {
+            allocation_registry[index] = nullptr;
+            std::size_t following = (index + 1U) & mask;
+            while (allocation_registry[following] != nullptr) {
+                void* const displaced = allocation_registry[following];
+                allocation_registry[following] = nullptr;
+                if (!register_allocation_unlocked(displaced)) {
+                    std::abort();
+                }
+                following = (following + 1U) & mask;
+            }
+            unlock_allocation_registry();
+            return true;
+        }
+    }
+    unlock_allocation_registry();
+    return false;
+}
 
 bool should_fail_allocation() noexcept {
     if (fail_forever.load(std::memory_order_relaxed)) {
@@ -68,13 +158,20 @@ void* allocate_for_test(std::size_t size) {
     if (result == nullptr) {
         throw std::bad_alloc{};
     }
+    if (!register_allocation(result)) {
+        std::free(result);
+        throw std::bad_alloc{};
+    }
     live_allocations.fetch_add(UINT64_C(1), std::memory_order_relaxed);
     return result;
 }
 
 void deallocate_for_test(void* value) noexcept {
     if (value != nullptr) {
-        live_allocations.fetch_sub(UINT64_C(1), std::memory_order_relaxed);
+        if (unregister_allocation(value)) {
+            live_allocations.fetch_sub(UINT64_C(1),
+                                       std::memory_order_relaxed);
+        }
         std::free(value);
     }
 }
@@ -826,9 +923,14 @@ int test_options_prefix_tail_reserved_and_limits() {
 
 #if defined(__unix__) || defined(__APPLE__)
 int test_guarded_short_prefixes_do_not_read_the_tail() {
+    static_assert(alignof(fdb_payload_v1_compile_options_t) ==
+                  alignof(fdb_payload_v1_capabilities_t));
     const long queried_page_size = ::sysconf(_SC_PAGESIZE);
     require(queried_page_size > 0);
     const std::size_t page_size = static_cast<std::size_t>(queried_page_size);
+    constexpr std::size_t struct_alignment =
+        alignof(fdb_payload_v1_compile_options_t);
+    require(page_size % struct_alignment == 0U);
     void* const pages =
         ::mmap(nullptr, page_size * 2U, PROT_READ | PROT_WRITE,
                MAP_PRIVATE | MAP_ANON, -1, 0);
@@ -837,23 +939,52 @@ int test_guarded_short_prefixes_do_not_read_the_tail() {
                        PROT_NONE) == 0);
 
     auto* const prefix = reinterpret_cast<std::uint32_t*>(
-        static_cast<char*>(pages) + page_size - sizeof(std::uint32_t));
-    *prefix = UINT32_C(4);
+        static_cast<char*>(pages) + page_size - struct_alignment);
+    require(reinterpret_cast<std::uintptr_t>(prefix) % struct_alignment ==
+            0U);
+    constexpr std::uint32_t canary = UINT32_C(0xa5a55a5a);
+    prefix[0] = UINT32_C(4);
+    prefix[1] = canary;
+#if FASTDB_PAYLOAD_TEST_HAS_ASAN
+    __asan_poison_memory_region(prefix + 1, sizeof(std::uint32_t));
+#endif
     const auto* const options =
         reinterpret_cast<const fdb_payload_v1_compile_options_t*>(prefix);
     fdb_payload_v1_spec_t* spec = nullptr;
     fdb_payload_v1_error_t* error = nullptr;
-    require(compile(kEmptySpec, options, &spec, &error) ==
-            FDB_PAYLOAD_E_UNSUPPORTED_ABI);
+    const fdb_payload_v1_status_t options_status =
+        compile(kEmptySpec, options, &spec, &error);
+#if FASTDB_PAYLOAD_TEST_HAS_ASAN
+    __asan_unpoison_memory_region(prefix + 1, sizeof(std::uint32_t));
+#endif
+    require(options_status == FDB_PAYLOAD_E_UNSUPPORTED_ABI);
     require(spec == nullptr);
+    require(error_is(
+        error, FDB_PAYLOAD_E_UNSUPPORTED_ABI, "UNSUPPORTED_ABI", "",
+        "Unsupported ABI struct contract",
+        R"({"argument":"options","minimum_struct_size":80,"reason":"struct_size_too_small","struct_size":4})"));
+    require(prefix[0] == UINT32_C(4));
+    require(prefix[1] == canary);
     fdb_payload_v1_error_release(error);
 
+#if FASTDB_PAYLOAD_TEST_HAS_ASAN
+    __asan_poison_memory_region(prefix + 1, sizeof(std::uint32_t));
+#endif
     auto* const capabilities =
         reinterpret_cast<fdb_payload_v1_capabilities_t*>(prefix);
     error = nullptr;
-    require(fdb_payload_v1_spec_capabilities(nullptr, capabilities, &error) ==
-            FDB_PAYLOAD_E_UNSUPPORTED_ABI);
-    require(*prefix == UINT32_C(4));
+    const fdb_payload_v1_status_t capabilities_status =
+        fdb_payload_v1_spec_capabilities(nullptr, capabilities, &error);
+#if FASTDB_PAYLOAD_TEST_HAS_ASAN
+    __asan_unpoison_memory_region(prefix + 1, sizeof(std::uint32_t));
+#endif
+    require(capabilities_status == FDB_PAYLOAD_E_UNSUPPORTED_ABI);
+    require(error_is(
+        error, FDB_PAYLOAD_E_UNSUPPORTED_ABI, "UNSUPPORTED_ABI", "",
+        "Unsupported ABI struct contract",
+        R"({"argument":"capabilities","minimum_struct_size":72,"reason":"struct_size_too_small","struct_size":4})"));
+    require(prefix[0] == UINT32_C(4));
+    require(prefix[1] == canary);
     fdb_payload_v1_error_release(error);
 
     require(::mprotect(static_cast<char*>(pages) + page_size, page_size,

@@ -146,6 +146,21 @@ if (NOT is_emscripten)
         target_link_libraries(fastdb4py PRIVATE ${PROJECT_NAME})
         target_link_directories(fastdb4py PRIVATE ${Python3_LIBRARY_DIRS})
 
+        # The wheel copies the wrapper and FastDB libraries into one directory.
+        # Use that relative runtime location in the build artifact itself so the
+        # packaged binaries never retain CMake's temporary source/build RPATH.
+        if(APPLE)
+            set_target_properties(fastdb4py PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "@loader_path"
+            )
+        elseif(UNIX)
+            set_target_properties(fastdb4py PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "$ORIGIN"
+            )
+        endif()
+
         # Free-threaded Python: define Py_GIL_DISABLED so pyconfig.h's auto-link
         # pragma resolves to the correct library name (e.g. python314t.lib)
         if(Py_GIL_DISABLED)

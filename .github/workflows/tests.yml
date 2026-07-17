@@ -28,10 +28,21 @@ jobs:
         with:
           filters: |
             core:
+              - 'schemas/**'
+              - 'tools/vendor_portable_payload_deps.sh'
+              - 'tools/generate_embedded_payload_schemas.py'
+              - 'tools/check_payload_abi_symbols.py'
               - 'fastcarto/**'
               - 'fastcarto/fastdb/**'
+              - 'fastcarto/lib/yyjson/**'
+              - 'fastcarto/lib/double-conversion/**'
+              - 'fastcarto/lib/picosha2/**'
               - 'fastcarto/CMakeLists.txt'
               - 'fastcarto/fastdb/CMakeLists.txt'
+              - 'tests/cpp/**'
+              - 'tests/fuzz/**'
+              - 'tests/golden/payload/**'
+              - 'tests/abi/**'
               - 'setup.py'
               - 'pyproject.toml'
               - 'MANIFEST.in'
@@ -104,22 +115,119 @@ jobs:
       - name: Run TypeScript tests
         run: npm run test:ts
 
+  native_tests:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            expected_arch: x86_64
+          - os: macos-15
+            expected_arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Assert runner architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.expected_arch }}
+        run: |
+          actual_arch="$(uname -m)"
+          echo "runner architecture: ${actual_arch}"
+          test "${actual_arch}" = "${EXPECTED_ARCH}"
+
+      - name: Verify vendored portable payload dependencies
+        run: tools/vendor_portable_payload_deps.sh --check
+
+      - name: Verify embedded payload schemas
+        run: python3 tools/generate_embedded_payload_schemas.py --check
+
+      - name: Configure native tests
+        run: >-
+          cmake -S fastcarto -B build/native
+          -DBUILD_TESTING=ON
+          -DBUILD_TOOLS=OFF
+          -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build native tests
+        run: cmake --build build/native --parallel
+
+      - name: Run native tests
+        run: ctest --test-dir build/native --output-on-failure
+
+      - name: Verify portable payload ABI symbols
+        run: python3 tools/check_payload_abi_symbols.py --build-dir build/native
+
+  native_sanitizers:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Show Clang toolchain
+        run: |
+          clang --version
+          clang++ --version
+
+      - name: Configure sanitizer and fuzz tests
+        run: >-
+          cmake -S fastcarto -B build/native-sanitizers
+          -DBUILD_TESTING=ON
+          -DBUILD_TOOLS=OFF
+          -DFASTDB_ENABLE_SANITIZERS=ON
+          -DFASTDB_BUILD_FUZZERS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build sanitizer and fuzz tests
+        run: cmake --build build/native-sanitizers --parallel
+
+      - name: Run deterministic sanitizer suite
+        run: ctest --test-dir build/native-sanitizers --output-on-failure
+
+      - name: Run portable payload fuzz smoke
+        run: |
+          cmake -E make_directory build/native-sanitizers/runtime-corpus
+          build/native-sanitizers/tests/cpp/fuzz_payload_spec_compile \
+            build/native-sanitizers/runtime-corpus \
+            tests/fuzz/payload/corpus \
+            -runs=1000 -max_len=1048576
+
   test:
     name: test
     needs:
       - detect_changes
       - python_tests
       - ts_tests
+      - native_tests
+      - native_sanitizers
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Validate required test results
         env:
+          DETECT_RESULT: ${{ needs.detect_changes.result }}
           PYTHON_RESULT: ${{ needs.python_tests.result }}
           TS_RESULT: ${{ needs.ts_tests.result }}
+          NATIVE_RESULT: ${{ needs.native_tests.result }}
+          SANITIZER_RESULT: ${{ needs.native_sanitizers.result }}
         run: |
+          echo "detect_changes result: ${DETECT_RESULT}"
           echo "python_tests result: ${PYTHON_RESULT}"
           echo "ts_tests result: ${TS_RESULT}"
+          echo "native_tests result: ${NATIVE_RESULT}"
+          echo "native_sanitizers result: ${SANITIZER_RESULT}"
+
+          if [ "${DETECT_RESULT}" != "success" ]; then
+            echo "detect_changes did not succeed"
+            exit 1
+          fi
 
           if [ "${PYTHON_RESULT}" = "failure" ] || [ "${PYTHON_RESULT}" = "cancelled" ]; then
             echo "python_tests did not succeed"
@@ -128,6 +236,16 @@ jobs:
 
           if [ "${TS_RESULT}" = "failure" ] || [ "${TS_RESULT}" = "cancelled" ]; then
             echo "ts_tests did not succeed"
+            exit 1
+          fi
+
+          if [ "${NATIVE_RESULT}" = "failure" ] || [ "${NATIVE_RESULT}" = "cancelled" ]; then
+            echo "native_tests did not succeed"
+            exit 1
+          fi
+
+          if [ "${SANITIZER_RESULT}" = "failure" ] || [ "${SANITIZER_RESULT}" = "cancelled" ]; then
+            echo "native_sanitizers did not succeed"
             exit 1
           fi
 

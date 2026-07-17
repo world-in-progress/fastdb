@@ -9,3 +9,4 @@ recursive-include fastcarto/dump-fastdb *
 recursive-include python *
 global-exclude *.py[cod]
 global-exclude *.so *.dylib *.dll
+global-exclude .DS_Store

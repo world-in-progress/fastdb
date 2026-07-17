@@ -53,6 +53,74 @@ function(add_fastdb_payload_test name)
     add_test(NAME payload.${name} COMMAND ${target_name})
 endfunction()
 
+option(
+    FASTDB_BUILD_FUZZERS
+    "Build Clang libFuzzer targets for the FastDB portable payload Core"
+    OFF
+)
+
+if(FASTDB_BUILD_FUZZERS)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$" OR
+       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
+        message(FATAL_ERROR
+            "FASTDB_BUILD_FUZZERS requires Clang or AppleClang for both C "
+            "and C++; got C=${CMAKE_C_COMPILER_ID}, "
+            "CXX=${CMAKE_CXX_COMPILER_ID}"
+        )
+    endif()
+
+    set(FASTDB_FUZZ_COMPILE_OPTIONS
+        -fsanitize=fuzzer-no-link,address,undefined
+        -fno-omit-frame-pointer
+    )
+    foreach(payload_fuzz_library IN ITEMS
+            fastdb_payload_core
+            fastdb_yyjson
+            fastdb_double_conversion)
+        if(NOT TARGET ${payload_fuzz_library})
+            message(FATAL_ERROR
+                "FASTDB_BUILD_FUZZERS cannot instrument missing target "
+                "${payload_fuzz_library}"
+            )
+        endif()
+        target_compile_options(
+            ${payload_fuzz_library}
+            PRIVATE ${FASTDB_FUZZ_COMPILE_OPTIONS}
+        )
+    endforeach()
+
+    add_executable(
+        fuzz_payload_spec_compile
+        ../fuzz/payload/fuzz_spec_compile.cpp
+    )
+    target_include_directories(
+        fuzz_payload_spec_compile
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+    )
+    target_link_libraries(
+        fuzz_payload_spec_compile
+        PRIVATE fastdb_payload_core
+    )
+    target_compile_features(fuzz_payload_spec_compile PRIVATE cxx_std_17)
+    target_compile_options(
+        fuzz_payload_spec_compile
+        PRIVATE ${FASTDB_FUZZ_COMPILE_OPTIONS}
+    )
+    target_link_options(
+        fuzz_payload_spec_compile
+        PRIVATE -fsanitize=fuzzer,address,undefined
+    )
+    set_target_properties(
+        fuzz_payload_spec_compile
+        PROPERTIES
+            CXX_EXTENSIONS OFF
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON
+            LINKER_LANGUAGE CXX
+    )
+endif()
+
 add_fastdb_payload_test(
     dependency_smoke
     SOURCES payload/test_dependency_smoke.cpp
@@ -239,6 +307,10 @@ set(FASTDB_JSON_DEPTH_TESTS
     destroy
     failure
     copy_move
+    object_serialize
+    object_destroy
+    object_failure
+    shared_child_dag
 )
 foreach(depth_test IN LISTS FASTDB_JSON_DEPTH_TESTS)
     add_test(
@@ -250,3 +322,17 @@ foreach(depth_test IN LISTS FASTDB_JSON_DEPTH_TESTS)
         PROPERTIES TIMEOUT 30
     )
 endforeach()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
+   CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(
+        NAME payload.abi_symbols
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/check_payload_abi_symbols.py
+            --build-dir
+            ${CMAKE_BINARY_DIR}
+    )
+    set_tests_properties(payload.abi_symbols PROPERTIES TIMEOUT 30)
+endif()
