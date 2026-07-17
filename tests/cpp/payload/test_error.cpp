@@ -75,6 +75,7 @@ using fastdb::payload::error::Error;
 using fastdb::payload::error::Result;
 using fastdb::payload::json::JcsFailure;
 using fastdb::payload::json::JsonPointer;
+using fastdb::payload::json::JsonPointerBuilder;
 using fastdb::payload::json::JsonValue;
 
 struct ErrorCase final {
@@ -207,6 +208,24 @@ int test_owned_error_fields_are_exact_and_canonical() {
     require(error_bytes(handle, fdb_payload_v1_error_details_json) ==
             "{\"a\":\"first\",\"z\":2}");
     fdb_payload_v1_error_release(handle);
+    return EXIT_SUCCESS;
+}
+
+int test_mutable_json_pointer_escapes_and_backtracks_exactly() {
+    JsonPointerBuilder path;
+    const JsonPointerBuilder::Mark root = path.mark();
+    path.append("entries");
+    path.append(UINT64_C(12));
+    const JsonPointerBuilder::Mark entry = path.mark();
+    path.append("id/value~");
+    require(path.snapshot().value() == "/entries/12/id~1value~0");
+
+    path.rewind(entry);
+    path.append("next");
+    require(path.snapshot().value() == "/entries/12/next");
+
+    path.rewind(root);
+    require(path.snapshot().value().empty());
     return EXIT_SUCCESS;
 }
 
@@ -506,6 +525,8 @@ int main() {
     require(test_max_minus_one_retain_saturates_and_release_is_a_noop() ==
             EXIT_SUCCESS);
     require(test_owned_error_fields_are_exact_and_canonical() == EXIT_SUCCESS);
+    require(test_mutable_json_pointer_escapes_and_backtracks_exactly() ==
+            EXIT_SUCCESS);
     require(test_invalid_message_fails_closed_to_valid_internal_error() ==
             EXIT_SUCCESS);
     require(test_jcs_failures_have_stable_codes_and_bad_details_fail_closed() ==

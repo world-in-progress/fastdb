@@ -141,6 +141,20 @@ std::string canonical_source(const SourceSpec& source) {
     return bytes == nullptr ? std::string{} : *bytes;
 }
 
+std::string deep_list_source(
+    std::uint32_t list_depth,
+    std::string_view terminal_type = R"({"kind":"u8"})") {
+    std::string source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"deep","cardinality":"one","type":)";
+    for (std::uint32_t depth = UINT32_C(0); depth < list_depth; ++depth) {
+        source += R"({"kind":"list","items":)";
+    }
+    source += terminal_type;
+    source.append(static_cast<std::size_t>(list_depth), '}');
+    source += R"(}],"components":[]})";
+    return source;
+}
+
 int test_empty_source_and_complete_record_algebra() {
     const std::string empty_source = fixture("valid/empty-record.source.json");
     require(!empty_source.empty());
@@ -542,14 +556,7 @@ int test_typed_count_limits_and_pre_growth_failure() {
 
 int test_deep_list_type_is_stack_safe() {
     constexpr std::uint32_t list_depth = UINT32_C(20000);
-    std::string source =
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"deep","cardinality":"one","type":)";
-    for (std::uint32_t depth = UINT32_C(0); depth < list_depth; ++depth) {
-        source += R"({"kind":"list","items":)";
-    }
-    source += R"({"kind":"u8"})";
-    source.append(static_cast<std::size_t>(list_depth), '}');
-    source += R"(}],"components":[]})";
+    const std::string source = deep_list_source(list_depth);
 
     JsonParseLimits json_limits;
     json_limits.max_nesting_depth = list_depth + UINT32_C(16);
@@ -577,11 +584,100 @@ int test_deep_list_type_is_stack_safe() {
     return EXIT_SUCCESS;
 }
 
+int test_deep_typed_parse_has_linear_allocation() {
+    constexpr std::uint32_t list_depth = UINT32_C(4000);
+    const std::string source = deep_list_source(list_depth);
+    JsonParseLimits json_limits;
+    json_limits.max_nesting_depth = list_depth + UINT32_C(16);
+    auto document = JsonDocument::parse(
+        reinterpret_cast<const std::uint8_t*>(source.data()),
+        static_cast<std::uint64_t>(source.size()), json_limits);
+    require(document.has_value());
+
+    bool threw = false;
+    bool parsed_successfully = false;
+    try {
+        allocation_guard::Budget budget(16U * 1024U * 1024U);
+        const auto parsed = parse_and_normalize_source(document.value());
+        parsed_successfully = parsed.has_value();
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    require(!threw);
+    require(parsed_successfully);
+    return EXIT_SUCCESS;
+}
+
+int test_deep_normalized_emission_has_linear_allocation() {
+    constexpr std::uint32_t list_depth = UINT32_C(4000);
+    const std::string source = deep_list_source(list_depth);
+    JsonParseLimits json_limits;
+    json_limits.max_nesting_depth = list_depth + UINT32_C(16);
+    auto document = JsonDocument::parse(
+        reinterpret_cast<const std::uint8_t*>(source.data()),
+        static_cast<std::uint64_t>(source.size()), json_limits);
+    require(document.has_value());
+    auto parsed = parse_and_normalize_source(document.value());
+    require(parsed.has_value());
+
+    bool threw = false;
+    bool emitted_object = false;
+    try {
+        allocation_guard::Budget budget(16U * 1024U * 1024U);
+        const auto normalized = normalized_source_json(parsed.value());
+        emitted_object =
+            std::holds_alternative<fastdb::payload::json::JsonValue::Object>(
+                normalized.storage());
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    require(!threw);
+    require(emitted_object);
+    return EXIT_SUCCESS;
+}
+
+int test_deep_invalid_type_path_is_exact() {
+    constexpr std::uint32_t list_depth = UINT32_C(4000);
+    const std::string source =
+        deep_list_source(list_depth, R"({"kind":"text"})");
+    JsonParseLimits json_limits;
+    json_limits.max_nesting_depth = list_depth + UINT32_C(16);
+    auto document = JsonDocument::parse(
+        reinterpret_cast<const std::uint8_t*>(source.data()),
+        static_cast<std::uint64_t>(source.size()), json_limits);
+    require(document.has_value());
+
+    std::string expected_path = "/entries/0/type";
+    for (std::uint32_t depth = UINT32_C(0); depth < list_depth; ++depth) {
+        expected_path += "/items";
+    }
+    expected_path += "/kind";
+    require(has_error(
+        parse_and_normalize_source(document.value()),
+        FDB_PAYLOAD_E_INVALID_TYPE, expected_path,
+        "Payload type kind is invalid",
+        R"({"actual":"text","reason":"invalid_type_kind"})"));
+    return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-    if (argc == 2 && std::string_view{argv[1]} == "deep") {
-        return test_deep_list_type_is_stack_safe();
+    if (argc == 2) {
+        const std::string_view selected{argv[1]};
+        if (selected == "deep") {
+            return test_deep_list_type_is_stack_safe();
+        }
+        if (selected == "deep-parse-allocation") {
+            return test_deep_typed_parse_has_linear_allocation();
+        }
+        if (selected == "deep-normalize-allocation") {
+            return test_deep_normalized_emission_has_linear_allocation();
+        }
+        if (selected == "deep-invalid-path") {
+            return test_deep_invalid_type_path_is_exact();
+        }
+        return EXIT_FAILURE;
     }
     require(test_empty_source_and_complete_record_algebra() == EXIT_SUCCESS);
     require(test_object_graph_structural_types_and_explicit_nullable() ==
@@ -593,5 +689,9 @@ int main(int argc, char** argv) {
             EXIT_SUCCESS);
     require(test_typed_count_limits_and_pre_growth_failure() == EXIT_SUCCESS);
     require(test_deep_list_type_is_stack_safe() == EXIT_SUCCESS);
+    require(test_deep_typed_parse_has_linear_allocation() == EXIT_SUCCESS);
+    require(test_deep_normalized_emission_has_linear_allocation() ==
+            EXIT_SUCCESS);
+    require(test_deep_invalid_type_path_is_exact() == EXIT_SUCCESS);
     return EXIT_SUCCESS;
 }

@@ -22,12 +22,21 @@ using error::Error;
 using error::Result;
 using json::JsonCursor;
 using json::JsonPointer;
+using json::JsonPointerBuilder;
 using json::JsonValue;
 
 struct MemberSlot final {
     bool present{false};
     JsonCursor value;
 };
+
+JsonPointer member_path(JsonPointerBuilder& path, std::string_view member) {
+    const JsonPointerBuilder::Mark mark = path.mark();
+    path.append(member);
+    JsonPointer snapshot = path.snapshot();
+    path.rewind(mark);
+    return snapshot;
+}
 
 JsonValue details(JsonValue::Object members) {
     return JsonValue::object(std::move(members));
@@ -206,27 +215,27 @@ bool is_identifier(std::string_view value) noexcept {
 }
 
 Result<std::string> parse_identifier(const JsonCursor& value,
-                                     const JsonPointer& path) {
+                                     const JsonPointerBuilder& path) {
     if (!value.is_string()) {
         return Result<std::string>::failure(
-            invalid_field_type(path, "string", value));
+            invalid_field_type(path.snapshot(), "string", value));
     }
     const std::string_view source = value.string();
     if (!is_identifier(source)) {
         return Result<std::string>::failure(
-            invalid_identifier(path, source));
+            invalid_identifier(path.snapshot(), source));
     }
     return Result<std::string>::success(std::string(source));
 }
 
 Result<bool> parse_nullable(const MemberSlot& nullable,
-                            const JsonPointer& type_path) {
+                            JsonPointerBuilder& type_path) {
     if (!nullable.present) {
         return Result<bool>::success(false);
     }
     if (!nullable.value.is_boolean()) {
         return Result<bool>::failure(invalid_field_type(
-            type_path.append("nullable"), "boolean", nullable.value));
+            member_path(type_path, "nullable"), "boolean", nullable.value));
     }
     return Result<bool>::success(nullable.value.boolean());
 }
@@ -347,10 +356,10 @@ struct ParsedTypeLevel final {
 };
 
 Result<ParsedTypeLevel> parse_type_level(const JsonCursor& value,
-                                         const JsonPointer& path) {
+                                         JsonPointerBuilder& path) {
     if (!value.is_object()) {
         return Result<ParsedTypeLevel>::failure(
-            invalid_field_type(path, "object", value));
+            invalid_field_type(path.snapshot(), "object", value));
     }
 
     MemberSlot kind_member;
@@ -364,18 +373,18 @@ Result<ParsedTypeLevel> parse_type_level(const JsonCursor& value,
     }
     if (!kind_member.present) {
         return Result<ParsedTypeLevel>::failure(
-            missing_field(path, "kind"));
+            missing_field(path.snapshot(), "kind"));
     }
     if (!kind_member.value.is_string()) {
         return Result<ParsedTypeLevel>::failure(invalid_field_type(
-            path.append("kind"), "string", kind_member.value));
+            member_path(path, "kind"), "string", kind_member.value));
     }
     const std::string_view kind_name = kind_member.value.string();
     const std::optional<TypeKind> parsed_kind =
         type_kind_from_name(kind_name);
     if (!parsed_kind.has_value()) {
         return Result<ParsedTypeLevel>::failure(
-            invalid_type_kind(path.append("kind"), kind_name));
+            invalid_type_kind(member_path(path, "kind"), kind_name));
     }
     const TypeKind kind = *parsed_kind;
 
@@ -388,7 +397,7 @@ Result<ParsedTypeLevel> parse_type_level(const JsonCursor& value,
     while (members.next(name, member_value)) {
         if (!type_member_allowed(kind, name)) {
             return Result<ParsedTypeLevel>::failure(
-                unknown_field(path.append(name), name));
+                unknown_field(member_path(path, name), name));
         }
         if (name == "nullable") {
             nullable = MemberSlot{true, member_value};
@@ -417,35 +426,35 @@ Result<ParsedTypeLevel> parse_type_level(const JsonCursor& value,
     if (is_normalized_integer(kind)) {
         if (!minimum.present) {
             return Result<ParsedTypeLevel>::failure(
-                missing_field(path, "min"));
+                missing_field(path.snapshot(), "min"));
         }
         if (!maximum.present) {
             return Result<ParsedTypeLevel>::failure(
-                missing_field(path, "max"));
+                missing_field(path.snapshot(), "max"));
         }
         if (!minimum.value.is_number()) {
             return Result<ParsedTypeLevel>::failure(invalid_field_type(
-                path.append("min"), "number", minimum.value));
+                member_path(path, "min"), "number", minimum.value));
         }
         if (!maximum.value.is_number()) {
             return Result<ParsedTypeLevel>::failure(invalid_field_type(
-                path.append("max"), "number", maximum.value));
+                member_path(path, "max"), "number", maximum.value));
         }
         node.minimum = minimum.value.number();
         node.maximum = maximum.value.number();
         if (!std::isfinite(node.minimum)) {
             return Result<ParsedTypeLevel>::failure(invalid_range(
-                path.append("min"), node.minimum, node.maximum,
+                member_path(path, "min"), node.minimum, node.maximum,
                 "non_finite_min"));
         }
         if (!std::isfinite(node.maximum)) {
             return Result<ParsedTypeLevel>::failure(invalid_range(
-                path.append("max"), node.minimum, node.maximum,
+                member_path(path, "max"), node.minimum, node.maximum,
                 "non_finite_max"));
         }
         if (!(node.minimum < node.maximum)) {
             return Result<ParsedTypeLevel>::failure(invalid_range(
-                path.append("max"), node.minimum, node.maximum,
+                member_path(path, "max"), node.minimum, node.maximum,
                 "min_not_less_than_max"));
         }
         return Result<ParsedTypeLevel>::success(
@@ -457,10 +466,12 @@ Result<ParsedTypeLevel> parse_type_level(const JsonCursor& value,
                                         : std::string_view{"target"};
         if (!source_id.present) {
             return Result<ParsedTypeLevel>::failure(
-                missing_field(path, member_name));
+                missing_field(path.snapshot(), member_name));
         }
-        auto parsed_id =
-            parse_identifier(source_id.value, path.append(member_name));
+        const JsonPointerBuilder::Mark type_mark = path.mark();
+        path.append(member_name);
+        auto parsed_id = parse_identifier(source_id.value, path);
+        path.rewind(type_mark);
         if (!parsed_id.has_value()) {
             return Result<ParsedTypeLevel>::failure(
                 std::move(parsed_id).error());
@@ -471,20 +482,19 @@ Result<ParsedTypeLevel> parse_type_level(const JsonCursor& value,
     }
     if (!items.present) {
         return Result<ParsedTypeLevel>::failure(
-            missing_field(path, "items"));
+            missing_field(path.snapshot(), "items"));
     }
     return Result<ParsedTypeLevel>::success(
         ParsedTypeLevel(std::move(node), items.value));
 }
 
 Result<TypeNode> parse_type(const JsonCursor& value,
-                            const JsonPointer& path) {
+                            JsonPointerBuilder& path) {
     JsonCursor current_value = value;
-    JsonPointer current_path = path;
     std::vector<TypeNode> parents;
 
     while (true) {
-        auto parsed_level = parse_type_level(current_value, current_path);
+        auto parsed_level = parse_type_level(current_value, path);
         if (!parsed_level.has_value()) {
             return Result<TypeNode>::failure(
                 std::move(parsed_level).error());
@@ -492,7 +502,7 @@ Result<TypeNode> parse_type(const JsonCursor& value,
         ParsedTypeLevel level = std::move(parsed_level).value();
         if (level.has_items) {
             current_value = level.items;
-            current_path = current_path.append("items");
+            path.append("items");
             parents.push_back(std::move(level.node));
             continue;
         }
@@ -510,10 +520,10 @@ Result<TypeNode> parse_type(const JsonCursor& value,
 }
 
 Result<Field> parse_field(const JsonCursor& value,
-                          const JsonPointer& path) {
+                          JsonPointerBuilder& path) {
     if (!value.is_object()) {
         return Result<Field>::failure(
-            invalid_field_type(path, "object", value));
+            invalid_field_type(path.snapshot(), "object", value));
     }
     MemberSlot id;
     MemberSlot type;
@@ -527,20 +537,26 @@ Result<Field> parse_field(const JsonCursor& value,
             type = MemberSlot{true, member_value};
         } else {
             return Result<Field>::failure(
-                unknown_field(path.append(name), name));
+                unknown_field(member_path(path, name), name));
         }
     }
     if (!id.present) {
-        return Result<Field>::failure(missing_field(path, "id"));
+        return Result<Field>::failure(missing_field(path.snapshot(), "id"));
     }
     if (!type.present) {
-        return Result<Field>::failure(missing_field(path, "type"));
+        return Result<Field>::failure(
+            missing_field(path.snapshot(), "type"));
     }
-    auto parsed_id = parse_identifier(id.value, path.append("id"));
+    const JsonPointerBuilder::Mark field_mark = path.mark();
+    path.append("id");
+    auto parsed_id = parse_identifier(id.value, path);
+    path.rewind(field_mark);
     if (!parsed_id.has_value()) {
         return Result<Field>::failure(std::move(parsed_id).error());
     }
-    auto parsed_type = parse_type(type.value, path.append("type"));
+    path.append("type");
+    auto parsed_type = parse_type(type.value, path);
+    path.rewind(field_mark);
     if (!parsed_type.has_value()) {
         return Result<Field>::failure(std::move(parsed_type).error());
     }
@@ -549,12 +565,12 @@ Result<Field> parse_field(const JsonCursor& value,
 }
 
 Result<Component> parse_component(const JsonCursor& value,
-                                  const JsonPointer& path,
+                                  JsonPointerBuilder& path,
                                   const SourceParseLimits& limits,
                                   std::uint64_t& total_fields) {
     if (!value.is_object()) {
         return Result<Component>::failure(
-            invalid_field_type(path, "object", value));
+            invalid_field_type(path.snapshot(), "object", value));
     }
     MemberSlot id;
     MemberSlot kind;
@@ -571,40 +587,46 @@ Result<Component> parse_component(const JsonCursor& value,
             fields = MemberSlot{true, member_value};
         } else {
             return Result<Component>::failure(
-                unknown_field(path.append(name), name));
+                unknown_field(member_path(path, name), name));
         }
     }
     if (!id.present) {
-        return Result<Component>::failure(missing_field(path, "id"));
+        return Result<Component>::failure(
+            missing_field(path.snapshot(), "id"));
     }
     if (!kind.present) {
-        return Result<Component>::failure(missing_field(path, "kind"));
+        return Result<Component>::failure(
+            missing_field(path.snapshot(), "kind"));
     }
     if (!fields.present) {
-        return Result<Component>::failure(missing_field(path, "fields"));
+        return Result<Component>::failure(
+            missing_field(path.snapshot(), "fields"));
     }
-    auto parsed_id = parse_identifier(id.value, path.append("id"));
+    const JsonPointerBuilder::Mark component_mark = path.mark();
+    path.append("id");
+    auto parsed_id = parse_identifier(id.value, path);
+    path.rewind(component_mark);
     if (!parsed_id.has_value()) {
         return Result<Component>::failure(std::move(parsed_id).error());
     }
     if (!kind.value.is_string()) {
         return Result<Component>::failure(invalid_field_type(
-            path.append("kind"), "string", kind.value));
+            member_path(path, "kind"), "string", kind.value));
     }
     if (kind.value.string() != "record") {
         return Result<Component>::failure(invalid_component_kind(
-            path.append("kind"), kind.value.string()));
+            member_path(path, "kind"), kind.value.string()));
     }
     if (!fields.value.is_array()) {
         return Result<Component>::failure(invalid_field_type(
-            path.append("fields"), "array", fields.value));
+            member_path(path, "fields"), "array", fields.value));
     }
 
     const std::uint64_t field_count = fields.value.size();
     if (field_count >
         static_cast<std::uint64_t>(limits.max_fields_per_component)) {
         return Result<Component>::failure(resource_limit(
-            path.append("fields"),
+            member_path(path, "fields"),
             "Payload component field count exceeds configured limit",
             "fields_per_component", field_count,
             static_cast<std::uint64_t>(limits.max_fields_per_component)));
@@ -617,7 +639,7 @@ Result<Component> parse_component(const JsonCursor& value,
                         : total_fields + field_count;
     if (total_overflows || total_after > limits.max_total_fields) {
         return Result<Component>::failure(resource_limit(
-            path.append("fields"),
+            member_path(path, "fields"),
             "Payload total field count exceeds configured limit",
             "total_fields", total_after, limits.max_total_fields));
     }
@@ -627,9 +649,12 @@ Result<Component> parse_component(const JsonCursor& value,
     auto elements = fields.value.elements();
     JsonCursor field_value;
     std::uint64_t field_index = UINT64_C(0);
+    path.append("fields");
+    const JsonPointerBuilder::Mark fields_mark = path.mark();
     while (elements.next(field_value)) {
-        auto parsed_field =
-            parse_field(field_value, path.append("fields").append(field_index));
+        path.append(field_index);
+        auto parsed_field = parse_field(field_value, path);
+        path.rewind(fields_mark);
         if (!parsed_field.has_value()) {
             return Result<Component>::failure(
                 std::move(parsed_field).error());
@@ -637,16 +662,17 @@ Result<Component> parse_component(const JsonCursor& value,
         parsed_fields.push_back(std::move(parsed_field).value());
         ++field_index;
     }
+    path.rewind(component_mark);
     total_fields = total_after;
     return Result<Component>::success(Component(
         std::move(parsed_id).value(), std::move(parsed_fields)));
 }
 
 Result<Entry> parse_entry(const JsonCursor& value,
-                          const JsonPointer& path) {
+                          JsonPointerBuilder& path) {
     if (!value.is_object()) {
         return Result<Entry>::failure(
-            invalid_field_type(path, "object", value));
+            invalid_field_type(path.snapshot(), "object", value));
     }
     MemberSlot id;
     MemberSlot cardinality;
@@ -663,26 +689,30 @@ Result<Entry> parse_entry(const JsonCursor& value,
             type = MemberSlot{true, member_value};
         } else {
             return Result<Entry>::failure(
-                unknown_field(path.append(name), name));
+                unknown_field(member_path(path, name), name));
         }
     }
     if (!id.present) {
-        return Result<Entry>::failure(missing_field(path, "id"));
+        return Result<Entry>::failure(missing_field(path.snapshot(), "id"));
     }
     if (!cardinality.present) {
         return Result<Entry>::failure(
-            missing_field(path, "cardinality"));
+            missing_field(path.snapshot(), "cardinality"));
     }
     if (!type.present) {
-        return Result<Entry>::failure(missing_field(path, "type"));
+        return Result<Entry>::failure(
+            missing_field(path.snapshot(), "type"));
     }
-    auto parsed_id = parse_identifier(id.value, path.append("id"));
+    const JsonPointerBuilder::Mark entry_mark = path.mark();
+    path.append("id");
+    auto parsed_id = parse_identifier(id.value, path);
+    path.rewind(entry_mark);
     if (!parsed_id.has_value()) {
         return Result<Entry>::failure(std::move(parsed_id).error());
     }
     if (!cardinality.value.is_string()) {
         return Result<Entry>::failure(invalid_field_type(
-            path.append("cardinality"), "string", cardinality.value));
+            member_path(path, "cardinality"), "string", cardinality.value));
     }
     Cardinality parsed_cardinality;
     if (cardinality.value.string() == "one") {
@@ -691,9 +721,11 @@ Result<Entry> parse_entry(const JsonCursor& value,
         parsed_cardinality = Cardinality::many;
     } else {
         return Result<Entry>::failure(invalid_cardinality(
-            path.append("cardinality"), cardinality.value.string()));
+            member_path(path, "cardinality"), cardinality.value.string()));
     }
-    auto parsed_type = parse_type(type.value, path.append("type"));
+    path.append("type");
+    auto parsed_type = parse_type(type.value, path);
+    path.rewind(entry_mark);
     if (!parsed_type.has_value()) {
         return Result<Entry>::failure(std::move(parsed_type).error());
     }
@@ -803,9 +835,10 @@ Result<SourceSpec> parse_and_normalize_source(
     const json::JsonDocument& document,
     SourceParseLimits limits) {
     const JsonCursor root = document.root();
+    JsonPointerBuilder path;
     if (!root.is_object()) {
         return Result<SourceSpec>::failure(
-            invalid_field_type(JsonPointer{}, "object", root));
+            invalid_field_type(path.snapshot(), "object", root));
     }
 
     MemberSlot schema;
@@ -826,36 +859,36 @@ Result<SourceSpec> parse_and_normalize_source(
             components = MemberSlot{true, value};
         } else {
             return Result<SourceSpec>::failure(
-                unknown_field(JsonPointer{}.append(name), name));
+                unknown_field(member_path(path, name), name));
         }
     }
     if (!schema.present) {
         return Result<SourceSpec>::failure(
-            missing_field(JsonPointer{}, "schema"));
+            missing_field(path.snapshot(), "schema"));
     }
     if (!profile.present) {
         return Result<SourceSpec>::failure(
-            missing_field(JsonPointer{}, "profile"));
+            missing_field(path.snapshot(), "profile"));
     }
     if (!entries.present) {
         return Result<SourceSpec>::failure(
-            missing_field(JsonPointer{}, "entries"));
+            missing_field(path.snapshot(), "entries"));
     }
     if (!components.present) {
         return Result<SourceSpec>::failure(
-            missing_field(JsonPointer{}, "components"));
+            missing_field(path.snapshot(), "components"));
     }
     if (!schema.value.is_string()) {
         return Result<SourceSpec>::failure(invalid_field_type(
-            JsonPointer{}.append("schema"), "string", schema.value));
+            member_path(path, "schema"), "string", schema.value));
     }
     if (schema.value.string() != "fastdb.payload.v1") {
         return Result<SourceSpec>::failure(unsupported_schema(
-            JsonPointer{}.append("schema"), schema.value.string()));
+            member_path(path, "schema"), schema.value.string()));
     }
     if (!profile.value.is_string()) {
         return Result<SourceSpec>::failure(invalid_field_type(
-            JsonPointer{}.append("profile"), "string", profile.value));
+            member_path(path, "profile"), "string", profile.value));
     }
     Profile parsed_profile;
     if (profile.value.string() == "record.v1") {
@@ -864,21 +897,21 @@ Result<SourceSpec> parse_and_normalize_source(
         parsed_profile = Profile::object_graph_v1;
     } else {
         return Result<SourceSpec>::failure(invalid_profile(
-            JsonPointer{}.append("profile"), profile.value.string()));
+            member_path(path, "profile"), profile.value.string()));
     }
     if (!entries.value.is_array()) {
         return Result<SourceSpec>::failure(invalid_field_type(
-            JsonPointer{}.append("entries"), "array", entries.value));
+            member_path(path, "entries"), "array", entries.value));
     }
     if (!components.value.is_array()) {
         return Result<SourceSpec>::failure(invalid_field_type(
-            JsonPointer{}.append("components"), "array", components.value));
+            member_path(path, "components"), "array", components.value));
     }
 
     const std::uint64_t entry_count = entries.value.size();
     if (entry_count > static_cast<std::uint64_t>(limits.max_entries)) {
         return Result<SourceSpec>::failure(resource_limit(
-            JsonPointer{}.append("entries"),
+            member_path(path, "entries"),
             "Payload entry count exceeds configured limit", "entries",
             entry_count, static_cast<std::uint64_t>(limits.max_entries)));
     }
@@ -886,7 +919,7 @@ Result<SourceSpec> parse_and_normalize_source(
     if (component_count >
         static_cast<std::uint64_t>(limits.max_components)) {
         return Result<SourceSpec>::failure(resource_limit(
-            JsonPointer{}.append("components"),
+            member_path(path, "components"),
             "Payload component count exceeds configured limit", "components",
             component_count,
             static_cast<std::uint64_t>(limits.max_components)));
@@ -897,9 +930,13 @@ Result<SourceSpec> parse_and_normalize_source(
     auto entry_values = entries.value.elements();
     JsonCursor entry_value;
     std::uint64_t entry_index = UINT64_C(0);
+    const JsonPointerBuilder::Mark root_mark = path.mark();
+    path.append("entries");
+    const JsonPointerBuilder::Mark entries_mark = path.mark();
     while (entry_values.next(entry_value)) {
-        auto parsed_entry = parse_entry(
-            entry_value, JsonPointer{}.append("entries").append(entry_index));
+        path.append(entry_index);
+        auto parsed_entry = parse_entry(entry_value, path);
+        path.rewind(entries_mark);
         if (!parsed_entry.has_value()) {
             return Result<SourceSpec>::failure(
                 std::move(parsed_entry).error());
@@ -907,6 +944,7 @@ Result<SourceSpec> parse_and_normalize_source(
         parsed_entries.push_back(std::move(parsed_entry).value());
         ++entry_index;
     }
+    path.rewind(root_mark);
 
     std::vector<Component> parsed_components;
     parsed_components.reserve(static_cast<std::size_t>(component_count));
@@ -914,11 +952,13 @@ Result<SourceSpec> parse_and_normalize_source(
     JsonCursor component_value;
     std::uint64_t component_index = UINT64_C(0);
     std::uint64_t total_fields = UINT64_C(0);
+    path.append("components");
+    const JsonPointerBuilder::Mark components_mark = path.mark();
     while (component_values.next(component_value)) {
-        auto parsed_component = parse_component(
-            component_value,
-            JsonPointer{}.append("components").append(component_index), limits,
-            total_fields);
+        path.append(component_index);
+        auto parsed_component =
+            parse_component(component_value, path, limits, total_fields);
+        path.rewind(components_mark);
         if (!parsed_component.has_value()) {
             return Result<SourceSpec>::failure(
                 std::move(parsed_component).error());
@@ -926,6 +966,7 @@ Result<SourceSpec> parse_and_normalize_source(
         parsed_components.push_back(std::move(parsed_component).value());
         ++component_index;
     }
+    path.rewind(root_mark);
 
     return Result<SourceSpec>::success(SourceSpec(
         parsed_profile, std::move(parsed_entries),

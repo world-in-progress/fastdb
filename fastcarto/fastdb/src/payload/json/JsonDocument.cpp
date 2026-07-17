@@ -185,14 +185,14 @@ std::string parse_reason(yyjson_read_code code) {
 }
 
 struct AuditFrame final {
-    AuditFrame(JsonPointer frame_path,
+    AuditFrame(JsonPointerBuilder::Mark frame_path_mark,
                std::uint64_t frame_depth,
                bool frame_is_object)
-        : path(std::move(frame_path)),
+        : path_mark(frame_path_mark),
           depth(frame_depth),
           is_object(frame_is_object) {}
 
-    JsonPointer path;
+    JsonPointerBuilder::Mark path_mark;
     std::uint64_t depth;
     bool is_object;
     yyjson_arr_iter array_iterator{};
@@ -202,9 +202,9 @@ struct AuditFrame final {
 };
 
 AuditFrame make_audit_frame(yyjson_val* value,
-                            JsonPointer path,
+                            JsonPointerBuilder::Mark path_mark,
                             std::uint64_t depth) {
-    AuditFrame frame(std::move(path), depth, yyjson_is_obj(value));
+    AuditFrame frame(path_mark, depth, yyjson_is_obj(value));
     if (frame.is_object) {
         frame.object_iterator = yyjson_obj_iter_with(value);
     } else {
@@ -213,19 +213,19 @@ AuditFrame make_audit_frame(yyjson_val* value,
     return frame;
 }
 
-Result<void> check_audit_value(const JsonPointer& path,
+Result<void> check_audit_value(const JsonPointerBuilder& path,
                                std::uint64_t depth,
                                const JsonParseLimits& limits,
                                std::uint64_t& value_count) {
     ++value_count;
     if (value_count > limits.max_json_values) {
         return Result<void>::failure(resource_limit(
-            path, "JSON value count exceeds configured limit", "json_values",
-            value_count, limits.max_json_values));
+            path.snapshot(), "JSON value count exceeds configured limit",
+            "json_values", value_count, limits.max_json_values));
     }
     if (depth > limits.max_nesting_depth) {
         return Result<void>::failure(resource_limit(
-            path, "JSON nesting depth exceeds configured limit",
+            path.snapshot(), "JSON nesting depth exceeds configured limit",
             "nesting_depth", depth, limits.max_nesting_depth));
     }
     return Result<void>::success();
@@ -233,21 +233,21 @@ Result<void> check_audit_value(const JsonPointer& path,
 
 Result<void> audit_document(yyjson_val* root, const JsonParseLimits& limits) {
     std::uint64_t value_count = 0;
-    auto root_check = check_audit_value(JsonPointer{}, UINT64_C(1), limits,
-                                        value_count);
+    JsonPointerBuilder path;
+    auto root_check =
+        check_audit_value(path, UINT64_C(1), limits, value_count);
     if (!root_check.has_value()) {
         return root_check;
     }
 
     std::vector<AuditFrame> pending;
     if (yyjson_is_ctn(root)) {
-        pending.push_back(
-            make_audit_frame(root, JsonPointer{}, UINT64_C(1)));
+        pending.push_back(make_audit_frame(root, path.mark(), UINT64_C(1)));
     }
     while (!pending.empty()) {
         AuditFrame& frame = pending.back();
+        path.rewind(frame.path_mark);
         yyjson_val* child = nullptr;
-        JsonPointer child_path;
         if (frame.is_object) {
             yyjson_val* const key =
                 yyjson_obj_iter_next(&frame.object_iterator);
@@ -257,12 +257,13 @@ Result<void> audit_document(yyjson_val* root, const JsonParseLimits& limits) {
             }
             const std::string name(yyjson_get_str(key), yyjson_get_len(key));
             const std::uint64_t member_index = frame.next_index++;
+            path.append(std::string_view{name});
             const auto inserted =
                 frame.first_indexes.emplace(name, member_index);
             if (!inserted.second) {
                 return Result<void>::failure(Error::from_details(
                     FDB_PAYLOAD_E_DUPLICATE_KEY,
-                    frame.path.append(std::string_view{name}),
+                    path.snapshot(),
                     "JSON object member name is duplicated",
                     object_details({
                         JsonValue::Member{
@@ -276,25 +277,24 @@ Result<void> audit_document(yyjson_val* root, const JsonParseLimits& limits) {
                     })));
             }
             child = yyjson_obj_iter_get_val(key);
-            child_path = frame.path.append(std::string_view{name});
         } else {
             child = yyjson_arr_iter_next(&frame.array_iterator);
             if (child == nullptr) {
                 pending.pop_back();
                 continue;
             }
-            child_path = frame.path.append(frame.next_index++);
+            path.append(frame.next_index++);
         }
 
         const std::uint64_t child_depth = frame.depth + UINT64_C(1);
-        auto child_check = check_audit_value(child_path, child_depth, limits,
+        auto child_check = check_audit_value(path, child_depth, limits,
                                              value_count);
         if (!child_check.has_value()) {
             return child_check;
         }
         if (yyjson_is_ctn(child)) {
-            pending.push_back(make_audit_frame(
-                child, std::move(child_path), child_depth));
+            pending.push_back(
+                make_audit_frame(child, path.mark(), child_depth));
         }
     }
     return Result<void>::success();

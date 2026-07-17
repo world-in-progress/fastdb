@@ -232,6 +232,22 @@ int test_resource_limits() {
         exact, FDB_PAYLOAD_E_SPEC_RESOURCE_LIMIT, "",
         "JSON source exceeds configured limit",
         R"({"actual":"9007199254740993","kind":"source_bytes","limit":"9007199254740992"})"));
+
+    constexpr std::uint32_t escaped_depth = UINT32_C(64);
+    std::string deep_source;
+    std::string deep_path;
+    for (std::uint32_t depth = UINT32_C(0); depth < escaped_depth; ++depth) {
+        deep_source += R"({"a/b~c":)";
+        deep_path += "/a~1b~0c";
+    }
+    deep_source += "null";
+    deep_source.append(static_cast<std::size_t>(escaped_depth), '}');
+    JsonParseLimits deep_limits;
+    deep_limits.max_nesting_depth = escaped_depth;
+    require(has_error(
+        parse(deep_source, deep_limits), FDB_PAYLOAD_E_SPEC_RESOURCE_LIMIT,
+        deep_path, "JSON nesting depth exceeds configured limit",
+        R"({"actual":"65","kind":"nesting_depth","limit":"64"})"));
     return EXIT_SUCCESS;
 }
 
@@ -264,6 +280,32 @@ int test_value_limit_audit_has_bounded_allocation() {
     }
     require(!threw);
     require(returned_exact_limit);
+    return EXIT_SUCCESS;
+}
+
+int test_deep_document_audit_has_linear_allocation() {
+    constexpr std::uint32_t nesting_depth = UINT32_C(4000);
+    std::string source;
+    source.reserve(static_cast<std::size_t>(nesting_depth) * 12U + 4U);
+    for (std::uint32_t depth = UINT32_C(0); depth < nesting_depth; ++depth) {
+        source += R"({"a/b~c":)";
+    }
+    source += "null";
+    source.append(static_cast<std::size_t>(nesting_depth), '}');
+
+    JsonParseLimits limits;
+    limits.max_nesting_depth = nesting_depth + UINT32_C(1);
+    bool threw = false;
+    bool parsed_successfully = false;
+    try {
+        allocation_guard::Budget budget(32U * 1024U * 1024U);
+        const auto result = parse(source, limits);
+        parsed_successfully = result.has_value();
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    require(!threw);
+    require(parsed_successfully);
     return EXIT_SUCCESS;
 }
 
@@ -374,12 +416,16 @@ int main(int argc, char** argv) {
         if (selected == "allocation") {
             return test_value_limit_audit_has_bounded_allocation();
         }
+        if (selected == "deep-allocation") {
+            return test_deep_document_audit_has_linear_allocation();
+        }
         return EXIT_FAILURE;
     }
     require(test_strict_syntax_and_numbers() == EXIT_SUCCESS);
     require(test_duplicate_paths_and_details() == EXIT_SUCCESS);
     require(test_resource_limits() == EXIT_SUCCESS);
     require(test_value_limit_audit_has_bounded_allocation() == EXIT_SUCCESS);
+    require(test_deep_document_audit_has_linear_allocation() == EXIT_SUCCESS);
     require(test_duplicate_safe_cursors_and_conversion() == EXIT_SUCCESS);
     require(test_embedded_source_schema_and_digest_pin() == EXIT_SUCCESS);
     return EXIT_SUCCESS;
