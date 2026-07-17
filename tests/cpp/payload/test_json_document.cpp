@@ -12,9 +12,64 @@
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
+#include <new>
 #include <string>
 #include <string_view>
 #include <variant>
+
+namespace allocation_guard {
+
+thread_local bool enabled = false;
+thread_local std::size_t remaining = 0;
+
+void* allocate(std::size_t size) {
+    if (enabled) {
+        if (size > remaining) {
+            throw std::bad_alloc();
+        }
+        remaining -= size;
+    }
+    void* const allocation = std::malloc(size);
+    if (allocation == nullptr) {
+        throw std::bad_alloc();
+    }
+    return allocation;
+}
+
+class Budget final {
+public:
+    explicit Budget(std::size_t bytes) {
+        remaining = bytes;
+        enabled = true;
+    }
+
+    Budget(const Budget&) = delete;
+    Budget& operator=(const Budget&) = delete;
+
+    ~Budget() { enabled = false; }
+};
+
+}  // namespace allocation_guard
+
+void* operator new(std::size_t size) {
+    return allocation_guard::allocate(size);
+}
+
+void* operator new[](std::size_t size) {
+    return allocation_guard::allocate(size);
+}
+
+void operator delete(void* allocation) noexcept { std::free(allocation); }
+
+void operator delete[](void* allocation) noexcept { std::free(allocation); }
+
+void operator delete(void* allocation, std::size_t) noexcept {
+    std::free(allocation);
+}
+
+void operator delete[](void* allocation, std::size_t) noexcept {
+    std::free(allocation);
+}
 
 namespace {
 
@@ -106,6 +161,16 @@ int test_strict_syntax_and_numbers() {
     require(has_error(parse("1e9999"), FDB_PAYLOAD_E_INVALID_NUMBER, "",
                       "JSON number is outside finite binary64 range",
                       R"({"reason":"number_out_of_range"})"));
+    for (const std::string_view symbolic : {
+             std::string_view{"NaN"},
+             std::string_view{"Infinity"},
+             std::string_view{"-Infinity"},
+             std::string_view{R"({"value":NaN})"},
+         }) {
+        require(has_error(parse(symbolic), FDB_PAYLOAD_E_INVALID_NUMBER, "",
+                          "JSON number is outside finite binary64 range",
+                          R"({"reason":"symbolic_non_finite"})"));
+    }
     return EXIT_SUCCESS;
 }
 
@@ -133,7 +198,7 @@ int test_resource_limits() {
     require(has_error(
         parse("null", source_limits), FDB_PAYLOAD_E_SPEC_RESOURCE_LIMIT, "",
         "JSON source exceeds configured limit",
-        R"({"actual":4,"kind":"source_bytes","limit":3})"));
+        R"({"actual":"4","kind":"source_bytes","limit":"3"})"));
 
     JsonParseLimits value_limits;
     value_limits.max_json_values = UINT64_C(3);
@@ -141,14 +206,56 @@ int test_resource_limits() {
         parse("[null,true,false]", value_limits),
         FDB_PAYLOAD_E_SPEC_RESOURCE_LIMIT, "/2",
         "JSON value count exceeds configured limit",
-        R"({"actual":4,"kind":"json_values","limit":3})"));
+        R"({"actual":"4","kind":"json_values","limit":"3"})"));
 
     JsonParseLimits depth_limits;
     depth_limits.max_nesting_depth = UINT32_C(1);
     require(has_error(
         parse("[[]]", depth_limits), FDB_PAYLOAD_E_SPEC_RESOURCE_LIMIT, "/0",
         "JSON nesting depth exceeds configured limit",
-        R"({"actual":2,"kind":"nesting_depth","limit":1})"));
+        R"({"actual":"2","kind":"nesting_depth","limit":"1"})"));
+
+    const std::uint8_t source_byte = static_cast<std::uint8_t>('0');
+    JsonParseLimits exact_limits;
+    exact_limits.max_source_bytes = UINT64_C(9007199254740992);
+    const auto exact = JsonDocument::parse(
+        &source_byte, UINT64_C(9007199254740993), exact_limits);
+    require(has_error(
+        exact, FDB_PAYLOAD_E_SPEC_RESOURCE_LIMIT, "",
+        "JSON source exceeds configured limit",
+        R"({"actual":"9007199254740993","kind":"source_bytes","limit":"9007199254740992"})"));
+    return EXIT_SUCCESS;
+}
+
+int test_value_limit_audit_has_bounded_allocation() {
+    constexpr std::size_t value_count = 20000U;
+    std::string source;
+    source.reserve(value_count * 5U + 1U);
+    source.push_back('[');
+    for (std::size_t index = 0; index < value_count; ++index) {
+        if (index != 0U) {
+            source.push_back(',');
+        }
+        source += "null";
+    }
+    source.push_back(']');
+
+    JsonParseLimits limits;
+    limits.max_json_values = UINT64_C(3);
+    bool threw = false;
+    bool returned_exact_limit = false;
+    try {
+        allocation_guard::Budget budget(64U * 1024U);
+        const auto result = parse(source, limits);
+        returned_exact_limit = has_error(
+            result, FDB_PAYLOAD_E_SPEC_RESOURCE_LIMIT, "/2",
+            "JSON value count exceeds configured limit",
+            R"({"actual":"4","kind":"json_values","limit":"3"})");
+    } catch (const std::bad_alloc&) {
+        threw = true;
+    }
+    require(!threw);
+    require(returned_exact_limit);
     return EXIT_SUCCESS;
 }
 
@@ -247,10 +354,24 @@ int test_embedded_source_schema_and_digest_pin() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2) {
+        const std::string_view selected = argv[1];
+        if (selected == "syntax") {
+            return test_strict_syntax_and_numbers();
+        }
+        if (selected == "limits") {
+            return test_resource_limits();
+        }
+        if (selected == "allocation") {
+            return test_value_limit_audit_has_bounded_allocation();
+        }
+        return EXIT_FAILURE;
+    }
     require(test_strict_syntax_and_numbers() == EXIT_SUCCESS);
     require(test_duplicate_paths_and_details() == EXIT_SUCCESS);
     require(test_resource_limits() == EXIT_SUCCESS);
+    require(test_value_limit_audit_has_bounded_allocation() == EXIT_SUCCESS);
     require(test_duplicate_safe_cursors_and_conversion() == EXIT_SUCCESS);
     require(test_embedded_source_schema_and_digest_pin() == EXIT_SUCCESS);
     return EXIT_SUCCESS;

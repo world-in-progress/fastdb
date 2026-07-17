@@ -32,12 +32,12 @@ Error invalid_json(std::string reason) {
             {JsonValue::Member{"reason", JsonValue{std::move(reason)}}}));
 }
 
-Error invalid_number() {
+Error invalid_number(std::string reason) {
     return Error::from_details(
         FDB_PAYLOAD_E_INVALID_NUMBER, JsonPointer{},
         "JSON number is outside finite binary64 range",
-        object_details({JsonValue::Member{"reason",
-                                          JsonValue{"number_out_of_range"}}}));
+        object_details(
+            {JsonValue::Member{"reason", JsonValue{std::move(reason)}}}));
 }
 
 Error allocation_failed() {
@@ -54,11 +54,94 @@ Error resource_limit(const JsonPointer& path,
     return Error::from_details(
         FDB_PAYLOAD_E_SPEC_RESOURCE_LIMIT, path, std::move(message),
         object_details({
-            JsonValue::Member{"limit", JsonValue{static_cast<double>(limit)}},
-            JsonValue::Member{"actual",
-                              JsonValue{static_cast<double>(actual)}},
+            JsonValue::Member{"limit", JsonValue{std::to_string(limit)}},
+            JsonValue::Member{"actual", JsonValue{std::to_string(actual)}},
             JsonValue::Member{"kind", JsonValue{std::move(kind)}},
         }));
+}
+
+bool is_json_whitespace(std::uint8_t value) noexcept {
+    return value == static_cast<std::uint8_t>(' ') ||
+           value == static_cast<std::uint8_t>('\t') ||
+           value == static_cast<std::uint8_t>('\n') ||
+           value == static_cast<std::uint8_t>('\r');
+}
+
+bool has_value_boundary_before(const std::uint8_t* source,
+                               std::uint64_t start) noexcept {
+    if (start == 0U) {
+        return true;
+    }
+    const std::uint8_t previous = source[start - UINT64_C(1)];
+    return is_json_whitespace(previous) ||
+           previous == static_cast<std::uint8_t>('[') ||
+           previous == static_cast<std::uint8_t>(',') ||
+           previous == static_cast<std::uint8_t>(':');
+}
+
+bool has_value_boundary_after(const std::uint8_t* source,
+                              std::uint64_t source_size,
+                              std::uint64_t end) noexcept {
+    if (end == source_size) {
+        return true;
+    }
+    const std::uint8_t next = source[end];
+    return is_json_whitespace(next) ||
+           next == static_cast<std::uint8_t>(',') ||
+           next == static_cast<std::uint8_t>(']') ||
+           next == static_cast<std::uint8_t>('}');
+}
+
+bool matches_at(const std::uint8_t* source,
+                std::uint64_t source_size,
+                std::uint64_t start,
+                std::string_view token) noexcept {
+    if (start > source_size ||
+        token.size() > source_size - start) {
+        return false;
+    }
+    for (std::size_t offset = 0; offset < token.size(); ++offset) {
+        if (source[start + static_cast<std::uint64_t>(offset)] !=
+            static_cast<std::uint8_t>(token[offset])) {
+            return false;
+        }
+    }
+    const std::uint64_t end =
+        start + static_cast<std::uint64_t>(token.size());
+    return has_value_boundary_before(source, start) &&
+           has_value_boundary_after(source, source_size, end);
+}
+
+bool is_symbolic_non_finite(const std::uint8_t* source,
+                            std::uint64_t source_size,
+                            std::uint64_t failure_position) noexcept {
+    if (source == nullptr || failure_position > source_size) {
+        return false;
+    }
+    constexpr std::uint64_t maximum_token_size = UINT64_C(9);
+    const std::uint64_t first_candidate =
+        failure_position > maximum_token_size
+            ? failure_position - maximum_token_size
+            : UINT64_C(0);
+    for (std::uint64_t start = first_candidate; start <= failure_position;
+         ++start) {
+        for (const std::string_view token : {
+                 std::string_view{"NaN"},
+                 std::string_view{"Infinity"},
+                 std::string_view{"-Infinity"},
+             }) {
+            const std::uint64_t end =
+                start + static_cast<std::uint64_t>(token.size());
+            if (failure_position >= start && failure_position <= end &&
+                matches_at(source, source_size, start, token)) {
+                return true;
+            }
+        }
+        if (start == std::numeric_limits<std::uint64_t>::max()) {
+            break;
+        }
+    }
+    return false;
 }
 
 std::string parse_reason(yyjson_read_code code) {
@@ -86,83 +169,117 @@ std::string parse_reason(yyjson_read_code code) {
     }
 }
 
-struct AuditItem final {
-    yyjson_val* value;
+struct AuditFrame final {
+    AuditFrame(JsonPointer frame_path,
+               std::uint64_t frame_depth,
+               bool frame_is_object)
+        : path(std::move(frame_path)),
+          depth(frame_depth),
+          is_object(frame_is_object) {}
+
     JsonPointer path;
     std::uint64_t depth;
+    bool is_object;
+    yyjson_arr_iter array_iterator{};
+    yyjson_obj_iter object_iterator{};
+    std::uint64_t next_index{0};
+    std::map<std::string, std::uint64_t> first_indexes;
 };
 
+AuditFrame make_audit_frame(yyjson_val* value,
+                            JsonPointer path,
+                            std::uint64_t depth) {
+    AuditFrame frame(std::move(path), depth, yyjson_is_obj(value));
+    if (frame.is_object) {
+        frame.object_iterator = yyjson_obj_iter_with(value);
+    } else {
+        frame.array_iterator = yyjson_arr_iter_with(value);
+    }
+    return frame;
+}
+
+Result<void> check_audit_value(const JsonPointer& path,
+                               std::uint64_t depth,
+                               const JsonParseLimits& limits,
+                               std::uint64_t& value_count) {
+    ++value_count;
+    if (value_count > limits.max_json_values) {
+        return Result<void>::failure(resource_limit(
+            path, "JSON value count exceeds configured limit", "json_values",
+            value_count, limits.max_json_values));
+    }
+    if (depth > limits.max_nesting_depth) {
+        return Result<void>::failure(resource_limit(
+            path, "JSON nesting depth exceeds configured limit",
+            "nesting_depth", depth, limits.max_nesting_depth));
+    }
+    return Result<void>::success();
+}
+
 Result<void> audit_document(yyjson_val* root, const JsonParseLimits& limits) {
-    std::vector<AuditItem> pending;
-    pending.push_back(AuditItem{root, JsonPointer{}, UINT64_C(1)});
     std::uint64_t value_count = 0;
+    auto root_check = check_audit_value(JsonPointer{}, UINT64_C(1), limits,
+                                        value_count);
+    if (!root_check.has_value()) {
+        return root_check;
+    }
 
+    std::vector<AuditFrame> pending;
+    if (yyjson_is_ctn(root)) {
+        pending.push_back(
+            make_audit_frame(root, JsonPointer{}, UINT64_C(1)));
+    }
     while (!pending.empty()) {
-        AuditItem item = std::move(pending.back());
-        pending.pop_back();
-
-        if (value_count == std::numeric_limits<std::uint64_t>::max()) {
-            return Result<void>::failure(resource_limit(
-                item.path, "JSON value count exceeds configured limit",
-                "json_values", value_count, limits.max_json_values));
-        }
-        ++value_count;
-        if (value_count > limits.max_json_values) {
-            return Result<void>::failure(resource_limit(
-                item.path, "JSON value count exceeds configured limit",
-                "json_values", value_count, limits.max_json_values));
-        }
-        if (item.depth > limits.max_nesting_depth) {
-            return Result<void>::failure(resource_limit(
-                item.path, "JSON nesting depth exceeds configured limit",
-                "nesting_depth", item.depth,
-                limits.max_nesting_depth));
-        }
-
-        std::vector<AuditItem> children;
-        if (yyjson_is_arr(item.value)) {
-            yyjson_arr_iter iterator = yyjson_arr_iter_with(item.value);
-            std::uint64_t index = 0;
-            while (yyjson_val* child = yyjson_arr_iter_next(&iterator)) {
-                children.push_back(AuditItem{
-                    child, item.path.append(index), item.depth + UINT64_C(1)});
-                ++index;
+        AuditFrame& frame = pending.back();
+        yyjson_val* child = nullptr;
+        JsonPointer child_path;
+        if (frame.is_object) {
+            yyjson_val* const key =
+                yyjson_obj_iter_next(&frame.object_iterator);
+            if (key == nullptr) {
+                pending.pop_back();
+                continue;
             }
-        } else if (yyjson_is_obj(item.value)) {
-            std::map<std::string, std::uint64_t> first_indexes;
-            yyjson_obj_iter iterator = yyjson_obj_iter_with(item.value);
-            std::uint64_t member_index = 0;
-            while (yyjson_val* key = yyjson_obj_iter_next(&iterator)) {
-                const std::string name(yyjson_get_str(key), yyjson_get_len(key));
-                const auto inserted =
-                    first_indexes.emplace(name, member_index);
-                if (!inserted.second) {
-                    return Result<void>::failure(Error::from_details(
-                        FDB_PAYLOAD_E_DUPLICATE_KEY,
-                        item.path.append(std::string_view{name}),
-                        "JSON object member name is duplicated",
-                        object_details({
-                            JsonValue::Member{
-                                "second_member_index",
-                                JsonValue{static_cast<double>(member_index)}},
-                            JsonValue::Member{"key", JsonValue{name}},
-                            JsonValue::Member{
-                                "first_member_index",
-                                JsonValue{static_cast<double>(
-                                    inserted.first->second)}},
-                        })));
-                }
-                children.push_back(AuditItem{
-                    yyjson_obj_iter_get_val(key),
-                    item.path.append(std::string_view{name}),
-                    item.depth + UINT64_C(1)});
-                ++member_index;
+            const std::string name(yyjson_get_str(key), yyjson_get_len(key));
+            const std::uint64_t member_index = frame.next_index++;
+            const auto inserted =
+                frame.first_indexes.emplace(name, member_index);
+            if (!inserted.second) {
+                return Result<void>::failure(Error::from_details(
+                    FDB_PAYLOAD_E_DUPLICATE_KEY,
+                    frame.path.append(std::string_view{name}),
+                    "JSON object member name is duplicated",
+                    object_details({
+                        JsonValue::Member{
+                            "second_member_index",
+                            JsonValue{static_cast<double>(member_index)}},
+                        JsonValue::Member{"key", JsonValue{name}},
+                        JsonValue::Member{
+                            "first_member_index",
+                            JsonValue{static_cast<double>(
+                                inserted.first->second)}},
+                    })));
             }
+            child = yyjson_obj_iter_get_val(key);
+            child_path = frame.path.append(std::string_view{name});
+        } else {
+            child = yyjson_arr_iter_next(&frame.array_iterator);
+            if (child == nullptr) {
+                pending.pop_back();
+                continue;
+            }
+            child_path = frame.path.append(frame.next_index++);
         }
 
-        for (auto iterator = children.rbegin(); iterator != children.rend();
-             ++iterator) {
-            pending.push_back(std::move(*iterator));
+        const std::uint64_t child_depth = frame.depth + UINT64_C(1);
+        auto child_check = check_audit_value(child_path, child_depth, limits,
+                                             value_count);
+        if (!child_check.has_value()) {
+            return child_check;
+        }
+        if (yyjson_is_ctn(child)) {
+            pending.push_back(make_audit_frame(
+                child, std::move(child_path), child_depth));
         }
     }
     return Result<void>::success();
@@ -288,22 +405,29 @@ Result<JsonDocument> JsonDocument::parse(const std::uint8_t* source,
         if (read_error.code == YYJSON_READ_ERROR_MEMORY_ALLOCATION) {
             return Result<JsonDocument>::failure(allocation_failed());
         }
+        if (is_symbolic_non_finite(
+                source, source_size,
+                static_cast<std::uint64_t>(read_error.pos))) {
+            return Result<JsonDocument>::failure(
+                invalid_number("symbolic_non_finite"));
+        }
         if (read_error.code == YYJSON_READ_ERROR_INVALID_NUMBER &&
             read_error.msg != nullptr &&
             std::string_view(read_error.msg) ==
                 "number is infinity when parsed as double") {
-            return Result<JsonDocument>::failure(invalid_number());
+            return Result<JsonDocument>::failure(
+                invalid_number("number_out_of_range"));
         }
         return Result<JsonDocument>::failure(
             invalid_json(parse_reason(read_error.code)));
     }
 
-    auto audit = audit_document(yyjson_doc_get_root(document), limits);
+    JsonDocument parsed(document);
+    auto audit = audit_document(parsed.root().value_, limits);
     if (!audit.has_value()) {
-        yyjson_doc_free(document);
         return Result<JsonDocument>::failure(std::move(audit).error());
     }
-    return Result<JsonDocument>::success(JsonDocument(document));
+    return Result<JsonDocument>::success(std::move(parsed));
 }
 
 JsonDocument::JsonDocument(yyjson_doc* document) noexcept
