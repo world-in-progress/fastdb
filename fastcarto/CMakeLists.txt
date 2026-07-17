@@ -13,6 +13,28 @@ option(
     "Enable address and undefined behavior sanitizers for FastDB native targets"
     OFF
 )
+option(
+    FASTDB_BUILD_FUZZERS
+    "Build Clang libFuzzer targets and enable ASan+UBSan for native targets"
+    OFF
+)
+
+if(FASTDB_BUILD_FUZZERS AND NOT BUILD_TESTING)
+    message(FATAL_ERROR
+        "FASTDB_BUILD_FUZZERS requires BUILD_TESTING=ON"
+    )
+endif()
+
+if(FASTDB_BUILD_FUZZERS)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$" OR
+       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
+        message(FATAL_ERROR
+            "FASTDB_BUILD_FUZZERS requires Clang or AppleClang for both C "
+            "and C++; got C=${CMAKE_C_COMPILER_ID}, "
+            "CXX=${CMAKE_CXX_COMPILER_ID}"
+        )
+    endif()
+endif()
 
 if(FASTDB_ENABLE_SANITIZERS)
     if(NOT CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang|GNU)$" OR
@@ -26,7 +48,7 @@ if(FASTDB_ENABLE_SANITIZERS)
 endif()
 
 function(fastdb_apply_sanitizers target_name)
-    if(FASTDB_ENABLE_SANITIZERS)
+    if(FASTDB_ENABLE_SANITIZERS OR FASTDB_BUILD_FUZZERS)
         if(NOT TARGET ${target_name})
             message(FATAL_ERROR
                 "Cannot apply FastDB sanitizers to missing target ${target_name}"

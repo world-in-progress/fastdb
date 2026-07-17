@@ -53,25 +53,9 @@ function(add_fastdb_payload_test name)
     add_test(NAME payload.${name} COMMAND ${target_name})
 endfunction()
 
-option(
-    FASTDB_BUILD_FUZZERS
-    "Build Clang libFuzzer targets for the FastDB portable payload Core"
-    OFF
-)
-
 if(FASTDB_BUILD_FUZZERS)
-    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$" OR
-       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
-        message(FATAL_ERROR
-            "FASTDB_BUILD_FUZZERS requires Clang or AppleClang for both C "
-            "and C++; got C=${CMAKE_C_COMPILER_ID}, "
-            "CXX=${CMAKE_CXX_COMPILER_ID}"
-        )
-    endif()
-
     set(FASTDB_FUZZ_COMPILE_OPTIONS
-        -fsanitize=fuzzer-no-link,address,undefined
-        -fno-omit-frame-pointer
+        -fsanitize=fuzzer-no-link
     )
     foreach(payload_fuzz_library IN ITEMS
             fastdb_payload_core
@@ -107,9 +91,10 @@ if(FASTDB_BUILD_FUZZERS)
         fuzz_payload_spec_compile
         PRIVATE ${FASTDB_FUZZ_COMPILE_OPTIONS}
     )
+    fastdb_apply_sanitizers(fuzz_payload_spec_compile)
     target_link_options(
         fuzz_payload_spec_compile
-        PRIVATE -fsanitize=fuzzer,address,undefined
+        PRIVATE -fsanitize=fuzzer
     )
     set_target_properties(
         fuzz_payload_spec_compile

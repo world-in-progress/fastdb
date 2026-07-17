@@ -15,6 +15,11 @@ profile, capabilities, stable indexes, source-schema facts, and owned errors.
 The strict compiler supports the complete declared V1 source algebra and both
 profiles at compile time.
 
+Native coverage-guided targets are a sanitizer configuration, not an isolated
+executable toggle. `FASTDB_BUILD_FUZZERS=ON` requires `BUILD_TESTING=ON` and
+Clang or AppleClang, and enables ASan+UBSan consistently for native libraries,
+ordinary tests, and the libFuzzer executable.
+
 P1 does not define `fastdb.payload.bin.v1` and cannot build, open, view,
 materialize, or invalidate portable payload values. Rust, Python, and official
 TypeScript/WASM portable projections and Core-owned four-language code
