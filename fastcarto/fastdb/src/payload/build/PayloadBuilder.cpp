@@ -2,6 +2,7 @@
 
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
+#include "payload/layout/InputSpan.hpp"
 #include "payload/layout/NormalizedInteger.hpp"
 #include "payload/layout/TextEncoding.hpp"
 
@@ -380,9 +381,9 @@ struct PayloadBuilder::State final {
             "Payload builder resource limit exceeded",
             details({
                 JsonValue::Member{"actual",
-                                  JsonValue{static_cast<double>(actual)}},
+                                  JsonValue{std::to_string(actual)}},
                 JsonValue::Member{"limit",
-                                  JsonValue{static_cast<double>(limit)}},
+                                  JsonValue{std::to_string(limit)}},
                 JsonValue::Member{"resource", JsonValue{resource}},
             }));
     }
@@ -673,8 +674,8 @@ Result<void> PayloadBuilder::begin_entry_impl(std::uint32_t entry_index,
             "Cardinality-one entry requires exactly one value",
             details({
                 JsonValue::Member{"actual",
-                                  JsonValue{static_cast<double>(value_count)}},
-                JsonValue::Member{"expected", JsonValue{1.0}},
+                                  JsonValue{std::to_string(value_count)}},
+                JsonValue::Member{"expected", JsonValue{"1"}},
                 JsonValue::Member{"reason",
                                   JsonValue{"one_entry_value_count"}},
             })));
@@ -900,8 +901,7 @@ Result<void> PayloadBuilder::push_storage_impl(TypeKind kind,
             FDB_PAYLOAD_E_INVALID_ARGUMENT, state.current_path(),
             "Payload input span pointer is null", "null_nonempty_span"));
     }
-    if (byte_count > static_cast<std::uint64_t>(
-                         std::numeric_limits<std::size_t>::max())) {
+    if (!layout::input_span_is_addressable(byte_count)) {
         return Result<void>::failure(simple_error(
             FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW, state.current_path(),
             "Payload input span length cannot be represented",
@@ -926,7 +926,7 @@ Result<void> PayloadBuilder::push_storage_impl(TypeKind kind,
     if (byte_count != UINT64_C(0)) {
         state.arena.byte_storage_.insert(
             state.arena.byte_storage_.end(), bytes,
-            bytes + static_cast<std::size_t>(byte_count));
+            bytes + static_cast<std::ptrdiff_t>(byte_count));
     }
     if (text) {
         state.text_bytes = updated;
@@ -950,6 +950,14 @@ Result<void> PayloadBuilder::push_str(std::string_view utf8) {
         if (expected_type(state.frames.back())->kind != TypeKind::str) {
             return Result<void>::failure(
                 state.type_mismatch(TypeKind::str, "push_str"));
+        }
+        if (!layout::input_span_is_addressable(
+                static_cast<std::uint64_t>(utf8.size()))) {
+            return Result<void>::failure(simple_error(
+                FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW,
+                state.current_path(),
+                "Payload input span length cannot be represented",
+                "input_span_length_overflow"));
         }
         auto valid = layout::validate_utf8(utf8, state.current_path());
         if (!valid.has_value()) {
@@ -986,19 +994,18 @@ Result<void> PayloadBuilder::push_wstr(const std::uint16_t* units,
                 "Payload UTF-16 input pointer is null",
                 "null_nonempty_span"));
         }
-        if (unit_count > static_cast<std::uint64_t>(
-                             std::numeric_limits<std::size_t>::max())) {
-            return Result<void>::failure(simple_error(
-                FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW,
-                state.current_path(),
-                "Payload UTF-16 unit count cannot be represented",
-                "input_span_length_overflow"));
-        }
         std::uint64_t byte_count = UINT64_MAX;
         if (!checked_multiply(unit_count, UINT64_C(2), byte_count)) {
             return Result<void>::failure(simple_error(
                 FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW,
                 state.current_path(), "Payload UTF-16 length overflowed",
+                "input_span_length_overflow"));
+        }
+        if (!layout::input_span_is_addressable(byte_count)) {
+            return Result<void>::failure(simple_error(
+                FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW,
+                state.current_path(),
+                "Payload UTF-16 input span cannot be addressed",
                 "input_span_length_overflow"));
         }
         auto valid =
@@ -1298,16 +1305,15 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
             details({
                 JsonValue::Member{
                     "available",
-                    JsonValue{static_cast<double>(run.data_byte_length)}},
+                    JsonValue{std::to_string(run.data_byte_length)}},
                 JsonValue::Member{"reason",
                                   JsonValue{"fixed_run_data_too_short"}},
                 JsonValue::Member{
                     "required",
-                    JsonValue{static_cast<double>(required_data)}},
+                    JsonValue{std::to_string(required_data)}},
             })));
     }
-    if (required_data > static_cast<std::uint64_t>(
-                            std::numeric_limits<std::size_t>::max())) {
+    if (!layout::input_span_is_addressable(required_data)) {
         return Result<void>::failure(simple_error(
             FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW, state.current_path(),
             "Fixed run data span cannot be addressed on this platform",
@@ -1326,14 +1332,24 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
         }
         const std::uint64_t required_validity = rounded / UINT64_C(8);
         if (required_validity > run.validity_byte_length) {
-            return Result<void>::failure(simple_error(
+            return Result<void>::failure(Error::from_details(
                 FDB_PAYLOAD_E_BUILDER_OUT_OF_BOUNDS,
                 state.current_path(),
                 "Fixed run validity span is shorter than declared elements",
-                "fixed_run_validity_too_short"));
+                details({
+                    JsonValue::Member{
+                        "available",
+                        JsonValue{std::to_string(
+                            run.validity_byte_length)}},
+                    JsonValue::Member{
+                        "reason",
+                        JsonValue{"fixed_run_validity_too_short"}},
+                    JsonValue::Member{
+                        "required",
+                        JsonValue{std::to_string(required_validity)}},
+                })));
         }
-        if (required_validity > static_cast<std::uint64_t>(
-                                    std::numeric_limits<std::size_t>::max())) {
+        if (!layout::input_span_is_addressable(required_validity)) {
             return Result<void>::failure(simple_error(
                 FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW,
                 state.current_path(),
@@ -1349,8 +1365,6 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
             "fixed_run_count_overflow"));
     }
 
-    std::vector<ExpectationFrame> simulated_frames = state.frames;
-    std::vector<PathToken> simulated_path = state.path;
     std::vector<PendingScalar> pending;
     if (run.count >
         static_cast<std::uint64_t>(pending.max_size())) {
@@ -1358,6 +1372,26 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
             state.current_path(), "fixed_run_values", run.count,
             static_cast<std::uint64_t>(pending.max_size())));
     }
+    std::uint64_t post_frame_count =
+        static_cast<std::uint64_t>(state.frames.size());
+    if (run.count == state.frames.back().remaining) {
+        --post_frame_count;
+        while (post_frame_count != UINT64_C(0) &&
+               state.frames[static_cast<std::size_t>(post_frame_count -
+                                                     UINT64_C(1))]
+                       .remaining == UINT64_C(0)) {
+            --post_frame_count;
+        }
+    }
+    auto growth = state.check_growth(run.count, UINT64_C(0),
+                                     post_frame_count,
+                                     state.current_path());
+    if (!growth.has_value()) {
+        return growth;
+    }
+
+    std::vector<ExpectationFrame> simulated_frames = state.frames;
+    std::vector<PathToken> simulated_path = state.path;
     pending.reserve(static_cast<std::size_t>(run.count));
     const std::uint32_t first_runtime_id = state.frames.back().type_id;
     for (std::uint64_t index = UINT64_C(0); index < run.count; ++index) {
@@ -1384,7 +1418,7 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
         bool present = true;
         if (run.validity != nullptr) {
             const std::uint64_t bit = run.validity_bit_offset + index;
-            const std::uint8_t byte = run.validity[static_cast<std::size_t>(
+            const std::uint8_t byte = run.validity[static_cast<std::ptrdiff_t>(
                 bit / UINT64_C(8))];
             present = ((byte >> (bit % UINT64_C(8))) & UINT8_C(1)) !=
                       UINT8_C(0);
@@ -1409,10 +1443,10 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
             continue;
         }
 
-        std::uint64_t bits = UINT64_C(0);
         const std::uint64_t offset = index * stride;
-        std::memcpy(&bits,
-                    run.data + static_cast<std::size_t>(offset), width);
+        const std::uint64_t bits = layout::load_native_fixed_scalar_bits(
+            type.kind,
+            run.data + static_cast<std::ptrdiff_t>(offset));
         if (type.kind == TypeKind::boolean && bits > UINT64_C(1)) {
             return Result<void>::failure(Error::from_details(
                 FDB_PAYLOAD_E_OUT_OF_RANGE, make_path(simulated_path),
@@ -1436,13 +1470,6 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
                       state.runtime_type_ids);
     }
 
-    auto growth = state.check_growth(
-        run.count, UINT64_C(0),
-        static_cast<std::uint64_t>(simulated_frames.size()),
-        state.current_path());
-    if (!growth.has_value()) {
-        return growth;
-    }
     auto capacity = state.reserve(run.count, UINT64_C(0), UINT64_C(0),
                                   UINT64_C(0), state.current_path());
     if (!capacity.has_value()) {

@@ -74,6 +74,8 @@ uv.lock
 
 # Build system files
 build/
+!fastcarto/fastdb/src/payload/build/
+!fastcarto/fastdb/src/payload/build/**
 build-wasm/
 build-wasm-check/
 dist/
