@@ -14,5 +14,5 @@ A limitation cannot be introduced only in code or release notes. It must be reco
 | Issue | Status | Scope |
 |---|---|---|
 | [0001](0001-portable-payload-deferred-capabilities.md) | Open | Capabilities deliberately deferred beyond the 0.2.0 portable payload foundation. |
-| [0002](0002-portable-payload-foundation-implementation-status.md) | Open (P1 implemented; independent review pending) | Current non-deferrable P2-P5 gaps, pending hosted CI evidence, and final-review state for the 0.2.0 portable payload foundation. |
+| [0002](0002-portable-payload-foundation-implementation-status.md) | Open (P1 locally frozen; hosted evidence pending) | Current non-deferrable P2-P5 gaps and pending hosted CI evidence for the 0.2.0 portable payload foundation. |
 | [0003](0003-legacy-swig-diagnostics.md) | Open | Exact seven-warning baseline and closure gate for the legacy 0.1.x SWIG input surface; no new warning is accepted implicitly. |

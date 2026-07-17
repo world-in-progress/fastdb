@@ -24,8 +24,10 @@ P1 does not define `fastdb.payload.bin.v1` and cannot build, open, view,
 materialize, or invalidate portable payload values. Rust, Python, and official
 TypeScript/WASM portable projections and Core-owned four-language code
 generation are also not implemented. Those non-deferrable P2-P5 gaps and the
-pending independent P1 final review are tracked in [Issue
+pending first hosted P1 execution are tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
+The P1 implementation has completed local independent review; no hosted CI
+result is represented as local evidence.
 
 The current package version and published packages remain 0.1.x and still
 contain legacy `fastdb.schema.v1`, call-db, `columnar.v1`, and `ColumnEngine`
