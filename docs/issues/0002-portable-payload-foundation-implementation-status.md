@@ -6,6 +6,7 @@
 - **Governing design:** [FastDB Portable Payload Foundation Design](../superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
 - **Governing decision:** [ADR-0001](../decisions/0001-portable-payload-core-authority.md)
 - **First implementation plan:** [Portable Payload Core Contract Implementation Plan](../superpowers/plans/2026-07-16-portable-payload-core-contract.md)
+- **P2 implementation plan:** [Portable Payload Record Runtime Implementation Plan](../superpowers/plans/2026-07-17-portable-payload-record-runtime.md)
 - **Post-0.2 deferrals:** [Issue 0001](0001-portable-payload-deferred-capabilities.md)
 
 ## Purpose
