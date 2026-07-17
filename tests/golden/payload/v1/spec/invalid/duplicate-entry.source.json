@@ -1,0 +1,9 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {"id": "same", "cardinality": "one", "type": {"kind": "u8"}},
+    {"id": "same", "cardinality": "many", "type": {"kind": "u16"}}
+  ],
+  "components": []
+}

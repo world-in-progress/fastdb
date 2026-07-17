@@ -112,6 +112,24 @@ target_compile_definitions(
         "FASTDB_PAYLOAD_SPEC_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/spec\""
 )
 
+add_fastdb_payload_test(
+    spec_resolve
+    SOURCES payload/test_spec_resolve.cpp
+    EXTRA_LIBRARIES fastdb_payload_core
+)
+target_include_directories(
+    fastdb_payload_test_spec_resolve
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_compile_definitions(
+    fastdb_payload_test_spec_resolve
+    PRIVATE
+        "FASTDB_PAYLOAD_SPEC_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/spec\""
+)
+set_tests_properties(payload.spec_resolve PROPERTIES TIMEOUT 60)
+
 find_package(Threads REQUIRED)
 
 add_fastdb_payload_test(

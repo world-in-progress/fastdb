@@ -1,0 +1,14 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {
+      "id": "root",
+      "cardinality": "one",
+      "type": {"kind": "ref", "target": "Node"}
+    }
+  ],
+  "components": [
+    {"id": "Node", "kind": "record", "fields": []}
+  ]
+}

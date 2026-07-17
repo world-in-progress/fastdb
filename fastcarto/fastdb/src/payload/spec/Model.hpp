@@ -1,10 +1,18 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
+
+namespace fastdb::payload::error {
+
+template <typename T>
+class Result;
+
+}  // namespace fastdb::payload::error
 
 namespace fastdb::payload::spec {
 
@@ -31,6 +39,9 @@ enum class TypeKind : std::uint8_t {
 };
 
 struct TypeNode final {
+    static constexpr std::uint32_t unresolved_component_index =
+        std::numeric_limits<std::uint32_t>::max();
+
     TypeNode(TypeKind type_kind, bool is_nullable) noexcept
         : kind(type_kind), nullable(is_nullable) {}
 
@@ -45,6 +56,8 @@ struct TypeNode final {
             minimum = other.minimum;
             maximum = other.maximum;
             source_id = std::move(other.source_id);
+            resolved_component_index = other.resolved_component_index;
+            variable_width = other.variable_width;
             items = std::move(other.items);
         }
         return *this;
@@ -56,6 +69,8 @@ struct TypeNode final {
     double minimum{0.0};
     double maximum{0.0};
     std::string source_id;
+    std::uint32_t resolved_component_index{unresolved_component_index};
+    bool variable_width{false};
     std::unique_ptr<TypeNode> items;
 
 private:
@@ -86,6 +101,8 @@ struct Entry final {
     std::string id;
     Cardinality cardinality;
     TypeNode type;
+    std::uint32_t index{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t source_index{std::numeric_limits<std::uint32_t>::max()};
 };
 
 struct Field final {
@@ -100,6 +117,8 @@ struct Field final {
 
     std::string id;
     TypeNode type;
+    std::uint32_t index{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t source_index{std::numeric_limits<std::uint32_t>::max()};
 };
 
 struct Component final {
@@ -115,6 +134,9 @@ struct Component final {
 
     std::string id;
     std::vector<Field> fields;
+    std::uint32_t index{std::numeric_limits<std::uint32_t>::max()};
+    std::uint32_t source_index{std::numeric_limits<std::uint32_t>::max()};
+    bool variable_width{false};
 };
 
 struct SourceSpec final {
@@ -134,6 +156,47 @@ struct SourceSpec final {
     Profile profile;
     std::vector<Entry> entries;
     std::vector<Component> components;
+};
+
+struct SemanticFacts final {
+    bool has_nullable{false};
+    bool has_lists{false};
+    bool has_references{false};
+    bool has_variable_width{false};
+    bool has_normalized_integers{false};
+    std::uint64_t semantic_flags{UINT64_C(0)};
+};
+
+class ResolvedSpec;
+
+error::Result<ResolvedSpec> resolve_source(SourceSpec source);
+
+class ResolvedSpec final {
+public:
+    ResolvedSpec(const ResolvedSpec&) = delete;
+    ResolvedSpec& operator=(const ResolvedSpec&) = delete;
+    ResolvedSpec(ResolvedSpec&&) noexcept = default;
+    ResolvedSpec& operator=(ResolvedSpec&&) noexcept = default;
+    ~ResolvedSpec() = default;
+
+    Profile profile() const noexcept { return source_.profile; }
+    const std::vector<Entry>& entries() const noexcept {
+        return source_.entries;
+    }
+    const std::vector<Component>& components() const noexcept {
+        return source_.components;
+    }
+    const SemanticFacts& facts() const noexcept { return facts_; }
+    const SourceSpec& source() const noexcept { return source_; }
+
+private:
+    friend error::Result<ResolvedSpec> resolve_source(SourceSpec source);
+
+    ResolvedSpec(SourceSpec source, SemanticFacts facts)
+        : source_(std::move(source)), facts_(facts) {}
+
+    SourceSpec source_;
+    SemanticFacts facts_;
 };
 
 }  // namespace fastdb::payload::spec
