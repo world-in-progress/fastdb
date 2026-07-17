@@ -2,6 +2,7 @@
 
 #include "payload/identity/Sha256.hpp"
 #include "payload/json/Jcs.hpp"
+#include "payload/json/JsonDocument.hpp"
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
 
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -65,6 +67,14 @@ std::string load_canonical_fixture(const char* filename) {
         return {};
     }
     return decoded;
+}
+
+std::string load_input_fixture(const char* filename) {
+    const std::string path =
+        std::string(FASTDB_PAYLOAD_JCS_FIXTURE_DIR) + '/' + filename;
+    std::ifstream input(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
 }
 
 bool serializes_to(const JsonValue& value, const std::string& expected) {
@@ -287,6 +297,20 @@ int test_rfc_fixtures_and_number_failures() {
     require(serializes_to(
         rfc8785_numbers(),
         load_canonical_fixture("rfc8785-numbers.canonical.hex")));
+
+    for (const char* stem : {"rfc8785-values", "rfc8785-numbers"}) {
+        const std::string source =
+            load_input_fixture((std::string(stem) + ".input.json").c_str());
+        const auto parsed = fastdb::payload::json::JsonDocument::parse(
+            reinterpret_cast<const std::uint8_t*>(source.data()),
+            static_cast<std::uint64_t>(source.size()));
+        require(parsed.has_value());
+        const auto serialized = jcs_serialize(parsed.value().to_json_value());
+        const auto* bytes = std::get_if<std::string>(&serialized);
+        require(bytes != nullptr);
+        require(*bytes == load_canonical_fixture(
+                              (std::string(stem) + ".canonical.hex").c_str()));
+    }
 
     require(fails_with(JsonValue{std::numeric_limits<double>::quiet_NaN()},
                        JcsFailure::non_finite_number));

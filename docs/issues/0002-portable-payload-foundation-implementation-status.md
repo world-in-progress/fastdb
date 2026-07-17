@@ -24,7 +24,8 @@ Current repository state:
 - `JsonValue` lifetime/release and JCS traversal are iterative, with committed array-focused tests at 50,000 levels for serialization, destruction, failure cleanup, and copy/move lifetime behavior;
 - at the start of Task 3, strict source parsing/compiler semantics, the stable public C ABI, binary/runtime behavior, bindings, and code generation were all still absent;
 - P1 Task 3 now ships only the pure-C ABI base: exact-width constants and V1 struct initializers, opaque spec/blob/error declarations, ABI version query, immutable owned blob/error handles, atomic retain/release, stable error field queries, and an exception-to-owned-error boundary;
-- the Task 3 ABI base does **not** expose `fdb_payload_v1_spec_compile_json` or any spec query family. Strict source parsing, normalization, source-model compilation, resolved indexes/manifest/capabilities, and the complete public spec compile/query ABI remain absent until later P1 tasks;
+- P1 Task 4 adds strict duplicate-aware JSON document parsing, iterative source/value/depth enforcement, borrowed source-order cursors, generic audited-document conversion for schema/JCS uses, and a Core-owned repository for the embedded `fastdb.payload.v1` source schema's JCS bytes and SHA-256 digest;
+- the Task 3 ABI base does **not** expose `fdb_payload_v1_spec_compile_json` or any spec query family. Typed source parsing, normalization, resolved indexes/manifest/capabilities, and the complete public spec compile/query ABI remain absent until later P1 tasks;
 - no `fastdb.payload.bin.v1`, builder/plan/backing, payload owner, checked view, materialization, object-graph runtime, portable language projection, or payload code generator is currently shipped;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
@@ -70,16 +71,6 @@ These are implementation-gate observations, not post-0.2.0 deferrals.
 
 **Closure criteria:** Before the P1 final gate, commit regression tests that exercise deep object serialization/destruction and shared-child DAG copy/move/release behavior at a depth and fan-out sufficient to fail a recursive or double-release implementation. Run them in Debug, Release, and the native sanitizer job.
 
-### Planned schema manifest globs
-
-**Current limit:** `uv build` succeeds but currently emits three warnings because `MANIFEST.in` matches no `*.json`, `*.sha256`, or `*.md` files under `schemas/`.
-
-**Reason:** Task 1 added the source-distribution manifest entries before Task 4 creates the first checked-in payload schema and schema documentation.
-
-**Impact:** The warnings do not remove any currently implemented portable schema because none exists yet, but treating them as normal would make a later missing schema artifact easier to overlook.
-
-**Closure criteria:** Task 4 must add the planned schema artifacts and make every `schemas/` manifest rule truthful, either by supplying the matched artifact or narrowing the rule. `uv build` must then complete without any missing-schema glob warning.
-
 ### Pre-existing SWIG diagnostics
 
 **Current limit:** The Python wheel build succeeds while SWIG reports `Warning 325` for nested `TileBox` (line 582), `HandleTileAction` (588), `TakeResult` (595), `TileDataHandle` (622), `TileDbBox` (631), and the second `TakeResult` (637) in `fastcarto/fastdb/include/fastdb.h`; it also reports `Warning 451` for the settable `const char *` member at line 206.
@@ -90,11 +81,33 @@ These are implementation-gate observations, not post-0.2.0 deferrals.
 
 **Closure criteria:** Before the P1 final gate, either fix the legacy SWIG declarations/typemaps and require a quiet build, or open an exact owner issue that enumerates each accepted residual diagnostic with its rationale, impact, and closure gate. No new SWIG warning may be normalized into this list implicitly.
 
+## P1 observations closed during implementation
+
+### Planned schema manifest globs
+
+**Closed by Task 4:** The repository now contains
+`schemas/fastdb.payload.v1.schema.json`, its Core-JCS digest pin
+`schemas/fastdb.payload.v1.schema.sha256`, and `schemas/README.md`. The source
+schema is also embedded as raw bytes by the deterministic standard-library-only
+generator.
+
+**Evidence:** `uv build` produced `dist/fastdb4py-0.1.22.tar.gz` and the local
+wheel without any no-match warning for `schemas/*.json`, `*.sha256`, or `*.md`.
+The sdist inventory contains all three exact paths. The separately tracked SWIG
+325/451 diagnostics above remain present and open; they were not normalized as
+part of this closure.
+`python3 tools/generate_embedded_payload_schemas.py --check` passes, and
+`payload.json_document` verifies that the embedded raw
+schema parses through `JsonDocument`, Core JCS/SHA-256 matches the checked-in
+pin, and the schema declares draft 2020-12 with a closed root shape. The pin was
+independently produced from 2,074 canonical bytes by the verification-only
+Python `rfc8785` 0.1.4 implementation before comparison with the Core result.
+
 ## Program checklist
 
 | Slice | Status | Required closure evidence |
 |---|---|---|
-| P1. Core contract compiler/query ABI | In progress: Tasks 1-2 reviewed; Task 3 ABI base implemented | Complete source algebra; strict duplicate-aware compile; normalization; resolved indexes/manifest/capabilities; complete spec compile/query C ABI; C++ facade; committed deep-object/DAG regressions; golden/fuzz/native CI |
+| P1. Core contract compiler/query ABI | In progress: Tasks 1-3 reviewed; Task 4 strict JSON/schema repository implemented | Complete typed source algebra; normalization; resolved indexes/manifest/capabilities; complete spec compile/query C ABI; C++ facade; committed deep-object/DAG regressions; golden/fuzz/native CI |
 | P2. Record binary/runtime/lifetime | Blocked on P1 | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
