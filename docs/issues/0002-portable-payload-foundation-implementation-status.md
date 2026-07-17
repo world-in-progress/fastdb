@@ -45,7 +45,8 @@ Current repository state:
 - P1 Task 9 is independently reviewed and complete for local P1 freeze: committed adjacent-shape regressions close the deep-object/shared-child observation; an exact sorted 33-symbol allowlist and executable symbol-diff gate freeze the public ABI; the Clang libFuzzer harness queries the complete required compiled-spec surface on success and owned diagnostics on failure; native Debug/Release/sanitizer gates, package inventories, and shipped-state documentation are defined;
 - the first independent Task 9 review found two integration defects: fuzzer-only builds instrumented shared dependencies without supplying sanitizer runtimes to ordinary consumers, and the workflow aggregate accepted any skipped job without proving it was out of scope. The reviewed correction makes fuzzer mode a consistent sanitizer configuration and validates each aggregate job against its exact path scope. The final re-review reports zero Critical, Important, or Minor findings after clean fuzzer-only, combined-sanitizer, native, language, package, ABI, and aggregate-matrix gates;
 - the GitHub Actions definition now targets the documented standard `ubuntu-24.04` x64 and `macos-15` arm64 runners, asserts the actual architecture, and includes required native and Linux sanitizer/fuzz jobs in the aggregate result. No push is authorized in Task 9, so the first hosted execution remains pending and is not represented as a local pass;
-- no `fastdb.payload.bin.v1`, builder/plan/backing, payload owner, checked view, materialization, object-graph runtime, portable language projection, or payload code generator is currently shipped;
+- P2 Task 1 now provides a Core-internal, record-profile logical-value builder over the frozen P1 `ResolvedSpec`: stable source-node runtime type IDs, flat `ValueNode`/index vectors, stable entry roots, copied text/wide-text/opaque storage, explicit iterative expectation frames, schema-driven `many + component` record batches, exact-width fixed runs, strict UTF-8/UTF-16 validation, normalized binary64 finite/range validation, transactional retryable mutation, deterministic builder limits/accounting, and stable builder errors 2009-2013;
+- the Task 1 builder is deliberately internal. No `fastdb.payload.bin.v1`, binary/layout encoder, `BuildPlan`, final backing, payload owner, open, checked view, materialization, object-graph runtime, public builder ABI, portable language projection, or payload code generator is currently shipped;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query slice is implemented, independently reviewed, and frozen
@@ -57,12 +58,14 @@ implemented.
 
 Users and downstream repositories can now compile and query
 `fastdb.payload.v1` through the independently reviewed C ABI or C++ facade.
-They still cannot build, open, view, materialize, invalidate, or generate a
-portable payload, and no Rust, Python, or TypeScript/WASM portable projection
-exists. C-Two may not replace those missing owner slices or depend on FastDB
-private headers; recreating FastDB semantics remains forbidden. Toodle
-consequently cannot yet treat the full structured-payload substrate as
-implemented.
+The Core now also has the first internal record authoring stage, but no public
+caller can create that builder or freeze it into a plan, and there are no
+portable binary bytes to build or open. Users still cannot build, open, view,
+materialize, invalidate, or generate a portable payload, and no Rust, Python,
+or TypeScript/WASM portable projection exists. C-Two may not replace those
+missing owner slices or depend on FastDB private headers; recreating FastDB
+semantics remains forbidden. Toodle consequently cannot yet treat the full
+structured-payload substrate as implemented.
 
 Raw-file/object bytes remain correctly outside FastDB in file/object storage. This implementation gap does not change that owner boundary and is not a reason to route raw files through the existing call-db path.
 
@@ -90,11 +93,13 @@ Collapsing these layers into one speculative change would make review and failur
 
 ### P2 record binary, runtime, and lifetime
 
-**Current limit:** P1 compiles and queries a specification but defines no
-`fastdb.payload.bin.v1` byte layout and cannot build, open, retain, view,
-materialize, or invalidate a portable payload. `PayloadBuilder`, `BuildPlan`,
-final-backing callbacks, direct/staged execution, and `PayloadOwner` do not
-exist.
+**Current limit:** P1 compiles and queries a specification, and P2 Task 1 has
+the internal flat logical arena and complete record-value authoring state
+machine. The builder is not a public ABI and can freeze only to an internal
+`LogicalPayload`; it does not produce binary bytes or a repeatable plan. There
+is still no `fastdb.payload.bin.v1` byte layout, binary encoder/open reader,
+`BuildPlan`, final-backing callback path, direct/staged execution,
+`PayloadOwner`, checked view, materialization, or invalidation.
 
 **Reason:** Binary and lifetime behavior must be designed from the frozen P1
 resolved model and must land atomically with its normative byte-layout document
@@ -280,7 +285,7 @@ result.
 | Slice | Status | Required closure evidence |
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
-| P2. Record binary/runtime/lifetime | Ready for implementation from the frozen P1 contract | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
+| P2. Record binary/runtime/lifetime | In progress: internal logical arena and complete record builder implemented; binary/plan/backing/lifetime remain open | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P1-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |

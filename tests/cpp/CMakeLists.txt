@@ -269,6 +269,19 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
 )
 
+add_fastdb_payload_test(
+    payload_builder
+    SOURCES payload/test_payload_builder.cpp
+    EXTRA_LIBRARIES fastdb_payload_core
+)
+target_include_directories(
+    fastdb_payload_test_payload_builder
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+set_tests_properties(payload.payload_builder PROPERTIES TIMEOUT 120)
+
 add_executable(
     fastdb_payload_test_json_depth
     payload/test_json_depth.cpp

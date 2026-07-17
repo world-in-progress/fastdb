@@ -46,6 +46,16 @@ std::string_view symbol_for_code(std::uint32_t code) noexcept {
         return "DIRECT_UNAVAILABLE";
     case FDB_PAYLOAD_E_PLAN_STATE:
         return "PLAN_STATE";
+    case FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE:
+        return "RUNTIME_UNAVAILABLE";
+    case FDB_PAYLOAD_E_INVALID_TEXT_ENCODING:
+        return "INVALID_TEXT_ENCODING";
+    case FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW:
+        return "BUILDER_LENGTH_OVERFLOW";
+    case FDB_PAYLOAD_E_BUILDER_OUT_OF_BOUNDS:
+        return "BUILDER_OUT_OF_BOUNDS";
+    case FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT:
+        return "BUILDER_RESOURCE_LIMIT";
     case FDB_PAYLOAD_E_INVALID_MAGIC:
         return "INVALID_MAGIC";
     case FDB_PAYLOAD_E_UNSUPPORTED_BINARY_VERSION:
