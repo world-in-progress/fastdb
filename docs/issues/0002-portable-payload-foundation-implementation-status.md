@@ -13,17 +13,15 @@
 
 The accepted 0.2.0 design defines a complete portable-payload foundation. The
 current repository implements the P1 compiler/query boundary, the P2 logical
-builder, the complete non-reference record algebra, and the current
-Core-private Task 7 hardened-open/owning-payload tranche, while it still ships
+builder, the complete non-reference record algebra, and the independently
+reviewed Core-private Task 8 checked-view/lifetime tranche, while it still ships
 the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 has completed local
 independent implementation review; its first hosted CI execution remains
-pending. Task 7's local Debug, Release, sanitizer, Core-wasm, language/package,
-and ABI-33 gates pass; controller pre-commit review and independent completion
-review both pass, with the independent review reporting zero Critical,
-Important, or Minor findings. P2 Task 8 views/lifetime barrier and Task 9 public
-runtime ABI, plus P3-P5 graph, language-parity, codegen, clean-cut, and release
-work, are not implemented. This issue records that temporary gap through the
-0.2.0 clean cut.
+pending. Tasks 7 and 8 pass their local Debug, Release, sanitizer, Core-wasm,
+language/package, and ABI-33 gates; their independent completion reviews each
+report zero Critical, Important, or Minor findings. P2 Task 9 public runtime
+ABI, plus P3-P5 graph, language-parity, codegen, clean-cut, and release work,
+remain open. This issue records that temporary gap through the 0.2.0 clean cut.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -65,7 +63,12 @@ Current repository state:
 - the new cheaply copyable, logically immutable `PayloadOwner` shares one `State` containing exactly one committed/retained backing reference, one `CompiledSpec`, one completely validated `PayloadIndex`, and one real optional `ExecutionReport`. Byte-open owners report `std::nullopt`; plan-created owners retain the exact direct/staged report. Owner copies share State without another backing retain, and digest/profile remain independent of caller spec, source bytes, builder, or plan lifetime;
 - `BuildPlan::execute` now uses a `.cpp`-local move-only committed-image handoff for direct/staged composition and validates only the final committed image through `open_record` before shared-State publication. Publication options take the maximum of safe defaults and immutable plan/spec facts, including stable entry/component counts. Non-allocation reader failures become `BACKING_CONTRACT` with original reader facts; reader or State allocation failures remain `ALLOCATION_FAILED`; every post-commit failure releases once and never rolls back. A commit-returned readable base may legally differ from the writable base: exact non-null/size/capacity shape is checked, and the shared reader validates the returned image;
 - Task 7 focused Debug evidence passes `payload.record_binary`, `payload.payload_backing`, and `payload.payload_open`, including exact physical `/binary/...` diagnostics, retained-span ownership, final-image reader validation, post-commit allocation cleanup, retry/live-byte balance, and legal relocated commit spans. Full Debug and Release each pass 24/24 tests; ASan+UBSan passes 24/24; the available focused TSan backing/concurrency target passes; the Core wasm32/Node harness passes; the existing ABI remains exactly 33 symbols; Python passes 413 tests, compileall, sdist, and wheel build; TypeScript/WASM passes 76 tests after a clean binding rebuild. Controller pre-commit review passes, and the independent completion review reports zero Critical, Important, or Minor findings after independently rerunning full Debug, the three focused targets, ABI-33, strict JSON/corpus inventory, and diff checks;
-- the builder, plan, backing execution, encoder, hardened open, and owner remain private Core seams. Task 8 checked views/access barrier/materialization/invalidation and Task 9 public C/C++ runtime/ABI have not been implemented; bindings and P3+ remain open;
+- P2 Task 8 extends the one hardened-open `PayloadIndex` rather than adding a second reader: it shares one immutable `RuntimeSchema`, retains only open-validated list-slot facts, and provides one offset-only cursor vocabulary for entry, component, list, scalar, and variable-span derivation. Backed views cache no byte pointer, and existing Task 3 scalar observation seams are thin wrappers over that same cursor arithmetic;
+- Task 8 adds one owner-state access barrier with one mutex/condition variable, non-wrapping generation, RAII short/long pins, deterministic invalidated/stale results, and idempotent drain-before-release invalidation. The backing is moved out under the barrier, released outside its mutex, and concurrent invalidators wait through that release before returning;
+- Task 8 also adds copyable immutable `View`, move-only typed `Access`, explicit little-endian owned wide-text decoding, selected-span lazy text validation/limits, and iterative one-source-pin materialization into a fresh detached `ValueArena`. Materialization copies exact scalar bits, variable bytes, null/empty distinctions, and child links transactionally before publishing source-independent detached state;
+- the focused `payload.checked_view` matrix passes navigation and every non-reference value kind, canonical component identity, text/opaque/wide access, lazy retry/concurrency and exact selected-span work limits, owner/view lifetime, transactional allocation-failure materialization, 100,000 short readers, decisive drain/release/reuse races, two deterministically observed invalidators, distinct-context callback reentry, stale generation, and generation exhaustion. Deep backed materialization and detached rematerialization also prove linear path-state storage through the Core-private metrics seam;
+- Task 8 is independently reviewed and complete at its private Core boundary. Full Debug and Release each pass 25/25; a no-competing-load ASan+UBSan run passes 25/25 with the two slow pressure tests completing in 91.63 and 101.11 seconds; focused TSan repeats pass without a race; Core-only wasm32/Node passes; the public ABI remains exactly 33 symbols; Python passes 413/413 plus compileall, sdist, and wheel; TypeScript/WASM passes 76/76 after a clean rebuild; and the final independent review reports zero Critical, Important, or Minor findings. The successful wheel build emits only the exact seven legacy diagnostics governed by [Issue 0003](0003-legacy-swig-diagnostics.md);
+- the builder, plan, backing execution, encoder, hardened open, owner, checked views, accesses, materialization, and invalidation remain private Core seams. Task 9 public C/C++ runtime/ABI has not been implemented; bindings and P3+ remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query slice is implemented, independently reviewed, and frozen
@@ -129,41 +132,41 @@ staged committed image through the same reader before publication; post-commit
 reader/publication failure releases once and never rolls back. Commit
 relocation remains legal: a successful commit may return a different readable
 base from its writable base when non-null/size/capacity shape and reader
-validation succeed.
+validation succeed. Task 8 now adds the independently reviewed Core-private
+single access barrier, generation, checked `View`/`Access`, transactional
+detached materialization, and drain-before-release invalidation over that same
+owner and index. Its focused, full-suite, sanitizer, wasm, language/package,
+ABI-33, and zero-finding independent-review gates are closed.
 
-Task 8 still has no access barrier, generation, checked `View`/`Access`,
-materialization, or invalidation. Task 9 still has no public builder, plan,
+Task 9 still has no public builder, plan,
 backing, build/open/owner C ABI or corresponding C++ runtime projection. The
 existing public surface remains the P1 compile/query ABI and query-only C++
-facade, so users cannot reach Task 7 through supported APIs. Rust, Python,
+facade, so users cannot reach the P2 runtime through supported APIs. Rust, Python,
 TypeScript/WASM, P3 object graphs, and later slices remain absent. Task 6/7
 callbacks may perform distinct-context nested execution because Core holds no
 unrelated lock, but a callback must not synchronously re-enter execution
 through the same backing context/token.
 
-**Reason:** Checked access and invalidation must reuse the single Task 7 owner
-and offset-only index, then the public ABI must project that reviewed lifetime
-model rather than expose private headers or invent a second reader. Callback
+**Reason:** Checked access and invalidation reuse the single Task 7 owner and
+offset-only index. The public ABI must project that reviewed lifetime model
+rather than expose private headers or invent a second reader. Callback
 execution is synchronous within one execution, while an external adapter may
 serialize or mutate one owner context/token; Core cannot safely infer a
 same-context/token reentrant ownership contract. Relocated commit spans are an
 accepted backing capability, so pointer identity cannot replace reader
 validation.
 
-**Impact:** Maintainers can exercise a complete owning Core-private open path
-and prove retained/committed reference cleanup, but a supported C/C++ caller
-still cannot author or consume the portable runtime. No checked borrowed value
-access or drain-before-release invalidation exists, and no binding may bypass
-that gap. Same-context/token callback reentry remains an adapter precondition;
+**Impact:** Maintainers can exercise a complete owning Core-private open,
+checked-view, materialization, and invalidation path, but a supported C/C++
+caller still cannot author or consume the portable runtime. No binding may
+bypass the absent Task 9 ABI. Same-context/token callback reentry remains an adapter precondition;
 distinct-context execution and nested execution are supported. Existing 0.1.x
 database/call-db bytes are not a substitute.
 
-**Next owner slice:** FastDB P2 Task 8, followed by Task 9.
+**Next owner slice:** FastDB P2 Task 9.
 
-**Closure criteria:** Task 7's local gates and zero-finding completion review
-are closed. Task 8 must add the one shared
-access barrier, generation, checked views/accesses, detached materialization,
-and drain-before-release invalidation. Task 9 must expose
+**Closure criteria:** Tasks 7 and 8 have closed their local gates and
+zero-finding completion reviews. Task 9 must expose
 builder/plan/backing/build/open/owner through the reviewed public C ABI and C++
 runtime facade. A future same-context/token
 reentrant callback contract requires explicit adapter ownership/serialization
@@ -367,7 +370,7 @@ result.
 | Slice | Status | Required closure evidence |
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
-| P2. Record binary/runtime/lifetime | In progress: logical builder, exact wire document, complete private non-reference encoder/reader, repeatable plan/backing execution, hardened copy/external open, retained backing, and shared owning payload are implemented and independently reviewed through Task 7; Task 8 views/barrier/materialize/invalidate and Task 9 public C/C++ runtime ABI remain open | Add the single checked access/invalidation lifetime model in Task 8; then publish deterministic builder/plan/backing/build/open/owner only through the reviewed Task 9 C ABI and C++ projection |
+| P2. Record binary/runtime/lifetime | In progress: logical builder, exact wire document, complete private non-reference encoder/reader, repeatable plan/backing execution, hardened copy/external open, retained backing, shared owning payload, checked views, barrier, materialization, and invalidation are implemented and independently reviewed through Task 8. Task 9 public C/C++ runtime ABI remains open | Publish deterministic builder/plan/backing/build/open/owner only through the reviewed Task 9 C ABI and C++ projection |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P1-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |

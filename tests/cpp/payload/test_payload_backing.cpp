@@ -134,7 +134,10 @@ namespace fastdb::payload::view {
 struct PayloadOwnerTestAccess final {
     static const backing::CommittedBacking& backing(
         const PayloadOwner& owner) noexcept {
-        return owner.state_->backing;
+        if (!owner.state_->backing.has_value()) {
+            std::abort();
+        }
+        return *owner.state_->backing;
     }
 };
 

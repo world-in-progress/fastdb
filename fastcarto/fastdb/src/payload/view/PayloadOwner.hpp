@@ -4,6 +4,7 @@
 #include "payload/build/ExecutionReport.hpp"
 #include "payload/error/Result.hpp"
 #include "payload/spec/CompiledSpec.hpp"
+#include "payload/view/AccessBarrier.hpp"
 #include "payload/view/Open.hpp"
 
 #include <array>
@@ -19,6 +20,25 @@ class BuildPlan;
 namespace fastdb::payload::view {
 
 struct PayloadOwnerTestAccess;
+class Access;
+class View;
+
+struct PayloadOwnerState final {
+    PayloadOwnerState(backing::CommittedBacking backing_value,
+                      spec::CompiledSpec spec_value,
+                      PayloadIndex index_value,
+                      std::optional<build::ExecutionReport> report_value)
+        : backing(std::move(backing_value)),
+          spec(std::move(spec_value)),
+          index(std::move(index_value)),
+          report(std::move(report_value)) {}
+
+    std::optional<backing::CommittedBacking> backing;
+    spec::CompiledSpec spec;
+    PayloadIndex index;
+    std::optional<build::ExecutionReport> report;
+    AccessBarrierState barrier;
+};
 
 class PayloadOwner final {
 public:
@@ -48,25 +68,12 @@ public:
         const noexcept {
         return state_->report;
     }
+    error::Result<Access> acquire() const;
+    error::Result<View> entry_view(std::uint32_t entry_index) const;
+    error::Result<void> invalidate();
 
 private:
-    struct State final {
-        State(backing::CommittedBacking backing_value,
-              spec::CompiledSpec spec_value,
-              PayloadIndex index_value,
-              std::optional<build::ExecutionReport> report_value) noexcept
-            : backing(std::move(backing_value)),
-              spec(std::move(spec_value)),
-              index(std::move(index_value)),
-              report(std::move(report_value)) {}
-
-        backing::CommittedBacking backing;
-        spec::CompiledSpec spec;
-        PayloadIndex index;
-        std::optional<build::ExecutionReport> report;
-    };
-
-    explicit PayloadOwner(std::shared_ptr<State> state) noexcept
+    explicit PayloadOwner(std::shared_ptr<PayloadOwnerState> state) noexcept
         : state_(std::move(state)) {}
 
     static error::Result<PayloadOwner> publish(
@@ -76,9 +83,12 @@ private:
         std::optional<build::ExecutionReport> report);
 
     friend class build::BuildPlan;
+    friend class Access;
+    friend class View;
+    friend error::Result<View> materialize(const View& view);
     friend struct PayloadOwnerTestAccess;
 
-    std::shared_ptr<State> state_;
+    std::shared_ptr<PayloadOwnerState> state_;
 };
 
 }  // namespace fastdb::payload::view

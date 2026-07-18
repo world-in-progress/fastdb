@@ -990,6 +990,596 @@ PayloadIndex::pool_metadata(layout::RegionKind kind) const noexcept {
                                  : std::optional<PoolMetadata>{*found};
 }
 
+std::optional<ListSlotMetadata> PayloadIndex::list_slot(
+    std::uint32_t owner_runtime_type_id) const noexcept {
+    if (owner_runtime_type_id >= list_slots_.size()) {
+        return std::nullopt;
+    }
+    return list_slots_[owner_runtime_type_id];
+}
+
+namespace {
+
+JsonPointer cursor_path(const ValueCursor& cursor) {
+    return JsonPointer{}.append("values").append(cursor.slot_offset);
+}
+
+Result<const layout::RuntimeType*> checked_cursor_type(
+    const PayloadIndex& index,
+    const ValueCursor& cursor,
+    TypeKind expected) {
+    if (cursor.kind != expected) {
+        return Result<const layout::RuntimeType*>::failure(simple_error(
+            FDB_PAYLOAD_E_TYPE_MISMATCH, cursor_path(cursor),
+            "Portable payload view kind does not match the operation",
+            "view_kind_mismatch"));
+    }
+    if (!cursor.present) {
+        return Result<const layout::RuntimeType*>::failure(simple_error(
+            FDB_PAYLOAD_E_UNEXPECTED_NULL, cursor_path(cursor),
+            "Portable payload view is null", "unexpected_null"));
+    }
+    if (index.runtime_schema() == nullptr) {
+        return Result<const layout::RuntimeType*>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload runtime metadata is missing",
+            "runtime_schema_missing"));
+    }
+    const layout::RuntimeType* const type =
+        index.runtime_schema()->find_type(cursor.runtime_type_id);
+    if (type == nullptr || type->source == nullptr ||
+        type->source->kind != cursor.kind) {
+        return Result<const layout::RuntimeType*>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload cursor type metadata is inconsistent",
+            "cursor_runtime_type_mismatch"));
+    }
+    return Result<const layout::RuntimeType*>::success(type);
+}
+
+struct CheckedListDescriptor final {
+    ListSlotMetadata metadata;
+    std::uint64_t first_index;
+    std::uint64_t item_count;
+};
+
+Result<CheckedListDescriptor> checked_list_descriptor(
+    const PayloadIndex& index,
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor) {
+    auto type = checked_cursor_type(index, cursor, TypeKind::list);
+    if (!type.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(type).error());
+    }
+    const auto metadata = index.list_slot(cursor.runtime_type_id);
+    if (!metadata.has_value() || type.value()->source->items == nullptr ||
+        metadata->item_runtime_type_id !=
+            index.runtime_schema()->runtime_id(*type.value()->source->items)) {
+        return Result<CheckedListDescriptor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload list cursor metadata is missing",
+            "list_cursor_metadata_missing"));
+    }
+    auto first = layout::load_u64_le(bytes, byte_count, cursor.slot_offset,
+                                     cursor_path(cursor));
+    auto count_offset = layout::checked_add_u64(
+        cursor.slot_offset, UINT64_C(8), cursor_path(cursor));
+    if (!first.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(first).error());
+    }
+    if (!count_offset.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(count_offset).error());
+    }
+    auto count = layout::load_u64_le(bytes, byte_count, count_offset.value(),
+                                     cursor_path(cursor));
+    if (!count.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(count).error());
+    }
+    auto end_index = layout::checked_range_end(
+        first.value(), count.value(), metadata->item_count,
+        cursor_path(cursor));
+    if (!end_index.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(end_index).error());
+    }
+    auto relative = layout::checked_multiply_u64(
+        first.value(), metadata->item_stride, cursor_path(cursor));
+    auto byte_length = layout::checked_multiply_u64(
+        count.value(), metadata->item_stride, cursor_path(cursor));
+    if (!relative.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(relative).error());
+    }
+    if (!byte_length.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(byte_length).error());
+    }
+    auto data_offset = layout::checked_add_u64(
+        metadata->item_data_offset, relative.value(), cursor_path(cursor));
+    if (!data_offset.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(data_offset).error());
+    }
+    auto bounded = layout::checked_range_end(
+        data_offset.value(), byte_length.value(), byte_count,
+        cursor_path(cursor));
+    if (!bounded.has_value()) {
+        return Result<CheckedListDescriptor>::failure(
+            std::move(bounded).error());
+    }
+    return Result<CheckedListDescriptor>::success(CheckedListDescriptor{
+        *metadata, first.value(), count.value()});
+}
+
+}  // namespace
+
+Result<EntrySequenceCursor> PayloadIndex::entry_sequence(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    std::uint32_t entry_index) const {
+    auto span = require_access_span(bytes, byte_count, total_length_);
+    if (!span.has_value()) {
+        return Result<EntrySequenceCursor>::failure(std::move(span).error());
+    }
+    if (entry_index >= entries_.size()) {
+        return Result<EntrySequenceCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE,
+            JsonPointer{}.append("entries").append(entry_index),
+            "Portable payload entry index is out of range", "entry_index"));
+    }
+    return Result<EntrySequenceCursor>::success(
+        EntrySequenceCursor{entry_index});
+}
+
+Result<std::uint64_t> PayloadIndex::sequence_length(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    EntrySequenceCursor sequence) const {
+    auto verified = entry_sequence(bytes, byte_count, sequence.entry_index);
+    if (!verified.has_value()) {
+        return Result<std::uint64_t>::failure(std::move(verified).error());
+    }
+    return Result<std::uint64_t>::success(
+        entries_[sequence.entry_index].value_count);
+}
+
+Result<ValueCursor> PayloadIndex::entry_value(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    EntrySequenceCursor sequence,
+    std::uint64_t value_index) const {
+    auto verified = entry_sequence(bytes, byte_count, sequence.entry_index);
+    if (!verified.has_value()) {
+        return Result<ValueCursor>::failure(std::move(verified).error());
+    }
+    const EntrySlotMetadata& entry = entries_[sequence.entry_index];
+    const JsonPointer path =
+        JsonPointer{}.append("entries").append(sequence.entry_index).append(
+            value_index);
+    if (value_index >= entry.value_count) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE, path,
+            "Portable payload value index is out of range", "value_index"));
+    }
+    bool present = true;
+    if (entry.has_validity) {
+        auto validity_offset = layout::checked_add_u64(
+            entry.validity_offset, value_index / UINT64_C(8), path);
+        if (!validity_offset.has_value()) {
+            return Result<ValueCursor>::failure(
+                std::move(validity_offset).error());
+        }
+        auto bounded = layout::checked_range_end(
+            validity_offset.value(), UINT64_C(1), byte_count, path);
+        if (!bounded.has_value()) {
+            return Result<ValueCursor>::failure(std::move(bounded).error());
+        }
+        present = ((bytes[static_cast<std::ptrdiff_t>(
+                         validity_offset.value())] >>
+                    (value_index % UINT64_C(8))) &
+                   UINT8_C(1)) != UINT8_C(0);
+    }
+    auto relative = layout::checked_multiply_u64(
+        value_index, entry.stride, path);
+    if (!relative.has_value()) {
+        return Result<ValueCursor>::failure(std::move(relative).error());
+    }
+    auto offset = layout::checked_add_u64(entry.data_offset, relative.value(),
+                                          path);
+    if (!offset.has_value()) {
+        return Result<ValueCursor>::failure(std::move(offset).error());
+    }
+    auto bounded = layout::checked_range_end(offset.value(), entry.stride,
+                                             byte_count, path);
+    if (!bounded.has_value()) {
+        return Result<ValueCursor>::failure(std::move(bounded).error());
+    }
+    return Result<ValueCursor>::success(ValueCursor{
+        entry.runtime_type_id, entry.kind, offset.value(), present});
+}
+
+Result<std::uint32_t> PayloadIndex::component_index(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor) const {
+    auto span = require_access_span(bytes, byte_count, total_length_);
+    if (!span.has_value()) {
+        return Result<std::uint32_t>::failure(std::move(span).error());
+    }
+    auto type = checked_cursor_type(*this, cursor, TypeKind::component);
+    if (!type.has_value()) {
+        return Result<std::uint32_t>::failure(std::move(type).error());
+    }
+    return Result<std::uint32_t>::success(
+        type.value()->source->resolved_component_index);
+}
+
+Result<std::uint32_t> PayloadIndex::component_field_count(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor) const {
+    auto component_index_result = component_index(bytes, byte_count, cursor);
+    if (!component_index_result.has_value()) {
+        return Result<std::uint32_t>::failure(
+            std::move(component_index_result).error());
+    }
+    const layout::ComponentLayout* const component =
+        runtime_schema_->component(component_index_result.value());
+    if (component == nullptr || component->fields.size() > UINT32_MAX) {
+        return Result<std::uint32_t>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload component field metadata is missing",
+            "component_layout_missing"));
+    }
+    return Result<std::uint32_t>::success(
+        static_cast<std::uint32_t>(component->fields.size()));
+}
+
+Result<ValueCursor> PayloadIndex::component_field(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor,
+    std::uint32_t field_index) const {
+    auto component_index_result = component_index(bytes, byte_count, cursor);
+    if (!component_index_result.has_value()) {
+        return Result<ValueCursor>::failure(
+            std::move(component_index_result).error());
+    }
+    const layout::ComponentLayout* const component =
+        runtime_schema_->component(component_index_result.value());
+    if (component == nullptr) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload component field metadata is missing",
+            "component_layout_missing"));
+    }
+    if (field_index >= component->fields.size()) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE,
+            cursor_path(cursor).append("fields").append(field_index),
+            "Portable payload field index is out of range", "field_index"));
+    }
+    const layout::ComponentFieldLayout& field =
+        component->fields[field_index];
+    const layout::RuntimeType* const field_type =
+        runtime_schema_->find_type(field.runtime_type_id);
+    if (field_type == nullptr || field_type->source == nullptr) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload component field type is missing",
+            "field_runtime_type_missing"));
+    }
+    const JsonPointer path =
+        cursor_path(cursor).append("fields").append(field_index);
+    bool present = true;
+    if (field.validity_bit != UINT32_MAX) {
+        auto validity_offset = layout::checked_add_u64(
+            cursor.slot_offset, field.validity_bit / UINT32_C(8), path);
+        if (!validity_offset.has_value()) {
+            return Result<ValueCursor>::failure(
+                std::move(validity_offset).error());
+        }
+        auto bounded = layout::checked_range_end(
+            validity_offset.value(), UINT64_C(1), byte_count, path);
+        if (!bounded.has_value()) {
+            return Result<ValueCursor>::failure(std::move(bounded).error());
+        }
+        present = ((bytes[static_cast<std::ptrdiff_t>(
+                         validity_offset.value())] >>
+                    (field.validity_bit % UINT32_C(8))) &
+                   UINT8_C(1)) != UINT8_C(0);
+    }
+    auto offset = layout::checked_add_u64(cursor.slot_offset, field.offset,
+                                          path);
+    if (!offset.has_value()) {
+        return Result<ValueCursor>::failure(std::move(offset).error());
+    }
+    auto bounded = layout::checked_range_end(
+        offset.value(), field.slot_stride, byte_count, path);
+    if (!bounded.has_value()) {
+        return Result<ValueCursor>::failure(std::move(bounded).error());
+    }
+    return Result<ValueCursor>::success(ValueCursor{
+        field.runtime_type_id, field_type->source->kind, offset.value(),
+        present});
+}
+
+Result<std::uint64_t> PayloadIndex::list_length(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor) const {
+    auto span = require_access_span(bytes, byte_count, total_length_);
+    if (!span.has_value()) {
+        return Result<std::uint64_t>::failure(std::move(span).error());
+    }
+    auto descriptor = checked_list_descriptor(*this, bytes, byte_count,
+                                              cursor);
+    if (!descriptor.has_value()) {
+        return Result<std::uint64_t>::failure(
+            std::move(descriptor).error());
+    }
+    return Result<std::uint64_t>::success(descriptor.value().item_count);
+}
+
+Result<ValueCursor> PayloadIndex::list_item(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor,
+    std::uint64_t item_index) const {
+    auto span = require_access_span(bytes, byte_count, total_length_);
+    if (!span.has_value()) {
+        return Result<ValueCursor>::failure(std::move(span).error());
+    }
+    auto descriptor = checked_list_descriptor(*this, bytes, byte_count,
+                                              cursor);
+    if (!descriptor.has_value()) {
+        return Result<ValueCursor>::failure(
+            std::move(descriptor).error());
+    }
+    const JsonPointer path = cursor_path(cursor).append(item_index);
+    if (item_index >= descriptor.value().item_count) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE, path,
+            "Portable payload list index is out of range", "list_index"));
+    }
+    auto aggregate_index = layout::checked_add_u64(
+        descriptor.value().first_index, item_index, path);
+    if (!aggregate_index.has_value()) {
+        return Result<ValueCursor>::failure(
+            std::move(aggregate_index).error());
+    }
+    bool present = true;
+    if (descriptor.value().metadata.has_validity) {
+        auto validity_offset = layout::checked_add_u64(
+            descriptor.value().metadata.validity_offset,
+            aggregate_index.value() / UINT64_C(8), path);
+        if (!validity_offset.has_value()) {
+            return Result<ValueCursor>::failure(
+                std::move(validity_offset).error());
+        }
+        auto bounded = layout::checked_range_end(
+            validity_offset.value(), UINT64_C(1), byte_count, path);
+        if (!bounded.has_value()) {
+            return Result<ValueCursor>::failure(std::move(bounded).error());
+        }
+        present = ((bytes[static_cast<std::ptrdiff_t>(
+                         validity_offset.value())] >>
+                    (aggregate_index.value() % UINT64_C(8))) &
+                   UINT8_C(1)) != UINT8_C(0);
+    }
+    auto relative = layout::checked_multiply_u64(
+        aggregate_index.value(), descriptor.value().metadata.item_stride,
+        path);
+    if (!relative.has_value()) {
+        return Result<ValueCursor>::failure(std::move(relative).error());
+    }
+    auto offset = layout::checked_add_u64(
+        descriptor.value().metadata.item_data_offset, relative.value(), path);
+    if (!offset.has_value()) {
+        return Result<ValueCursor>::failure(std::move(offset).error());
+    }
+    auto bounded = layout::checked_range_end(
+        offset.value(), descriptor.value().metadata.item_stride, byte_count,
+        path);
+    if (!bounded.has_value()) {
+        return Result<ValueCursor>::failure(std::move(bounded).error());
+    }
+    const layout::RuntimeType* const item_type = runtime_schema_->find_type(
+        descriptor.value().metadata.item_runtime_type_id);
+    if (item_type == nullptr || item_type->source == nullptr) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, path,
+            "Portable payload list item type is missing",
+            "list_item_runtime_type_missing"));
+    }
+    return Result<ValueCursor>::success(ValueCursor{
+        descriptor.value().metadata.item_runtime_type_id,
+        item_type->source->kind, offset.value(), present});
+}
+
+Result<ObservedScalar> PayloadIndex::scalar_observation(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor) const {
+    auto span = require_access_span(bytes, byte_count, total_length_);
+    if (!span.has_value()) {
+        return Result<ObservedScalar>::failure(std::move(span).error());
+    }
+    if (runtime_schema_ == nullptr) {
+        return Result<ObservedScalar>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload runtime metadata is missing",
+            "runtime_schema_missing"));
+    }
+    const layout::RuntimeType* const type =
+        runtime_schema_->find_type(cursor.runtime_type_id);
+    if (type == nullptr || type->source == nullptr ||
+        type->source->kind != cursor.kind) {
+        return Result<ObservedScalar>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload scalar cursor metadata is inconsistent",
+            "cursor_runtime_type_mismatch"));
+    }
+    return observe_scalar(bytes, byte_count, *type->source,
+                          cursor.slot_offset, cursor.present,
+                          cursor_path(cursor));
+}
+
+Result<VariableSpanMetadata> PayloadIndex::variable_span(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor) const {
+    auto span = require_access_span(bytes, byte_count, total_length_);
+    if (!span.has_value()) {
+        return Result<VariableSpanMetadata>::failure(std::move(span).error());
+    }
+    if (!variable_kind(cursor.kind)) {
+        return Result<VariableSpanMetadata>::failure(simple_error(
+            FDB_PAYLOAD_E_TYPE_MISMATCH, cursor_path(cursor),
+            "Portable payload span acquisition requires text or bytes",
+            "view_kind_mismatch"));
+    }
+    if (!cursor.present) {
+        return Result<VariableSpanMetadata>::failure(simple_error(
+            FDB_PAYLOAD_E_UNEXPECTED_NULL, cursor_path(cursor),
+            "Portable payload view is null", "unexpected_null"));
+    }
+    if (runtime_schema_ == nullptr) {
+        return Result<VariableSpanMetadata>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload runtime metadata is missing",
+            "runtime_schema_missing"));
+    }
+    const layout::RuntimeType* const type =
+        runtime_schema_->find_type(cursor.runtime_type_id);
+    if (type == nullptr || type->source == nullptr ||
+        type->source->kind != cursor.kind) {
+        return Result<VariableSpanMetadata>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload span cursor metadata is inconsistent",
+            "cursor_runtime_type_mismatch"));
+    }
+    auto relative = layout::load_u64_le(bytes, byte_count,
+                                        cursor.slot_offset,
+                                        cursor_path(cursor));
+    auto length_offset = layout::checked_add_u64(
+        cursor.slot_offset, UINT64_C(8), cursor_path(cursor));
+    if (!relative.has_value()) {
+        return Result<VariableSpanMetadata>::failure(
+            std::move(relative).error());
+    }
+    if (!length_offset.has_value()) {
+        return Result<VariableSpanMetadata>::failure(
+            std::move(length_offset).error());
+    }
+    auto length = layout::load_u64_le(bytes, byte_count,
+                                      length_offset.value(),
+                                      cursor_path(cursor));
+    if (!length.has_value()) {
+        return Result<VariableSpanMetadata>::failure(
+            std::move(length).error());
+    }
+    if (cursor.kind == TypeKind::wstr &&
+        ((relative.value() | length.value()) & UINT64_C(1)) != UINT64_C(0)) {
+        return Result<VariableSpanMetadata>::failure(simple_error(
+            FDB_PAYLOAD_E_MISALIGNED, cursor_path(cursor),
+            "Portable payload UTF-16LE descriptor is misaligned",
+            "utf16_descriptor_misaligned"));
+    }
+    const PoolMetadata* const pool = find_pool(pools_, cursor.kind);
+    if (pool == nullptr) {
+        return Result<VariableSpanMetadata>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload variable pool metadata is missing",
+            "variable_pool_missing"));
+    }
+    auto relative_end = layout::checked_range_end(
+        relative.value(), length.value(), pool->byte_length,
+        cursor_path(cursor));
+    if (!relative_end.has_value()) {
+        return Result<VariableSpanMetadata>::failure(
+            std::move(relative_end).error());
+    }
+    auto absolute = layout::checked_add_u64(
+        pool->data_offset, relative.value(), cursor_path(cursor));
+    if (!absolute.has_value()) {
+        return Result<VariableSpanMetadata>::failure(
+            std::move(absolute).error());
+    }
+    auto bounded = layout::checked_range_end(
+        absolute.value(), length.value(), byte_count, cursor_path(cursor));
+    if (!bounded.has_value()) {
+        return Result<VariableSpanMetadata>::failure(
+            std::move(bounded).error());
+    }
+    return Result<VariableSpanMetadata>::success(VariableSpanMetadata{
+        cursor.kind, absolute.value(), length.value()});
+}
+
+Result<VariableSpanMetadata> PayloadIndex::text_span(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    ValueCursor cursor,
+    const JsonPointer& diagnostic_path) const {
+    if (cursor.kind != TypeKind::str && cursor.kind != TypeKind::wstr) {
+        return Result<VariableSpanMetadata>::failure(simple_error(
+            FDB_PAYLOAD_E_TYPE_MISMATCH, diagnostic_path,
+            "Portable payload text acquisition requires a text value",
+            "view_kind_mismatch"));
+    }
+    auto span = variable_span(bytes, byte_count, cursor);
+    if (!span.has_value()) {
+        return span;
+    }
+    if (span.value().byte_length > retained_max_string_bytes_) {
+        return Result<VariableSpanMetadata>::failure(resource_error(
+            diagnostic_path, "string_bytes", span.value().byte_length,
+            retained_max_string_bytes_));
+    }
+    if (!text_validated_eagerly_) {
+        const std::uint64_t units =
+            cursor.kind == TypeKind::str
+                ? span.value().byte_length
+                : span.value().byte_length / UINT64_C(2);
+        auto total_work = layout::checked_add_u64(
+            validation_work_, units, diagnostic_path);
+        if (!total_work.has_value()) {
+            return Result<VariableSpanMetadata>::failure(resource_error(
+                diagnostic_path, "validation_work", UINT64_MAX,
+                retained_max_validation_work_));
+        }
+        if (total_work.value() > retained_max_validation_work_) {
+            return Result<VariableSpanMetadata>::failure(resource_error(
+                diagnostic_path, "validation_work", total_work.value(),
+                retained_max_validation_work_));
+        }
+        Result<void> valid = cursor.kind == TypeKind::str
+            ? layout::validate_utf8(
+                  std::string_view{
+                      span.value().byte_length == UINT64_C(0)
+                          ? ""
+                          : reinterpret_cast<const char*>(bytes) +
+                                static_cast<std::ptrdiff_t>(
+                                    span.value().data_offset),
+                      static_cast<std::size_t>(span.value().byte_length)},
+                  diagnostic_path)
+            : layout::validate_utf16le(
+                  bytes + static_cast<std::ptrdiff_t>(
+                              span.value().data_offset),
+                  span.value().byte_length, diagnostic_path);
+        if (!valid.has_value()) {
+            return Result<VariableSpanMetadata>::failure(
+                std::move(valid).error());
+        }
+    }
+    return span;
+}
+
 Result<EntrySlotMetadata> PayloadIndex::entry_slot(
     std::uint32_t entry_index) const {
     if (entry_index >= entries_.size()) {
@@ -1005,7 +1595,7 @@ Result<FieldSlotMetadata> PayloadIndex::field_slot(
     std::uint32_t entry_index,
     const std::uint32_t* field_indexes,
     std::uint64_t field_depth) const {
-    if (runtime_schema_ == std::nullopt || entry_index >= entries_.size()) {
+    if (runtime_schema_ == nullptr || entry_index >= entries_.size()) {
         return Result<FieldSlotMetadata>::failure(simple_error(
             FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE,
             JsonPointer{}.append("entries").append(entry_index),
@@ -1088,59 +1678,17 @@ Result<ObservedScalar> PayloadIndex::scalar(const std::uint8_t* bytes,
                                             std::uint64_t byte_count,
                                             std::uint32_t entry_index,
                                             std::uint64_t value_index) const {
-    auto span = require_access_span(bytes, byte_count, total_length_);
-    if (!span.has_value()) {
-        return Result<ObservedScalar>::failure(std::move(span).error());
+    auto sequence = entry_sequence(bytes, byte_count, entry_index);
+    if (!sequence.has_value()) {
+        return Result<ObservedScalar>::failure(
+            std::move(sequence).error());
     }
-    auto metadata = entry_slot(entry_index);
-    if (!metadata.has_value()) {
-        return Result<ObservedScalar>::failure(std::move(metadata).error());
+    auto cursor = entry_value(bytes, byte_count, sequence.value(),
+                              value_index);
+    if (!cursor.has_value()) {
+        return Result<ObservedScalar>::failure(std::move(cursor).error());
     }
-    if (value_index >= metadata.value().value_count) {
-        return Result<ObservedScalar>::failure(simple_error(
-            FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE,
-            JsonPointer{}.append("entries").append(entry_index).append(
-                value_index),
-            "Portable payload value index is out of range", "value_index"));
-    }
-    const layout::RuntimeType* type =
-        runtime_schema_->find_type(metadata.value().runtime_type_id);
-    if (type == nullptr) {
-        return Result<ObservedScalar>::failure(simple_error(
-            FDB_PAYLOAD_E_INTERNAL, JsonPointer{}.append("entries"),
-            "Portable payload entry type metadata is missing",
-            "entry_runtime_type_missing"));
-    }
-    bool present = true;
-    if (metadata.value().has_validity) {
-        auto validity_offset = layout::checked_add_u64(
-            metadata.value().validity_offset, value_index / UINT64_C(8),
-            JsonPointer{}.append("entries").append(entry_index));
-        if (!validity_offset.has_value()) {
-            return Result<ObservedScalar>::failure(
-                std::move(validity_offset).error());
-        }
-        present = ((bytes[static_cast<std::ptrdiff_t>(
-                        validity_offset.value())] >>
-                    (value_index % UINT64_C(8))) &
-                   UINT8_C(1)) != UINT8_C(0);
-    }
-    auto relative = layout::checked_multiply_u64(
-        value_index, metadata.value().stride,
-        JsonPointer{}.append("entries").append(entry_index));
-    if (!relative.has_value()) {
-        return Result<ObservedScalar>::failure(std::move(relative).error());
-    }
-    auto offset = layout::checked_add_u64(
-        metadata.value().data_offset, relative.value(),
-        JsonPointer{}.append("entries").append(entry_index));
-    if (!offset.has_value()) {
-        return Result<ObservedScalar>::failure(std::move(offset).error());
-    }
-    return observe_scalar(bytes, byte_count, *type->source, offset.value(),
-                          present,
-                          JsonPointer{}.append("entries").append(entry_index)
-                              .append(value_index));
+    return scalar_observation(bytes, byte_count, cursor.value());
 }
 
 Result<ObservedScalar> PayloadIndex::field_scalar(
@@ -1154,110 +1702,31 @@ Result<ObservedScalar> PayloadIndex::field_scalar(
     if (!target.has_value()) {
         return Result<ObservedScalar>::failure(std::move(target).error());
     }
-    auto span = require_access_span(bytes, byte_count, total_length_);
-    if (!span.has_value()) {
-        return Result<ObservedScalar>::failure(std::move(span).error());
-    }
-    const EntrySlotMetadata& entry = entries_[entry_index];
-    if (value_index >= entry.value_count) {
-        return Result<ObservedScalar>::failure(simple_error(
-            FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE,
-            JsonPointer{}.append("entries").append(entry_index).append(
-                value_index),
-            "Portable payload value index is out of range", "value_index"));
-    }
-    bool present = true;
-    if (entry.has_validity) {
-        auto validity_offset = layout::checked_add_u64(
-            entry.validity_offset, value_index / UINT64_C(8),
-            JsonPointer{}.append("entries").append(entry_index));
-        if (!validity_offset.has_value()) {
-            return Result<ObservedScalar>::failure(
-                std::move(validity_offset).error());
-        }
-        present = ((bytes[static_cast<std::ptrdiff_t>(
-                        validity_offset.value())] >>
-                    (value_index % UINT64_C(8))) &
-                   UINT8_C(1)) != UINT8_C(0);
-    }
-    const layout::RuntimeType* current =
-        runtime_schema_->find_type(entry.runtime_type_id);
-    auto row_relative = layout::checked_multiply_u64(
-        value_index, entry.stride,
-        JsonPointer{}.append("entries").append(entry_index));
-    if (!row_relative.has_value()) {
+    auto sequence = entry_sequence(bytes, byte_count, entry_index);
+    if (!sequence.has_value()) {
         return Result<ObservedScalar>::failure(
-            std::move(row_relative).error());
+            std::move(sequence).error());
     }
-    auto row_offset = layout::checked_add_u64(
-        entry.data_offset, row_relative.value(),
-        JsonPointer{}.append("entries").append(entry_index));
-    if (!row_offset.has_value()) {
-        return Result<ObservedScalar>::failure(std::move(row_offset).error());
+    auto current = entry_value(bytes, byte_count, sequence.value(),
+                               value_index);
+    if (!current.has_value()) {
+        return Result<ObservedScalar>::failure(std::move(current).error());
     }
-    std::uint64_t base = row_offset.value();
     for (std::uint64_t depth = UINT64_C(0); depth < field_depth; ++depth) {
-        if (!present) {
+        if (!current.value().present) {
             return Result<ObservedScalar>::success(ObservedScalar{
                 false, target.value().kind, UINT64_C(0)});
         }
-        if (current == nullptr || current->source->kind != TypeKind::component) {
-            return Result<ObservedScalar>::failure(simple_error(
-                FDB_PAYLOAD_E_INTERNAL,
-                JsonPointer{}.append("fields").append(depth),
-                "Portable payload field path metadata is inconsistent",
-                "field_path_runtime_mismatch"));
-        }
-        const layout::ComponentLayout* component = runtime_schema_->component(
-            current->source->resolved_component_index);
-        if (component == nullptr) {
-            return Result<ObservedScalar>::failure(simple_error(
-                FDB_PAYLOAD_E_INTERNAL,
-                JsonPointer{}.append("fields").append(depth),
-                "Portable payload component metadata is missing",
-                "component_layout_missing"));
-        }
-        const std::uint32_t field_index =
-            field_indexes[static_cast<std::size_t>(depth)];
-        const layout::ComponentFieldLayout& field =
-            component->fields[field_index];
-        const auto& source_component =
-            runtime_schema_->spec().resolved().components()[
-                current->source->resolved_component_index];
-        const spec::TypeNode& field_type =
-            source_component.fields[field_index].type;
-        if (field.validity_bit != UINT32_MAX) {
-            auto validity_offset = layout::checked_add_u64(
-                base, field.validity_bit / UINT32_C(8),
-                JsonPointer{}.append("fields").append(depth));
-            if (!validity_offset.has_value()) {
-                return Result<ObservedScalar>::failure(
-                    std::move(validity_offset).error());
-            }
-            present = ((bytes[static_cast<std::ptrdiff_t>(
-                            validity_offset.value())] >>
-                        (field.validity_bit % UINT32_C(8))) &
-                       UINT8_C(1)) != UINT8_C(0);
-        }
-        auto field_offset = layout::checked_add_u64(
-            base, field.offset,
-            JsonPointer{}.append("fields").append(depth));
-        if (!field_offset.has_value()) {
+        auto child = component_field(
+            bytes, byte_count, current.value(),
+            field_indexes[static_cast<std::size_t>(depth)]);
+        if (!child.has_value()) {
             return Result<ObservedScalar>::failure(
-                std::move(field_offset).error());
+                std::move(child).error());
         }
-        base = field_offset.value();
-        current = runtime_schema_->find_type(field.runtime_type_id);
-        if (depth + UINT64_C(1) == field_depth) {
-            return observe_scalar(
-                bytes, byte_count, field_type, base, present,
-                JsonPointer{}.append("entries").append(entry_index).append(
-                    value_index));
-        }
+        current = std::move(child);
     }
-    return Result<ObservedScalar>::failure(simple_error(
-        FDB_PAYLOAD_E_INVALID_ARGUMENT, JsonPointer{}.append("fields"),
-        "Portable payload field path is empty", "invalid_field_path"));
+    return scalar_observation(bytes, byte_count, current.value());
 }
 
 Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
@@ -1983,6 +2452,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         ListPartitions list_partitions;
         list_partitions.indexes.assign(runtime.value().type_count(),
                                        UINT32_MAX);
+        output.list_slots_.assign(runtime.value().type_count(), std::nullopt);
         list_partitions.states.reserve(
             runtime.value().list_nodes().size());
         std::uint64_t total_list_elements = UINT64_C(0);
@@ -2163,6 +2633,19 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 list.owner_runtime_type_id, list.item_runtime_type_id,
                 validity_region_index, region_index, validity_descriptor,
                 items_descriptor, UINT64_C(0)});
+            output.list_slots_[list.owner_runtime_type_id] =
+                ListSlotMetadata{
+                    list.item_runtime_type_id,
+                    items_descriptor.data_offset,
+                    items_descriptor.element_count,
+                    items_descriptor.stride,
+                    validity_region_index != UINT32_MAX,
+                    validity_region_index == UINT32_MAX
+                        ? UINT64_C(0)
+                        : validity_descriptor.data_offset,
+                    validity_region_index == UINT32_MAX
+                        ? UINT64_C(0)
+                        : validity_descriptor.byte_length};
             regions.push_back(items_descriptor);
             cursor = end.value();
             ++region_index;
@@ -2488,7 +2971,8 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
         }
 
-        output.runtime_schema_.emplace(std::move(runtime).value());
+        output.runtime_schema_ = std::make_shared<const RuntimeSchema>(
+            std::move(runtime).value());
         output.total_length_ = byte_count;
         output.validation_work_ = work.value();
         output.retained_max_string_bytes_ = limits.max_string_bytes;

@@ -143,9 +143,12 @@ namespace fastdb::payload::view {
 
 struct PayloadOwnerTestAccess final {
     static std::vector<std::uint8_t> copy_bytes(const PayloadOwner& owner) {
+        if (!owner.state_->backing.has_value()) {
+            std::abort();
+        }
         const std::uint8_t* const begin =
-            owner.state_->backing.readable_data();
-        const std::uint64_t size = owner.state_->backing.readable_size();
+            owner.state_->backing->readable_data();
+        const std::uint64_t size = owner.state_->backing->readable_size();
         return std::vector<std::uint8_t>(
             begin, begin + static_cast<std::ptrdiff_t>(size));
     }

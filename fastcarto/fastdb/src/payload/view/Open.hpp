@@ -1,11 +1,13 @@
 #pragma once
 
 #include "payload/error/Result.hpp"
+#include "payload/json/JsonPointer.hpp"
 #include "payload/layout/BinaryFormat.hpp"
 #include "payload/layout/RuntimeSchema.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -67,6 +69,33 @@ struct VariableSlotMetadata final {
     bool present;
 };
 
+struct ListSlotMetadata final {
+    std::uint32_t item_runtime_type_id;
+    std::uint64_t item_data_offset;
+    std::uint64_t item_count;
+    std::uint32_t item_stride;
+    bool has_validity;
+    std::uint64_t validity_offset;
+    std::uint64_t validity_byte_length;
+};
+
+struct EntrySequenceCursor final {
+    std::uint32_t entry_index;
+};
+
+struct ValueCursor final {
+    std::uint32_t runtime_type_id;
+    spec::TypeKind kind;
+    std::uint64_t slot_offset;
+    bool present;
+};
+
+struct VariableSpanMetadata final {
+    spec::TypeKind kind;
+    std::uint64_t data_offset;
+    std::uint64_t byte_length;
+};
+
 class PayloadIndex final {
 public:
     std::uint64_t total_length() const noexcept { return total_length_; }
@@ -90,6 +119,62 @@ public:
     std::uint64_t retained_max_validation_work() const noexcept {
         return retained_max_validation_work_;
     }
+    const std::shared_ptr<const layout::RuntimeSchema>& runtime_schema()
+        const noexcept {
+        return runtime_schema_;
+    }
+    std::optional<ListSlotMetadata> list_slot(
+        std::uint32_t owner_runtime_type_id) const noexcept;
+
+    error::Result<EntrySequenceCursor> entry_sequence(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        std::uint32_t entry_index) const;
+    error::Result<std::uint64_t> sequence_length(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        EntrySequenceCursor sequence) const;
+    error::Result<ValueCursor> entry_value(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        EntrySequenceCursor sequence,
+        std::uint64_t value_index) const;
+    error::Result<std::uint32_t> component_index(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        ValueCursor cursor) const;
+    error::Result<std::uint32_t> component_field_count(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        ValueCursor cursor) const;
+    error::Result<ValueCursor> component_field(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        ValueCursor cursor,
+        std::uint32_t field_index) const;
+    error::Result<std::uint64_t> list_length(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        ValueCursor cursor) const;
+    error::Result<ValueCursor> list_item(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        ValueCursor cursor,
+        std::uint64_t item_index) const;
+    error::Result<ObservedScalar> scalar_observation(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        ValueCursor cursor) const;
+    error::Result<VariableSpanMetadata> variable_span(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        ValueCursor cursor) const;
+    error::Result<VariableSpanMetadata> text_span(
+        const std::uint8_t* bytes,
+        std::uint64_t byte_count,
+        ValueCursor cursor,
+        const json::JsonPointer& diagnostic_path) const;
+
     error::Result<EntrySlotMetadata> entry_slot(
         std::uint32_t entry_index) const;
     error::Result<FieldSlotMetadata> field_slot(
@@ -123,7 +208,8 @@ private:
     std::vector<EntrySlotMetadata> entries_;
     std::vector<PoolMetadata> pools_;
     std::vector<VariableSlotMetadata> variable_slots_;
-    std::optional<layout::RuntimeSchema> runtime_schema_;
+    std::vector<std::optional<ListSlotMetadata>> list_slots_;
+    std::shared_ptr<const layout::RuntimeSchema> runtime_schema_;
     std::uint64_t total_length_{UINT64_C(0)};
     std::uint64_t validation_work_{UINT64_C(0)};
     std::uint64_t retained_max_string_bytes_{UINT64_C(0)};

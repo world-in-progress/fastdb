@@ -4,6 +4,7 @@
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
 #include "payload/layout/InputSpan.hpp"
+#include "payload/view/View.hpp"
 
 #include <fastdb_payload.h>
 
@@ -11,6 +12,8 @@
 #include <cstdint>
 #include <cstring>
 #include <new>
+#include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <utility>
 
@@ -36,6 +39,28 @@ Error backing_error(std::uint32_t code, const char* reason) {
         "Portable payload owner backing failed",
         JsonValue::object({JsonValue::Member{"reason", JsonValue{reason}}}));
 }
+
+class InvalidatorWaitRegistration final {
+public:
+    explicit InvalidatorWaitRegistration(
+        AccessBarrierState& barrier) noexcept
+        : barrier_(&barrier) {
+        ++barrier_->waiting_invalidators;
+        barrier_->drained.notify_all();
+    }
+
+    InvalidatorWaitRegistration(const InvalidatorWaitRegistration&) = delete;
+    InvalidatorWaitRegistration& operator=(
+        const InvalidatorWaitRegistration&) = delete;
+
+    ~InvalidatorWaitRegistration() {
+        --barrier_->waiting_invalidators;
+        barrier_->drained.notify_all();
+    }
+
+private:
+    AccessBarrierState* barrier_;
+};
 
 Result<backing::CommittedBacking> copy_to_heap(
     const std::uint8_t* bytes,
@@ -88,8 +113,9 @@ Result<PayloadOwner> PayloadOwner::publish(
     PayloadIndex index,
     std::optional<build::ExecutionReport> report) try {
     return Result<PayloadOwner>::success(PayloadOwner{
-        std::make_shared<State>(std::move(backing), std::move(spec),
-                                std::move(index), std::move(report))});
+        std::make_shared<PayloadOwnerState>(
+            std::move(backing), std::move(spec), std::move(index),
+            std::move(report))});
 } catch (const std::bad_alloc&) {
     return Result<PayloadOwner>::failure(allocation_error());
 } catch (const std::length_error&) {
@@ -152,6 +178,102 @@ Result<PayloadOwner> PayloadOwner::open_external(
     return Result<PayloadOwner>::failure(allocation_error());
 } catch (const std::length_error&) {
     return Result<PayloadOwner>::failure(allocation_error());
+}
+
+Result<Access> PayloadOwner::acquire() const try {
+    std::uint64_t generation = UINT64_C(0);
+    auto pin = AccessPin::acquire_current(state_->barrier, generation);
+    if (!pin.has_value()) {
+        return Result<Access>::failure(std::move(pin).error());
+    }
+    if (!state_->backing.has_value()) {
+        return Result<Access>::failure(backing_error(
+            FDB_PAYLOAD_E_INTERNAL, "missing_committed_backing"));
+    }
+    auto access = std::make_unique<Access::State>();
+    access->owner = state_;
+    access->pin.emplace(std::move(pin).value());
+    access->kind = AccessKind::payload;
+    access->bytes = state_->backing->readable_data();
+    access->byte_count = state_->backing->readable_size();
+    return Result<Access>::success(Access{std::move(access)});
+} catch (const std::bad_alloc&) {
+    return Result<Access>::failure(allocation_error());
+} catch (const std::length_error&) {
+    return Result<Access>::failure(allocation_error());
+}
+
+Result<View> PayloadOwner::entry_view(std::uint32_t entry_index) const try {
+    std::uint64_t generation = UINT64_C(0);
+    auto pin = AccessPin::acquire_current(state_->barrier, generation);
+    if (!pin.has_value()) {
+        return Result<View>::failure(std::move(pin).error());
+    }
+    if (!state_->backing.has_value()) {
+        return Result<View>::failure(backing_error(
+            FDB_PAYLOAD_E_INTERNAL, "missing_committed_backing"));
+    }
+    auto sequence = state_->index.entry_sequence(
+        state_->backing->readable_data(), state_->backing->readable_size(),
+        entry_index);
+    if (!sequence.has_value()) {
+        return Result<View>::failure(std::move(sequence).error());
+    }
+    auto view_state = std::make_shared<View::State>();
+    view_state->is_backed = true;
+    view_state->is_sequence = true;
+    view_state->owner = state_;
+    view_state->generation = generation;
+    view_state->sequence = sequence.value();
+    view_state->diagnostic_path =
+        JsonPointer{}.append("entries").append(entry_index);
+    return Result<View>::success(View{std::move(view_state)});
+} catch (const std::bad_alloc&) {
+    return Result<View>::failure(allocation_error());
+} catch (const std::length_error&) {
+    return Result<View>::failure(allocation_error());
+}
+
+Result<void> PayloadOwner::invalidate() {
+    AccessBarrierState& barrier = state_->barrier;
+    std::optional<backing::CommittedBacking> released;
+    std::unique_lock<std::mutex> lock(barrier.mutex);
+    if (barrier.invalidating) {
+        if (barrier.waiting_invalidators ==
+            std::numeric_limits<std::uint64_t>::max()) {
+            return Result<void>::failure(backing_error(
+                FDB_PAYLOAD_E_INTERNAL,
+                "waiting_invalidator_overflow"));
+        }
+        InvalidatorWaitRegistration registration{barrier};
+        barrier.drained.wait(lock, [&barrier] {
+            return !barrier.invalidating;
+        });
+    }
+    if (barrier.invalidated) {
+        return Result<void>::success();
+    }
+    barrier.invalidating = true;
+    barrier.drained.notify_all();
+    barrier.drained.wait(lock, [&barrier] {
+        return barrier.active_accesses == UINT64_C(0);
+    });
+    if (state_->backing.has_value()) {
+        released.emplace(std::move(*state_->backing));
+        state_->backing.reset();
+    }
+    if (barrier.generation != std::numeric_limits<std::uint64_t>::max()) {
+        ++barrier.generation;
+    }
+    barrier.invalidated = true;
+
+    lock.unlock();
+    released.reset();
+    lock.lock();
+
+    barrier.invalidating = false;
+    barrier.drained.notify_all();
+    return Result<void>::success();
 }
 
 }  // namespace fastdb::payload::view
