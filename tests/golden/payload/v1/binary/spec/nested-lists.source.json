@@ -1,0 +1,66 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {
+      "id": "envelopes",
+      "cardinality": "many",
+      "type": {"kind": "component", "id": "Envelope"}
+    },
+    {
+      "id": "scalar_lists",
+      "cardinality": "many",
+      "type": {
+        "kind": "list",
+        "nullable": true,
+        "items": {"kind": "u16", "nullable": true}
+      }
+    },
+    {
+      "id": "matrices",
+      "cardinality": "one",
+      "type": {
+        "kind": "list",
+        "items": {
+          "kind": "list",
+          "nullable": true,
+          "items": {"kind": "str", "nullable": true}
+        }
+      }
+    }
+  ],
+  "components": [
+    {
+      "id": "Envelope",
+      "kind": "record",
+      "fields": [
+        {
+          "id": "text_groups",
+          "type": {
+            "kind": "list",
+            "items": {
+              "kind": "list",
+              "nullable": true,
+              "items": {"kind": "str", "nullable": true}
+            }
+          }
+        },
+        {
+          "id": "wide_values",
+          "type": {
+            "kind": "list",
+            "nullable": true,
+            "items": {"kind": "wstr", "nullable": true}
+          }
+        },
+        {
+          "id": "blob_values",
+          "type": {
+            "kind": "list",
+            "items": {"kind": "bytes", "nullable": true}
+          }
+        }
+      ]
+    }
+  ]
+}

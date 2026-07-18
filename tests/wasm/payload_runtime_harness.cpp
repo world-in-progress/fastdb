@@ -228,6 +228,177 @@ bool add_text_byte_values(PayloadBuilder& builder) {
     return true;
 }
 
+bool add_nested_list_values(PayloadBuilder& builder) {
+#define FASTDB_WASM_STEP(expression)                                         \
+    do {                                                                     \
+        if (!(expression).has_value()) {                                     \
+            return false;                                                    \
+        }                                                                    \
+    } while (false)
+    const std::array<std::uint16_t, 3> wide{
+        {UINT16_C(0x0041), UINT16_C(0xd83d), UINT16_C(0xde03)}};
+    const std::array<std::uint8_t, 3> opaque{
+        {UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x41)}};
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(0), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_str(""));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_str("alpha"));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_wstr(nullptr, UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_wstr(wide.data(), wide.size()));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_bytes(opaque.data(), opaque.size()));
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(1), UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_u16(UINT16_C(7)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_u16(UINT16_C(9)));
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(2), UINT64_C(1)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_str(""));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_str("tail"));
+#undef FASTDB_WASM_STEP
+    return true;
+}
+
+bool add_component_list_composition_values(PayloadBuilder& builder) {
+#define FASTDB_WASM_STEP(expression)                                         \
+    do {                                                                     \
+        if (!(expression).has_value()) {                                     \
+            return false;                                                    \
+        }                                                                    \
+    } while (false)
+    const std::array<std::uint16_t, 1> wide{{UINT16_C(0x4e2d)}};
+    const std::array<std::uint8_t, 3> opaque{
+        {UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x80)}};
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(0), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_bool(UINT8_C(1)));
+    FASTDB_WASM_STEP(builder.push_u8(UINT8_C(8)));
+    FASTDB_WASM_STEP(builder.push_u16(UINT16_C(16)));
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_C(32)));
+    FASTDB_WASM_STEP(builder.push_i32(INT32_C(-32)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0x3fe0000000000000)));
+    FASTDB_WASM_STEP(builder.push_u16n_bits(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0x3f800000)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0x4000000000000000)));
+    FASTDB_WASM_STEP(builder.push_str("component"));
+    FASTDB_WASM_STEP(builder.push_wstr(wide.data(), wide.size()));
+    FASTDB_WASM_STEP(builder.push_bytes(opaque.data(), opaque.size()));
+
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_bool(UINT8_C(1)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_bool(UINT8_C(0)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_u8(UINT8_C(0)));
+    FASTDB_WASM_STEP(builder.push_u8(UINT8_MAX));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_u16(UINT16_C(0)));
+    FASTDB_WASM_STEP(builder.push_u16(UINT16_MAX));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_C(0)));
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_MAX));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_i32(INT32_MIN));
+    FASTDB_WASM_STEP(builder.push_i32(INT32_MAX));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0x3ff0000000000000)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_u16n_bits(UINT64_C(0xbff0000000000000)));
+    FASTDB_WASM_STEP(builder.push_u16n_bits(UINT64_C(0x3ff0000000000000)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0x80000000)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0x7fa12345)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0x7ff0000000000000)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0xfff8000000001234)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_str(""));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_str("list"));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_wstr(wide.data(), wide.size()));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_bytes(opaque.data(), opaque.size()));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_C(1)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_C(2)));
+    FASTDB_WASM_STEP(builder.push_str("two"));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_u8(UINT8_C(1)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_u8(UINT8_C(2)));
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_C(9)));
+    FASTDB_WASM_STEP(builder.push_str("root"));
+
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_bool(UINT8_C(0)));
+    FASTDB_WASM_STEP(builder.push_u8(UINT8_C(0)));
+    FASTDB_WASM_STEP(builder.push_u16(UINT16_C(0)));
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_C(0)));
+    FASTDB_WASM_STEP(builder.push_i32(INT32_C(0)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_u16n_bits(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_str(""));
+    FASTDB_WASM_STEP(builder.push_wstr(nullptr, UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_bytes(nullptr, UINT64_C(0)));
+    for (std::uint32_t field = UINT32_C(0); field < UINT32_C(12); ++field) {
+        FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+    }
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_null());
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(1), UINT64_C(3)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.begin_list(UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_C(7)));
+    FASTDB_WASM_STEP(builder.push_str("entry"));
+#undef FASTDB_WASM_STEP
+    return true;
+}
+
 bool exact_golden(const std::string& root,
                   const std::string& name,
                   const std::vector<std::uint8_t>& bytes) {
@@ -491,6 +662,55 @@ int run() {
         lazy_opened.value().validation_work() + UINT64_C(45) !=
             text_opened.value().validation_work()) {
         return 26;
+    }
+
+    const auto exact_list_runtime =
+        [&](std::string_view name,
+            bool (*add_values)(PayloadBuilder&),
+            std::uint32_t expected_region_count) {
+            auto spec = CompiledSpec::compile(
+                read_file(root + "/spec/" + std::string(name) +
+                          ".source.json"));
+            if (!spec.has_value()) {
+                return false;
+            }
+            auto builder = PayloadBuilder::create(spec.value());
+            if (!builder.has_value() || !add_values(builder.value())) {
+                return false;
+            }
+            auto logical = builder.value().freeze();
+            auto runtime = RuntimeSchema::compile(spec.value());
+            if (!logical.has_value() || !runtime.has_value()) {
+                return false;
+            }
+            auto record =
+                RecordLayout::plan(runtime.value(), logical.value());
+            if (!record.has_value() ||
+                record.value().region_count() != expected_region_count) {
+                return false;
+            }
+            VectorSink output(record.value().total_length());
+            if (!fastdb::payload::build::encode_record(
+                     record.value(), logical.value(), output)
+                     .has_value() ||
+                !exact_golden(root, std::string(name), output.bytes_)) {
+                return false;
+            }
+            auto index = fastdb::payload::view::open_record(
+                spec.value(), output.bytes_.data(), output.bytes_.size());
+            return index.has_value() &&
+                   index.value().total_length() == output.bytes_.size() &&
+                   index.value().validation_work() ==
+                       record.value().validation_work();
+        };
+    if (!exact_list_runtime("nested-lists", add_nested_list_values,
+                            UINT32_C(21))) {
+        return 27;
+    }
+    if (!exact_list_runtime("component-list-composition",
+                            add_component_list_composition_values,
+                            UINT32_C(38))) {
+        return 28;
     }
     return 0;
 }

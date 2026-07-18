@@ -21,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace fastdb::payload::view {
@@ -29,6 +30,7 @@ namespace {
 using error::Error;
 using error::Result;
 using json::JsonPointer;
+using json::JsonPointerBuilder;
 using json::JsonValue;
 using layout::EntryDescriptor;
 using layout::RegionDescriptor;
@@ -135,7 +137,7 @@ Result<void> require_zero(const std::uint8_t* bytes,
     return Result<void>::success();
 }
 
-bool task4_record_kind(TypeKind kind) noexcept {
+bool record_kind(TypeKind kind) noexcept {
     switch (kind) {
     case TypeKind::boolean:
     case TypeKind::u8:
@@ -150,6 +152,7 @@ bool task4_record_kind(TypeKind kind) noexcept {
     case TypeKind::wstr:
     case TypeKind::bytes:
     case TypeKind::component:
+    case TypeKind::list:
         return true;
     default:
         return false;
@@ -159,6 +162,10 @@ bool task4_record_kind(TypeKind kind) noexcept {
 bool variable_kind(TypeKind kind) noexcept {
     return kind == TypeKind::str || kind == TypeKind::wstr ||
            kind == TypeKind::bytes;
+}
+
+bool container_kind(TypeKind kind) noexcept {
+    return kind == TypeKind::component || kind == TypeKind::list;
 }
 
 const PoolMetadata* find_pool(const std::vector<PoolMetadata>& pools,
@@ -185,6 +192,29 @@ struct PoolCursors final {
             return utf16;
         }
         return opaque;
+    }
+};
+
+struct ListRegionState final {
+    std::uint32_t owner_runtime_type_id;
+    std::uint32_t item_runtime_type_id;
+    std::uint32_t validity_region_index;
+    std::uint32_t items_region_index;
+    RegionDescriptor validity;
+    RegionDescriptor items;
+    std::uint64_t cursor{UINT64_C(0)};
+};
+
+struct ListPartitions final {
+    std::vector<ListRegionState> states;
+    std::vector<std::uint32_t> indexes;
+
+    ListRegionState* find(std::uint32_t runtime_type_id) noexcept {
+        if (runtime_type_id >= indexes.size()) {
+            return nullptr;
+        }
+        const std::uint32_t index = indexes[runtime_type_id];
+        return index < states.size() ? &states[index] : nullptr;
     }
 };
 
@@ -301,61 +331,266 @@ Result<std::uint64_t> read_u64(const std::uint8_t* bytes,
     return layout::load_u64_le(bytes, byte_count, offset, path);
 }
 
+struct RegionFields final {
+    std::uint32_t kind;
+    std::uint32_t flags;
+    std::uint32_t owner;
+    std::uint32_t runtime_type_id;
+    std::uint64_t data_offset;
+    std::uint64_t byte_length;
+    std::uint64_t element_count;
+    std::uint32_t stride;
+    std::uint32_t alignment;
+    std::uint64_t reserved;
+};
+
+Result<RegionFields> read_region_fields(const std::uint8_t* bytes,
+                                        std::uint64_t byte_count,
+                                        std::uint32_t region_index,
+                                        const JsonPointer& path) {
+    const std::uint64_t base =
+        layout::header_size + static_cast<std::uint64_t>(region_index) *
+                                  layout::region_descriptor_size;
+    auto kind = read_u32(bytes, byte_count, base + layout::region_kind_offset,
+                         path);
+    auto flags = read_u32(bytes, byte_count,
+                          base + layout::region_flags_offset, path);
+    auto owner = read_u32(bytes, byte_count,
+                          base + layout::region_owner_index_offset, path);
+    auto type_id = read_u32(bytes, byte_count,
+                            base + layout::region_runtime_type_id_offset, path);
+    auto data_offset = read_u64(bytes, byte_count,
+                                base + layout::region_data_offset_offset, path);
+    auto byte_length = read_u64(bytes, byte_count,
+                                base + layout::region_byte_length_offset, path);
+    auto element_count = read_u64(
+        bytes, byte_count, base + layout::region_element_count_offset, path);
+    auto stride = read_u32(bytes, byte_count,
+                           base + layout::region_stride_offset, path);
+    auto alignment = read_u32(bytes, byte_count,
+                              base + layout::region_alignment_offset, path);
+    auto reserved = read_u64(bytes, byte_count,
+                             base + layout::region_reserved_offset, path);
+    if (!kind.has_value() || !flags.has_value() || !owner.has_value() ||
+        !type_id.has_value() || !data_offset.has_value() ||
+        !byte_length.has_value() || !element_count.has_value() ||
+        !stride.has_value() || !alignment.has_value() ||
+        !reserved.has_value()) {
+        return Result<RegionFields>::failure(simple_error(
+            FDB_PAYLOAD_E_OUT_OF_BOUNDS, path,
+            "Portable payload region descriptor is outside the image",
+            "region_descriptor_out_of_bounds"));
+    }
+    return Result<RegionFields>::success(RegionFields{
+        kind.value(), flags.value(), owner.value(), type_id.value(),
+        data_offset.value(), byte_length.value(), element_count.value(),
+        stride.value(), alignment.value(), reserved.value()});
+}
+
 struct ValidationSlot final {
     const spec::TypeNode* type;
     std::uint64_t offset;
     std::uint64_t structural_depth;
     bool present;
-    JsonPointer path;
+    JsonPointerBuilder::Mark path_mark;
 };
+
+struct ListContinuation final {
+    const spec::TypeNode* item_type;
+    ListRegionState* state;
+    std::uint64_t first_index;
+    std::uint64_t item_count;
+    std::uint64_t next_index;
+    std::uint64_t structural_depth;
+    JsonPointerBuilder::Mark path_mark;
+};
+
+struct ComponentContinuation final {
+    const layout::ComponentLayout* component;
+    const spec::Component* source_component;
+    std::uint64_t offset;
+    std::uint64_t structural_depth;
+    std::size_t next_field;
+    JsonPointerBuilder::Mark path_mark;
+};
+
+using ValidationFrame =
+    std::variant<ValidationSlot, ListContinuation, ComponentContinuation>;
 
 Result<void> validate_fixed_slot(
     const RuntimeSchema& runtime, const std::uint8_t* bytes,
     std::uint64_t byte_count, const spec::TypeNode& root_type,
     std::uint64_t root_offset, bool root_present, WorkCounter& work,
     std::uint64_t max_nesting_depth, const std::vector<PoolMetadata>& pools,
-    PoolCursors& pool_cursors, std::vector<VariableSlotMetadata>& variables,
-    bool validate_text_eager, const JsonPointer& root_path) {
-    std::vector<ValidationSlot> pending;
+    PoolCursors& pool_cursors, ListPartitions& list_partitions,
+    std::vector<VariableSlotMetadata>& variables, bool validate_text_eager,
+    const JsonPointer& root_path) {
+    std::vector<ValidationFrame> pending;
+    JsonPointerBuilder path;
+    path.assign(root_path);
     const std::uint64_t root_depth =
-        root_present && root_type.kind == TypeKind::component ? UINT64_C(1)
-                                                              : UINT64_C(0);
+        root_present && container_kind(root_type.kind) ? UINT64_C(1)
+                                                      : UINT64_C(0);
     pending.push_back(ValidationSlot{&root_type, root_offset, root_depth,
-                                     root_present, root_path});
-    bool first = true;
+                                     root_present, path.mark()});
     while (!pending.empty()) {
-        ValidationSlot slot = std::move(pending.back());
+        ComponentContinuation* const component_continuation =
+            std::get_if<ComponentContinuation>(&pending.back());
+        if (component_continuation != nullptr) {
+            path.rewind(component_continuation->path_mark);
+            if (component_continuation->next_field ==
+                component_continuation->component->fields.size()) {
+                pending.pop_back();
+                continue;
+            }
+            const std::size_t index =
+                component_continuation->next_field++;
+            const layout::ComponentFieldLayout& field =
+                component_continuation->component->fields[index];
+            const spec::Field& source_field =
+                component_continuation->source_component->fields[index];
+            const std::uint64_t component_offset =
+                component_continuation->offset;
+            const std::uint64_t structural_depth =
+                component_continuation->structural_depth;
+            path.append(source_field.id);
+            const JsonPointer field_path = path.snapshot();
+            auto field_work = work.charge(UINT64_C(1), field_path);
+            if (!field_work.has_value()) {
+                return field_work;
+            }
+            bool present = true;
+            if (field.validity_bit != UINT32_MAX) {
+                auto validity_offset = layout::checked_add_u64(
+                    component_offset,
+                    field.validity_bit / UINT32_C(8), field_path);
+                if (!validity_offset.has_value()) {
+                    return Result<void>::failure(
+                        std::move(validity_offset).error());
+                }
+                const std::uint8_t validity =
+                    bytes[static_cast<std::ptrdiff_t>(
+                        validity_offset.value())];
+                present = ((validity >>
+                            (field.validity_bit % UINT32_C(8))) &
+                           UINT8_C(1)) != UINT8_C(0);
+            }
+            auto child_offset = layout::checked_add_u64(
+                component_offset, field.offset, field_path);
+            if (!child_offset.has_value()) {
+                return Result<void>::failure(
+                    std::move(child_offset).error());
+            }
+            std::uint64_t child_depth = structural_depth;
+            if (present && container_kind(source_field.type.kind)) {
+                auto incremented = layout::checked_add_u64(
+                    child_depth, UINT64_C(1), field_path);
+                if (!incremented.has_value()) {
+                    return Result<void>::failure(
+                        std::move(incremented).error());
+                }
+                child_depth = incremented.value();
+            }
+            pending.push_back(ValidationSlot{
+                &source_field.type, child_offset.value(), child_depth,
+                present, path.mark()});
+            continue;
+        }
+        ListContinuation* const continuation =
+            std::get_if<ListContinuation>(&pending.back());
+        if (continuation != nullptr) {
+            path.rewind(continuation->path_mark);
+            if (continuation->next_index == continuation->item_count) {
+                pending.pop_back();
+                continue;
+            }
+            const std::uint64_t local_index = continuation->next_index++;
+            ListRegionState* const state = continuation->state;
+            const spec::TypeNode* const item_type =
+                continuation->item_type;
+            const std::uint64_t first_index = continuation->first_index;
+            const std::uint64_t structural_depth =
+                continuation->structural_depth;
+            path.append(local_index);
+            const JsonPointer item_path = path.snapshot();
+            auto item_work = work.charge(UINT64_C(1), item_path);
+            if (!item_work.has_value()) {
+                return item_work;
+            }
+            auto aggregate_index = layout::checked_add_u64(
+                first_index, local_index, item_path);
+            if (!aggregate_index.has_value()) {
+                return Result<void>::failure(
+                    std::move(aggregate_index).error());
+            }
+            auto relative = layout::checked_multiply_u64(
+                aggregate_index.value(), state->items.stride, item_path);
+            if (!relative.has_value()) {
+                return Result<void>::failure(std::move(relative).error());
+            }
+            auto absolute = layout::checked_add_u64(
+                state->items.data_offset, relative.value(), item_path);
+            if (!absolute.has_value()) {
+                return Result<void>::failure(std::move(absolute).error());
+            }
+            bool present = true;
+            if (state->validity_region_index != UINT32_MAX) {
+                auto validity_byte = layout::checked_add_u64(
+                    state->validity.data_offset,
+                    aggregate_index.value() / UINT64_C(8), item_path);
+                if (!validity_byte.has_value()) {
+                    return Result<void>::failure(
+                        std::move(validity_byte).error());
+                }
+                present =
+                    ((bytes[static_cast<std::ptrdiff_t>(
+                          validity_byte.value())] >>
+                      (aggregate_index.value() % UINT64_C(8))) &
+                     UINT8_C(1)) != UINT8_C(0);
+            }
+            std::uint64_t child_depth = structural_depth;
+            if (present && container_kind(item_type->kind)) {
+                auto incremented = layout::checked_add_u64(
+                    child_depth, UINT64_C(1), item_path);
+                if (!incremented.has_value()) {
+                    return Result<void>::failure(
+                        std::move(incremented).error());
+                }
+                child_depth = incremented.value();
+            }
+            pending.push_back(ValidationSlot{
+                item_type, absolute.value(), child_depth, present,
+                path.mark()});
+            continue;
+        }
+        ValidationSlot slot =
+            std::move(std::get<ValidationSlot>(pending.back()));
         pending.pop_back();
-        if (slot.present && slot.type->kind == TypeKind::component &&
+        path.rewind(slot.path_mark);
+        const JsonPointer slot_path = path.snapshot();
+        if (slot.present && container_kind(slot.type->kind) &&
             slot.structural_depth > max_nesting_depth) {
             return Result<void>::failure(resource_error(
-                slot.path, "nesting_depth", slot.structural_depth,
+                slot_path, "nesting_depth", slot.structural_depth,
                 max_nesting_depth));
         }
         const std::uint32_t type_id = runtime.runtime_id(*slot.type);
         const layout::RuntimeType* runtime_type = runtime.find_type(type_id);
         if (type_id == UINT32_MAX || runtime_type == nullptr) {
             return Result<void>::failure(simple_error(
-                FDB_PAYLOAD_E_INTERNAL, slot.path,
+                FDB_PAYLOAD_E_INTERNAL, slot_path,
                 "Portable payload slot type metadata is missing",
                 "slot_runtime_type_missing"));
         }
-        if (!first) {
-            auto charged = work.charge(UINT64_C(1), slot.path);
-            if (!charged.has_value()) {
-                return charged;
-            }
-        }
-        first = false;
         auto slot_end = layout::checked_range_end(
-            slot.offset, runtime_type->slot.stride, byte_count, slot.path);
+            slot.offset, runtime_type->slot.stride, byte_count, slot_path);
         if (!slot_end.has_value()) {
             return Result<void>::failure(std::move(slot_end).error());
         }
         if (!slot.present) {
             auto zero = require_zero(
                 bytes, byte_count, slot.offset, slot_end.value(), work,
-                slot.path, "nonzero_null_storage",
+                slot_path, "nonzero_null_storage",
                 slot.type->kind == TypeKind::component);
             if (!zero.has_value()) {
                 return zero;
@@ -369,17 +604,17 @@ Result<void> validate_fixed_slot(
         }
         if (variable_kind(slot.type->kind)) {
             auto relative_offset =
-                read_u64(bytes, byte_count, slot.offset, slot.path);
+                read_u64(bytes, byte_count, slot.offset, slot_path);
             auto length_offset =
-                layout::checked_add_u64(slot.offset, UINT64_C(8), slot.path);
+                layout::checked_add_u64(slot.offset, UINT64_C(8), slot_path);
             if (!length_offset.has_value()) {
                 return Result<void>::failure(std::move(length_offset).error());
             }
             auto byte_length =
-                read_u64(bytes, byte_count, length_offset.value(), slot.path);
+                read_u64(bytes, byte_count, length_offset.value(), slot_path);
             if (!relative_offset.has_value() || !byte_length.has_value()) {
                 return Result<void>::failure(simple_error(
-                    FDB_PAYLOAD_E_OUT_OF_BOUNDS, slot.path,
+                    FDB_PAYLOAD_E_OUT_OF_BOUNDS, slot_path,
                     "Portable payload variable descriptor is outside the image",
                     "variable_descriptor_out_of_bounds"));
             }
@@ -387,32 +622,32 @@ Result<void> validate_fixed_slot(
                 ((relative_offset.value() | byte_length.value()) &
                  UINT64_C(1)) != UINT64_C(0)) {
                 return Result<void>::failure(simple_error(
-                    FDB_PAYLOAD_E_MISALIGNED, slot.path,
+                    FDB_PAYLOAD_E_MISALIGNED, slot_path,
                     "Portable payload UTF-16LE descriptor is misaligned",
                     "utf16_descriptor_misaligned"));
             }
             const PoolMetadata* const pool = find_pool(pools, slot.type->kind);
             if (pool == nullptr) {
                 return Result<void>::failure(simple_error(
-                    FDB_PAYLOAD_E_INTERNAL, slot.path,
+                    FDB_PAYLOAD_E_INTERNAL, slot_path,
                     "Portable payload variable pool metadata is missing",
                     "variable_pool_missing"));
             }
             std::uint64_t& cursor = pool_cursors.for_kind(slot.type->kind);
             auto advanced = layout::checked_partition_advance(
                 cursor, relative_offset.value(), byte_length.value(),
-                pool->byte_length, slot.path);
+                pool->byte_length, slot_path);
             if (!advanced.has_value()) {
                 return Result<void>::failure(std::move(advanced).error());
             }
             cursor = advanced.value();
             auto absolute = layout::checked_add_u64(
-                pool->data_offset, relative_offset.value(), slot.path);
+                pool->data_offset, relative_offset.value(), slot_path);
             if (!absolute.has_value()) {
                 return Result<void>::failure(std::move(absolute).error());
             }
             auto bounded = layout::checked_range_end(
-                absolute.value(), byte_length.value(), byte_count, slot.path);
+                absolute.value(), byte_length.value(), byte_count, slot_path);
             if (!bounded.has_value()) {
                 return Result<void>::failure(std::move(bounded).error());
             }
@@ -424,7 +659,7 @@ Result<void> validate_fixed_slot(
                     slot.type->kind == TypeKind::str
                         ? byte_length.value()
                         : byte_length.value() / UINT64_C(2);
-                auto content_work = work.charge(units, slot.path);
+                auto content_work = work.charge(units, slot_path);
                 if (!content_work.has_value()) {
                     return content_work;
                 }
@@ -437,38 +672,96 @@ Result<void> validate_fixed_slot(
                                           absolute.value()),
                                   static_cast<std::size_t>(
                                       byte_length.value())},
-                              slot.path)
+                              slot_path)
                         : layout::validate_utf16le(
                               bytes +
                                   static_cast<std::ptrdiff_t>(absolute.value()),
-                              byte_length.value(), slot.path);
+                              byte_length.value(), slot_path);
                 if (!valid.has_value()) {
                     return valid;
                 }
             }
             continue;
         }
+        if (slot.type->kind == TypeKind::list) {
+            auto first_index =
+                read_u64(bytes, byte_count, slot.offset, slot_path);
+            auto count_offset = layout::checked_add_u64(
+                slot.offset, UINT64_C(8), slot_path);
+            if (!count_offset.has_value()) {
+                return Result<void>::failure(
+                    std::move(count_offset).error());
+            }
+            auto item_count = read_u64(bytes, byte_count,
+                                       count_offset.value(), slot_path);
+            if (!first_index.has_value() || !item_count.has_value()) {
+                return Result<void>::failure(simple_error(
+                    FDB_PAYLOAD_E_OUT_OF_BOUNDS, slot_path,
+                    "Portable payload list descriptor is outside the image",
+                    "list_descriptor_out_of_bounds"));
+            }
+            ListRegionState* const state =
+                list_partitions.find(type_id);
+            if (state == nullptr || slot.type->items == nullptr ||
+                state->item_runtime_type_id !=
+                    runtime.runtime_id(*slot.type->items)) {
+                return Result<void>::failure(simple_error(
+                    FDB_PAYLOAD_E_INTERNAL, slot_path,
+                    "Portable payload list region metadata is missing",
+                    "list_region_metadata_missing"));
+            }
+            auto first_byte = layout::checked_multiply_u64(
+                first_index.value(), state->items.stride, slot_path);
+            if (!first_byte.has_value()) {
+                return Result<void>::failure(std::move(first_byte).error());
+            }
+            auto item_bytes = layout::checked_multiply_u64(
+                item_count.value(), state->items.stride, slot_path);
+            if (!item_bytes.has_value()) {
+                return Result<void>::failure(std::move(item_bytes).error());
+            }
+            auto bounded = layout::checked_range_end(
+                first_byte.value(), item_bytes.value(),
+                state->items.byte_length, slot_path);
+            if (!bounded.has_value()) {
+                return Result<void>::failure(std::move(bounded).error());
+            }
+            auto advanced = layout::checked_partition_advance(
+                state->cursor, first_index.value(), item_count.value(),
+                state->items.element_count, slot_path);
+            if (!advanced.has_value()) {
+                return Result<void>::failure(std::move(advanced).error());
+            }
+            state->cursor = advanced.value();
+            if (item_count.value() != UINT64_C(0)) {
+                pending.push_back(ListContinuation{
+                    slot.type->items.get(), state, first_index.value(),
+                    item_count.value(), UINT64_C(0), slot.structural_depth,
+                    slot.path_mark});
+            }
+            continue;
+        }
         if (slot.type->kind != TypeKind::component) {
             auto observed = observe_scalar(bytes, byte_count, *slot.type,
-                                           slot.offset, true, slot.path);
+                                           slot.offset, true, slot_path);
             if (!observed.has_value()) {
                 return Result<void>::failure(std::move(observed).error());
             }
             if (slot.type->kind == TypeKind::boolean &&
                 observed.value().bits > UINT64_C(1)) {
                 return Result<void>::failure(
-                    invalid_value(slot.path, "invalid_boolean_byte"));
+                    invalid_value(slot_path, "invalid_boolean_byte"));
             }
             if (slot.type->kind == TypeKind::f32 &&
                 noncanonical_f32_nan(
                     static_cast<std::uint32_t>(observed.value().bits))) {
                 return Result<void>::failure(
-                    noncanonical(slot.path, "noncanonical_f32_nan"));
+                    noncanonical(slot_path, "noncanonical_f32_nan"));
             }
             if (slot.type->kind == TypeKind::f64 &&
                 noncanonical_f64_nan(observed.value().bits)) {
                 return Result<void>::failure(
-                    noncanonical(slot.path, "noncanonical_f64_nan"));
+                    noncanonical(slot_path, "noncanonical_f64_nan"));
             }
             continue;
         }
@@ -477,16 +770,16 @@ Result<void> validate_fixed_slot(
             slot.type->resolved_component_index);
         if (component == nullptr) {
             return Result<void>::failure(simple_error(
-                FDB_PAYLOAD_E_INTERNAL, slot.path,
+                FDB_PAYLOAD_E_INTERNAL, slot_path,
                 "Portable payload component metadata is missing",
                 "component_layout_missing"));
         }
         auto validity_end = layout::checked_add_u64(
-            slot.offset, component->validity_bytes, slot.path);
+            slot.offset, component->validity_bytes, slot_path);
         if (!validity_end.has_value()) {
             return Result<void>::failure(std::move(validity_end).error());
         }
-        auto charged = work.charge(component->validity_bytes, slot.path);
+        auto charged = work.charge(component->validity_bytes, slot_path);
         if (!charged.has_value()) {
             return charged;
         }
@@ -500,7 +793,7 @@ Result<void> validate_fixed_slot(
             nullable_count % UINT32_C(8) != UINT32_C(0)) {
             auto tail_offset = layout::checked_add_u64(
                 slot.offset, component->validity_bytes - UINT32_C(1),
-                slot.path);
+                slot_path);
             if (!tail_offset.has_value()) {
                 return Result<void>::failure(
                     std::move(tail_offset).error());
@@ -513,32 +806,32 @@ Result<void> validate_fixed_slot(
                 UINT8_C(0xff) << used);
             if ((tail & mask) != UINT8_C(0)) {
                 return Result<void>::failure(noncanonical(
-                    slot.path, "nonzero_component_validity_tail"));
+                    slot_path, "nonzero_component_validity_tail"));
             }
         }
 
         std::uint64_t cursor = validity_end.value();
         for (const layout::ComponentFieldLayout& field : component->fields) {
             auto field_offset = layout::checked_add_u64(
-                slot.offset, field.offset, slot.path);
+                slot.offset, field.offset, slot_path);
             if (!field_offset.has_value()) {
                 return Result<void>::failure(std::move(field_offset).error());
             }
             auto padding = require_zero(
                 bytes, byte_count, cursor, field_offset.value(), work,
-                slot.path, "nonzero_component_padding");
+                slot_path, "nonzero_component_padding");
             if (!padding.has_value()) {
                 return padding;
             }
             auto field_end = layout::checked_add_u64(
-                field_offset.value(), field.slot_stride, slot.path);
+                field_offset.value(), field.slot_stride, slot_path);
             if (!field_end.has_value()) {
                 return Result<void>::failure(std::move(field_end).error());
             }
             cursor = field_end.value();
         }
         auto tail_padding = require_zero(
-            bytes, byte_count, cursor, slot_end.value(), work, slot.path,
+            bytes, byte_count, cursor, slot_end.value(), work, slot_path,
             "nonzero_component_padding");
         if (!tail_padding.has_value()) {
             return tail_padding;
@@ -547,49 +840,10 @@ Result<void> validate_fixed_slot(
         const auto& source_component =
             runtime.spec().resolved().components()[
                 slot.type->resolved_component_index];
-        for (std::size_t reverse = component->fields.size(); reverse > 0U;
-             --reverse) {
-            const std::size_t index = reverse - 1U;
-            const layout::ComponentFieldLayout& field =
-                component->fields[index];
-            bool present = true;
-            if (field.validity_bit != UINT32_MAX) {
-                auto validity_offset = layout::checked_add_u64(
-                    slot.offset, field.validity_bit / UINT32_C(8),
-                    slot.path);
-                if (!validity_offset.has_value()) {
-                    return Result<void>::failure(
-                        std::move(validity_offset).error());
-                }
-                const std::uint8_t validity =
-                    bytes[static_cast<std::ptrdiff_t>(
-                        validity_offset.value())];
-                present = ((validity >>
-                            (field.validity_bit % UINT32_C(8))) &
-                           UINT8_C(1)) != UINT8_C(0);
-            }
-            auto child_offset = layout::checked_add_u64(
-                slot.offset, field.offset, slot.path);
-            if (!child_offset.has_value()) {
-                return Result<void>::failure(
-                    std::move(child_offset).error());
-            }
-            const spec::TypeNode& child_type =
-                source_component.fields[index].type;
-            std::uint64_t child_depth = slot.structural_depth;
-            if (present && child_type.kind == TypeKind::component) {
-                auto incremented = layout::checked_add_u64(
-                    child_depth, UINT64_C(1),
-                    slot.path.append(source_component.fields[index].id));
-                if (!incremented.has_value()) {
-                    return Result<void>::failure(
-                        std::move(incremented).error());
-                }
-                child_depth = incremented.value();
-            }
-            pending.push_back(ValidationSlot{
-                &child_type, child_offset.value(), child_depth, present,
-                slot.path.append(source_component.fields[index].id)});
+        if (!component->fields.empty()) {
+            pending.push_back(ComponentContinuation{
+                component, &source_component, slot.offset,
+                slot.structural_depth, 0U, slot.path_mark});
         }
     }
     return Result<void>::success();
@@ -1060,18 +1314,38 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 "runtime_entry_inventory_mismatch"));
         }
         for (const spec::Entry& entry : compiled.resolved().entries()) {
-            if (!task4_record_kind(entry.type.kind)) {
+            if (!record_kind(entry.type.kind)) {
                 return Result<PayloadIndex>::failure(simple_error(
-                    FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE,
+                    FDB_PAYLOAD_E_INTERNAL,
                     JsonPointer{}.append("entries").append(entry.id),
-                    "Portable record open does not implement this runtime type yet",
-                    "initial_record_open_type_unavailable"));
+                    "Portable record open reached a forbidden reference type",
+                    "record_ref_invariant"));
+            }
+        }
+        std::uint64_t list_region_count = UINT64_C(0);
+        for (const layout::ListNodeLayout& list :
+             runtime.value().list_nodes()) {
+            const std::uint64_t count =
+                list.item_nullable ? UINT64_C(2) : UINT64_C(1);
+            counted_work = layout::checked_accumulate_u64(
+                list_region_count, count,
+                JsonPointer{}.append("runtime").append("lists"));
+            if (!counted_work.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(counted_work).error());
             }
         }
         const std::uint64_t pool_count =
             (runtime.value().has_utf8_pool() ? UINT64_C(1) : UINT64_C(0)) +
             (runtime.value().has_utf16_pool() ? UINT64_C(1) : UINT64_C(0)) +
             (runtime.value().has_bytes_pool() ? UINT64_C(1) : UINT64_C(0));
+        counted_work = layout::checked_accumulate_u64(
+            expected_regions, list_region_count,
+            JsonPointer{}.append("regions"));
+        if (!counted_work.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(counted_work).error());
+        }
         counted_work = layout::checked_accumulate_u64(
             expected_regions, pool_count, JsonPointer{}.append("regions"));
         if (!counted_work.has_value()) {
@@ -1436,6 +1710,195 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
         }
 
+        ListPartitions list_partitions;
+        list_partitions.indexes.assign(runtime.value().type_count(),
+                                       UINT32_MAX);
+        list_partitions.states.reserve(
+            runtime.value().list_nodes().size());
+        std::uint64_t total_list_elements = UINT64_C(0);
+        for (const layout::ListNodeLayout& list :
+             runtime.value().list_nodes()) {
+            RegionDescriptor validity_descriptor{
+                RegionKind::list_validity, UINT32_C(0),
+                list.owner_runtime_type_id, list.item_runtime_type_id,
+                UINT64_C(0), UINT64_C(0), UINT64_C(0), UINT32_C(0),
+                UINT32_C(1)};
+            std::uint32_t validity_region_index = UINT32_MAX;
+            if (list.item_nullable) {
+                const JsonPointer path =
+                    JsonPointer{}.append("regions").append(region_index);
+                charged = work.charge(UINT64_C(1), path);
+                if (!charged.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(charged).error());
+                }
+                auto fields = read_region_fields(
+                    bytes, byte_count, region_index, path);
+                if (!fields.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(fields).error());
+                }
+                auto rounded = layout::checked_add_u64(
+                    fields.value().element_count, UINT64_C(7), path);
+                if (!rounded.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(rounded).error());
+                }
+                auto aligned = layout::checked_align_up_u64(
+                    cursor, UINT32_C(1), path);
+                if (!aligned.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(aligned).error());
+                }
+                if (fields.value().kind !=
+                        static_cast<std::uint32_t>(
+                            RegionKind::list_validity) ||
+                    fields.value().flags != UINT32_C(0) ||
+                    fields.value().owner != list.owner_runtime_type_id ||
+                    fields.value().runtime_type_id !=
+                        list.item_runtime_type_id ||
+                    fields.value().data_offset != aligned.value() ||
+                    fields.value().byte_length !=
+                        rounded.value() / UINT64_C(8) ||
+                    fields.value().stride != UINT32_C(0) ||
+                    fields.value().alignment != UINT32_C(1) ||
+                    fields.value().reserved != UINT64_C(0)) {
+                    return Result<PayloadIndex>::failure(noncanonical(
+                        path, "region_descriptor_contract"));
+                }
+                auto padding = require_zero(
+                    bytes, byte_count, cursor, aligned.value(), work,
+                    JsonPointer{}.append("padding"),
+                    "nonzero_inter_region_padding");
+                if (!padding.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(padding).error());
+                }
+                auto end = layout::checked_range_end(
+                    fields.value().data_offset,
+                    fields.value().byte_length, byte_count, path);
+                if (!end.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(end).error());
+                }
+                validity_region_index = region_index;
+                validity_descriptor = RegionDescriptor{
+                    RegionKind::list_validity, UINT32_C(0),
+                    list.owner_runtime_type_id, list.item_runtime_type_id,
+                    fields.value().data_offset,
+                    fields.value().byte_length,
+                    fields.value().element_count, UINT32_C(0), UINT32_C(1)};
+                regions.push_back(validity_descriptor);
+                cursor = end.value();
+                ++region_index;
+            }
+
+            const JsonPointer path =
+                JsonPointer{}.append("regions").append(region_index);
+            charged = work.charge(UINT64_C(1), path);
+            if (!charged.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(charged).error());
+            }
+            auto fields = read_region_fields(
+                bytes, byte_count, region_index, path);
+            if (!fields.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(fields).error());
+            }
+            auto expected_length = layout::checked_multiply_u64(
+                fields.value().element_count, list.item_stride, path);
+            if (!expected_length.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(expected_length).error());
+            }
+            auto aligned = layout::checked_align_up_u64(
+                cursor, list.item_alignment, path);
+            if (!aligned.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(aligned).error());
+            }
+            if (fields.value().data_offset % list.item_alignment !=
+                UINT64_C(0)) {
+                return Result<PayloadIndex>::failure(simple_error(
+                    FDB_PAYLOAD_E_MISALIGNED, path,
+                    "Portable payload list item region offset is misaligned",
+                    "region_offset_misaligned"));
+            }
+            if (fields.value().kind !=
+                    static_cast<std::uint32_t>(RegionKind::list_items) ||
+                fields.value().flags != UINT32_C(0) ||
+                fields.value().owner != list.owner_runtime_type_id ||
+                fields.value().runtime_type_id !=
+                    list.item_runtime_type_id ||
+                fields.value().data_offset != aligned.value() ||
+                fields.value().byte_length != expected_length.value() ||
+                fields.value().stride != list.item_stride ||
+                fields.value().alignment != list.item_alignment ||
+                fields.value().reserved != UINT64_C(0) ||
+                (list.item_nullable &&
+                 validity_descriptor.element_count !=
+                     fields.value().element_count)) {
+                return Result<PayloadIndex>::failure(
+                    noncanonical(path, "region_descriptor_contract"));
+            }
+            auto padding = require_zero(
+                bytes, byte_count, cursor, aligned.value(), work,
+                JsonPointer{}.append("padding"),
+                "nonzero_inter_region_padding");
+            if (!padding.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(padding).error());
+            }
+            auto end = layout::checked_range_end(
+                fields.value().data_offset, fields.value().byte_length,
+                byte_count, path);
+            if (!end.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(end).error());
+            }
+            auto accumulated = layout::checked_accumulate_u64(
+                total_list_elements, fields.value().element_count,
+                JsonPointer{}.append("lists").append(
+                    list.owner_runtime_type_id));
+            if (!accumulated.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(accumulated).error());
+            }
+            if (total_list_elements > limits.max_list_elements) {
+                return Result<PayloadIndex>::failure(resource_error(
+                    JsonPointer{}.append("lists").append(
+                        list.owner_runtime_type_id),
+                    "list_elements", total_list_elements,
+                    limits.max_list_elements));
+            }
+            const RegionDescriptor items_descriptor{
+                RegionKind::list_items, UINT32_C(0),
+                list.owner_runtime_type_id, list.item_runtime_type_id,
+                fields.value().data_offset, fields.value().byte_length,
+                fields.value().element_count, list.item_stride,
+                list.item_alignment};
+            if (list.owner_runtime_type_id >=
+                    list_partitions.indexes.size() ||
+                list_partitions.indexes[list.owner_runtime_type_id] !=
+                    UINT32_MAX) {
+                return Result<PayloadIndex>::failure(simple_error(
+                    FDB_PAYLOAD_E_INTERNAL,
+                    JsonPointer{}.append("runtime").append("lists"),
+                    "Portable payload list runtime inventory is invalid",
+                    "list_runtime_inventory_mismatch"));
+            }
+            list_partitions.indexes[list.owner_runtime_type_id] =
+                static_cast<std::uint32_t>(list_partitions.states.size());
+            list_partitions.states.push_back(ListRegionState{
+                list.owner_runtime_type_id, list.item_runtime_type_id,
+                validity_region_index, region_index, validity_descriptor,
+                items_descriptor, UINT64_C(0)});
+            regions.push_back(items_descriptor);
+            cursor = end.value();
+            ++region_index;
+        }
+
         const std::array<RegionKind, 3> pool_order{{RegionKind::utf8_pool,
                                                     RegionKind::utf16_pool,
                                                     RegionKind::bytes_pool}};
@@ -1596,6 +2059,40 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 std::move(final_padding).error());
         }
 
+        for (const ListRegionState& list : list_partitions.states) {
+            if (list.validity_region_index == UINT32_MAX) {
+                continue;
+            }
+            const JsonPointer path = JsonPointer{}
+                                         .append("regions")
+                                         .append(list.validity_region_index);
+            charged = work.charge(list.validity.byte_length, path);
+            if (!charged.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(charged).error());
+            }
+            if (list.validity.element_count % UINT64_C(8) != UINT64_C(0) &&
+                list.validity.element_count != UINT64_C(0)) {
+                auto tail_offset = layout::checked_add_u64(
+                    list.validity.data_offset,
+                    list.validity.byte_length - UINT64_C(1), path);
+                if (!tail_offset.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(tail_offset).error());
+                }
+                const std::uint8_t tail = bytes[static_cast<std::ptrdiff_t>(
+                    tail_offset.value())];
+                const std::uint8_t used = static_cast<std::uint8_t>(
+                    list.validity.element_count % UINT64_C(8));
+                const std::uint8_t mask = static_cast<std::uint8_t>(
+                    UINT8_C(0xff) << used);
+                if ((tail & mask) != UINT8_C(0)) {
+                    return Result<PayloadIndex>::failure(noncanonical(
+                        path, "nonzero_validity_tail"));
+                }
+            }
+        }
+
         for (const EntryDescriptor& entry : entries) {
             const RegionDescriptor& values_region =
                 regions[entry.values_region_index];
@@ -1705,12 +2202,23 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 auto valid = validate_fixed_slot(
                     runtime.value(), bytes, byte_count, source.type, offset,
                     present, work, limits.max_nesting_depth, output.pools_,
-                    pool_cursors, output.variable_slots_,
+                    pool_cursors, list_partitions, output.variable_slots_,
                     limits.validate_text_eager, path);
                 if (!valid.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(valid).error());
                 }
+            }
+        }
+
+        for (const ListRegionState& list : list_partitions.states) {
+            auto consumed = layout::require_partition_consumed(
+                list.cursor, list.items.element_count,
+                JsonPointer{}.append("lists").append(
+                    list.owner_runtime_type_id));
+            if (!consumed.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(consumed).error());
             }
         }
 

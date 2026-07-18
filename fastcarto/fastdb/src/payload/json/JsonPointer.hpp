@@ -29,6 +29,7 @@ public:
 
     Mark mark() const noexcept;
     void rewind(Mark mark) noexcept;
+    void assign(const JsonPointer& path);
     void append(std::string_view token);
     void append(std::uint64_t index);
     JsonPointer snapshot() const;

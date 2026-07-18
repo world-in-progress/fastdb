@@ -60,6 +60,10 @@ void JsonPointerBuilder::rewind(Mark path_mark) noexcept {
     }
 }
 
+void JsonPointerBuilder::assign(const JsonPointer& path) {
+    value_ = path.value_;
+}
+
 void JsonPointerBuilder::append(std::string_view token) {
     append_token(value_, token);
 }

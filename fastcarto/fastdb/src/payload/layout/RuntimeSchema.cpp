@@ -458,4 +458,108 @@ Result<void> RuntimeSchema::finalize_reachable_inventory() {
     return Result<void>::success();
 }
 
+Result<void> RuntimeSchema::validate_list_metadata() const {
+    const JsonPointer path = JsonPointer{}.append("runtime").append("lists");
+    std::vector<std::uint32_t> metadata_indexes(types_.size(), UINT32_MAX);
+    std::size_t reachable_list_count = 0U;
+    for (const RuntimeType& type : types_) {
+        if (type.reachable && type.source != nullptr &&
+            type.source->kind == TypeKind::list) {
+            ++reachable_list_count;
+        }
+    }
+    if (list_nodes_.size() != reachable_list_count) {
+        return Result<void>::failure(runtime_error(
+            path, FDB_PAYLOAD_E_INTERNAL,
+            "Reachable list runtime metadata is incomplete",
+            "missing_list_runtime_metadata"));
+    }
+    std::uint32_t previous_owner = UINT32_C(0);
+    bool have_previous = false;
+    for (std::uint32_t index = UINT32_C(0); index < list_nodes_.size();
+         ++index) {
+        const ListNodeLayout& node = list_nodes_[index];
+        if (node.owner_runtime_type_id >= types_.size() ||
+            node.item_runtime_type_id >= types_.size()) {
+            return Result<void>::failure(runtime_error(
+                path, FDB_PAYLOAD_E_INTERNAL,
+                "List runtime metadata references a missing type",
+                "missing_list_runtime_metadata"));
+        }
+        const RuntimeType& owner = types_[node.owner_runtime_type_id];
+        if (!owner.reachable || owner.source == nullptr ||
+            owner.source->kind != TypeKind::list) {
+            return Result<void>::failure(runtime_error(
+                path, FDB_PAYLOAD_E_INTERNAL,
+                "List runtime metadata owner is not a reachable list",
+                "list_runtime_metadata_mismatch"));
+        }
+        if ((have_previous &&
+             node.owner_runtime_type_id <= previous_owner) ||
+            metadata_indexes[node.owner_runtime_type_id] != UINT32_MAX) {
+            return Result<void>::failure(runtime_error(
+                path, FDB_PAYLOAD_E_INTERNAL,
+                "List runtime metadata is not uniquely sorted",
+                "list_runtime_metadata_order"));
+        }
+        metadata_indexes[node.owner_runtime_type_id] = index;
+        previous_owner = node.owner_runtime_type_id;
+        have_previous = true;
+    }
+    for (const RuntimeType& type : types_) {
+        if (type.reachable && type.source != nullptr &&
+            type.source->kind == TypeKind::list &&
+            metadata_indexes[type.runtime_type_id] == UINT32_MAX) {
+            return Result<void>::failure(runtime_error(
+                path, FDB_PAYLOAD_E_INTERNAL,
+                "Reachable list runtime metadata is missing",
+                "missing_list_runtime_metadata"));
+        }
+    }
+
+    std::vector<std::uint8_t> state(types_.size(), UINT8_C(0));
+    std::vector<std::uint32_t> chain;
+    for (const ListNodeLayout& root : list_nodes_) {
+        std::uint32_t current = root.owner_runtime_type_id;
+        chain.clear();
+        while (current < metadata_indexes.size() &&
+               metadata_indexes[current] != UINT32_MAX) {
+            if (state[current] == UINT8_C(1)) {
+                return Result<void>::failure(runtime_error(
+                    path, FDB_PAYLOAD_E_INTERNAL,
+                    "List runtime metadata contains a cycle",
+                    "cyclic_list_runtime_metadata"));
+            }
+            if (state[current] == UINT8_C(2)) {
+                break;
+            }
+            state[current] = UINT8_C(1);
+            chain.push_back(current);
+            const ListNodeLayout& node =
+                list_nodes_[metadata_indexes[current]];
+            current = node.item_runtime_type_id;
+        }
+        for (const std::uint32_t runtime_type_id : chain) {
+            state[runtime_type_id] = UINT8_C(2);
+        }
+    }
+
+    for (const ListNodeLayout& node : list_nodes_) {
+        const RuntimeType& owner = types_[node.owner_runtime_type_id];
+        const std::uint32_t expected_item = runtime_id(*owner.source->items);
+        const RuntimeType& item = types_[node.item_runtime_type_id];
+        if (expected_item == UINT32_MAX ||
+            node.item_runtime_type_id != expected_item || !item.reachable ||
+            node.item_stride != item.slot.stride ||
+            node.item_alignment != item.slot.alignment ||
+            node.item_nullable != item.source->nullable) {
+            return Result<void>::failure(runtime_error(
+                path, FDB_PAYLOAD_E_INTERNAL,
+                "List runtime metadata does not match its source type",
+                "list_runtime_metadata_mismatch"));
+        }
+    }
+    return Result<void>::success();
+}
+
 }  // namespace fastdb::payload::layout

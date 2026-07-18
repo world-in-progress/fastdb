@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <new>
 #include <string>
@@ -29,8 +31,26 @@
 namespace allocation_failure {
 
 std::atomic<std::int64_t> fail_after{INT64_C(-1)};
+std::atomic<std::size_t> largest_allocation{0U};
+std::atomic<std::size_t> current_live_bytes{0U};
+std::atomic<std::size_t> peak_live_bytes{0U};
 
-void* allocate(std::size_t size) {
+struct AllocationHeader final {
+    void* raw;
+    std::size_t requested;
+};
+
+void update_peak(std::atomic<std::size_t>& peak, std::size_t candidate) {
+    std::size_t observed = peak.load(std::memory_order_relaxed);
+    while (observed < candidate &&
+           !peak.compare_exchange_weak(
+               observed, candidate, std::memory_order_relaxed)) {
+    }
+}
+
+void* allocate(std::size_t size,
+               std::size_t alignment = alignof(std::max_align_t)) {
+    update_peak(largest_allocation, size);
     const std::int64_t remaining =
         fail_after.load(std::memory_order_relaxed);
     if (remaining >= INT64_C(0)) {
@@ -39,11 +59,41 @@ void* allocate(std::size_t size) {
             throw std::bad_alloc();
         }
     }
-    void* const result = std::malloc(size == 0U ? 1U : size);
-    if (result == nullptr) {
+    alignment = std::max(alignment, alignof(AllocationHeader));
+    const std::size_t payload_size = size == 0U ? 1U : size;
+    if (payload_size >
+        std::numeric_limits<std::size_t>::max() - sizeof(AllocationHeader) -
+            (alignment - 1U)) {
         throw std::bad_alloc();
     }
-    return result;
+    void* const raw = std::malloc(payload_size + sizeof(AllocationHeader) +
+                                  alignment - 1U);
+    if (raw == nullptr) {
+        throw std::bad_alloc();
+    }
+    const std::uintptr_t begin =
+        reinterpret_cast<std::uintptr_t>(raw) + sizeof(AllocationHeader);
+    const std::uintptr_t aligned =
+        (begin + alignment - 1U) & ~(alignment - 1U);
+    auto* const header =
+        reinterpret_cast<AllocationHeader*>(aligned) - 1;
+    header->raw = raw;
+    header->requested = size;
+    const std::size_t live =
+        current_live_bytes.fetch_add(size, std::memory_order_relaxed) + size;
+    update_peak(peak_live_bytes, live);
+    return reinterpret_cast<void*>(aligned);
+}
+
+void deallocate(void* value) noexcept {
+    if (value == nullptr) {
+        return;
+    }
+    auto* const header =
+        reinterpret_cast<AllocationHeader*>(value) - 1;
+    current_live_bytes.fetch_sub(header->requested,
+                                 std::memory_order_relaxed);
+    std::free(header->raw);
 }
 
 }  // namespace allocation_failure
@@ -54,10 +104,59 @@ void* operator new(std::size_t size) {
 void* operator new[](std::size_t size) {
     return allocation_failure::allocate(size);
 }
-void operator delete(void* value) noexcept { std::free(value); }
-void operator delete[](void* value) noexcept { std::free(value); }
-void operator delete(void* value, std::size_t) noexcept { std::free(value); }
-void operator delete[](void* value, std::size_t) noexcept { std::free(value); }
+void* operator new(std::size_t size, std::align_val_t alignment) {
+    return allocation_failure::allocate(
+        size, static_cast<std::size_t>(alignment));
+}
+void* operator new[](std::size_t size, std::align_val_t alignment) {
+    return allocation_failure::allocate(
+        size, static_cast<std::size_t>(alignment));
+}
+void operator delete(void* value) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete[](void* value) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete(void* value, std::size_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete[](void* value, std::size_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete(void* value, std::align_val_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete[](void* value, std::align_val_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete(void* value, std::size_t,
+                     std::align_val_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete[](void* value, std::size_t,
+                       std::align_val_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+
+namespace fastdb::payload::layout {
+
+struct RuntimeSchemaTestAccess final {
+    static void remove_last_list(RuntimeSchema& schema) {
+        if (!schema.list_nodes_.empty()) {
+            schema.list_nodes_.pop_back();
+        }
+    }
+
+    static void make_first_list_cyclic(RuntimeSchema& schema) {
+        if (!schema.list_nodes_.empty()) {
+            schema.list_nodes_.front().item_runtime_type_id =
+                schema.list_nodes_.front().owner_runtime_type_id;
+        }
+    }
+};
+
+}  // namespace fastdb::payload::layout
 
 namespace {
 
@@ -86,6 +185,15 @@ std::vector<std::uint8_t> decode_hex(std::string_view hexadecimal) {
             hex_nibble(hexadecimal[index * 2U + 1U]));
     }
     return bytes;
+}
+
+std::string read_binary_fixture(std::string_view relative) {
+    const std::string path =
+        std::string(FASTDB_PAYLOAD_BINARY_FIXTURE_DIR) + "/" +
+        std::string(relative);
+    std::ifstream input(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(input),
+                       std::istreambuf_iterator<char>());
 }
 
 std::string component_id(std::uint32_t index) {
@@ -126,6 +234,18 @@ std::string doubling_component_spec(bool reachable) {
         source += "]}";
     }
     source += "]}";
+    return source;
+}
+
+std::string deep_list_spec(std::uint32_t depth) {
+    std::string source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"deep","cardinality":"one","type":)";
+    for (std::uint32_t index = UINT32_C(0); index < depth; ++index) {
+        source += R"({"kind":"list","items":)";
+    }
+    source += R"({"kind":"u8"})";
+    source.append(static_cast<std::size_t>(depth), '}');
+    source += R"(}],"components":[]})";
     return source;
 }
 
@@ -406,6 +526,261 @@ Result<LogicalPayload> build_scenario(CompiledSpec spec,
         return builder.freeze();
     }
 
+    if (scenario == "nested_lists") {
+        const std::array<std::uint16_t, 3> wide{{UINT16_C(0x0041),
+                                                 UINT16_C(0xd83d),
+                                                 UINT16_C(0xde03)}};
+        const std::array<std::uint8_t, 3> opaque{{UINT8_C(0x00),
+                                                  UINT8_C(0xff),
+                                                  UINT8_C(0x41)}};
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str(""));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("alpha"));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_wstr(nullptr, UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_wstr(wide.data(), wide.size()));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_bytes(opaque.data(), opaque.size()));
+
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(1), UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16(UINT16_C(7)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16(UINT16_C(9)));
+
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(2), UINT64_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str(""));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("tail"));
+        return builder.freeze();
+    }
+
+    if (scenario == "component_list_composition") {
+        const std::array<std::uint16_t, 1> wide{{UINT16_C(0x4e2d)}};
+        const std::array<std::uint8_t, 3> opaque{{UINT8_C(0x00),
+                                                  UINT8_C(0xff),
+                                                  UINT8_C(0x80)}};
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bool(UINT8_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(8)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16(UINT16_C(16)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u32(UINT32_C(32)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_i32(INT32_C(-32)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_u8n_bits(UINT64_C(0x3fe0000000000000)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16n_bits(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_f32_bits(UINT32_C(0x3f800000)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_f64_bits(UINT64_C(0x4000000000000000)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("component"));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_wstr(wide.data(), wide.size()));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_bytes(opaque.data(), opaque.size()));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bool(UINT8_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bool(UINT8_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_MAX));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16(UINT16_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16(UINT16_MAX));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u32(UINT32_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u32(UINT32_MAX));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_i32(INT32_MIN));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_i32(INT32_MAX));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8n_bits(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_u8n_bits(UINT64_C(0x3ff0000000000000)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_u16n_bits(UINT64_C(0xbff0000000000000)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_u16n_bits(UINT64_C(0x3ff0000000000000)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_f32_bits(UINT32_C(0x80000000)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_f32_bits(UINT32_C(0x7fa12345)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_f64_bits(UINT64_C(0x7ff0000000000000)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_f64_bits(UINT64_C(0xfff8000000001234)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str(""));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("list"));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_wstr(wide.data(), wide.size()));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_bytes(opaque.data(), opaque.size()));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u32(UINT32_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u32(UINT32_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("two"));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u32(UINT32_C(9)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("root"));
+
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bool(UINT8_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16(UINT16_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u32(UINT32_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_i32(INT32_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8n_bits(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16n_bits(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_f32_bits(UINT32_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_f64_bits(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str(""));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_wstr(nullptr, UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bytes(nullptr, UINT64_C(0)));
+        for (std::uint32_t field = UINT32_C(0); field < UINT32_C(12);
+             ++field) {
+            FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        }
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(1), UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u32(UINT32_C(7)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("entry"));
+        return builder.freeze();
+    }
+
+    if (scenario == "simple_lists") {
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(4)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(3)));
+        return builder.freeze();
+    }
+
+    if (scenario == "zero_count_list_aggregate") {
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        return builder.freeze();
+    }
+
+    if (scenario == "wide_lists") {
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u16(UINT16_C(7)));
+        return builder.freeze();
+    }
+
+    if (scenario == "wide_budget_list") {
+        constexpr std::uint64_t width = UINT64_C(4096);
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(width));
+        for (std::uint64_t index = UINT64_C(0); index < width; ++index) {
+            FASTDB_BINARY_SCENARIO_STEP(
+                builder.push_u8(static_cast<std::uint8_t>(index)));
+        }
+        return builder.freeze();
+    }
+
+    if (scenario == "wide_budget_many") {
+        constexpr std::uint64_t width = UINT64_C(4096);
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), width));
+        for (std::uint64_t index = UINT64_C(0); index < width; ++index) {
+            FASTDB_BINARY_SCENARIO_STEP(
+                builder.push_u8(static_cast<std::uint8_t>(index)));
+        }
+        return builder.freeze();
+    }
+
+    if (scenario == "wide_budget_component") {
+        constexpr std::uint64_t width = UINT64_C(4096);
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        for (std::uint64_t index = UINT64_C(0); index < width; ++index) {
+            FASTDB_BINARY_SCENARIO_STEP(
+                builder.push_u8(static_cast<std::uint8_t>(index)));
+        }
+        return builder.freeze();
+    }
+
+    if (scenario == "nested_simple") {
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(3)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_list(UINT64_C(1)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_u8(UINT8_C(7)));
+        return builder.freeze();
+    }
+
     if (scenario != "fixed_scalars") {
         return Result<LogicalPayload>::failure(
             fastdb::payload::error::Error::from_details(
@@ -494,6 +869,36 @@ Result<Encoded> encode_case(const BinaryGoldenCase& item) {
                 sink.write_count()});
 }
 
+Result<Encoded> encode_source_scenario(std::string_view source,
+                                       std::string_view scenario) {
+    auto compiled = CompiledSpec::compile(source);
+    if (!compiled.has_value()) {
+        return Result<Encoded>::failure(std::move(compiled).error());
+    }
+    CompiledSpec spec = compiled.value();
+    auto values = build_scenario(compiled.value(), scenario);
+    if (!values.has_value()) {
+        return Result<Encoded>::failure(std::move(values).error());
+    }
+    auto runtime = RuntimeSchema::compile(spec);
+    if (!runtime.has_value()) {
+        return Result<Encoded>::failure(std::move(runtime).error());
+    }
+    auto planned = RecordLayout::plan(runtime.value(), values.value());
+    if (!planned.has_value()) {
+        return Result<Encoded>::failure(std::move(planned).error());
+    }
+    VectorSink sink(planned.value().total_length());
+    auto encoded = fastdb::payload::build::encode_record(
+        planned.value(), values.value(), sink);
+    if (!encoded.has_value()) {
+        return Result<Encoded>::failure(std::move(encoded).error());
+    }
+    return Result<Encoded>::success(
+        Encoded{std::move(spec), std::move(planned).value(), sink.bytes(),
+                sink.write_count()});
+}
+
 const BinaryGoldenCase* find_case(const std::vector<BinaryGoldenCase>& cases,
                                   std::string_view name) {
     const auto found = std::find_if(
@@ -506,7 +911,7 @@ const BinaryGoldenCase* find_case(const std::vector<BinaryGoldenCase>& cases,
 int test_binary_goldens_determinism_hash_and_headers() {
     const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
         FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
-    require(corpus.size() == 5U);
+    require(corpus.size() == 7U);
     for (const BinaryGoldenCase& item : corpus) {
         auto first = encode_case(item);
         auto second = encode_case(item);
@@ -559,7 +964,9 @@ int test_binary_goldens_determinism_hash_and_headers() {
             : item.name == "fixed-scalars"     ? "/regions/2"
             : item.name == "numeric-edges"     ? "/padding"
             : item.name == "nested-components" ? "/entries/c_empty_many/1"
-                                               : "/entries/nested/1/suffix";
+            : item.name == "text-bytes" ? "/entries/nested/1/suffix"
+            : item.name == "nested-lists" ? "/entries/matrices/2/2"
+                                           : "/entries/leaf_lists/2/1/label";
         require(limited.error().path() == expected_short_path,
                 item.name + ":" + std::string(limited.error().path()));
         require(limited.error().details_json() ==
@@ -707,6 +1114,24 @@ int test_open_preflights_static_spec_limits_and_known_work() {
                 compiled.value(), bad_magic.data(), bad_magic.size(), limits)
                 .error()
                 .code() == FDB_PAYLOAD_E_INVALID_MAGIC);
+    return EXIT_SUCCESS;
+}
+
+int require_partition_error(
+    const Result<fastdb::payload::view::PayloadIndex>& result,
+    std::string_view path,
+    std::uint64_t expected,
+    std::uint64_t actual,
+    std::string_view reason) {
+    require(!result.has_value());
+    require(result.error().code() == FDB_PAYLOAD_E_NON_CANONICAL_BINARY);
+    require(result.error().path() == path,
+            std::string(result.error().path()) + ":" +
+                std::string(result.error().details_json()));
+    require(result.error().details_json() ==
+            "{\"actual\":\"" + std::to_string(actual) +
+                "\",\"expected\":\"" + std::to_string(expected) +
+                "\",\"reason\":\"" + std::string(reason) + "\"}");
     return EXIT_SUCCESS;
 }
 
@@ -1764,9 +2189,1111 @@ int test_open_observation_and_malformed_canonical_values() {
     return EXIT_SUCCESS;
 }
 
+struct AlgebraCoverageRow final {
+    std::string_view kind;
+    std::string_view root_case;
+    std::string_view component_case;
+    std::string_view list_case;
+};
+
+constexpr std::array<AlgebraCoverageRow, 14> task5_algebra_coverage{{
+    {"bool", "fixed-scalars", "component-list-composition", "component-list-composition"},
+    {"u8", "fixed-scalars", "component-list-composition", "component-list-composition"},
+    {"u16", "fixed-scalars", "component-list-composition", "component-list-composition"},
+    {"u32", "fixed-scalars", "component-list-composition", "component-list-composition"},
+    {"i32", "fixed-scalars", "component-list-composition", "component-list-composition"},
+    {"u8n", "numeric-edges", "component-list-composition", "component-list-composition"},
+    {"u16n", "numeric-edges", "component-list-composition", "component-list-composition"},
+    {"f32", "fixed-scalars", "component-list-composition", "component-list-composition"},
+    {"f64", "fixed-scalars", "component-list-composition", "component-list-composition"},
+    {"str", "text-bytes", "component-list-composition", "component-list-composition"},
+    {"wstr", "text-bytes", "component-list-composition", "component-list-composition"},
+    {"bytes", "text-bytes", "component-list-composition", "component-list-composition"},
+    {"component", "nested-components", "component-list-composition", "component-list-composition"},
+    {"list", "nested-lists", "component-list-composition", "nested-lists"},
+}};
+
+int test_task5_recursive_lists_and_named_algebra_matrix() {
+    for (const AlgebraCoverageRow& row : task5_algebra_coverage) {
+        require(!row.kind.empty());
+        require(!row.root_case.empty());
+        require(!row.component_case.empty());
+        require(!row.list_case.empty());
+    }
+
+    const std::string nested_source =
+        read_binary_fixture("spec/nested-lists.source.json");
+    const std::string composition_source =
+        read_binary_fixture("spec/component-list-composition.source.json");
+    require(!nested_source.empty());
+    require(!composition_source.empty());
+    auto nested_spec = CompiledSpec::compile(nested_source);
+    auto composition_spec = CompiledSpec::compile(composition_source);
+    require(nested_spec.has_value());
+    require(composition_spec.has_value());
+    auto nested_values =
+        build_scenario(nested_spec.value(), "nested_lists");
+    auto composition_values = build_scenario(
+        composition_spec.value(), "component_list_composition");
+    require(nested_values.has_value(),
+            nested_values.has_value()
+                ? std::string_view{}
+                : nested_values.error().details_json());
+    require(composition_values.has_value(),
+            composition_values.has_value()
+                ? std::string_view{}
+                : composition_values.error().details_json());
+    auto nested_runtime = RuntimeSchema::compile(nested_spec.value());
+    auto composition_runtime = RuntimeSchema::compile(composition_spec.value());
+    require(nested_runtime.has_value());
+    require(composition_runtime.has_value());
+    require(nested_runtime.value().list_nodes().size() == 7U);
+    require(composition_runtime.value().list_nodes().size() == 16U);
+    for (std::size_t index = 1U;
+         index < nested_runtime.value().list_nodes().size(); ++index) {
+        require(nested_runtime.value().list_nodes()[index - 1U]
+                    .owner_runtime_type_id <
+                nested_runtime.value().list_nodes()[index]
+                    .owner_runtime_type_id);
+    }
+
+    auto nested_layout =
+        RecordLayout::plan(nested_runtime.value(), nested_values.value());
+    const std::string nested_layout_error =
+        nested_layout.has_value()
+            ? std::string{}
+            : std::to_string(nested_layout.error().code()) + ":" +
+                  std::string(nested_layout.error().path()) + ":" +
+                  std::string(nested_layout.error().details_json());
+    require(nested_layout.has_value(),
+            nested_layout_error);
+    auto composition_layout = RecordLayout::plan(
+        composition_runtime.value(), composition_values.value());
+    require(composition_layout.has_value(),
+            composition_layout.has_value()
+                ? std::string_view{}
+                : composition_layout.error().details_json());
+
+    constexpr std::array<std::uint64_t, 7> expected_nested_counts{{
+        UINT64_C(3), UINT64_C(3), UINT64_C(3), UINT64_C(3),
+        UINT64_C(3), UINT64_C(3), UINT64_C(2)}};
+    std::array<std::uint64_t, 7> actual_nested_counts{};
+    std::size_t list_index = 0U;
+    for (const auto& region : nested_layout.value().regions()) {
+        if (region.kind !=
+            fastdb::payload::layout::RegionKind::list_items) {
+            continue;
+        }
+        require(list_index < actual_nested_counts.size());
+        actual_nested_counts[list_index++] = region.element_count;
+    }
+    require(list_index == actual_nested_counts.size());
+    require(actual_nested_counts == expected_nested_counts);
+    require(nested_layout.value().region_count() == UINT32_C(21));
+    require(nested_layout.value().descriptor_facts().size() == 27U);
+    require(nested_layout.value().list_aggregates().size() == 7U);
+    require(nested_layout.value().list_aggregates().front()
+                .owner_runtime_type_id == UINT32_C(1));
+    require(nested_layout.value().descriptor_facts().front()
+                .runtime_type_id == UINT32_C(6));
+    require(nested_layout.value().descriptor_facts().front()
+                .runtime_type_id !=
+            nested_layout.value().list_aggregates().front()
+                .owner_runtime_type_id);
+    for (const auto& fact : nested_layout.value().descriptor_facts()) {
+        require(nested_layout.value().descriptor_fact(fact.node_index) ==
+                &fact);
+    }
+    const auto& scalar_nodes = nested_layout.value().entry_values()[1];
+    require(scalar_nodes.size() == 3U);
+    const auto* null_scalar_list =
+        nested_layout.value().descriptor_fact(scalar_nodes[0]);
+    const auto* empty_scalar_list =
+        nested_layout.value().descriptor_fact(scalar_nodes[1]);
+    const auto* present_scalar_list =
+        nested_layout.value().descriptor_fact(scalar_nodes[2]);
+    require(null_scalar_list != nullptr && empty_scalar_list != nullptr &&
+            present_scalar_list != nullptr);
+    require(null_scalar_list->first == UINT64_C(0) &&
+            null_scalar_list->count == UINT64_C(0));
+    require(empty_scalar_list->first == UINT64_C(0) &&
+            empty_scalar_list->count == UINT64_C(0));
+    require(present_scalar_list->first == UINT64_C(0) &&
+            present_scalar_list->count == UINT64_C(3));
+    for (const auto& list : nested_runtime.value().list_nodes()) {
+        const auto* aggregate = nested_layout.value().list_aggregate(
+            list.owner_runtime_type_id);
+        require(aggregate != nullptr);
+        require(aggregate->item_runtime_type_id ==
+                list.item_runtime_type_id);
+        require(aggregate->items_region_index != UINT32_MAX);
+        require((aggregate->validity_region_index != UINT32_MAX) ==
+                list.item_nullable);
+    }
+
+    VectorSink nested_sink(nested_layout.value().total_length());
+    require(fastdb::payload::build::encode_record(
+                nested_layout.value(), nested_values.value(), nested_sink)
+                .has_value());
+    require(nested_sink.next_offset() ==
+            nested_layout.value().total_length());
+    VectorSink composition_sink(composition_layout.value().total_length());
+    require(fastdb::payload::build::encode_record(
+                composition_layout.value(), composition_values.value(),
+                composition_sink)
+                .has_value());
+    require(composition_sink.next_offset() ==
+            composition_layout.value().total_length());
+
+    auto missing_runtime = RuntimeSchema::compile(nested_spec.value());
+    require(missing_runtime.has_value());
+    fastdb::payload::layout::RuntimeSchemaTestAccess::remove_last_list(
+        missing_runtime.value());
+    const auto missing_layout =
+        RecordLayout::plan(missing_runtime.value(), nested_values.value());
+    require(!missing_layout.has_value());
+    require(missing_layout.error().code() == FDB_PAYLOAD_E_INTERNAL);
+    require(missing_layout.error().path() == "/runtime/lists");
+    require(missing_layout.error().details_json() ==
+            R"({"reason":"missing_list_runtime_metadata"})");
+
+    auto cyclic_runtime = RuntimeSchema::compile(nested_spec.value());
+    require(cyclic_runtime.has_value());
+    fastdb::payload::layout::RuntimeSchemaTestAccess::make_first_list_cyclic(
+        cyclic_runtime.value());
+    const auto cyclic_layout =
+        RecordLayout::plan(cyclic_runtime.value(), nested_values.value());
+    require(!cyclic_layout.has_value());
+    require(cyclic_layout.error().code() == FDB_PAYLOAD_E_INTERNAL);
+    require(cyclic_layout.error().path() == "/runtime/lists");
+    require(cyclic_layout.error().details_json() ==
+            R"({"reason":"cyclic_list_runtime_metadata"})");
+    return EXIT_SUCCESS;
+}
+
+std::string simple_list_source() {
+    return R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"lists","cardinality":"many","type":{"kind":"list","nullable":true,"items":{"kind":"u8","nullable":true}}}],"components":[]})";
+}
+
+std::string zero_count_list_aggregate_source() {
+    return simple_list_source();
+}
+
+std::string wide_list_source() {
+    return R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"wide","cardinality":"one","type":{"kind":"list","items":{"kind":"u16"}}}],"components":[]})";
+}
+
+std::string wide_budget_list_source() {
+    return R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"wide","cardinality":"one","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})";
+}
+
+std::string wide_budget_many_source() {
+    return R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"wide","cardinality":"many","type":{"kind":"u8"}}],"components":[]})";
+}
+
+std::string wide_budget_component_source() {
+    constexpr std::uint32_t width = UINT32_C(4096);
+    std::string source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"wide","cardinality":"one","type":{"kind":"component","id":"Wide"}}],"components":[{"id":"Wide","kind":"record","fields":[)";
+    for (std::uint32_t index = UINT32_C(0); index < width; ++index) {
+        if (index != UINT32_C(0)) {
+            source += ',';
+        }
+        source += "{\"id\":\"f" + std::to_string(index) +
+                  "\",\"type\":{\"kind\":\"u8\"}}";
+    }
+    source += "]}]}";
+    return source;
+}
+
+std::string nested_simple_source() {
+    return R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"nested","cardinality":"one","type":{"kind":"list","items":{"kind":"list","nullable":true,"items":{"kind":"u8"}}}}],"components":[]})";
+}
+
+int test_task5_zero_count_list_aggregate_regions() {
+    auto encoded = encode_source_scenario(
+        zero_count_list_aggregate_source(), "zero_count_list_aggregate");
+    require(encoded.has_value(),
+            encoded.has_value() ? std::string_view{}
+                                : encoded.error().details_json());
+
+    auto runtime = RuntimeSchema::compile(encoded.value().spec);
+    require(runtime.has_value());
+    require(runtime.value().list_nodes().size() == 1U);
+    const auto& list_node = runtime.value().list_nodes().front();
+    require(list_node.owner_runtime_type_id == UINT32_C(0));
+    require(list_node.item_runtime_type_id == UINT32_C(1));
+    require(list_node.item_nullable);
+
+    const auto& layout = encoded.value().layout;
+    const auto& regions = layout.regions();
+    require(regions.size() == 4U);
+    require(regions[0].kind ==
+            fastdb::payload::layout::RegionKind::entry_validity);
+    require(regions[0].owner_index == UINT32_C(0));
+    require(regions[0].runtime_type_id == UINT32_C(0));
+    require(regions[0].data_offset == UINT64_C(392));
+    require(regions[0].byte_length == UINT64_C(1));
+    require(regions[0].element_count == UINT64_C(2));
+    require(regions[0].stride == UINT32_C(0));
+    require(regions[0].alignment == UINT32_C(1));
+    require(regions[1].kind ==
+            fastdb::payload::layout::RegionKind::entry_values);
+    require(regions[1].owner_index == UINT32_C(0));
+    require(regions[1].runtime_type_id == UINT32_C(0));
+    require(regions[1].data_offset == UINT64_C(400));
+    require(regions[1].byte_length == UINT64_C(32));
+    require(regions[1].element_count == UINT64_C(2));
+    require(regions[1].stride == UINT32_C(16));
+    require(regions[1].alignment == UINT32_C(8));
+
+    const auto& list_validity = regions[2];
+    const auto& list_items = regions[3];
+    require(list_validity.kind ==
+            fastdb::payload::layout::RegionKind::list_validity);
+    require(list_validity.owner_index == UINT32_C(0));
+    require(list_validity.runtime_type_id == UINT32_C(1));
+    require(list_validity.data_offset == UINT64_C(432));
+    require(list_validity.byte_length == UINT64_C(0));
+    require(list_validity.element_count == UINT64_C(0));
+    require(list_validity.stride == UINT32_C(0));
+    require(list_validity.alignment == UINT32_C(1));
+    require(list_items.kind ==
+            fastdb::payload::layout::RegionKind::list_items);
+    require(list_items.owner_index == UINT32_C(0));
+    require(list_items.runtime_type_id == UINT32_C(1));
+    require(list_items.data_offset == UINT64_C(432));
+    require(list_items.byte_length == UINT64_C(0));
+    require(list_items.element_count == UINT64_C(0));
+    require(list_items.stride == UINT32_C(1));
+    require(list_items.alignment == UINT32_C(1));
+    require(list_validity.data_offset == list_items.data_offset);
+    require(list_items.data_offset == layout.total_length());
+
+    require(encoded.value().bytes[static_cast<std::size_t>(
+                regions[0].data_offset)] == UINT8_C(0x02));
+    const auto descriptor_word = [&](std::uint64_t instance,
+                                     std::uint64_t word) {
+        return fastdb::payload::layout::load_u64_le(
+            encoded.value().bytes.data(), encoded.value().bytes.size(),
+            regions[1].data_offset + instance * UINT64_C(16) +
+                word * UINT64_C(8),
+            JsonPointer{});
+    };
+    for (std::uint64_t instance = UINT64_C(0); instance < UINT64_C(2);
+         ++instance) {
+        require(descriptor_word(instance, UINT64_C(0)).value() ==
+                UINT64_C(0));
+        require(descriptor_word(instance, UINT64_C(1)).value() ==
+                UINT64_C(0));
+    }
+
+    const auto opened = fastdb::payload::view::open_record(
+        encoded.value().spec, encoded.value().bytes.data(),
+        encoded.value().bytes.size());
+    require(opened.has_value());
+    require(opened.value().validation_work() == layout.validation_work());
+    return EXIT_SUCCESS;
+}
+
+int test_task5_list_region_descriptor_and_partition_failures() {
+    auto encoded = encode_source_scenario(simple_list_source(), "simple_lists");
+    require(encoded.has_value(),
+            encoded.has_value() ? std::string_view{}
+                                : encoded.error().details_json());
+    const auto& regions = encoded.value().layout.regions();
+    require(regions.size() == 4U);
+    require(regions[0].kind ==
+            fastdb::payload::layout::RegionKind::entry_validity);
+    require(regions[1].kind ==
+            fastdb::payload::layout::RegionKind::entry_values);
+    require(regions[2].kind ==
+            fastdb::payload::layout::RegionKind::list_validity);
+    require(regions[3].kind ==
+            fastdb::payload::layout::RegionKind::list_items);
+    require(regions[3].element_count == UINT64_C(4));
+    require(encoded.value().bytes[static_cast<std::size_t>(
+                regions[0].data_offset)] == UINT8_C(0x0e));
+    const auto descriptor_word = [&](std::uint64_t instance,
+                                     std::uint64_t word) {
+        return fastdb::payload::layout::load_u64_le(
+            encoded.value().bytes.data(), encoded.value().bytes.size(),
+            regions[1].data_offset + instance * UINT64_C(16) +
+                word * UINT64_C(8),
+            JsonPointer{});
+    };
+    require(descriptor_word(UINT64_C(0), UINT64_C(0)).value() ==
+            UINT64_C(0));
+    require(descriptor_word(UINT64_C(0), UINT64_C(1)).value() ==
+            UINT64_C(0));
+    require(descriptor_word(UINT64_C(1), UINT64_C(0)).value() ==
+            UINT64_C(0));
+    require(descriptor_word(UINT64_C(1), UINT64_C(1)).value() ==
+            UINT64_C(0));
+    require(descriptor_word(UINT64_C(2), UINT64_C(0)).value() ==
+            UINT64_C(0));
+    require(descriptor_word(UINT64_C(2), UINT64_C(1)).value() ==
+            UINT64_C(3));
+    require(descriptor_word(UINT64_C(3), UINT64_C(0)).value() ==
+            UINT64_C(3));
+    require(descriptor_word(UINT64_C(3), UINT64_C(1)).value() ==
+            UINT64_C(1));
+    require(encoded.value().bytes[static_cast<std::size_t>(
+                regions[2].data_offset)] == UINT8_C(0x0d));
+    require(encoded.value().bytes[static_cast<std::size_t>(
+                regions[3].data_offset)] == UINT8_C(1));
+    require(encoded.value().bytes[static_cast<std::size_t>(
+                regions[3].data_offset + UINT64_C(1))] == UINT8_C(0));
+    require(encoded.value().bytes[static_cast<std::size_t>(
+                regions[3].data_offset + UINT64_C(2))] == UINT8_C(2));
+    require(encoded.value().bytes[static_cast<std::size_t>(
+                regions[3].data_offset + UINT64_C(3))] == UINT8_C(3));
+    const auto open = [&](const std::vector<std::uint8_t>& bytes) {
+        return fastdb::payload::view::open_record(
+            encoded.value().spec, bytes.data(), bytes.size());
+    };
+    const auto opened = open(encoded.value().bytes);
+    const std::string open_error =
+        opened.has_value()
+            ? std::string{}
+            : std::to_string(opened.error().code()) + ":" +
+                  std::string(opened.error().path()) + ":" +
+                  std::string(opened.error().details_json());
+    require(opened.has_value(), open_error);
+
+    for (const std::uint32_t declared_regions :
+         std::array<std::uint32_t, 2>{UINT32_C(3), UINT32_C(5)}) {
+        auto wrong_inventory = encoded.value().bytes;
+        require(fastdb::payload::layout::store_u32_le(
+                    wrong_inventory.data(), wrong_inventory.size(),
+                    fastdb::payload::layout::header_region_count_offset,
+                    declared_regions, JsonPointer{})
+                    .has_value());
+        require(require_reason_error(
+                    open(wrong_inventory),
+                    FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/header",
+                    "directory_header_contract") == EXIT_SUCCESS);
+    }
+
+    const auto mutate_u32 = [&](std::uint32_t region,
+                                std::uint64_t field,
+                                std::uint32_t value) {
+        auto bytes = encoded.value().bytes;
+        if (!fastdb::payload::layout::store_u32_le(
+                 bytes.data(), bytes.size(), region_field(region, field),
+                 value, JsonPointer{})
+                 .has_value()) {
+            std::abort();
+        }
+        return bytes;
+    };
+    const auto mutate_u64 = [&](std::uint32_t region,
+                                std::uint64_t field,
+                                std::uint64_t value) {
+        auto bytes = encoded.value().bytes;
+        if (!fastdb::payload::layout::store_u64_le(
+                 bytes.data(), bytes.size(), region_field(region, field),
+                 value, JsonPointer{})
+                 .has_value()) {
+            std::abort();
+        }
+        return bytes;
+    };
+    require(require_reason_error(
+                open(mutate_u64(
+                    UINT32_C(3),
+                    fastdb::payload::layout::region_element_count_offset,
+                    UINT64_C(5))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(3),
+                    fastdb::payload::layout::region_kind_offset,
+                    static_cast<std::uint32_t>(
+                        fastdb::payload::layout::RegionKind::list_validity))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(UINT32_C(3),
+                                fastdb::payload::layout::region_stride_offset,
+                                UINT32_C(2))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(2),
+                    fastdb::payload::layout::region_kind_offset,
+                    static_cast<std::uint32_t>(
+                        fastdb::payload::layout::RegionKind::list_items))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u64(
+                    UINT32_C(2),
+                    fastdb::payload::layout::region_byte_length_offset,
+                    UINT64_C(2))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(2),
+                    fastdb::payload::layout::region_stride_offset,
+                    UINT32_C(1))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(2),
+                    fastdb::payload::layout::region_owner_index_offset,
+                    UINT32_C(7))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(2),
+                    fastdb::payload::layout::region_runtime_type_id_offset,
+                    UINT32_MAX)),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(2),
+                    fastdb::payload::layout::region_alignment_offset,
+                    UINT32_C(2))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u64(
+                    UINT32_C(2),
+                    fastdb::payload::layout::region_element_count_offset,
+                    UINT64_C(5))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(3),
+                    fastdb::payload::layout::region_owner_index_offset,
+                    UINT32_C(7))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(3),
+                    fastdb::payload::layout::region_runtime_type_id_offset,
+                    UINT32_MAX)),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u32(
+                    UINT32_C(3),
+                    fastdb::payload::layout::region_alignment_offset,
+                    UINT32_C(2))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+
+    auto bad_tail = encoded.value().bytes;
+    bad_tail[static_cast<std::size_t>(regions[2].data_offset)] |= UINT8_C(0x80);
+    require(require_reason_error(open(bad_tail),
+                                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                                "/regions/2", "nonzero_validity_tail") ==
+            EXIT_SUCCESS);
+
+    const std::uint64_t descriptor_base = regions[1].data_offset;
+    const auto mutate_descriptor = [&](std::uint64_t instance,
+                                       std::uint64_t first,
+                                       std::uint64_t count) {
+        auto bytes = encoded.value().bytes;
+        const std::uint64_t offset =
+            descriptor_base + instance * UINT64_C(16);
+        if (!fastdb::payload::layout::store_u64_le(
+                 bytes.data(), bytes.size(), offset, first, JsonPointer{})
+                 .has_value() ||
+            !fastdb::payload::layout::store_u64_le(
+                 bytes.data(), bytes.size(), offset + UINT64_C(8), count,
+                 JsonPointer{})
+                 .has_value()) {
+            std::abort();
+        }
+        return bytes;
+    };
+    require(require_reason_error(open(mutate_descriptor(UINT64_C(0),
+                                                        UINT64_C(1),
+                                                        UINT64_C(0))),
+                                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                                "/entries/lists/0",
+                                "nonzero_null_storage") == EXIT_SUCCESS);
+    require(require_partition_error(
+                open(mutate_descriptor(UINT64_C(2), UINT64_C(1),
+                                       UINT64_C(3))),
+                "/entries/lists/2", UINT64_C(0), UINT64_C(1),
+                "partition_cursor_mismatch") == EXIT_SUCCESS);
+    require(require_partition_error(
+                open(mutate_descriptor(UINT64_C(3), UINT64_C(2),
+                                       UINT64_C(1))),
+                "/entries/lists/3", UINT64_C(3), UINT64_C(2),
+                "partition_cursor_mismatch") == EXIT_SUCCESS);
+    require(require_partition_error(
+                open(mutate_descriptor(UINT64_C(3), UINT64_C(0),
+                                       UINT64_C(1))),
+                "/entries/lists/3", UINT64_C(3), UINT64_C(0),
+                "partition_cursor_mismatch") == EXIT_SUCCESS);
+    require(require_partition_error(
+                open(mutate_descriptor(UINT64_C(2), UINT64_C(3),
+                                       UINT64_C(1))),
+                "/entries/lists/2", UINT64_C(0), UINT64_C(3),
+                "partition_cursor_mismatch") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_descriptor(UINT64_C(2), UINT64_MAX,
+                                       UINT64_C(2))),
+                FDB_PAYLOAD_E_LENGTH_OVERFLOW, "/entries/lists/2",
+                "wire_add_overflow") == EXIT_SUCCESS);
+
+    auto nonzero_null_item = encoded.value().bytes;
+    nonzero_null_item[static_cast<std::size_t>(
+        regions[3].data_offset + UINT64_C(1))] = UINT8_C(9);
+    require(require_reason_error(open(nonzero_null_item),
+                                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                                "/entries/lists/2/1",
+                                "nonzero_null_storage") == EXIT_SUCCESS);
+
+    auto unconsumed = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u64_le(
+                unconsumed.data(), unconsumed.size(),
+                region_field(
+                    UINT32_C(2),
+                    fastdb::payload::layout::region_element_count_offset),
+                UINT64_C(5), JsonPointer{})
+                .has_value());
+    require(fastdb::payload::layout::store_u64_le(
+                unconsumed.data(), unconsumed.size(),
+                region_field(UINT32_C(3),
+                             fastdb::payload::layout::region_byte_length_offset),
+                UINT64_C(5), JsonPointer{})
+                .has_value());
+    require(fastdb::payload::layout::store_u64_le(
+                unconsumed.data(), unconsumed.size(),
+                region_field(
+                    UINT32_C(3),
+                    fastdb::payload::layout::region_element_count_offset),
+                UINT64_C(5), JsonPointer{})
+                .has_value());
+    require(require_partition_error(open(unconsumed), "/lists/0",
+                                    UINT64_C(5), UINT64_C(4),
+                                    "partition_not_consumed") ==
+            EXIT_SUCCESS);
+
+    auto wide = encode_source_scenario(wide_list_source(), "wide_lists");
+    require(wide.has_value());
+    const std::uint64_t wide_descriptor =
+        wide.value().layout.regions()[0].data_offset;
+    const auto mutate_wide_descriptor = [&](std::uint64_t first,
+                                            std::uint64_t count) {
+        auto bytes = wide.value().bytes;
+        if (!fastdb::payload::layout::store_u64_le(
+                 bytes.data(), bytes.size(), wide_descriptor, first,
+                 JsonPointer{})
+                 .has_value() ||
+            !fastdb::payload::layout::store_u64_le(
+                 bytes.data(), bytes.size(),
+                 wide_descriptor + UINT64_C(8), count, JsonPointer{})
+                 .has_value()) {
+            std::abort();
+        }
+        return bytes;
+    };
+    const auto open_wide = [&](const std::vector<std::uint8_t>& bytes) {
+        return fastdb::payload::view::open_record(
+            wide.value().spec, bytes.data(), bytes.size());
+    };
+    require(require_reason_error(
+                open_wide(mutate_wide_descriptor(
+                    UINT64_MAX / UINT64_C(2) + UINT64_C(1), UINT64_C(0))),
+                FDB_PAYLOAD_E_LENGTH_OVERFLOW, "/entries/wide",
+                "wire_multiply_overflow") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open_wide(mutate_wide_descriptor(UINT64_C(0), UINT64_MAX)),
+                FDB_PAYLOAD_E_LENGTH_OVERFLOW, "/entries/wide",
+                "wire_multiply_overflow") == EXIT_SUCCESS);
+
+    auto nested =
+        encode_source_scenario(nested_simple_source(), "nested_simple");
+    require(nested.has_value());
+    require(nested.value().layout.regions().size() == 4U);
+    auto invalid_nested = nested.value().bytes;
+    const std::uint64_t inner_descriptor =
+        nested.value().layout.regions()[2].data_offset + UINT64_C(32);
+    require(fastdb::payload::layout::store_u64_le(
+                invalid_nested.data(), invalid_nested.size(),
+                inner_descriptor, UINT64_C(2), JsonPointer{})
+                .has_value());
+    const auto invalid_nested_result =
+        fastdb::payload::view::open_record(
+            nested.value().spec, invalid_nested.data(),
+            invalid_nested.size());
+    require(!invalid_nested_result.has_value());
+    require(invalid_nested_result.error().code() == FDB_PAYLOAD_E_OUT_OF_BOUNDS);
+    require(invalid_nested_result.error().path() == "/entries/nested/2");
+    require(invalid_nested_result.error().details_json() ==
+            R"({"available":"1","end":"3","reason":"wire_range_out_of_bounds"})");
+    return EXIT_SUCCESS;
+}
+
+int test_task5_list_limits_and_20000_level_iteration() {
+    auto simple = encode_source_scenario(simple_list_source(), "simple_lists");
+    require(simple.has_value());
+    auto limits = fastdb::payload::view::default_open_limits();
+    limits.max_list_elements = UINT64_C(4);
+    require(fastdb::payload::view::open_record(
+                simple.value().spec, simple.value().bytes.data(),
+                simple.value().bytes.size(), limits)
+                .has_value());
+    limits.max_list_elements = UINT64_C(3);
+    const auto limited_first = fastdb::payload::view::open_record(
+        simple.value().spec, simple.value().bytes.data(),
+        simple.value().bytes.size(), limits);
+    const auto limited_second = fastdb::payload::view::open_record(
+        simple.value().spec, simple.value().bytes.data(),
+        simple.value().bytes.size(), limits);
+    require(require_resource_limit(limited_first, "/lists/0", UINT64_C(4),
+                                   UINT64_C(3), "list_elements") ==
+            EXIT_SUCCESS);
+    require(limited_second.error().path() == limited_first.error().path());
+    require(limited_second.error().details_json() ==
+            limited_first.error().details_json());
+
+    const auto simple_unrestricted = fastdb::payload::view::open_record(
+        simple.value().spec, simple.value().bytes.data(),
+        simple.value().bytes.size());
+    require(simple_unrestricted.has_value());
+    auto work_limits = fastdb::payload::view::default_open_limits();
+    work_limits.max_validation_work =
+        simple_unrestricted.value().validation_work();
+    require(fastdb::payload::view::open_record(
+                simple.value().spec, simple.value().bytes.data(),
+                simple.value().bytes.size(), work_limits)
+                .has_value());
+    --work_limits.max_validation_work;
+    const auto work_short_first = fastdb::payload::view::open_record(
+        simple.value().spec, simple.value().bytes.data(),
+        simple.value().bytes.size(), work_limits);
+    const auto work_short_second = fastdb::payload::view::open_record(
+        simple.value().spec, simple.value().bytes.data(),
+        simple.value().bytes.size(), work_limits);
+    require(require_resource_limit(
+                work_short_first, "/entries/lists/3/0",
+                simple_unrestricted.value().validation_work(),
+                simple_unrestricted.value().validation_work() - UINT64_C(1),
+                "validation_work") == EXIT_SUCCESS);
+    require(work_short_second.error().path() ==
+            work_short_first.error().path());
+    require(work_short_second.error().details_json() ==
+            work_short_first.error().details_json());
+
+    const std::string composition_source =
+        read_binary_fixture("spec/component-list-composition.source.json");
+    auto composition = encode_source_scenario(
+        composition_source, "component_list_composition");
+    require(composition.has_value());
+    const std::string nested_order_source =
+        read_binary_fixture("spec/nested-lists.source.json");
+    auto nested_order =
+        encode_source_scenario(nested_order_source, "nested_lists");
+    require(nested_order.has_value());
+    auto logical_order_limits = fastdb::payload::view::default_open_limits();
+    logical_order_limits.max_validation_work = UINT64_C(103);
+    const auto logical_order_first = fastdb::payload::view::open_record(
+        nested_order.value().spec, nested_order.value().bytes.data(),
+        nested_order.value().bytes.size(), logical_order_limits);
+    const auto logical_order_second = fastdb::payload::view::open_record(
+        nested_order.value().spec, nested_order.value().bytes.data(),
+        nested_order.value().bytes.size(), logical_order_limits);
+    require(require_resource_limit(
+                logical_order_first,
+                "/entries/envelopes/0/text_groups/0", UINT64_C(104),
+                UINT64_C(103), "validation_work") == EXIT_SUCCESS);
+    require(logical_order_second.error().path() ==
+            logical_order_first.error().path());
+    require(logical_order_second.error().details_json() ==
+            logical_order_first.error().details_json());
+
+    constexpr std::uint64_t wide_width = UINT64_C(4096);
+    auto wide_budget_spec =
+        CompiledSpec::compile(wide_budget_list_source());
+    require(wide_budget_spec.has_value());
+    auto wide_budget_values = build_scenario(
+        wide_budget_spec.value(), "wide_budget_list");
+    auto wide_budget_runtime =
+        RuntimeSchema::compile(wide_budget_spec.value());
+    require(wide_budget_values.has_value() &&
+            wide_budget_runtime.has_value());
+    allocation_failure::largest_allocation.store(
+        0U, std::memory_order_relaxed);
+    auto wide_budget_layout = RecordLayout::plan(
+        wide_budget_runtime.value(), wide_budget_values.value());
+    require(wide_budget_layout.has_value());
+    const std::size_t largest_plan_allocation =
+        allocation_failure::largest_allocation.load(
+            std::memory_order_relaxed);
+    require(largest_plan_allocation < 65536U,
+            "wide plan allocation=" +
+                std::to_string(largest_plan_allocation));
+    VectorSink wide_budget_sink(
+        wide_budget_layout.value().total_length());
+    require(fastdb::payload::build::encode_record(
+                wide_budget_layout.value(), wide_budget_values.value(),
+                wide_budget_sink)
+                .has_value());
+    auto wide_work_limits = fastdb::payload::view::default_open_limits();
+    wide_work_limits.max_validation_work =
+        wide_budget_layout.value().validation_work() - wide_width;
+    allocation_failure::largest_allocation.store(
+        0U, std::memory_order_relaxed);
+    const auto wide_work = fastdb::payload::view::open_record(
+        wide_budget_spec.value(), wide_budget_sink.bytes().data(),
+        wide_budget_sink.bytes().size(), wide_work_limits);
+    require(require_resource_limit(
+                wide_work, "/entries/wide/0",
+                wide_work_limits.max_validation_work + UINT64_C(1),
+                wide_work_limits.max_validation_work,
+                "validation_work") == EXIT_SUCCESS);
+    const std::size_t largest_open_allocation =
+        allocation_failure::largest_allocation.load(
+            std::memory_order_relaxed);
+    require(largest_open_allocation < 65536U,
+            "wide open allocation=" +
+                std::to_string(largest_open_allocation));
+
+    auto wide_many_spec =
+        CompiledSpec::compile(wide_budget_many_source());
+    require(wide_many_spec.has_value());
+    auto wide_many_values = build_scenario(
+        wide_many_spec.value(), "wide_budget_many");
+    auto wide_many_runtime =
+        RuntimeSchema::compile(wide_many_spec.value());
+    require(wide_many_values.has_value() &&
+            wide_many_runtime.has_value());
+    allocation_failure::largest_allocation.store(
+        0U, std::memory_order_relaxed);
+    auto wide_many_layout = RecordLayout::plan(
+        wide_many_runtime.value(), wide_many_values.value());
+    require(wide_many_layout.has_value());
+    const std::size_t largest_many_plan_allocation =
+        allocation_failure::largest_allocation.load(
+            std::memory_order_relaxed);
+    require(largest_many_plan_allocation < 65536U,
+            "wide many plan allocation=" +
+                std::to_string(largest_many_plan_allocation));
+
+    constexpr std::uint64_t component_width = UINT64_C(4096);
+    auto wide_component_spec =
+        CompiledSpec::compile(wide_budget_component_source());
+    require(wide_component_spec.has_value());
+    auto wide_component_values = build_scenario(
+        wide_component_spec.value(), "wide_budget_component");
+    auto wide_component_runtime =
+        RuntimeSchema::compile(wide_component_spec.value());
+    require(wide_component_values.has_value() &&
+            wide_component_runtime.has_value());
+    allocation_failure::largest_allocation.store(
+        0U, std::memory_order_relaxed);
+    auto wide_component_layout = RecordLayout::plan(
+        wide_component_runtime.value(), wide_component_values.value());
+    require(wide_component_layout.has_value());
+    const std::size_t largest_component_plan_allocation =
+        allocation_failure::largest_allocation.load(
+            std::memory_order_relaxed);
+    require(largest_component_plan_allocation < 200000U,
+            "wide component plan allocation=" +
+                std::to_string(largest_component_plan_allocation));
+    VectorSink wide_component_sink(
+        wide_component_layout.value().total_length());
+    require(fastdb::payload::build::encode_record(
+                wide_component_layout.value(),
+                wide_component_values.value(), wide_component_sink)
+                .has_value());
+    auto component_work_limits =
+        fastdb::payload::view::default_open_limits();
+    component_work_limits.max_validation_work =
+        wide_component_layout.value().validation_work() - component_width;
+    allocation_failure::largest_allocation.store(
+        0U, std::memory_order_relaxed);
+    const auto component_work = fastdb::payload::view::open_record(
+        wide_component_spec.value(), wide_component_sink.bytes().data(),
+        wide_component_sink.bytes().size(), component_work_limits);
+    require(require_resource_limit(
+                component_work, "/entries/wide/f0",
+                component_work_limits.max_validation_work + UINT64_C(1),
+                component_work_limits.max_validation_work,
+                "validation_work") == EXIT_SUCCESS);
+    const std::size_t largest_component_open_allocation =
+        allocation_failure::largest_allocation.load(
+            std::memory_order_relaxed);
+    require(largest_component_open_allocation < 300000U,
+            "wide component open allocation=" +
+                std::to_string(largest_component_open_allocation) +
+                ", limit=" +
+                std::to_string(component_work_limits.max_validation_work));
+    auto mixed_limits = fastdb::payload::view::default_open_limits();
+    mixed_limits.max_nesting_depth = UINT64_C(3);
+    require(fastdb::payload::view::open_record(
+                composition.value().spec, composition.value().bytes.data(),
+                composition.value().bytes.size(), mixed_limits)
+                .has_value());
+    mixed_limits.max_nesting_depth = UINT64_C(2);
+    const auto mixed_short_first = fastdb::payload::view::open_record(
+        composition.value().spec, composition.value().bytes.data(),
+        composition.value().bytes.size(), mixed_limits);
+    const auto mixed_short_second = fastdb::payload::view::open_record(
+        composition.value().spec, composition.value().bytes.data(),
+        composition.value().bytes.size(), mixed_limits);
+    require(require_resource_limit(mixed_short_first,
+                                   "/entries/records/0/leaves/1",
+                                   UINT64_C(3), UINT64_C(2),
+                                   "nesting_depth") == EXIT_SUCCESS);
+    require(mixed_short_second.error().path() ==
+            mixed_short_first.error().path());
+    require(mixed_short_second.error().details_json() ==
+            mixed_short_first.error().details_json());
+
+    constexpr std::uint32_t depth = UINT32_C(20000);
+    const std::string source = deep_list_spec(depth);
+    fastdb::payload::spec::CompileLimits compile_limits{};
+    compile_limits.json.max_source_bytes = UINT64_C(64) * UINT64_C(1024) *
+                                           UINT64_C(1024);
+    compile_limits.json.max_json_values = UINT64_C(100000);
+    compile_limits.json.max_nesting_depth = depth + UINT32_C(16);
+    auto compiled = CompiledSpec::compile(source, compile_limits);
+    require(compiled.has_value());
+    auto builder_limits = fastdb::payload::build::default_builder_limits();
+    builder_limits.max_nesting_depth = depth;
+    builder_limits.max_total_builder_bytes =
+        UINT64_C(8) * UINT64_C(1024) * UINT64_C(1024);
+    auto builder = PayloadBuilder::create(compiled.value(), builder_limits);
+    require(builder.has_value());
+    require(builder.value().begin_entry(UINT32_C(0), UINT64_C(1)).has_value());
+    for (std::uint32_t index = UINT32_C(0); index < depth; ++index) {
+        require(builder.value().begin_list(UINT64_C(1)).has_value());
+    }
+    require(builder.value().push_u8(UINT8_C(42)).has_value());
+    auto values = builder.value().freeze();
+    require(values.has_value());
+    auto runtime = RuntimeSchema::compile(compiled.value());
+    require(runtime.has_value());
+    auto planned = RecordLayout::plan(runtime.value(), values.value());
+    require(planned.has_value(),
+            planned.has_value() ? std::string_view{}
+                                : planned.error().details_json());
+    VectorSink sink(planned.value().total_length());
+    require(fastdb::payload::build::encode_record(
+                planned.value(), values.value(), sink)
+                .has_value());
+    auto open_limits = fastdb::payload::view::default_open_limits();
+    open_limits.max_regions = UINT64_C(50000);
+    open_limits.max_nesting_depth = depth;
+    open_limits.max_list_elements = depth;
+    open_limits.max_validation_work = UINT64_C(1000000);
+    const std::size_t open_live_baseline =
+        allocation_failure::current_live_bytes.load(
+            std::memory_order_relaxed);
+    allocation_failure::peak_live_bytes.store(
+        open_live_baseline, std::memory_order_relaxed);
+    const auto deep_open = fastdb::payload::view::open_record(
+        compiled.value(), sink.bytes().data(), sink.bytes().size(),
+        open_limits);
+    const std::size_t open_peak_live =
+        allocation_failure::peak_live_bytes.load(
+            std::memory_order_relaxed);
+    const std::size_t open_peak_delta =
+        open_peak_live - open_live_baseline;
+    require(deep_open.has_value());
+    require(open_peak_delta < 64U * 1024U * 1024U,
+            "20000-level open peak live requested bytes=" +
+                std::to_string(open_peak_delta));
+    open_limits.max_nesting_depth = depth - UINT32_C(1);
+    std::string depth_path = "/entries/deep";
+    for (std::uint32_t index = UINT32_C(1); index < depth; ++index) {
+        depth_path += "/0";
+    }
+    require(require_resource_limit(
+                fastdb::payload::view::open_record(
+                    compiled.value(), sink.bytes().data(), sink.bytes().size(),
+                    open_limits),
+                depth_path, depth, depth - UINT32_C(1), "nesting_depth") ==
+            EXIT_SUCCESS);
+    return EXIT_SUCCESS;
+}
+
+int test_task5_list_allocation_failure_sweeps() {
+    const std::string source =
+        read_binary_fixture("spec/component-list-composition.source.json");
+    auto compiled = CompiledSpec::compile(source);
+    require(compiled.has_value());
+    auto values = build_scenario(compiled.value(),
+                                 "component_list_composition");
+    auto runtime = RuntimeSchema::compile(compiled.value());
+    require(values.has_value() && runtime.has_value());
+
+    Result<RecordLayout> planned = Result<RecordLayout>::failure(
+        fastdb::payload::error::Error::from_details(
+            FDB_PAYLOAD_E_INTERNAL, JsonPointer{}, "uninitialized",
+            fastdb::payload::json::JsonValue::object({})));
+    std::uint64_t layout_failures = UINT64_C(0);
+    for (std::int64_t allocation = INT64_C(0); allocation < INT64_C(8192);
+         ++allocation) {
+        allocation_failure::fail_after.store(allocation,
+                                              std::memory_order_relaxed);
+        try {
+            planned = RecordLayout::plan(runtime.value(), values.value());
+        } catch (const std::bad_alloc&) {
+            allocation_failure::fail_after.store(INT64_C(-1),
+                                                  std::memory_order_relaxed);
+            require(false, "list layout escaped bad_alloc at " +
+                               std::to_string(allocation));
+        }
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                              std::memory_order_relaxed);
+        if (planned.has_value()) {
+            break;
+        }
+        require(planned.error().code() == FDB_PAYLOAD_E_ALLOCATION_FAILED);
+        ++layout_failures;
+    }
+    require(planned.has_value());
+    require(layout_failures > UINT64_C(0));
+
+    std::vector<std::uint8_t> encoded;
+    std::uint64_t encode_failures = UINT64_C(0);
+    for (std::int64_t allocation = INT64_C(0); allocation < INT64_C(8192);
+         ++allocation) {
+        VectorSink sink(planned.value().total_length());
+        allocation_failure::fail_after.store(allocation,
+                                              std::memory_order_relaxed);
+        Result<void> result = Result<void>::success();
+        try {
+            result = fastdb::payload::build::encode_record(
+                planned.value(), values.value(), sink);
+        } catch (const std::bad_alloc&) {
+            allocation_failure::fail_after.store(INT64_C(-1),
+                                                  std::memory_order_relaxed);
+            require(false, "list encode escaped bad_alloc at " +
+                               std::to_string(allocation));
+        }
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                              std::memory_order_relaxed);
+        if (result.has_value()) {
+            encoded = sink.bytes();
+            break;
+        }
+        require(result.error().code() == FDB_PAYLOAD_E_ALLOCATION_FAILED);
+        ++encode_failures;
+    }
+    require(!encoded.empty());
+    require(encode_failures > UINT64_C(0));
+
+    Result<fastdb::payload::view::PayloadIndex> opened =
+        Result<fastdb::payload::view::PayloadIndex>::failure(
+            fastdb::payload::error::Error::from_details(
+                FDB_PAYLOAD_E_INTERNAL, JsonPointer{}, "uninitialized",
+                fastdb::payload::json::JsonValue::object({})));
+    std::uint64_t open_failures = UINT64_C(0);
+    for (std::int64_t allocation = INT64_C(0); allocation < INT64_C(8192);
+         ++allocation) {
+        allocation_failure::fail_after.store(allocation,
+                                              std::memory_order_relaxed);
+        try {
+            opened = fastdb::payload::view::open_record(
+                compiled.value(), encoded.data(), encoded.size());
+        } catch (const std::bad_alloc&) {
+            allocation_failure::fail_after.store(INT64_C(-1),
+                                                  std::memory_order_relaxed);
+            require(false, "list open escaped bad_alloc at " +
+                               std::to_string(allocation));
+        }
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                              std::memory_order_relaxed);
+        if (opened.has_value()) {
+            break;
+        }
+        require(opened.error().code() == FDB_PAYLOAD_E_ALLOCATION_FAILED);
+        ++open_failures;
+    }
+    require(opened.has_value());
+    require(opened.value().validation_work() ==
+            planned.value().validation_work());
+    require(open_failures > UINT64_C(0));
+
+    const auto validity = std::find_if(
+        planned.value().regions().begin(), planned.value().regions().end(),
+        [](const auto& region) {
+            return region.kind ==
+                       fastdb::payload::layout::RegionKind::list_validity &&
+                   region.element_count % UINT64_C(8) != UINT64_C(0) &&
+                   region.element_count != UINT64_C(0);
+        });
+    require(validity != planned.value().regions().end());
+    auto malformed = encoded;
+    malformed[static_cast<std::size_t>(validity->data_offset +
+                                       validity->byte_length - UINT64_C(1))] |=
+        UINT8_C(0x80);
+    bool reached_validation_error = false;
+    std::uint64_t malformed_failures = UINT64_C(0);
+    for (std::int64_t allocation = INT64_C(0); allocation < INT64_C(8192);
+         ++allocation) {
+        Result<fastdb::payload::view::PayloadIndex> result =
+            Result<fastdb::payload::view::PayloadIndex>::failure(
+                fastdb::payload::error::Error::from_details(
+                    FDB_PAYLOAD_E_INTERNAL, JsonPointer{}, "uninitialized",
+                    fastdb::payload::json::JsonValue::object({})));
+        allocation_failure::fail_after.store(allocation,
+                                              std::memory_order_relaxed);
+        try {
+            result = fastdb::payload::view::open_record(
+                compiled.value(), malformed.data(), malformed.size());
+        } catch (const std::bad_alloc&) {
+            allocation_failure::fail_after.store(INT64_C(-1),
+                                                  std::memory_order_relaxed);
+            require(false, "list validation escaped bad_alloc at " +
+                               std::to_string(allocation));
+        }
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                              std::memory_order_relaxed);
+        require(!result.has_value());
+        if (result.error().code() == FDB_PAYLOAD_E_ALLOCATION_FAILED) {
+            ++malformed_failures;
+            continue;
+        }
+        require(result.error().code() == FDB_PAYLOAD_E_NON_CANONICAL_BINARY);
+        require(result.error().details_json() ==
+                R"({"reason":"nonzero_validity_tail"})");
+        reached_validation_error = true;
+        break;
+    }
+    require(reached_validation_error);
+    return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main() {
+    if (test_task5_recursive_lists_and_named_algebra_matrix() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_task5_zero_count_list_aggregate_regions() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_task5_list_region_descriptor_and_partition_failures() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_task5_list_limits_and_20000_level_iteration() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_task5_list_allocation_failure_sweeps() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
     if (test_binary_goldens_determinism_hash_and_headers() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }

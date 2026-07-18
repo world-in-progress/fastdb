@@ -228,6 +228,15 @@ int test_mutable_json_pointer_escapes_and_backtracks_exactly() {
 
     path.rewind(root);
     require(path.snapshot().value().empty());
+
+    const JsonPointer assigned =
+        JsonPointer{}.append("root/value~").append(UINT64_C(7));
+    path.assign(assigned);
+    const JsonPointerBuilder::Mark assigned_root = path.mark();
+    path.append("child");
+    require(path.snapshot().value() == "/root~1value~0/7/child");
+    path.rewind(assigned_root);
+    require(path.snapshot().value() == assigned.value());
     return EXIT_SUCCESS;
 }
 

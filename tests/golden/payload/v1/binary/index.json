@@ -45,6 +45,24 @@
         "binary_hex": "valid/text-bytes.bin.hex",
         "sha256": "valid/text-bytes.sha256"
       }
+    },
+    {
+      "name": "nested-lists",
+      "success": {
+        "source": "spec/nested-lists.source.json",
+        "scenario": "nested_lists",
+        "binary_hex": "valid/nested-lists.bin.hex",
+        "sha256": "valid/nested-lists.sha256"
+      }
+    },
+    {
+      "name": "component-list-composition",
+      "success": {
+        "source": "spec/component-list-composition.source.json",
+        "scenario": "component_list_composition",
+        "binary_hex": "valid/component-list-composition.bin.hex",
+        "sha256": "valid/component-list-composition.sha256"
+      }
     }
   ]
 }

@@ -9,6 +9,9 @@
 
 namespace fastdb::payload::layout {
 
+class RecordLayout;
+struct RuntimeSchemaTestAccess;
+
 struct SlotLayout final {
     std::uint32_t stride;
     std::uint32_t alignment;
@@ -85,6 +88,9 @@ public:
     const spec::CompiledSpec& spec() const noexcept { return spec_; }
 
 private:
+    friend class RecordLayout;
+    friend struct RuntimeSchemaTestAccess;
+
     explicit RuntimeSchema(spec::CompiledSpec spec)
         : spec_(std::move(spec)) {}
 
@@ -92,6 +98,7 @@ private:
     error::Result<void> analyze_reachability();
     error::Result<void> compile_component_layouts();
     error::Result<void> finalize_reachable_inventory();
+    error::Result<void> validate_list_metadata() const;
 
     spec::CompiledSpec spec_;
     std::vector<RuntimeType> types_;

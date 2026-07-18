@@ -1,0 +1,70 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {
+      "id": "records",
+      "cardinality": "many",
+      "type": {"kind": "component", "id": "Composition"}
+    },
+    {
+      "id": "leaf_lists",
+      "cardinality": "many",
+      "type": {
+        "kind": "list",
+        "nullable": true,
+        "items": {"kind": "component", "id": "Leaf", "nullable": true}
+      }
+    }
+  ],
+  "components": [
+    {
+      "id": "Composition",
+      "kind": "record",
+      "fields": [
+        {"id": "scalars", "type": {"kind": "component", "id": "ScalarFields"}},
+        {"id": "bools", "type": {"kind": "list", "items": {"kind": "bool", "nullable": true}}},
+        {"id": "u8s", "type": {"kind": "list", "items": {"kind": "u8", "nullable": true}}},
+        {"id": "u16s", "type": {"kind": "list", "items": {"kind": "u16", "nullable": true}}},
+        {"id": "u32s", "type": {"kind": "list", "items": {"kind": "u32", "nullable": true}}},
+        {"id": "i32s", "type": {"kind": "list", "items": {"kind": "i32", "nullable": true}}},
+        {"id": "u8ns", "type": {"kind": "list", "items": {"kind": "u8n", "min": 0, "max": 1, "nullable": true}}},
+        {"id": "u16ns", "type": {"kind": "list", "items": {"kind": "u16n", "min": -1, "max": 1, "nullable": true}}},
+        {"id": "f32s", "type": {"kind": "list", "items": {"kind": "f32", "nullable": true}}},
+        {"id": "f64s", "type": {"kind": "list", "items": {"kind": "f64", "nullable": true}}},
+        {"id": "strs", "type": {"kind": "list", "items": {"kind": "str", "nullable": true}}},
+        {"id": "wstrs", "type": {"kind": "list", "items": {"kind": "wstr", "nullable": true}}},
+        {"id": "byte_values", "type": {"kind": "list", "items": {"kind": "bytes", "nullable": true}}},
+        {"id": "leaves", "type": {"kind": "list", "nullable": true, "items": {"kind": "component", "id": "Leaf", "nullable": true}}},
+        {"id": "nested", "type": {"kind": "list", "items": {"kind": "list", "nullable": true, "items": {"kind": "u8", "nullable": true}}}},
+        {"id": "reused", "type": {"kind": "component", "id": "Leaf", "nullable": true}}
+      ]
+    },
+    {
+      "id": "Leaf",
+      "kind": "record",
+      "fields": [
+        {"id": "id", "type": {"kind": "u32"}},
+        {"id": "label", "type": {"kind": "str", "nullable": true}}
+      ]
+    },
+    {
+      "id": "ScalarFields",
+      "kind": "record",
+      "fields": [
+        {"id": "a_bool", "type": {"kind": "bool"}},
+        {"id": "b_u8", "type": {"kind": "u8"}},
+        {"id": "c_u16", "type": {"kind": "u16"}},
+        {"id": "d_u32", "type": {"kind": "u32"}},
+        {"id": "e_i32", "type": {"kind": "i32"}},
+        {"id": "f_u8n", "type": {"kind": "u8n", "min": 0, "max": 1}},
+        {"id": "g_u16n", "type": {"kind": "u16n", "min": -1, "max": 1}},
+        {"id": "h_f32", "type": {"kind": "f32"}},
+        {"id": "i_f64", "type": {"kind": "f64"}},
+        {"id": "j_str", "type": {"kind": "str"}},
+        {"id": "k_wstr", "type": {"kind": "wstr"}},
+        {"id": "l_bytes", "type": {"kind": "bytes"}}
+      ]
+    }
+  ]
+}
