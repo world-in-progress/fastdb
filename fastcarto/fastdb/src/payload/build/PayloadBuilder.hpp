@@ -1,5 +1,6 @@
 #pragma once
 
+#include "payload/build/BuildPlan.hpp"
 #include "payload/build/ValueArena.hpp"
 #include "payload/error/Result.hpp"
 
@@ -63,6 +64,7 @@ public:
     error::Result<void> begin_component();
     error::Result<void> begin_list(std::uint64_t item_count);
     error::Result<LogicalPayload> freeze();
+    error::Result<BuildPlan> freeze_plan();
 
 private:
     struct State;

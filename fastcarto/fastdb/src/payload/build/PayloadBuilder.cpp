@@ -1443,6 +1443,22 @@ Result<LogicalPayload> PayloadBuilder::freeze() {
     }
 }
 
+Result<BuildPlan> PayloadBuilder::freeze_plan() {
+    auto values = freeze();
+    if (!values.has_value()) {
+        return Result<BuildPlan>::failure(std::move(values).error());
+    }
+    LogicalPayload logical = std::move(values).value();
+    auto plan = BuildPlan::create(std::move(logical));
+    if (!plan.has_value()) {
+        State& state = *state_;
+        state.arena = std::move(logical.arena_);
+        state.entry_roots = std::move(logical.entry_roots_);
+        state.sealed = false;
+    }
+    return plan;
+}
+
 Result<LogicalPayload> PayloadBuilder::freeze_impl() {
     State& state = *state_;
     auto valid_state = state.check_state();

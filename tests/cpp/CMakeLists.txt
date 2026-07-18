@@ -315,6 +315,21 @@ target_compile_definitions(
 )
 set_tests_properties(payload.record_binary PROPERTIES TIMEOUT 120)
 
+add_fastdb_payload_test(
+    payload_backing
+    SOURCES payload/test_payload_backing.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_payload_backing
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+set_tests_properties(payload.payload_backing PROPERTIES TIMEOUT 120)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     add_executable(
         fastdb_payload_wasm_runtime_harness

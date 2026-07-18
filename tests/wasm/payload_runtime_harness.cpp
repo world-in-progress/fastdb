@@ -1,3 +1,4 @@
+#include "payload/backing/HeapBacking.hpp"
 #include "payload/build/PayloadBuilder.hpp"
 #include "payload/build/RecordEncoder.hpp"
 #include "payload/identity/Sha256.hpp"
@@ -16,6 +17,8 @@
 #include <string>
 #include <string_view>
 #include <vector>
+
+#include <fastdb_payload.h>
 
 namespace {
 
@@ -433,7 +436,67 @@ NormalizedFacts normalized_facts(const fastdb::payload::spec::TypeNode& type) {
     std::abort();
 }
 
+std::string oversized_plan_source() {
+    std::string source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"huge","cardinality":"one","type":{"kind":"component","id":"C28","nullable":true}}],"components":[)";
+    source +=
+        R"({"id":"C00","kind":"record","fields":[{"id":"value","type":{"kind":"f64"}}]})";
+    for (std::uint32_t level = UINT32_C(1); level <= UINT32_C(28);
+         ++level) {
+        const std::string id = level < UINT32_C(10)
+                                   ? "C0" + std::to_string(level)
+                                   : "C" + std::to_string(level);
+        const std::uint32_t previous_level = level - UINT32_C(1);
+        const std::string previous =
+            previous_level < UINT32_C(10)
+                ? "C0" + std::to_string(previous_level)
+                : "C" + std::to_string(previous_level);
+        source +=
+            R"(,{"id":")" + id +
+            R"(","kind":"record","fields":[{"id":"left","type":{"kind":"component","id":")" +
+            previous +
+            R"("}},{"id":"right","type":{"kind":"component","id":")" +
+            previous + R"("}}]})";
+    }
+    source += "]}";
+    return source;
+}
+
+bool oversized_plan_fails_structurally_and_retries() {
+    auto compiled = CompiledSpec::compile(oversized_plan_source());
+    if (!compiled.has_value()) {
+        return false;
+    }
+    auto builder = PayloadBuilder::create(compiled.value());
+    if (!builder.has_value() ||
+        !builder.value().begin_entry(UINT32_C(0), UINT64_C(1)).has_value() ||
+        !builder.value().push_null().has_value()) {
+        return false;
+    }
+    auto plan = builder.value().freeze_plan();
+    if (!plan.has_value() ||
+        plan.value().info().total_bytes != UINT64_C(2147483936) ||
+        plan.value().info().max_alignment != UINT32_C(8)) {
+        return false;
+    }
+    for (std::uint32_t attempt = UINT32_C(0); attempt < UINT32_C(2);
+         ++attempt) {
+        auto executed = plan.value().execute(UINT32_C(2), nullptr);
+        if (executed.has_value() ||
+            executed.error().code() != FDB_PAYLOAD_E_ALLOCATION_FAILED ||
+            executed.error().path() != "/backing" ||
+            executed.error().details_json() !=
+                "{\"reason\":\"reserve_allocation_failed\"}") {
+            return false;
+        }
+    }
+    return true;
+}
+
 int run() {
+    if (!oversized_plan_fails_structurally_and_retries()) {
+        return 29;
+    }
     const std::string root = FASTDB_PAYLOAD_BINARY_FIXTURE_DIR;
     auto compiled = CompiledSpec::compile(
         read_file(root + "/spec/fixed-scalars.source.json"));

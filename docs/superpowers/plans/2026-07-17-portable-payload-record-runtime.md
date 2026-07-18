@@ -464,7 +464,7 @@ Defaults protect untrusted input but are not format maxima; callers may raise a 
 
 ### Immutable plans and final backing
 
-`PayloadBuilder::freeze` first produces an immutable `LogicalPayload`; `BuildPlan::create` then owns that value, the `CompiledSpec`, `RuntimeSchema`, `RecordLayout`, exact resource facts, and direct viability. The plan is immutable, retainable, thread-safe, and repeatable. Concurrent executions require distinct backing contexts.
+`PayloadBuilder::freeze` first produces an immutable `LogicalPayload`; `BuildPlan::create(LogicalPayload&&)` plans without consuming that value on failure and moves it into the plan only after complete success. The plan then owns the value, one `RecordLayout` (which owns its `RuntimeSchema`), exact resource facts, and direct viability. It is immutable, retainable, thread-safe, and repeatable. Concurrent executions require distinct backing contexts.
 
 Every P2 record plan is layout-direct-eligible because all final region sizes and offsets are known. Execution policy is exactly:
 
@@ -495,7 +495,7 @@ reserve success -> writes -> commit failure -> rollback
 reserve success -> commit success -> Core validation/publication failure -> release
 ```
 
-After a successful reserve, exactly one rollback occurs on every pre-commit/commit failure and none after commit success. Commit is atomic: failure leaves the reservation uncommitted and rollback-capable. If rollback also fails, `ROLLBACK_FAILED` is returned with the original code/symbol and rollback status in canonical details. Commit success returns the exact contiguous readable base/length and transfers the reservation's initial owner reference to `PayloadOwner`; if the shared hardened reader or owner allocation then fails, Core releases that committed reference exactly once and never rolls it back.
+After a successful reserve, exactly one rollback occurs on every pre-commit/commit failure and none after commit success. Commit is atomic: failure leaves the reservation uncommitted and rollback-capable. If rollback also fails, `ROLLBACK_FAILED` is returned with the original code/symbol and rollback status in canonical details. Commit success returns the exact contiguous readable base/length and transfers the reservation's initial owner reference into an internal committed handoff. Task 6 validates that span and moves it into inline `PendingPayload` state; an invalid committed span releases once and never rolls back. Task 7 consumes that handoff into `PayloadOwner`; if the shared hardened reader or owner allocation then fails, Core likewise releases that committed reference exactly once and never rolls it back.
 
 ### Payload owner, checked access, and materialization
 
@@ -693,7 +693,7 @@ Build execution requires reserve/commit/rollback/release; `write` may be null on
 
 The opaque owner-token value may itself be null; Core never dereferences it and always passes it back to the callbacks. Ownership is defined by the successful reserve/retain and matching rollback/release calls, not by token non-nullness.
 
-Callback status mapping is closed: reserve may return success, `DIRECT_UNAVAILABLE` for a direct request, or `ALLOCATION_FAILED`; write/commit/rollback/retain may return success or `ALLOCATION_FAILED`. Any other callback status becomes `BACKING_CONTRACT` with `callback` and `callback_status` details. A non-zero commit becomes `COMMIT_FAILED` unless allocation is the direct cause; a non-zero rollback becomes `ROLLBACK_FAILED` and preserves the original failure in details. Release returns void and must not unwind across C.
+Callback status mapping is operation-specific and closed: direct reserve accepts success, `DIRECT_UNAVAILABLE`, or `ALLOCATION_FAILED`, while staged reserve accepts only success or `ALLOCATION_FAILED`; write and retain accept success or `ALLOCATION_FAILED`; commit additionally accepts `COMMIT_FAILED`; rollback additionally accepts `ROLLBACK_FAILED`. An allowed non-zero rollback status surfaces as `ROLLBACK_FAILED` and preserves the original failure and rollback status. Every other status becomes `BACKING_CONTRACT` with `callback` and `callback_status` details; unknown rollback also preserves the original failure. Release returns void and must not unwind across C.
 
 Ownership transitions are also closed. Core initializes every callback output to null/zero before entry and ignores all outputs on failure:
 
@@ -1258,7 +1258,8 @@ All fallible functions retain the P1 meta-contract: non-null `out_error`, clear 
   - no rollback after commit success; later Core validation/publication failure releases the committed owner exactly once;
   - exactly one final release of each successfully published committed owner token;
   - callbacks run without unrelated Core locks, distinct-context callback reentry succeeds, and the documented same-context/token owner reentry precondition is present in Issue 0002;
-  - allocation failure before reserve, after reserve, during staging, and while creating the result object.
+  - allocation failure during plan creation, after reserve, and during heap staging, with retryability and balanced ownership; successful commit hands the move-only `PendingPayload` through inline `noexcept` state, so its real Task 6 post-commit failure is invalid committed-span validation, which releases once and never rolls back rather than inventing a result allocation point.
+  - Core heap reserve preflights `minimum_capacity + alignment - 1` against both platform size arithmetic and the actual byte-vector container limit before entering its `noexcept` allocation path; a native `PTRDIFF_MAX+1` callback probe and a real wasm32 plan with `total_bytes=2147483936` must return `ALLOCATION_FAILED` with null outputs, no rollback/release, no leak, and repeatable plan execution rather than terminate on a container-length exception.
 
 - [ ] Run:
 
@@ -1297,7 +1298,7 @@ All fallible functions retain the P1 meta-contract: non-null `out_error`, clear 
 
   class BuildPlan final {
   public:
-      static error::Result<BuildPlan> create(build::LogicalPayload values);
+      static error::Result<BuildPlan> create(build::LogicalPayload&& values);
       const PlanInfo& info() const noexcept;
       error::Result<PendingPayload> execute(
           std::uint32_t policy,
@@ -1350,6 +1351,7 @@ All fallible functions retain the P1 meta-contract: non-null `out_error`, clear 
   - failed retain acquires no reference and receives no compensating release;
   - an unaligned external base opens identically to an aligned base because every wire load is byte-based;
   - execution-created owner adopts the reservation reference without an extra retain;
+  - the first real `PayloadOwner`/shared-state publication allocation is injected after execution commit and releases the adopted committed reference exactly once on failure without rollback;
   - releasing plan/spec/source handles before owner does not change digest/profile/bytes;
   - owner copies share immutable state and one backing reference;
   - opened owners have no fabricated execution report;
