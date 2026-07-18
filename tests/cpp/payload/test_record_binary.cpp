@@ -561,7 +561,9 @@ int require_resource_limit(
     std::string_view resource) {
     require(!result.has_value());
     require(result.error().code() == FDB_PAYLOAD_E_RESOURCE_LIMIT);
-    require(result.error().path() == path);
+    require(result.error().path() == path,
+            std::string(result.error().path()) + ":" +
+                std::string(result.error().details_json()));
     require(result.error().details_json() ==
             exact_resource_details(actual, limit, resource));
     return EXIT_SUCCESS;
@@ -848,6 +850,117 @@ int test_task3_metadata_observation_and_nan_canonicalization() {
     return EXIT_SUCCESS;
 }
 
+int test_open_component_nesting_depth_limits() {
+    const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
+        FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
+    const BinaryGoldenCase* numeric = find_case(corpus, "numeric-edges");
+    const BinaryGoldenCase* nested = find_case(corpus, "nested-components");
+    require(numeric != nullptr && nested != nullptr);
+
+    auto numeric_encoded = encode_case(*numeric);
+    require(numeric_encoded.has_value());
+    auto scalar_limits = fastdb::payload::view::default_open_limits();
+    scalar_limits.max_nesting_depth = UINT64_C(0);
+    require(fastdb::payload::view::open_record(
+                numeric_encoded.value().spec,
+                numeric_encoded.value().bytes.data(),
+                numeric_encoded.value().bytes.size(), scalar_limits)
+                .has_value());
+
+    auto nested_encoded = encode_case(*nested);
+    require(nested_encoded.has_value());
+    auto unrestricted = fastdb::payload::view::open_record(
+        nested_encoded.value().spec, nested_encoded.value().bytes.data(),
+        nested_encoded.value().bytes.size());
+    require(unrestricted.has_value());
+
+    auto exact_limits = fastdb::payload::view::default_open_limits();
+    exact_limits.max_nesting_depth = UINT64_C(3);
+    auto exact_first = fastdb::payload::view::open_record(
+        nested_encoded.value().spec, nested_encoded.value().bytes.data(),
+        nested_encoded.value().bytes.size(), exact_limits);
+    auto exact_second = fastdb::payload::view::open_record(
+        nested_encoded.value().spec, nested_encoded.value().bytes.data(),
+        nested_encoded.value().bytes.size(), exact_limits);
+    require(exact_first.has_value() && exact_second.has_value());
+    require(exact_first.value().validation_work() ==
+            unrestricted.value().validation_work());
+    require(exact_second.value().validation_work() ==
+            unrestricted.value().validation_work());
+    require(exact_first.value().validation_work() ==
+            nested_encoded.value().layout.validation_work());
+
+    auto short_limits = exact_limits;
+    short_limits.max_nesting_depth = UINT64_C(2);
+    short_limits.max_validation_work = unrestricted.value().validation_work();
+    const auto short_first = fastdb::payload::view::open_record(
+        nested_encoded.value().spec, nested_encoded.value().bytes.data(),
+        nested_encoded.value().bytes.size(), short_limits);
+    const auto short_second = fastdb::payload::view::open_record(
+        nested_encoded.value().spec, nested_encoded.value().bytes.data(),
+        nested_encoded.value().bytes.size(), short_limits);
+    require(require_resource_limit(short_first,
+                                   "/entries/a_direct/b_middle/b_leaf_reuse",
+                                   UINT64_C(3), UINT64_C(2),
+                                   "nesting_depth") == EXIT_SUCCESS);
+    require(require_resource_limit(short_second,
+                                   "/entries/a_direct/b_middle/b_leaf_reuse",
+                                   UINT64_C(3), UINT64_C(2),
+                                   "nesting_depth") == EXIT_SUCCESS);
+
+    auto work_short_limits = exact_limits;
+    work_short_limits.max_validation_work =
+        unrestricted.value().validation_work() - UINT64_C(1);
+    const auto work_short = fastdb::payload::view::open_record(
+        nested_encoded.value().spec, nested_encoded.value().bytes.data(),
+        nested_encoded.value().bytes.size(), work_short_limits);
+    require(require_resource_limit(
+                work_short, "/entries/c_empty_many/1",
+                unrestricted.value().validation_work(),
+                unrestricted.value().validation_work() - UINT64_C(1),
+                "validation_work") == EXIT_SUCCESS);
+
+    auto nullable_spec = CompiledSpec::compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"root","cardinality":"one","type":{"kind":"component","id":"Outer"}}],"components":[{"id":"Leaf","kind":"record","fields":[{"id":"value","type":{"kind":"u8"}}]},{"id":"Outer","kind":"record","fields":[{"id":"absent","type":{"kind":"component","id":"Leaf","nullable":true}},{"id":"scalar","type":{"kind":"u8"}}]}]})");
+    require(nullable_spec.has_value());
+    auto nullable_builder = PayloadBuilder::create(nullable_spec.value());
+    require(nullable_builder.has_value());
+    require(nullable_builder.value()
+                .begin_entry(UINT32_C(0), UINT64_C(1))
+                .has_value());
+    require(nullable_builder.value().begin_component().has_value());
+    require(nullable_builder.value().push_null().has_value());
+    require(nullable_builder.value().push_u8(UINT8_C(7)).has_value());
+    auto nullable_values = nullable_builder.value().freeze();
+    auto nullable_runtime = RuntimeSchema::compile(nullable_spec.value());
+    require(nullable_values.has_value() && nullable_runtime.has_value());
+    auto nullable_layout =
+        RecordLayout::plan(nullable_runtime.value(), nullable_values.value());
+    require(nullable_layout.has_value());
+    VectorSink nullable_sink(nullable_layout.value().total_length());
+    require(fastdb::payload::build::encode_record(
+                nullable_layout.value(), nullable_values.value(), nullable_sink)
+                .has_value());
+
+    auto nullable_limits = fastdb::payload::view::default_open_limits();
+    nullable_limits.max_nesting_depth = UINT64_C(1);
+    const auto nullable_opened = fastdb::payload::view::open_record(
+        nullable_spec.value(), nullable_sink.bytes().data(),
+        nullable_sink.bytes().size(), nullable_limits);
+    require(nullable_opened.has_value());
+    require(nullable_opened.value().validation_work() ==
+            nullable_layout.value().validation_work());
+
+    nullable_limits.max_nesting_depth = UINT64_C(0);
+    require(require_resource_limit(
+                fastdb::payload::view::open_record(
+                    nullable_spec.value(), nullable_sink.bytes().data(),
+                    nullable_sink.bytes().size(), nullable_limits),
+                "/entries/root", UINT64_C(1), UINT64_C(0),
+                "nesting_depth") == EXIT_SUCCESS);
+    return EXIT_SUCCESS;
+}
+
 int test_large_many_component_stride_and_count_overflow() {
     auto compiled = CompiledSpec::compile(
         R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"rows","cardinality":"many","type":{"kind":"component","id":"Wide"}}],"components":[{"id":"Wide","kind":"record","fields":[{"id":"a","type":{"kind":"f64"}},{"id":"b","type":{"kind":"u32"}}]}]})");
@@ -949,7 +1062,7 @@ int test_component_malformed_bytes_have_exact_diagnostics() {
                 fastdb::payload::view::open_record(
                     encoded.value().spec, bad_field_padding.data(),
                     bad_field_padding.size()),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/entries/a_direct/0",
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/entries/a_direct",
                 "nonzero_component_padding") == EXIT_SUCCESS);
 
     auto bad_tail_padding = encoded.value().bytes;
@@ -959,7 +1072,7 @@ int test_component_malformed_bytes_have_exact_diagnostics() {
                 fastdb::payload::view::open_record(
                     encoded.value().spec, bad_tail_padding.data(),
                     bad_tail_padding.size()),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/entries/a_direct/0",
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/entries/a_direct",
                 "nonzero_component_padding") == EXIT_SUCCESS);
 
     auto bad_null = encoded.value().bytes;
@@ -1250,6 +1363,9 @@ int main() {
     }
     if (test_task3_metadata_observation_and_nan_canonicalization() !=
         EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_open_component_nesting_depth_limits() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     if (test_large_many_component_stride_and_count_overflow() != EXIT_SUCCESS) {

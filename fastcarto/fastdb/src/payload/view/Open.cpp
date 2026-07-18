@@ -265,6 +265,7 @@ Result<std::uint64_t> read_u64(const std::uint8_t* bytes,
 struct ValidationSlot final {
     const spec::TypeNode* type;
     std::uint64_t offset;
+    std::uint64_t structural_depth;
     bool present;
     JsonPointer path;
 };
@@ -276,14 +277,24 @@ Result<void> validate_fixed_slot(const RuntimeSchema& runtime,
                                  std::uint64_t root_offset,
                                  bool root_present,
                                  WorkCounter& work,
+                                 std::uint64_t max_nesting_depth,
                                  const JsonPointer& root_path) {
     std::vector<ValidationSlot> pending;
-    pending.push_back(
-        ValidationSlot{&root_type, root_offset, root_present, root_path});
+    const std::uint64_t root_depth =
+        root_present && root_type.kind == TypeKind::component ? UINT64_C(1)
+                                                              : UINT64_C(0);
+    pending.push_back(ValidationSlot{&root_type, root_offset, root_depth,
+                                     root_present, root_path});
     bool first = true;
     while (!pending.empty()) {
         ValidationSlot slot = std::move(pending.back());
         pending.pop_back();
+        if (slot.present && slot.type->kind == TypeKind::component &&
+            slot.structural_depth > max_nesting_depth) {
+            return Result<void>::failure(resource_error(
+                slot.path, "nesting_depth", slot.structural_depth,
+                max_nesting_depth));
+        }
         const std::uint32_t type_id = runtime.runtime_id(*slot.type);
         const layout::RuntimeType* runtime_type = runtime.find_type(type_id);
         if (type_id == UINT32_MAX || runtime_type == nullptr) {
@@ -440,9 +451,21 @@ Result<void> validate_fixed_slot(const RuntimeSchema& runtime,
                 return Result<void>::failure(
                     std::move(child_offset).error());
             }
+            const spec::TypeNode& child_type =
+                source_component.fields[index].type;
+            std::uint64_t child_depth = slot.structural_depth;
+            if (present && child_type.kind == TypeKind::component) {
+                auto incremented = layout::checked_add_u64(
+                    child_depth, UINT64_C(1),
+                    slot.path.append(source_component.fields[index].id));
+                if (!incremented.has_value()) {
+                    return Result<void>::failure(
+                        std::move(incremented).error());
+                }
+                child_depth = incremented.value();
+            }
             pending.push_back(ValidationSlot{
-                &source_component.fields[index].type,
-                child_offset.value(), present,
+                &child_type, child_offset.value(), child_depth, present,
                 slot.path.append(source_component.fields[index].id)});
         }
     }
@@ -1334,9 +1357,12 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
             for (std::uint64_t index = UINT64_C(0);
                  index < entry.value_count; ++index) {
+                const JsonPointer entry_path =
+                    JsonPointer{}.append("entries").append(source.id);
                 const JsonPointer path =
-                    JsonPointer{}.append("entries").append(source.id).append(
-                        index);
+                    source.cardinality == Cardinality::one
+                        ? entry_path
+                        : entry_path.append(index);
                 bool present = true;
                 if (validity_region != nullptr) {
                     auto validity_offset = layout::checked_add_u64(
@@ -1368,7 +1394,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 const std::uint64_t offset = absolute_offset.value();
                 auto valid = validate_fixed_slot(
                     runtime.value(), bytes, byte_count, source.type, offset,
-                    present, work, path);
+                    present, work, limits.max_nesting_depth, path);
                 if (!valid.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(valid).error());

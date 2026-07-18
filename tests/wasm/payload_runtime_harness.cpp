@@ -8,6 +8,7 @@
 #include "payload/view/Open.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
@@ -105,24 +106,93 @@ bool add_fixed_values(PayloadBuilder& builder) {
     return true;
 }
 
-int run() {
-    const JsonPointer path = JsonPointer{}.append("wasm");
-    auto lower = fastdb::payload::layout::quantize_normalized(
-        UINT64_C(0x3fe0000000000000), 0.0, 255.0, UINT32_C(255),
-        "u8n", path);
-    auto upper = fastdb::payload::layout::quantize_normalized(
-        UINT64_C(0x3ff8000000000000), 0.0, 255.0, UINT32_C(255),
-        "u8n", path);
-    auto decoded = fastdb::payload::layout::dequantize_normalized(
-        UINT32_C(128), -0x1p1000, 0x1p1000, UINT32_C(255), "u8n",
-        path);
-    if (!lower.has_value() || lower.value() != UINT32_C(0) ||
-        !upper.has_value() || upper.value() != UINT32_C(2) ||
-        !decoded.has_value() ||
-        decoded.value() != UINT64_C(0x7df0101010101010)) {
-        return 1;
-    }
+bool add_numeric_edge_values(PayloadBuilder& builder) {
+#define FASTDB_WASM_STEP(expression)                                         \
+    do {                                                                     \
+        if (!(expression).has_value()) {                                     \
+            return false;                                                    \
+        }                                                                    \
+    } while (false)
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(0), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_bool(UINT8_C(0)));
+    FASTDB_WASM_STEP(builder.push_bool(UINT8_C(1)));
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(1), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_u8(UINT8_C(0)));
+    FASTDB_WASM_STEP(builder.push_u8(UINT8_MAX));
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(2), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_u16(UINT16_C(0)));
+    FASTDB_WASM_STEP(builder.push_u16(UINT16_MAX));
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(3), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_C(0)));
+    FASTDB_WASM_STEP(builder.push_u32(UINT32_MAX));
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(4), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_i32(INT32_MIN));
+    FASTDB_WASM_STEP(builder.push_i32(INT32_MAX));
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(5), UINT64_C(6)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0x80000000)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0x7f800000)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0xff800000)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0x7fa12345)));
+    FASTDB_WASM_STEP(builder.push_f32_bits(UINT32_C(0xffdabcde)));
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(6), UINT64_C(6)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0x8000000000000000)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0x7ff0000000000000)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0xfff0000000000000)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0x7ff0000000000042)));
+    FASTDB_WASM_STEP(builder.push_f64_bits(UINT64_C(0xfff8000000001234)));
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(7), UINT64_C(6)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0x8000000000000000)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0x406fe00000000000)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0x3fe0000000000000)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(0x3ff8000000000000)));
+    FASTDB_WASM_STEP(builder.push_u8n_bits(UINT64_C(1)));
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(8), UINT64_C(4)));
+    FASTDB_WASM_STEP(builder.push_u16n_bits(UINT64_C(0xc0e0000000000000)));
+    FASTDB_WASM_STEP(builder.push_u16n_bits(UINT64_C(0x40dfffc000000000)));
+    FASTDB_WASM_STEP(builder.push_u16n_bits(UINT64_C(0xc0dfffe000000000)));
+    FASTDB_WASM_STEP(builder.push_u16n_bits(UINT64_C(0xc0dfffa000000000)));
+#undef FASTDB_WASM_STEP
+    return true;
+}
 
+bool exact_golden(const std::string& root,
+                  const std::string& name,
+                  const std::vector<std::uint8_t>& bytes) {
+    const auto golden = read_hex(root + "/valid/" + name + ".bin.hex");
+    std::string expected_hash =
+        read_file(root + "/valid/" + name + ".sha256");
+    if (!expected_hash.empty() && expected_hash.back() == '\n') {
+        expected_hash.pop_back();
+    }
+    return bytes == golden &&
+           fastdb::payload::identity::sha256_lower_hex(
+               fastdb::payload::identity::sha256(bytes.data(), bytes.size())) ==
+               expected_hash;
+}
+
+struct NormalizedFacts final {
+    double minimum;
+    double maximum;
+    std::uint32_t maximum_code;
+    const char* kind;
+};
+
+NormalizedFacts normalized_facts(const fastdb::payload::spec::TypeNode& type) {
+    if (type.kind == fastdb::payload::spec::TypeKind::u8n) {
+        return NormalizedFacts{type.minimum, type.maximum, UINT32_C(255),
+                               "u8n"};
+    }
+    if (type.kind == fastdb::payload::spec::TypeKind::u16n) {
+        return NormalizedFacts{type.minimum, type.maximum, UINT32_C(65535),
+                               "u16n"};
+    }
+    std::abort();
+}
+
+int run() {
     const std::string root = FASTDB_PAYLOAD_BINARY_FIXTURE_DIR;
     auto compiled = CompiledSpec::compile(
         read_file(root + "/spec/fixed-scalars.source.json"));
@@ -148,17 +218,7 @@ int run() {
              .has_value()) {
         return 6;
     }
-    const auto golden = read_hex(root + "/valid/fixed-scalars.bin.hex");
-    std::string expected_hash =
-        read_file(root + "/valid/fixed-scalars.sha256");
-    if (!expected_hash.empty() && expected_hash.back() == '\n') {
-        expected_hash.pop_back();
-    }
-    if (sink.bytes_ != golden ||
-        fastdb::payload::identity::sha256_lower_hex(
-            fastdb::payload::identity::sha256(sink.bytes_.data(),
-                                               sink.bytes_.size())) !=
-            expected_hash) {
+    if (!exact_golden(root, "fixed-scalars", sink.bytes_)) {
         return 7;
     }
     auto opened = fastdb::payload::view::open_record(
@@ -170,6 +230,80 @@ int run() {
                 .value()
                 .bits != UINT64_C(0x7ff8000000000000)) {
         return 8;
+    }
+
+    auto numeric_spec = CompiledSpec::compile(
+        read_file(root + "/spec/numeric-edges.source.json"));
+    if (!numeric_spec.has_value()) {
+        return 9;
+    }
+    const auto& numeric_entries = numeric_spec.value().resolved().entries();
+    if (numeric_entries.size() != 9U ||
+        numeric_entries[7].type.kind != fastdb::payload::spec::TypeKind::u8n ||
+        numeric_entries[8].type.kind != fastdb::payload::spec::TypeKind::u16n) {
+        return 10;
+    }
+    const NormalizedFacts u8n = normalized_facts(numeric_entries[7].type);
+    const JsonPointer path = JsonPointer{}.append("wasm");
+    const auto lower = fastdb::payload::layout::quantize_normalized(
+        UINT64_C(0x3fe0000000000000), u8n.minimum, u8n.maximum,
+        u8n.maximum_code, u8n.kind, path);
+    const auto upper = fastdb::payload::layout::quantize_normalized(
+        UINT64_C(0x3ff8000000000000), u8n.minimum, u8n.maximum,
+        u8n.maximum_code, u8n.kind, path);
+    if (!lower.has_value() || lower.value() != UINT32_C(0) ||
+        !upper.has_value() || upper.value() != UINT32_C(2)) {
+        return 11;
+    }
+    auto numeric_builder = PayloadBuilder::create(numeric_spec.value());
+    if (!numeric_builder.has_value() ||
+        !add_numeric_edge_values(numeric_builder.value())) {
+        return 12;
+    }
+    auto numeric_values = numeric_builder.value().freeze();
+    auto numeric_runtime = RuntimeSchema::compile(numeric_spec.value());
+    if (!numeric_values.has_value() || !numeric_runtime.has_value()) {
+        return 13;
+    }
+    auto numeric_layout =
+        RecordLayout::plan(numeric_runtime.value(), numeric_values.value());
+    if (!numeric_layout.has_value()) {
+        return 14;
+    }
+    VectorSink numeric_sink(numeric_layout.value().total_length());
+    if (!fastdb::payload::build::encode_record(
+             numeric_layout.value(), numeric_values.value(), numeric_sink)
+             .has_value()) {
+        return 15;
+    }
+    if (!exact_golden(root, "numeric-edges", numeric_sink.bytes_)) {
+        return 16;
+    }
+    auto numeric_opened = fastdb::payload::view::open_record(
+        numeric_spec.value(), numeric_sink.bytes_.data(),
+        numeric_sink.bytes_.size());
+    if (!numeric_opened.has_value()) {
+        return 17;
+    }
+    const std::array<std::uint64_t, 8> expected_bits{{
+        UINT64_C(0x0000000000000000), UINT64_C(0x406fe00000000000),
+        UINT64_C(0x0000000000000000), UINT64_C(0x4000000000000000),
+        UINT64_C(0xc0e0000000000000), UINT64_C(0x40dfffc000000000),
+        UINT64_C(0xc0e0000000000000), UINT64_C(0xc0dfff8000000000)}};
+    const std::array<std::uint32_t, 8> entry_indexes{{
+        UINT32_C(7), UINT32_C(7), UINT32_C(7), UINT32_C(7), UINT32_C(8),
+        UINT32_C(8), UINT32_C(8), UINT32_C(8)}};
+    const std::array<std::uint64_t, 8> value_indexes{{
+        UINT64_C(0), UINT64_C(2), UINT64_C(3), UINT64_C(4), UINT64_C(0),
+        UINT64_C(1), UINT64_C(2), UINT64_C(3)}};
+    for (std::size_t index = 0U; index < expected_bits.size(); ++index) {
+        auto observed = numeric_opened.value().scalar(
+            numeric_sink.bytes_.data(), numeric_sink.bytes_.size(),
+            entry_indexes[index], value_indexes[index]);
+        if (!observed.has_value() ||
+            observed.value().bits != expected_bits[index]) {
+            return 18;
+        }
     }
     return 0;
 }
