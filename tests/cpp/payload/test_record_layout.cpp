@@ -63,7 +63,8 @@ int test_runtime_ids_reachability_and_component_layout() {
 
     require(schema.type_count() == UINT32_C(13));
     for (std::uint32_t id = UINT32_C(0); id < UINT32_C(13); ++id) {
-        require(schema.type(id).runtime_type_id == id);
+        require(schema.find_type(id) != nullptr);
+        require(schema.find_type(id)->runtime_type_id == id);
     }
 
     const auto& entries = compiled.value().resolved().entries();
@@ -90,6 +91,8 @@ int test_runtime_ids_reachability_and_component_layout() {
     require(schema.component_reachable(UINT32_C(1)));
     require(schema.component_reachable(UINT32_C(2)));
     require(schema.component_reachable(UINT32_C(3)));
+    require(schema.components().size() == 3U);
+    require(schema.component(UINT32_C(0)) == nullptr);
 
     require(schema.list_nodes().size() == 3U);
     require(schema.list_nodes()[0].owner_runtime_type_id == UINT32_C(1));
@@ -99,33 +102,36 @@ int test_runtime_ids_reachability_and_component_layout() {
     require(schema.list_nodes()[2].owner_runtime_type_id == UINT32_C(10));
     require(schema.list_nodes()[2].item_runtime_type_id == UINT32_C(11));
 
-    const auto& empty = schema.component(UINT32_C(1));
-    require(empty.stride == UINT32_C(1));
-    require(empty.alignment == UINT32_C(1));
-    require(empty.validity_bytes == UINT32_C(0));
+    const auto* empty = schema.component(UINT32_C(1));
+    require(empty != nullptr);
+    require(empty->stride == UINT32_C(1));
+    require(empty->alignment == UINT32_C(1));
+    require(empty->validity_bytes == UINT32_C(0));
 
-    const auto& leaf = schema.component(UINT32_C(2));
-    require(leaf.validity_bytes == UINT32_C(1));
-    require(leaf.fields.size() == 2U);
-    require(leaf.fields[0].offset == UINT32_C(2));
-    require(leaf.fields[0].validity_bit == UINT32_C(0));
-    require(leaf.fields[1].offset == UINT32_C(8));
-    require(leaf.fields[1].validity_bit == UINT32_MAX);
-    require(leaf.stride == UINT32_C(16));
-    require(leaf.alignment == UINT32_C(8));
+    const auto* leaf = schema.component(UINT32_C(2));
+    require(leaf != nullptr);
+    require(leaf->validity_bytes == UINT32_C(1));
+    require(leaf->fields.size() == 2U);
+    require(leaf->fields[0].offset == UINT32_C(2));
+    require(leaf->fields[0].validity_bit == UINT32_C(0));
+    require(leaf->fields[1].offset == UINT32_C(8));
+    require(leaf->fields[1].validity_bit == UINT32_MAX);
+    require(leaf->stride == UINT32_C(16));
+    require(leaf->alignment == UINT32_C(8));
 
-    const auto& reach = schema.component(UINT32_C(3));
-    require(reach.validity_bytes == UINT32_C(1));
-    require(reach.fields.size() == 4U);
-    require(reach.fields[0].offset == UINT32_C(1));
-    require(reach.fields[1].offset == UINT32_C(8));
-    require(reach.fields[1].validity_bit == UINT32_C(0));
-    require(reach.fields[2].offset == UINT32_C(24));
-    require(reach.fields[3].offset == UINT32_C(40));
-    require(reach.fields[1].slot_stride == leaf.stride);
-    require(reach.fields[3].slot_stride == leaf.stride);
-    require(reach.stride == UINT32_C(56));
-    require(reach.alignment == UINT32_C(8));
+    const auto* reach = schema.component(UINT32_C(3));
+    require(reach != nullptr);
+    require(reach->validity_bytes == UINT32_C(1));
+    require(reach->fields.size() == 4U);
+    require(reach->fields[0].offset == UINT32_C(1));
+    require(reach->fields[1].offset == UINT32_C(8));
+    require(reach->fields[1].validity_bit == UINT32_C(0));
+    require(reach->fields[2].offset == UINT32_C(24));
+    require(reach->fields[3].offset == UINT32_C(40));
+    require(reach->fields[1].slot_stride == leaf->stride);
+    require(reach->fields[3].slot_stride == leaf->stride);
+    require(reach->stride == UINT32_C(56));
+    require(reach->alignment == UINT32_C(8));
     return EXIT_SUCCESS;
 }
 
@@ -154,8 +160,10 @@ int test_builder_consumes_the_same_runtime_schema_ids() {
     std::set<std::uint32_t> observed;
     for (const auto& node : frozen.value().nodes()) {
         require(node.runtime_type_id < runtime.value().type_count());
-        require(runtime.value().type(node.runtime_type_id).runtime_type_id ==
-                node.runtime_type_id);
+        require(runtime.value().find_type(node.runtime_type_id) != nullptr);
+        require(runtime.value()
+                    .find_type(node.runtime_type_id)
+                    ->runtime_type_id == node.runtime_type_id);
         observed.insert(node.runtime_type_id);
     }
     const std::set<std::uint32_t> expected{
@@ -266,6 +274,59 @@ std::string component_id(std::uint32_t index) {
     return "c" + std::string(5U - digits.size(), '0') + digits;
 }
 
+std::string doubling_component_spec(bool reachable) {
+    constexpr std::uint32_t component_count = UINT32_C(34);
+    std::string source =
+        "{\"schema\":\"fastdb.payload.v1\",\"profile\":\"record.v1\",";
+    if (reachable) {
+        source +=
+            "\"entries\":[{\"id\":\"root\",\"cardinality\":\"one\","
+            "\"type\":{\"kind\":\"component\",\"id\":\"c00000\"}}],";
+    } else {
+        source +=
+            "\"entries\":[{\"id\":\"root\",\"cardinality\":\"one\","
+            "\"type\":{\"kind\":\"u8\"}}],";
+    }
+    source += "\"components\":[";
+    for (std::uint32_t index = UINT32_C(0); index < component_count; ++index) {
+        if (index != UINT32_C(0)) {
+            source += ',';
+        }
+        source += "{\"id\":\"" + component_id(index) +
+                  "\",\"kind\":\"record\",\"fields\":[";
+        if (index + UINT32_C(1) < component_count) {
+            const std::string next = component_id(index + UINT32_C(1));
+            source +=
+                "{\"id\":\"left\",\"type\":{\"kind\":\"component\","
+                "\"id\":\"" +
+                next +
+                "\"}},{\"id\":\"right\",\"type\":{\"kind\":"
+                "\"component\",\"id\":\"" +
+                next + "\"}}";
+        }
+        source += "]}";
+    }
+    source += "]}";
+    return source;
+}
+
+int test_unreachable_component_layout_overflow_is_not_compiled() {
+    auto compiled = compile(doubling_component_spec(false));
+    require(compiled.has_value());
+    auto runtime = RuntimeSchema::compile(compiled.value());
+    require(runtime.has_value());
+    require(runtime.value().type_count() == UINT32_C(67));
+    require(runtime.value().components().empty());
+    require(!runtime.value().component_reachable(UINT32_C(0)));
+
+    auto reachable = compile(doubling_component_spec(true));
+    require(reachable.has_value());
+    auto rejected = RuntimeSchema::compile(reachable.value());
+    require(!rejected.has_value());
+    require(rejected.error().code() == FDB_PAYLOAD_E_RESOURCE_LIMIT);
+    return EXIT_SUCCESS;
+}
+
 int test_reverse_component_chain_layout_is_iterative_and_linear() {
     constexpr std::uint32_t component_count = UINT32_C(2048);
     std::string source =
@@ -292,10 +353,13 @@ int test_reverse_component_chain_layout_is_iterative_and_linear() {
     auto runtime = RuntimeSchema::compile(compiled.value());
     require(runtime.has_value());
     require(runtime.value().components().size() == component_count);
-    require(runtime.value().component(UINT32_C(0)).stride == UINT32_C(1));
-    require(runtime.value()
-                .component(component_count - UINT32_C(1))
-                .stride == UINT32_C(1));
+    const auto* first = runtime.value().component(UINT32_C(0));
+    const auto* last =
+        runtime.value().component(component_count - UINT32_C(1));
+    require(first != nullptr);
+    require(last != nullptr);
+    require(first->stride == UINT32_C(1));
+    require(last->stride == UINT32_C(1));
     return EXIT_SUCCESS;
 }
 
@@ -312,6 +376,10 @@ int main() {
         return EXIT_FAILURE;
     }
     if (test_normalized_wire_layout_is_deferred_to_exact_task3_arithmetic() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_unreachable_component_layout_overflow_is_not_compiled() !=
         EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }

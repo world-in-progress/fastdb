@@ -311,9 +311,71 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 std::move(header_reserved).error());
         }
 
+        const std::uint64_t expected_entries = static_cast<std::uint64_t>(
+            compiled.resolved().entries().size());
+        std::uint64_t expected_regions = expected_entries;
+        for (const spec::Entry& entry : compiled.resolved().entries()) {
+            if (!entry.type.nullable) {
+                continue;
+            }
+            auto counted = layout::checked_accumulate_u64(
+                expected_regions, UINT64_C(1),
+                JsonPointer{}.append("regions"));
+            if (!counted.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(counted).error());
+            }
+        }
+        const std::uint64_t expected_components =
+            static_cast<std::uint64_t>(
+                compiled.resolved().components().size());
+        std::uint64_t known_minimum_work = UINT64_C(1);
+        auto counted_work = layout::checked_accumulate_u64(
+            known_minimum_work, expected_entries,
+            JsonPointer{}.append("validation_work"));
+        if (!counted_work.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(counted_work).error());
+        }
+        counted_work = layout::checked_accumulate_u64(
+            known_minimum_work, expected_regions,
+            JsonPointer{}.append("validation_work"));
+        if (!counted_work.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(counted_work).error());
+        }
+        if (expected_entries > limits.max_entries) {
+            return Result<PayloadIndex>::failure(resource_error(
+                JsonPointer{}.append("entries"), "entries", expected_entries,
+                limits.max_entries));
+        }
+        if (expected_regions > limits.max_regions) {
+            return Result<PayloadIndex>::failure(resource_error(
+                JsonPointer{}.append("regions"), "regions", expected_regions,
+                limits.max_regions));
+        }
+        if (expected_components > limits.max_components) {
+            return Result<PayloadIndex>::failure(resource_error(
+                JsonPointer{}.append("components"), "components",
+                expected_components, limits.max_components));
+        }
+        if (known_minimum_work > limits.max_validation_work) {
+            return Result<PayloadIndex>::failure(resource_error(
+                JsonPointer{}.append("validation_work"), "validation_work",
+                known_minimum_work, limits.max_validation_work));
+        }
+
         auto runtime = RuntimeSchema::compile(compiled);
         if (!runtime.has_value()) {
             return Result<PayloadIndex>::failure(std::move(runtime).error());
+        }
+        const auto& runtime_entries =
+            runtime.value().spec().resolved().entries();
+        if (runtime_entries.size() != expected_entries) {
+            return Result<PayloadIndex>::failure(simple_error(
+                FDB_PAYLOAD_E_INTERNAL, JsonPointer{}.append("entries"),
+                "Runtime entry inventory differs from the compiled spec",
+                "runtime_entry_inventory_mismatch"));
         }
         for (const spec::Entry& entry : compiled.resolved().entries()) {
             if (entry.type.kind == TypeKind::u8n ||
@@ -331,32 +393,6 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     "Portable record open does not implement this runtime type yet",
                     "initial_record_open_type_unavailable"));
             }
-        }
-
-        const std::uint64_t expected_entries =
-            compiled.resolved().entries().size();
-        std::uint64_t expected_regions = expected_entries;
-        for (const spec::Entry& entry : compiled.resolved().entries()) {
-            if (entry.type.nullable) {
-                ++expected_regions;
-            }
-        }
-        if (expected_entries > limits.max_entries) {
-            return Result<PayloadIndex>::failure(resource_error(
-                JsonPointer{}.append("entries"), "entries", expected_entries,
-                limits.max_entries));
-        }
-        if (expected_regions > limits.max_regions) {
-            return Result<PayloadIndex>::failure(resource_error(
-                JsonPointer{}.append("regions"), "regions", expected_regions,
-                limits.max_regions));
-        }
-        if (compiled.resolved().components().size() >
-            limits.max_components) {
-            return Result<PayloadIndex>::failure(resource_error(
-                JsonPointer{}.append("components"), "components",
-                compiled.resolved().components().size(),
-                limits.max_components));
         }
 
         auto region_directory_offset = read_u64(
@@ -438,7 +474,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         std::uint32_t next_region = UINT32_C(0);
         for (std::uint32_t index = UINT32_C(0);
              index < entry_count.value(); ++index) {
-            const spec::Entry& source = compiled.resolved().entries()[index];
+            const spec::Entry& source = runtime_entries[index];
             const JsonPointer path =
                 JsonPointer{}.append("entries").append(source.id);
             charged = work.charge(UINT64_C(1), path);
@@ -482,6 +518,13 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
             const std::uint32_t expected_type =
                 runtime.value().runtime_id(source.type);
+            if (expected_type == UINT32_MAX ||
+                runtime.value().find_type(expected_type) == nullptr) {
+                return Result<PayloadIndex>::failure(simple_error(
+                    FDB_PAYLOAD_E_INTERNAL, path,
+                    "Runtime entry type is unassigned",
+                    "unassigned_runtime_type"));
+            }
             const std::uint32_t expected_cardinality =
                 source.cardinality == Cardinality::one ? UINT32_C(1)
                                                        : UINT32_C(2);
@@ -549,9 +592,18 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         std::uint32_t region_index = UINT32_C(0);
         for (const EntryDescriptor& entry : entries) {
             const spec::Entry& source =
-                compiled.resolved().entries()[entry.entry_index];
-            const layout::SlotLayout slot =
-                runtime.value().type(entry.runtime_type_id).slot;
+                runtime_entries[entry.entry_index];
+            const layout::RuntimeType* const runtime_type =
+                runtime.value().find_type(entry.runtime_type_id);
+            if (entry.runtime_type_id == UINT32_MAX ||
+                runtime_type == nullptr) {
+                return Result<PayloadIndex>::failure(simple_error(
+                    FDB_PAYLOAD_E_INTERNAL,
+                    JsonPointer{}.append("entries").append(source.id),
+                    "Runtime entry type is outside the inventory",
+                    "runtime_type_id_out_of_range"));
+            }
+            const layout::SlotLayout slot = runtime_type->slot;
             const std::uint32_t count = source.type.nullable ? UINT32_C(2)
                                                             : UINT32_C(1);
             for (std::uint32_t local = UINT32_C(0); local < count; ++local) {
@@ -700,7 +752,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
 
         for (const EntryDescriptor& entry : entries) {
             const spec::Entry& source =
-                compiled.resolved().entries()[entry.entry_index];
+                runtime_entries[entry.entry_index];
             const RegionDescriptor& value_region =
                 regions[entry.values_region_index];
             const RegionDescriptor* validity_region =

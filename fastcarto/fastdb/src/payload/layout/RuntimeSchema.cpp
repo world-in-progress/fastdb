@@ -213,13 +213,16 @@ Result<void> RuntimeSchema::analyze_reachability() {
 
 Result<void> RuntimeSchema::compile_component_layouts() {
     const auto& source_components = spec_.resolved().components();
-    components_.resize(source_components.size());
+    component_layout_indexes_.assign(source_components.size(), UINT32_MAX);
     std::vector<std::uint32_t> dependency_count(source_components.size(),
                                                 UINT32_C(0));
     std::vector<std::vector<std::uint32_t>> dependents(
         source_components.size());
     for (std::uint32_t component_index = UINT32_C(0);
          component_index < source_components.size(); ++component_index) {
+        if (!component_reachable(component_index)) {
+            continue;
+        }
         const Component& component = source_components[component_index];
         for (const spec::Field& field : component.fields) {
             if (field.type.kind == TypeKind::ref) {
@@ -234,6 +237,7 @@ Result<void> RuntimeSchema::compile_component_layouts() {
             }
             const std::uint32_t target = field.type.resolved_component_index;
             if (target >= source_components.size() ||
+                !component_reachable(target) ||
                 dependency_count[component_index] == UINT32_MAX) {
                 return Result<void>::failure(runtime_error(
                     JsonPointer{}.append("runtime").append("components"),
@@ -248,8 +252,13 @@ Result<void> RuntimeSchema::compile_component_layouts() {
 
     std::vector<std::uint32_t> ready;
     ready.reserve(source_components.size());
+    std::size_t reachable_count = 0U;
     for (std::uint32_t component_index = UINT32_C(0);
          component_index < dependency_count.size(); ++component_index) {
+        if (!component_reachable(component_index)) {
+            continue;
+        }
+        ++reachable_count;
         if (dependency_count[component_index] == UINT32_C(0)) {
             ready.push_back(component_index);
         }
@@ -292,9 +301,19 @@ Result<void> RuntimeSchema::compile_component_layouts() {
         for (const spec::Field& field : component.fields) {
             SlotLayout slot = primitive_slot(field.type.kind);
             if (field.type.kind == TypeKind::component) {
-                const ComponentLayout& nested =
-                    components_[field.type.resolved_component_index];
-                slot = {nested.stride, nested.alignment};
+                const ComponentLayout* const nested =
+                    this->component(field.type.resolved_component_index);
+                if (nested == nullptr) {
+                    return Result<void>::failure(runtime_error(
+                        JsonPointer{}
+                            .append("components")
+                            .append(component.id)
+                            .append(field.id),
+                        FDB_PAYLOAD_E_INTERNAL,
+                        "Runtime component dependency layout is missing",
+                        "component_dependency_layout_missing"));
+                }
+                slot = {nested->stride, nested->alignment};
             }
             const JsonPointer field_path = JsonPointer{}
                                                      .append("components")
@@ -311,8 +330,16 @@ Result<void> RuntimeSchema::compile_component_layouts() {
             }
             const std::uint32_t bit =
                 field.type.nullable ? validity_bit++ : UINT32_MAX;
+            const std::uint32_t field_type_id = runtime_id(field.type);
+            if (field_type_id == UINT32_MAX ||
+                find_type(field_type_id) == nullptr) {
+                return Result<void>::failure(runtime_error(
+                    field_path, FDB_PAYLOAD_E_INTERNAL,
+                    "Runtime component field type is unassigned",
+                    "unassigned_runtime_type"));
+            }
             result.fields.push_back(ComponentFieldLayout{
-                runtime_id(field.type), offset.value(), slot.stride,
+                field_type_id, offset.value(), slot.stride,
                 slot.alignment, bit});
             auto end =
                 checked_add_u64(aligned.value(), slot.stride, field_path);
@@ -341,7 +368,14 @@ Result<void> RuntimeSchema::compile_component_layouts() {
             result.stride = narrowed.value();
             result.alignment = maximum_alignment;
         }
-        components_[component_index] = std::move(result);
+        auto layout_index = checked_narrow_u32(
+            components_.size(),
+            JsonPointer{}.append("runtime").append("components"));
+        if (!layout_index.has_value()) {
+            return Result<void>::failure(std::move(layout_index).error());
+        }
+        component_layout_indexes_[component_index] = layout_index.value();
+        components_.push_back(std::move(result));
         for (const std::uint32_t dependent : dependents[component_index]) {
             if (dependency_count[dependent] == UINT32_C(0)) {
                 return Result<void>::failure(runtime_error(
@@ -356,7 +390,7 @@ Result<void> RuntimeSchema::compile_component_layouts() {
             }
         }
     }
-    if (ready.size() != source_components.size()) {
+    if (components_.size() != reachable_count) {
         return Result<void>::failure(runtime_error(
             JsonPointer{}.append("runtime").append("components"),
             FDB_PAYLOAD_E_INTERNAL,
@@ -365,10 +399,18 @@ Result<void> RuntimeSchema::compile_component_layouts() {
     }
 
     for (RuntimeType& type : types_) {
-        if (type.source->kind == TypeKind::component) {
-            const ComponentLayout& component =
-                components_[type.source->resolved_component_index];
-            type.slot = {component.stride, component.alignment};
+        if (type.reachable && type.source->kind == TypeKind::component) {
+            const ComponentLayout* const component_layout =
+                component(type.source->resolved_component_index);
+            if (component_layout == nullptr) {
+                return Result<void>::failure(runtime_error(
+                    JsonPointer{}.append("runtime").append("components"),
+                    FDB_PAYLOAD_E_INTERNAL,
+                    "Reachable runtime component layout is missing",
+                    "reachable_component_layout_missing"));
+            }
+            type.slot = {component_layout->stride,
+                         component_layout->alignment};
         }
     }
     return Result<void>::success();
@@ -382,10 +424,17 @@ Result<void> RuntimeSchema::finalize_reachable_inventory() {
         switch (type.source->kind) {
         case TypeKind::list: {
             const std::uint32_t item_id = runtime_id(*type.source->items);
-            const RuntimeType& item = types_[item_id];
+            const RuntimeType* const item = find_type(item_id);
+            if (item_id == UINT32_MAX || item == nullptr) {
+                return Result<void>::failure(runtime_error(
+                    JsonPointer{}.append("runtime").append("lists"),
+                    FDB_PAYLOAD_E_INTERNAL,
+                    "Runtime list item type is unassigned",
+                    "unassigned_runtime_type"));
+            }
             list_nodes_.push_back(ListNodeLayout{
-                type.runtime_type_id, item_id, item.slot.stride,
-                item.slot.alignment, item.source->nullable});
+                type.runtime_type_id, item_id, item->slot.stride,
+                item->slot.alignment, item->source->nullable});
             break;
         }
         case TypeKind::str:

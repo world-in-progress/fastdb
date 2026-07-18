@@ -141,17 +141,21 @@ Result<void> encode_slot(const RecordLayout& layout,
                          const LogicalPayload& values,
                          const ValueNode& node,
                          AscendingWriter& writer) {
-    const layout::RuntimeType& runtime =
-        layout.runtime_schema().type(node.runtime_type_id);
+    const layout::RuntimeType* const runtime =
+        layout.runtime_schema().find_type(node.runtime_type_id);
+    if (node.runtime_type_id == UINT32_MAX || runtime == nullptr) {
+        return Result<void>::failure(encode_error(
+            JsonPointer{}.append("values"), "runtime_type_id_out_of_range"));
+    }
     std::array<std::uint8_t, 8> bytes{};
     if (node.tag == ValueTag::null_value) {
-        return writer.write(bytes.data(), runtime.slot.stride);
+        return writer.write(bytes.data(), runtime->slot.stride);
     }
-    if (!tag_matches(runtime.source->kind, node.tag)) {
+    if (!tag_matches(runtime->source->kind, node.tag)) {
         return Result<void>::failure(encode_error(
             JsonPointer{}.append("values"), "value_tag_mismatch"));
     }
-    switch (runtime.source->kind) {
+    switch (runtime->source->kind) {
     case TypeKind::boolean:
     case TypeKind::u8:
         bytes[0] = static_cast<std::uint8_t>(node.scalar_bits_or_offset);
@@ -197,7 +201,7 @@ Result<void> encode_slot(const RecordLayout& layout,
             JsonPointer{}.append("values"), "unsupported_initial_slot"));
     }
     (void)values;
-    return writer.write(bytes.data(), runtime.slot.stride);
+    return writer.write(bytes.data(), runtime->slot.stride);
 }
 
 }  // namespace

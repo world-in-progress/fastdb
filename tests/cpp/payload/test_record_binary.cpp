@@ -53,6 +53,47 @@ std::vector<std::uint8_t> decode_hex(std::string_view hexadecimal) {
     return bytes;
 }
 
+std::string component_id(std::uint32_t index) {
+    std::string digits = std::to_string(index);
+    return "c" + std::string(5U - digits.size(), '0') + digits;
+}
+
+std::string doubling_component_spec(bool reachable) {
+    constexpr std::uint32_t component_count = UINT32_C(34);
+    std::string source =
+        "{\"schema\":\"fastdb.payload.v1\",\"profile\":\"record.v1\",";
+    if (reachable) {
+        source +=
+            "\"entries\":[{\"id\":\"root\",\"cardinality\":\"one\","
+            "\"type\":{\"kind\":\"component\",\"id\":\"c00000\"}}],";
+    } else {
+        source +=
+            "\"entries\":[{\"id\":\"root\",\"cardinality\":\"one\","
+            "\"type\":{\"kind\":\"u8\"}}],";
+    }
+    source += "\"components\":[";
+    for (std::uint32_t index = UINT32_C(0); index < component_count; ++index) {
+        if (index != UINT32_C(0)) {
+            source += ',';
+        }
+        source += "{\"id\":\"" + component_id(index) +
+                  "\",\"kind\":\"record\",\"fields\":[";
+        if (index + UINT32_C(1) < component_count) {
+            const std::string next = component_id(index + UINT32_C(1));
+            source +=
+                "{\"id\":\"left\",\"type\":{\"kind\":\"component\","
+                "\"id\":\"" +
+                next +
+                "\"}},{\"id\":\"right\",\"type\":{\"kind\":"
+                "\"component\",\"id\":\"" +
+                next + "\"}}";
+        }
+        source += "]}";
+    }
+    source += "]}";
+    return source;
+}
+
 class VectorSink final : public ByteSink {
 public:
     explicit VectorSink(std::uint64_t size)
@@ -279,6 +320,114 @@ int test_binary_goldens_determinism_hash_and_headers() {
     return EXIT_SUCCESS;
 }
 
+int test_digest_equal_independent_specs_share_stable_wire_layout() {
+    const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
+        FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
+    const BinaryGoldenCase* fixed = find_case(corpus, "fixed-scalars");
+    require(fixed != nullptr);
+    auto runtime_spec = CompiledSpec::compile(fixed->success.source);
+    auto values_spec = CompiledSpec::compile(fixed->success.source);
+    require(runtime_spec.has_value());
+    require(values_spec.has_value());
+    require(runtime_spec.value().digest() == values_spec.value().digest());
+    require(&runtime_spec.value().resolved().entries()[0].type !=
+            &values_spec.value().resolved().entries()[0].type);
+    auto runtime = RuntimeSchema::compile(runtime_spec.value());
+    auto values = build_scenario(values_spec.value(), fixed->success.scenario);
+    require(runtime.has_value());
+    require(values.has_value());
+    auto planned = RecordLayout::plan(runtime.value(), values.value());
+    require(planned.has_value());
+    VectorSink sink(planned.value().total_length());
+    require(fastdb::payload::build::encode_record(
+                planned.value(), values.value(), sink)
+                .has_value());
+    require(sink.bytes() == decode_hex(fixed->success.binary_hex));
+    return EXIT_SUCCESS;
+}
+
+std::string exact_resource_details(std::uint64_t actual,
+                                   std::uint64_t limit,
+                                   std::string_view resource) {
+    return "{\"actual\":\"" + std::to_string(actual) +
+           "\",\"limit\":\"" + std::to_string(limit) +
+           "\",\"resource\":\"" + std::string(resource) + "\"}";
+}
+
+int require_resource_limit(
+    const Result<fastdb::payload::view::PayloadIndex>& result,
+    std::string_view path,
+    std::uint64_t actual,
+    std::uint64_t limit,
+    std::string_view resource) {
+    require(!result.has_value());
+    require(result.error().code() == FDB_PAYLOAD_E_RESOURCE_LIMIT);
+    require(result.error().path() == path);
+    require(result.error().details_json() ==
+            exact_resource_details(actual, limit, resource));
+    return EXIT_SUCCESS;
+}
+
+int test_open_preflights_static_spec_limits_and_known_work() {
+    const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
+        FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
+    const BinaryGoldenCase* fixed = find_case(corpus, "fixed-scalars");
+    require(fixed != nullptr);
+    auto compiled = CompiledSpec::compile(fixed->success.source);
+    require(compiled.has_value());
+    const auto bytes = decode_hex(fixed->success.binary_hex);
+
+    auto limits = fastdb::payload::view::default_open_limits();
+    limits.max_entries = UINT64_C(6);
+    require(require_resource_limit(fastdb::payload::view::open_record(
+                                       compiled.value(), bytes.data(),
+                                       bytes.size(), limits),
+                                   "/entries", UINT64_C(7), UINT64_C(6),
+                                   "entries") == EXIT_SUCCESS);
+
+    limits = fastdb::payload::view::default_open_limits();
+    limits.max_regions = UINT64_C(7);
+    require(require_resource_limit(fastdb::payload::view::open_record(
+                                       compiled.value(), bytes.data(),
+                                       bytes.size(), limits),
+                                   "/regions", UINT64_C(8), UINT64_C(7),
+                                   "regions") == EXIT_SUCCESS);
+
+    limits = fastdb::payload::view::default_open_limits();
+    limits.max_validation_work = UINT64_C(15);
+    require(require_resource_limit(fastdb::payload::view::open_record(
+                                       compiled.value(), bytes.data(),
+                                       bytes.size(), limits),
+                                   "/validation_work", UINT64_C(16),
+                                   UINT64_C(15), "validation_work") ==
+            EXIT_SUCCESS);
+
+    std::string wide_source = doubling_component_spec(true);
+    auto wide = CompiledSpec::compile(wide_source);
+    require(wide.has_value());
+    auto wide_bytes = bytes;
+    std::copy(wide.value().digest().begin(), wide.value().digest().end(),
+              wide_bytes.begin() + static_cast<std::ptrdiff_t>(
+                                       fastdb::payload::layout::header_spec_digest_offset));
+    limits = fastdb::payload::view::default_open_limits();
+    limits.max_components = UINT64_C(33);
+    require(require_resource_limit(fastdb::payload::view::open_record(
+                                       wide.value(), wide_bytes.data(),
+                                       wide_bytes.size(), limits),
+                                   "/components", UINT64_C(34), UINT64_C(33),
+                                   "components") == EXIT_SUCCESS);
+
+    auto bad_magic = bytes;
+    bad_magic[0] ^= UINT8_C(1);
+    limits = fastdb::payload::view::default_open_limits();
+    limits.max_entries = UINT64_C(0);
+    require(fastdb::payload::view::open_record(
+                compiled.value(), bad_magic.data(), bad_magic.size(), limits)
+                .error()
+                .code() == FDB_PAYLOAD_E_INVALID_MAGIC);
+    return EXIT_SUCCESS;
+}
+
 int test_region_matrix_zero_boundaries_and_partition_rules() {
     using fastdb::payload::layout::RegionCountUnit;
     using fastdb::payload::layout::RegionAlignmentRule;
@@ -486,6 +635,14 @@ int test_open_observation_and_malformed_canonical_values() {
 
 int main() {
     if (test_binary_goldens_determinism_hash_and_headers() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_digest_equal_independent_specs_share_stable_wire_layout() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_open_preflights_static_spec_limits_and_known_work() !=
+        EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     if (test_region_matrix_zero_boundaries_and_partition_rules() !=

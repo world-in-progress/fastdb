@@ -31,6 +31,9 @@ permanently reserved as a wire sentinel.
 4. Compute record reachability in a separate iterative pass from every entry
    root, following `list.items` and by-value component field edges. It selects
    component layouts, list regions, and pools but never renumbers source nodes.
+   Component layouts are compiled and cached only for this reachable subgraph;
+   unreachable source component nodes retain IDs but have no runtime slot or
+   component-layout inventory entry.
 5. A reached `ref` is an internal record invariant failure. Reject
    `object_graph.v1` with `RUNTIME_UNAVAILABLE` before record runtime creation.
 

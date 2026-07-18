@@ -53,16 +53,25 @@ public:
     std::uint32_t type_count() const noexcept {
         return static_cast<std::uint32_t>(types_.size());
     }
-    const RuntimeType& type(std::uint32_t runtime_type_id) const noexcept {
-        return types_[runtime_type_id];
+    const RuntimeType* find_type(
+        std::uint32_t runtime_type_id) const noexcept {
+        return runtime_type_id < types_.size() ? &types_[runtime_type_id]
+                                               : nullptr;
     }
     std::uint32_t runtime_id(const spec::TypeNode& type) const noexcept;
     bool component_reachable(std::uint32_t component_index) const noexcept {
-        return reachable_components_[component_index] != UINT8_C(0);
+        return component_index < reachable_components_.size() &&
+               reachable_components_[component_index] != UINT8_C(0);
     }
-    const ComponentLayout& component(
+    const ComponentLayout* component(
         std::uint32_t component_index) const noexcept {
-        return components_[component_index];
+        if (component_index >= component_layout_indexes_.size()) {
+            return nullptr;
+        }
+        const std::uint32_t layout_index =
+            component_layout_indexes_[component_index];
+        return layout_index < components_.size() ? &components_[layout_index]
+                                                 : nullptr;
     }
     const std::vector<ComponentLayout>& components() const noexcept {
         return components_;
@@ -88,6 +97,7 @@ private:
     std::vector<RuntimeType> types_;
     std::unordered_map<const spec::TypeNode*, std::uint32_t> type_ids_;
     std::vector<ComponentLayout> components_;
+    std::vector<std::uint32_t> component_layout_indexes_;
     std::vector<std::uint8_t> reachable_components_;
     std::vector<ListNodeLayout> list_nodes_;
     bool has_utf8_pool_{false};

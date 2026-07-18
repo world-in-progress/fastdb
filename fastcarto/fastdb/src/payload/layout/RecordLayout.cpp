@@ -141,7 +141,14 @@ Result<RecordLayout> RecordLayout::plan(
                     "reason", JsonValue{"layout_spec_digest_mismatch"}}})));
         }
         RecordLayout result(runtime_schema);
-        const auto& source_entries = values.spec().resolved().entries();
+        const auto& source_entries =
+            runtime_schema.spec().resolved().entries();
+        if (source_entries.size() !=
+            values.spec().resolved().entries().size()) {
+            return Result<RecordLayout>::failure(layout_error(
+                JsonPointer{}.append("entries"),
+                "digest_equal_entry_inventory_mismatch"));
+        }
         auto entry_count = checked_narrow_u32(
             source_entries.size(), JsonPointer{}.append("entries"));
         if (!entry_count.has_value()) {
@@ -183,7 +190,14 @@ Result<RecordLayout> RecordLayout::plan(
             }
             result.root_value_count_ = new_root_count.value();
             const std::uint32_t type_id = runtime_schema.runtime_id(entry.type);
-            const SlotLayout slot = runtime_schema.type(type_id).slot;
+            const RuntimeType* const runtime_type =
+                runtime_schema.find_type(type_id);
+            if (type_id == UINT32_MAX || runtime_type == nullptr) {
+                return Result<RecordLayout>::failure(layout_error(
+                    JsonPointer{}.append("entries").append(entry.id),
+                    "entry_runtime_type_unassigned"));
+            }
+            const SlotLayout slot = runtime_type->slot;
             std::uint32_t validity_region = UINT32_MAX;
             if (entry.type.nullable) {
                 auto validity_index = checked_narrow_u32(
