@@ -14,6 +14,9 @@ error::Result<void> validate_utf8(std::string_view bytes,
 error::Result<void> validate_utf16(const std::uint16_t* units,
                                    std::uint64_t count,
                                    const json::JsonPointer& path);
+error::Result<void> validate_utf16le(const std::uint8_t* bytes,
+                                     std::uint64_t byte_count,
+                                     const json::JsonPointer& path);
 void append_utf16le(std::vector<std::uint8_t>& output,
                     const std::uint16_t* units,
                     std::uint64_t count);

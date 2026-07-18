@@ -1,6 +1,7 @@
 #pragma once
 
 #include "payload/error/Result.hpp"
+#include "payload/layout/BinaryFormat.hpp"
 #include "payload/layout/RuntimeSchema.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 
@@ -20,6 +21,7 @@ struct OpenLimits final {
     std::uint64_t max_graph_objects;
     std::uint64_t max_string_bytes;
     std::uint64_t max_validation_work;
+    bool validate_text_eager;
 };
 
 OpenLimits default_open_limits() noexcept;
@@ -49,6 +51,21 @@ struct FieldSlotMetadata final {
     std::uint32_t alignment;
 };
 
+struct PoolMetadata final {
+    layout::RegionKind kind;
+    std::uint64_t data_offset;
+    std::uint64_t byte_length;
+    std::uint64_t element_count;
+};
+
+struct VariableSlotMetadata final {
+    spec::TypeKind kind;
+    std::uint64_t descriptor_offset;
+    std::uint64_t pool_relative_offset;
+    std::uint64_t byte_length;
+    bool present;
+};
+
 class PayloadIndex final {
 public:
     std::uint64_t total_length() const noexcept { return total_length_; }
@@ -57,6 +74,20 @@ public:
     }
     std::uint64_t validation_work() const noexcept {
         return validation_work_;
+    }
+    const std::vector<VariableSlotMetadata>& variable_slots() const noexcept {
+        return variable_slots_;
+    }
+    std::optional<PoolMetadata> pool_metadata(
+        layout::RegionKind kind) const noexcept;
+    bool text_validated_eagerly() const noexcept {
+        return text_validated_eagerly_;
+    }
+    std::uint64_t retained_max_string_bytes() const noexcept {
+        return retained_max_string_bytes_;
+    }
+    std::uint64_t retained_max_validation_work() const noexcept {
+        return retained_max_validation_work_;
     }
     error::Result<EntrySlotMetadata> entry_slot(
         std::uint32_t entry_index) const;
@@ -89,9 +120,14 @@ private:
         OpenLimits);
 
     std::vector<EntrySlotMetadata> entries_;
+    std::vector<PoolMetadata> pools_;
+    std::vector<VariableSlotMetadata> variable_slots_;
     std::optional<layout::RuntimeSchema> runtime_schema_;
     std::uint64_t total_length_{UINT64_C(0)};
     std::uint64_t validation_work_{UINT64_C(0)};
+    std::uint64_t retained_max_string_bytes_{UINT64_C(0)};
+    std::uint64_t retained_max_validation_work_{UINT64_C(0)};
+    bool text_validated_eagerly_{false};
 };
 
 error::Result<PayloadIndex> open_record(

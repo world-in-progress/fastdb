@@ -107,6 +107,44 @@ error::Result<void> validate_utf16(const std::uint16_t* units,
     return error::Result<void>::success();
 }
 
+error::Result<void> validate_utf16le(const std::uint8_t* bytes,
+                                     std::uint64_t byte_count,
+                                     const json::JsonPointer& path) {
+    if (byte_count % UINT64_C(2) != UINT64_C(0)) {
+        return error::Result<void>::failure(
+            invalid_text(path, "utf-16le", "odd_byte_length"));
+    }
+    auto load = [bytes](std::uint64_t offset) noexcept {
+        return static_cast<std::uint16_t>(
+            static_cast<std::uint16_t>(bytes[offset]) |
+            static_cast<std::uint16_t>(
+                static_cast<std::uint16_t>(bytes[offset + UINT64_C(1)]) << 8U));
+    };
+    std::uint64_t offset = UINT64_C(0);
+    while (offset < byte_count) {
+        const std::uint16_t unit = load(offset);
+        if (unit >= UINT16_C(0xd800) && unit <= UINT16_C(0xdbff)) {
+            if (byte_count - offset < UINT64_C(4)) {
+                return error::Result<void>::failure(
+                    invalid_text(path, "utf-16le", "unpaired_surrogate"));
+            }
+            const std::uint16_t trail = load(offset + UINT64_C(2));
+            if (trail < UINT16_C(0xdc00) || trail > UINT16_C(0xdfff)) {
+                return error::Result<void>::failure(
+                    invalid_text(path, "utf-16le", "unpaired_surrogate"));
+            }
+            offset += UINT64_C(4);
+            continue;
+        }
+        if (unit >= UINT16_C(0xdc00) && unit <= UINT16_C(0xdfff)) {
+            return error::Result<void>::failure(
+                invalid_text(path, "utf-16le", "unpaired_surrogate"));
+        }
+        offset += UINT64_C(2);
+    }
+    return error::Result<void>::success();
+}
+
 void append_utf16le(std::vector<std::uint8_t>& output,
                     const std::uint16_t* units,
                     std::uint64_t count) {

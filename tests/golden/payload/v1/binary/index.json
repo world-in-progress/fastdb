@@ -36,6 +36,15 @@
         "binary_hex": "valid/nested-components.bin.hex",
         "sha256": "valid/nested-components.sha256"
       }
+    },
+    {
+      "name": "text-bytes",
+      "success": {
+        "source": "spec/text-bytes.source.json",
+        "scenario": "text_bytes",
+        "binary_hex": "valid/text-bytes.bin.hex",
+        "sha256": "valid/text-bytes.sha256"
+      }
     }
   ]
 }

@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <new>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fastdb::payload::build {
@@ -147,6 +148,12 @@ bool tag_matches(TypeKind kind, ValueTag tag) noexcept {
         return tag == ValueTag::u8n;
     case TypeKind::u16n:
         return tag == ValueTag::u16n;
+    case TypeKind::str:
+        return tag == ValueTag::str;
+    case TypeKind::wstr:
+        return tag == ValueTag::wstr;
+    case TypeKind::bytes:
+        return tag == ValueTag::bytes;
     case TypeKind::component:
         return tag == ValueTag::component;
     default:
@@ -154,16 +161,33 @@ bool tag_matches(TypeKind kind, ValueTag tag) noexcept {
     }
 }
 
+struct PoolCursors final {
+    std::uint64_t utf8{UINT64_C(0)};
+    std::uint64_t utf16{UINT64_C(0)};
+    std::uint64_t opaque{UINT64_C(0)};
+
+    std::uint64_t& for_kind(TypeKind kind) noexcept {
+        if (kind == TypeKind::str) {
+            return utf8;
+        }
+        if (kind == TypeKind::wstr) {
+            return utf16;
+        }
+        return opaque;
+    }
+};
+
 Result<void> encode_scalar_slot(const RecordLayout& layout,
-                                const ValueNode& node,
-                                AscendingWriter& writer) {
+                                const LogicalPayload& values,
+                                const ValueNode& node, AscendingWriter& writer,
+                                PoolCursors& pool_cursors) {
     const layout::RuntimeType* const runtime =
         layout.runtime_schema().find_type(node.runtime_type_id);
     if (node.runtime_type_id == UINT32_MAX || runtime == nullptr) {
         return Result<void>::failure(encode_error(
             JsonPointer{}.append("values"), "runtime_type_id_out_of_range"));
     }
-    std::array<std::uint8_t, 8> bytes{};
+    std::array<std::uint8_t, 16> bytes{};
     if (node.tag == ValueTag::null_value) {
         return writer.write(bytes.data(), runtime->slot.stride);
     }
@@ -237,6 +261,35 @@ Result<void> encode_scalar_slot(const RecordLayout& layout,
             return Result<void>::failure(encode_error(
                 JsonPointer{}.append("values"), "slot_store_failed"));
         }
+        break;
+    }
+    case TypeKind::str:
+    case TypeKind::wstr:
+    case TypeKind::bytes: {
+        if (runtime->source->kind == TypeKind::wstr &&
+            node.byte_length % UINT64_C(2) != UINT64_C(0)) {
+            return Result<void>::failure(
+                encode_error(JsonPointer{}.append("values"),
+                             "wide_text_storage_length_is_odd"));
+        }
+        auto storage_end = layout::checked_range_end(
+            node.scalar_bits_or_offset, node.byte_length,
+            values.byte_storage().size(), JsonPointer{}.append("values"));
+        if (!storage_end.has_value()) {
+            return Result<void>::failure(std::move(storage_end).error());
+        }
+        std::uint64_t& cursor = pool_cursors.for_kind(runtime->source->kind);
+        if (!put_u64(bytes, UINT64_C(0), cursor).has_value() ||
+            !put_u64(bytes, UINT64_C(8), node.byte_length).has_value()) {
+            return Result<void>::failure(encode_error(
+                JsonPointer{}.append("values"), "descriptor_store_failed"));
+        }
+        auto advanced = layout::checked_add_u64(cursor, node.byte_length,
+                                                JsonPointer{}.append("pools"));
+        if (!advanced.has_value()) {
+            return Result<void>::failure(std::move(advanced).error());
+        }
+        cursor = advanced.value();
         break;
     }
     default:
@@ -337,8 +390,8 @@ Result<ComponentFrame> begin_component_frame(
 
 Result<void> encode_value_slot(const RecordLayout& layout,
                                const LogicalPayload& values,
-                               NodeIndex node_index,
-                               AscendingWriter& writer) {
+                               NodeIndex node_index, AscendingWriter& writer,
+                               PoolCursors& pool_cursors) {
     try {
         if (node_index >= values.nodes().size()) {
             return Result<void>::failure(encode_error(
@@ -363,7 +416,8 @@ Result<void> encode_value_slot(const RecordLayout& layout,
             return writer.zero_until(slot_end.value());
         }
         if (runtime->source->kind != TypeKind::component) {
-            return encode_scalar_slot(layout, *node, writer);
+            return encode_scalar_slot(layout, values, *node, writer,
+                                      pool_cursors);
         }
 
         auto root = begin_component_frame(layout, values, *node, writer);
@@ -440,7 +494,8 @@ Result<void> encode_value_slot(const RecordLayout& layout,
                     "component_child_type_mismatch"));
             }
             if (child_runtime->source->kind != TypeKind::component) {
-                auto encoded = encode_scalar_slot(layout, child, writer);
+                auto encoded = encode_scalar_slot(layout, values, child, writer,
+                                                  pool_cursors);
                 if (!encoded.has_value()) {
                     return encoded;
                 }
@@ -469,6 +524,7 @@ Result<void> encode_record(const RecordLayout& layout,
             JsonPointer{}, "encode_spec_digest_mismatch"));
     }
     AscendingWriter writer(sink);
+    PoolCursors pool_cursors;
     auto region_bytes = layout::checked_multiply_u64(
         layout.region_count(), layout::region_descriptor_size,
         JsonPointer{}.append("header").append("region_directory"));
@@ -604,8 +660,16 @@ Result<void> encode_record(const RecordLayout& layout,
         if (!padded.has_value()) {
             return padded;
         }
-        const auto& nodes = layout.entry_values()[region.owner_index];
+        if (region.kind == RegionKind::entry_validity ||
+            region.kind == RegionKind::entry_values) {
+            if (region.owner_index >= layout.entry_values().size()) {
+                return Result<void>::failure(
+                    encode_error(JsonPointer{}.append("regions"),
+                                 "entry_region_owner_out_of_range"));
+            }
+        }
         if (region.kind == RegionKind::entry_validity) {
+            const auto& nodes = layout.entry_values()[region.owner_index];
             std::uint8_t byte = UINT8_C(0);
             for (std::uint64_t index = UINT64_C(0);
                  index < region.element_count; ++index) {
@@ -625,12 +689,69 @@ Result<void> encode_record(const RecordLayout& layout,
                 }
             }
         } else if (region.kind == RegionKind::entry_values) {
+            const auto& nodes = layout.entry_values()[region.owner_index];
             for (const NodeIndex node_index : nodes) {
-                written =
-                    encode_value_slot(layout, values, node_index, writer);
+                written = encode_value_slot(layout, values, node_index, writer,
+                                            pool_cursors);
                 if (!written.has_value()) {
                     return written;
                 }
+            }
+        } else if (region.kind == RegionKind::utf8_pool ||
+                   region.kind == RegionKind::utf16_pool ||
+                   region.kind == RegionKind::bytes_pool) {
+            const TypeKind wanted =
+                region.kind == RegionKind::utf8_pool    ? TypeKind::str
+                : region.kind == RegionKind::utf16_pool ? TypeKind::wstr
+                                                        : TypeKind::bytes;
+            if (pool_cursors.for_kind(wanted) != region.byte_length) {
+                return Result<void>::failure(
+                    encode_error(JsonPointer{}.append("pools"),
+                                 "pool_descriptor_cursor_mismatch"));
+            }
+            const std::string_view storage = values.byte_storage();
+            for (const NodeIndex node_index : layout.variable_values()) {
+                if (node_index >= values.nodes().size()) {
+                    return Result<void>::failure(
+                        encode_error(JsonPointer{}.append("pools"),
+                                     "pool_node_out_of_range"));
+                }
+                const ValueNode& node =
+                    values.nodes()[static_cast<std::size_t>(node_index)];
+                const layout::RuntimeType* const runtime =
+                    layout.runtime_schema().find_type(node.runtime_type_id);
+                if (runtime == nullptr || runtime->source->kind != wanted ||
+                    node.tag == ValueTag::null_value) {
+                    continue;
+                }
+                auto storage_end = layout::checked_range_end(
+                    node.scalar_bits_or_offset, node.byte_length,
+                    storage.size(), JsonPointer{}.append("pools"));
+                if (!storage_end.has_value()) {
+                    return Result<void>::failure(
+                        std::move(storage_end).error());
+                }
+                if (node.byte_length != UINT64_C(0)) {
+                    written = writer.write(
+                        reinterpret_cast<const std::uint8_t*>(storage.data()) +
+                            static_cast<std::ptrdiff_t>(
+                                node.scalar_bits_or_offset),
+                        node.byte_length);
+                    if (!written.has_value()) {
+                        return written;
+                    }
+                }
+            }
+            auto pool_end =
+                layout::checked_add_u64(region.data_offset, region.byte_length,
+                                        JsonPointer{}.append("pools"));
+            if (!pool_end.has_value()) {
+                return Result<void>::failure(std::move(pool_end).error());
+            }
+            if (writer.offset() != pool_end.value()) {
+                return Result<void>::failure(
+                    encode_error(JsonPointer{}.append("pools"),
+                                 "pool_write_length_mismatch"));
             }
         } else {
             return Result<void>::failure(encode_error(

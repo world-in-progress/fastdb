@@ -13,8 +13,8 @@
 
 The accepted 0.2.0 design defines a complete portable-payload foundation. The
 current repository implements the P1 compiler/query boundary, the P2 logical
-builder, and the fixed-width/AoS P2 binary-layout tranche, while it still ships
-the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 has completed local
+builder, and the fixed-width/AoS/variable-pool P2 binary-layout tranche, while
+it still ships the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 has completed local
 independent implementation review; its first hosted CI execution remains
 pending. The remaining P2 runtime/lifetime work and P3-P5 graph,
 language-parity, codegen, clean-cut, and release work are not implemented. This
@@ -51,7 +51,9 @@ Current repository state:
 - Task 2 also adds an internal checked `RecordLayout`, ascending bounded `ByteSink` encoder, and strict byte-loading `open_record` for empty and component-free non-normalized fixed scalar records. The two-case ordered corpus pins exact hand-reviewed bytes and independent SHA-256 files, including zero-length boundaries, nullable storage, signed zero, infinities, canonical NaNs, digest embedding, and deterministic repeated builds. `NON_CANONICAL_BINARY` (`3009`) and `INVALID_BINARY_VALUE` (`3010`) are stable without adding any public function; the public ABI remains the frozen 33 symbols;
 - P2 Task 3 extends that private Core runtime through every fixed-width scalar, including exact u8n/u16n quantize/dequantize, and through arbitrary finite acyclic inline component reuse under `one` and `many`. The normalized helper decomposes binary64 inputs into bounded integer limbs, applies exact nearest-even code selection, and rounds decoded rationals directly to binary64 bits without `long double`, `fenv`, fast-math, or a binding. Component encoding/open are iterative; immediate validity bytes lead each slot, every field is aligned, empty components use stride one, and every gap, tail, and null component slot is canonical zero;
 - Task 3 also replaces the decoded-observation index with immutable entry/field slot metadata. Observation requires the private caller to supply the same still-live immutable byte image accepted by `open_record`; the index validates span shape but owns no payload backing, cannot prove later pointer/content identity, and stores no second decoded value tree. The four-case ordered corpus adds independent numeric-edge and nested/reused-component bytes and hashes; malformed-byte, checked-arithmetic, exact validation-work, allocation-failure, native sanitizer, and Core-only wasm32/Node coverage exercise the new paths. This creates no binding projection or public runtime API, and the frozen public ABI remains exactly 33 symbols;
-- the builder, layout, encoder, and open reader remain private Core seams. Variable pools, lists, public `BuildPlan`, backing callbacks, direct/staged execution, `PayloadOwner`, checked backing-owned views, materialization/invalidation, and the complete P2 C ABI remain open;
+- P2 Task 4 adds deterministic UTF-8, UTF-16LE, and opaque-byte pools to that same private runtime. Canonical traversal covers root and nested component values without deduplication, every variable slot carries a checked offset/length descriptor, and strict open rejects pool inventory, range, partition, padding, UTF-8, and UTF-16LE violations in deterministic order. The fifth ordered binary golden pins embedded NULs, supplementary UTF-16, repeated equal values, empty present values, nulls, and arbitrary opaque octets; an independent byte receipt and Core-only wasm32/Node coverage pin little-endian text bytes and exact pool offsets;
+- Task 4 also stages only a private eager/lazy text-validation switch. Eager open validates all text content and charges UTF-8 bytes plus UTF-16 code units; lazy open validates the complete bounded metadata/partition shape but retains no unchecked text pointer or text accessor. This is not the public Task 7 `OpenOptions` surface and adds no Task 8 access pin or lifetime guarantee;
+- the builder, layout, encoder, and open reader remain private Core seams. Lists, public `BuildPlan`, backing callbacks, direct/staged execution, `PayloadOwner`, checked backing-owned views, materialization/invalidation, and the complete P2 C ABI remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query slice is implemented, independently reviewed, and frozen
@@ -101,34 +103,37 @@ Collapsing these layers into one speculative change would make review and failur
 
 **Current limit:** P1 compiles/queries a specification, P2 Task 1 has the
 internal logical arena and record authoring state machine, P2 Task 2 has the
-exact binary contract, and P2 Task 3 has the private deterministic encoder/open
-for all fixed-width scalars and arbitrary finite acyclic inline AoS components.
+exact binary contract, and P2 Tasks 3-4 have the private deterministic
+encoder/open for all fixed-width scalars, arbitrary finite acyclic inline AoS
+components, and canonical UTF-8, UTF-16LE, and opaque-byte pools.
 Its immutable `PayloadIndex` contains entry/field slot metadata and observes
 only against the same still-live immutable byte image supplied to open; it
 checks the later span but cannot prove backing identity or lifetime, and it
 does not own a backing or a decoded value tree. This is not a public ABI or a
 repeatable `BuildPlan`.
-Variable pools, lists, final backing callbacks, direct/staged execution,
-`PayloadOwner`, checked backing-owned views, materialization, and invalidation
-do not exist.
+Its private lazy mode exposes only validated variable-slot and pool metadata;
+it deliberately exposes no unchecked text. Lists, final backing callbacks,
+direct/staged execution, `PayloadOwner`, checked backing-owned views,
+materialization, and invalidation do not exist.
 
-**Reason:** Variable-width regions and public lifetime APIs must build on the
-now-proven fixed/AoS layout, exact normalized arithmetic, strict open, and
+**Reason:** Lists and public lifetime APIs must build on the now-proven
+fixed/AoS/variable-pool layout, exact normalized arithmetic, strict open, and
 metadata-only index without turning private Core seams into a second public
-model. Backing identity, access pins, and lifetime enforcement belong to the
-later `PayloadOwner` slice rather than this Task 3 value-layout tranche.
+model. Backing identity, public open options, access pins, and lifetime
+enforcement belong to their later owner slices rather than this Task 4 pool
+tranche.
 
-**Impact:** Maintainers can review exact fixed/AoS bytes and Core-private round
-trips, but private observation is sound only while its caller preserves the
-same immutable byte image. Mutation, substitution, or release between open and
+**Impact:** Maintainers can review exact fixed/AoS/variable-pool bytes and
+Core-private round trips, but private observation is sound only while its
+caller preserves the same immutable byte image. Mutation, substitution, or release between open and
 observation is not enforceable yet, and a supported C/C++ caller still cannot
 author or consume the portable runtime. Existing 0.1.x database/call-db bytes
 are not a substitute.
 
 **Next owner slice:** FastDB P2.
 
-**Closure criteria:** Extend the frozen layout through variable pools and lists,
-then implement plan, backing, build/open, owner, checked view, materialize, and
+**Closure criteria:** Extend the frozen layout through lists, then implement
+plan, backing, build/open, owner, checked view, materialize, and
 invalidate. Pass deterministic, malformed-input, backing-failure, lifetime,
 sanitizer, wasm, and cross-platform gates.
 
@@ -300,7 +305,7 @@ result.
 | Slice | Status | Required closure evidence |
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
-| P2. Record binary/runtime/lifetime | In progress: logical builder, exact wire document, and private fixed-scalar/normalized/AoS-component encoder/open are implemented; variable/list, public plan/backing/lifetime remain open | Complete variable/list types, repeatable plan/backing and public deterministic build/open, then replace the same-live-immutable-image private observation limit with checked backing-owned views/materialize/invalidate |
+| P2. Record binary/runtime/lifetime | In progress: logical builder, exact wire document, and private fixed-scalar/normalized/AoS-component/variable-pool encoder/open are implemented; list, public plan/backing/lifetime remain open | Complete list types, repeatable plan/backing and public deterministic build/open, then replace the same-live-immutable-image private observation limit with checked backing-owned views/materialize/invalidate |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P1-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |

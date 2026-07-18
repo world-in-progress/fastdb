@@ -39,6 +39,9 @@ public:
         const noexcept {
         return entry_values_;
     }
+    const std::vector<build::NodeIndex>& variable_values() const noexcept {
+        return variable_values_;
+    }
     const RuntimeSchema& runtime_schema() const noexcept {
         return runtime_schema_;
     }
@@ -51,6 +54,7 @@ private:
     std::vector<RegionDescriptor> regions_;
     std::vector<EntryDescriptor> entries_;
     std::vector<std::vector<build::NodeIndex>> entry_values_;
+    std::vector<build::NodeIndex> variable_values_;
     std::uint64_t total_length_{UINT64_C(0)};
     std::uint64_t root_value_count_{UINT64_C(0)};
     std::uint64_t validation_work_{UINT64_C(0)};

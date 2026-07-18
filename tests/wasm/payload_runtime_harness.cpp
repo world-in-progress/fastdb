@@ -158,6 +158,76 @@ bool add_numeric_edge_values(PayloadBuilder& builder) {
     return true;
 }
 
+bool add_text_byte_values(PayloadBuilder& builder) {
+#define FASTDB_WASM_STEP(expression)                                           \
+    do {                                                                       \
+        if (!(expression).has_value()) {                                       \
+            return false;                                                      \
+        }                                                                      \
+    } while (false)
+    const std::array<std::uint16_t, 1> wide_a{{UINT16_C(0x0041)}};
+    const std::array<std::uint16_t, 2> wide_bmp_nul{
+        {UINT16_C(0x4e2d), UINT16_C(0x0000)}};
+    const std::array<std::uint16_t, 2> wide_supplementary{
+        {UINT16_C(0xd83d), UINT16_C(0xde03)}};
+    const std::array<std::uint16_t, 5> wide_nested{
+        {UINT16_C(0x0041), UINT16_C(0x4e2d), UINT16_C(0xd83d), UINT16_C(0xde03),
+         UINT16_C(0x0000)}};
+    const std::array<std::uint8_t, 3> opaque{
+        {UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x80)}};
+    const std::array<std::uint8_t, 4> nested_opaque{
+        {UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x80), UINT8_C(0x41)}};
+    const std::array<std::uint8_t, 2> suffix{{UINT8_C(0x01), UINT8_C(0x02)}};
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(0), UINT64_C(7)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_str(""));
+    FASTDB_WASM_STEP(builder.push_str("ASCII"));
+    FASTDB_WASM_STEP(builder.push_str(std::string_view{"\xe4\xb8\xad\0", 4U}));
+    FASTDB_WASM_STEP(builder.push_str("repeat"));
+    FASTDB_WASM_STEP(builder.push_str("repeat"));
+    FASTDB_WASM_STEP(builder.push_str("tail"));
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(1), UINT64_C(6)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_wstr(nullptr, UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_wstr(wide_a.data(), wide_a.size()));
+    FASTDB_WASM_STEP(
+        builder.push_wstr(wide_bmp_nul.data(), wide_bmp_nul.size()));
+    FASTDB_WASM_STEP(builder.push_wstr(wide_supplementary.data(),
+                                       wide_supplementary.size()));
+    FASTDB_WASM_STEP(builder.push_wstr(wide_a.data(), wide_a.size()));
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(2), UINT64_C(6)));
+    FASTDB_WASM_STEP(builder.push_null());
+    FASTDB_WASM_STEP(builder.push_bytes(nullptr, UINT64_C(0)));
+    FASTDB_WASM_STEP(builder.push_bytes(opaque.data(), opaque.size()));
+    FASTDB_WASM_STEP(builder.push_bytes(opaque.data(), opaque.size()));
+    FASTDB_WASM_STEP(builder.push_bytes(
+        reinterpret_cast<const std::uint8_t*>("A\0"), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.push_bytes(nullptr, UINT64_C(0)));
+
+    FASTDB_WASM_STEP(builder.begin_entry(UINT32_C(3), UINT64_C(2)));
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_str("P"));
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_str("I"));
+    FASTDB_WASM_STEP(builder.push_wstr(wide_nested.data(), wide_nested.size()));
+    FASTDB_WASM_STEP(
+        builder.push_bytes(nested_opaque.data(), nested_opaque.size()));
+    FASTDB_WASM_STEP(builder.push_bytes(suffix.data(), suffix.size()));
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_str(""));
+    FASTDB_WASM_STEP(builder.begin_component());
+    FASTDB_WASM_STEP(builder.push_str("repeat"));
+    FASTDB_WASM_STEP(builder.push_wstr(wide_a.data(), wide_a.size()));
+    FASTDB_WASM_STEP(
+        builder.push_bytes(nested_opaque.data(), nested_opaque.size()));
+    FASTDB_WASM_STEP(builder.push_bytes(nullptr, UINT64_C(0)));
+#undef FASTDB_WASM_STEP
+    return true;
+}
+
 bool exact_golden(const std::string& root,
                   const std::string& name,
                   const std::vector<std::uint8_t>& bytes) {
@@ -304,6 +374,123 @@ int run() {
             observed.value().bits != expected_bits[index]) {
             return 18;
         }
+    }
+
+    auto text_spec =
+        CompiledSpec::compile(read_file(root + "/spec/text-bytes.source.json"));
+    if (!text_spec.has_value()) {
+        return 19;
+    }
+    auto text_builder = PayloadBuilder::create(text_spec.value());
+    if (!text_builder.has_value() ||
+        !add_text_byte_values(text_builder.value())) {
+        return 20;
+    }
+    auto text_values = text_builder.value().freeze();
+    auto text_runtime = RuntimeSchema::compile(text_spec.value());
+    if (!text_values.has_value() || !text_runtime.has_value()) {
+        return 21;
+    }
+    auto text_layout =
+        RecordLayout::plan(text_runtime.value(), text_values.value());
+    if (!text_layout.has_value() ||
+        text_layout.value().regions().size() != 10U) {
+        return 22;
+    }
+    VectorSink text_sink(text_layout.value().total_length());
+    if (!fastdb::payload::build::encode_record(text_layout.value(),
+                                               text_values.value(), text_sink)
+             .has_value() ||
+        !exact_golden(root, "text-bytes", text_sink.bytes_)) {
+        return 23;
+    }
+    auto text_opened = fastdb::payload::view::open_record(
+        text_spec.value(), text_sink.bytes_.data(), text_sink.bytes_.size());
+    const std::array<std::uint8_t, 33> expected_utf8{
+        {'A',           'S',           'C',
+         'I',           'I',           UINT8_C(0xe4),
+         UINT8_C(0xb8), UINT8_C(0xad), UINT8_C(0x00),
+         'r',           'e',           'p',
+         'e',           'a',           't',
+         'r',           'e',           'p',
+         'e',           'a',           't',
+         't',           'a',           'i',
+         'l',           'P',           'I',
+         'r',           'e',           'p',
+         'e',           'a',           't'}};
+    const std::array<std::uint8_t, 24> expected_utf16le{
+        {UINT8_C(0x41), UINT8_C(0x00), UINT8_C(0x2d), UINT8_C(0x4e),
+         UINT8_C(0x00), UINT8_C(0x00), UINT8_C(0x3d), UINT8_C(0xd8),
+         UINT8_C(0x03), UINT8_C(0xde), UINT8_C(0x41), UINT8_C(0x00),
+         UINT8_C(0x41), UINT8_C(0x00), UINT8_C(0x2d), UINT8_C(0x4e),
+         UINT8_C(0x3d), UINT8_C(0xd8), UINT8_C(0x03), UINT8_C(0xde),
+         UINT8_C(0x00), UINT8_C(0x00), UINT8_C(0x41), UINT8_C(0x00)}};
+    const std::array<std::uint8_t, 18> expected_bytes{
+        {UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x80), UINT8_C(0x00),
+         UINT8_C(0xff), UINT8_C(0x80), UINT8_C(0x41), UINT8_C(0x00),
+         UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x80), UINT8_C(0x41),
+         UINT8_C(0x01), UINT8_C(0x02), UINT8_C(0x00), UINT8_C(0xff),
+         UINT8_C(0x80), UINT8_C(0x41)}};
+    const auto utf8_pool =
+        text_opened.has_value()
+            ? text_opened.value().pool_metadata(
+                  fastdb::payload::layout::RegionKind::utf8_pool)
+            : std::nullopt;
+    const auto utf16_pool =
+        text_opened.has_value()
+            ? text_opened.value().pool_metadata(
+                  fastdb::payload::layout::RegionKind::utf16_pool)
+            : std::nullopt;
+    const auto bytes_pool =
+        text_opened.has_value()
+            ? text_opened.value().pool_metadata(
+                  fastdb::payload::layout::RegionKind::bytes_pool)
+            : std::nullopt;
+    if (!text_opened.has_value() ||
+        !text_opened.value().text_validated_eagerly() ||
+        text_opened.value().variable_slots().size() != 29U ||
+        !utf8_pool.has_value() || utf8_pool->data_offset != UINT64_C(1336) ||
+        utf8_pool->byte_length != expected_utf8.size() ||
+        utf8_pool->element_count != expected_utf8.size() ||
+        !utf16_pool.has_value() || utf16_pool->data_offset != UINT64_C(1370) ||
+        utf16_pool->byte_length != expected_utf16le.size() ||
+        utf16_pool->element_count != UINT64_C(12) || !bytes_pool.has_value() ||
+        bytes_pool->data_offset != UINT64_C(1394) ||
+        bytes_pool->byte_length != expected_bytes.size() ||
+        bytes_pool->element_count != expected_bytes.size() ||
+        !std::equal(expected_utf8.begin(), expected_utf8.end(),
+                    text_sink.bytes_.begin() +
+                        static_cast<std::ptrdiff_t>(utf8_pool->data_offset)) ||
+        !std::equal(expected_utf16le.begin(), expected_utf16le.end(),
+                    text_sink.bytes_.begin() +
+                        static_cast<std::ptrdiff_t>(utf16_pool->data_offset)) ||
+        !std::equal(expected_bytes.begin(), expected_bytes.end(),
+                    text_sink.bytes_.begin() +
+                        static_cast<std::ptrdiff_t>(bytes_pool->data_offset))) {
+        return 24;
+    }
+    auto invalid_utf8 = text_sink.bytes_;
+    invalid_utf8[static_cast<std::size_t>(
+        text_layout.value().regions()[7].data_offset)] = UINT8_C(0xff);
+    auto rejected = fastdb::payload::view::open_record(
+        text_spec.value(), invalid_utf8.data(), invalid_utf8.size());
+    if (rejected.has_value() ||
+        rejected.error().code() != FDB_PAYLOAD_E_INVALID_TEXT_ENCODING ||
+        rejected.error().path() != "/entries/texts/2" ||
+        rejected.error().details_json() !=
+            "{\"encoding\":\"utf-8\",\"reason\":\"invalid_sequence\"}") {
+        return 25;
+    }
+    auto lazy_limits = fastdb::payload::view::default_open_limits();
+    lazy_limits.validate_text_eager = false;
+    auto lazy_opened = fastdb::payload::view::open_record(
+        text_spec.value(), invalid_utf8.data(), invalid_utf8.size(),
+        lazy_limits);
+    if (!lazy_opened.has_value() ||
+        lazy_opened.value().text_validated_eagerly() ||
+        lazy_opened.value().validation_work() + UINT64_C(45) !=
+            text_opened.value().validation_work()) {
+        return 26;
     }
     return 0;
 }

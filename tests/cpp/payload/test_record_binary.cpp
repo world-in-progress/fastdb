@@ -330,6 +330,82 @@ Result<LogicalPayload> build_scenario(CompiledSpec spec,
         return builder.freeze();
     }
 
+    if (scenario == "text_bytes") {
+        const std::array<std::uint16_t, 1> wide_a{{UINT16_C(0x0041)}};
+        const std::array<std::uint16_t, 2> wide_bmp_nul{
+            {UINT16_C(0x4e2d), UINT16_C(0x0000)}};
+        const std::array<std::uint16_t, 2> wide_supplementary{
+            {UINT16_C(0xd83d), UINT16_C(0xde03)}};
+        const std::array<std::uint16_t, 5> wide_nested{
+            {UINT16_C(0x0041), UINT16_C(0x4e2d), UINT16_C(0xd83d),
+             UINT16_C(0xde03), UINT16_C(0x0000)}};
+        const std::array<std::uint8_t, 3> opaque{
+            {UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x80)}};
+        const std::array<std::uint8_t, 4> nested_opaque{
+            {UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x80), UINT8_C(0x41)}};
+        const std::array<std::uint8_t, 2> suffix{
+            {UINT8_C(0x01), UINT8_C(0x02)}};
+
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(7)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str(""));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("ASCII"));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_str(std::string_view{"\xe4\xb8\xad\0", 4U}));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("repeat"));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("repeat"));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("tail"));
+
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(1), UINT64_C(6)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_wstr(nullptr, UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_wstr(wide_a.data(), wide_a.size()));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_wstr(wide_bmp_nul.data(), wide_bmp_nul.size()));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_wstr(
+            wide_supplementary.data(), wide_supplementary.size()));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_wstr(wide_a.data(), wide_a.size()));
+
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(2), UINT64_C(6)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_null());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bytes(nullptr, UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_bytes(opaque.data(), opaque.size()));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_bytes(opaque.data(), opaque.size()));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bytes(
+            reinterpret_cast<const std::uint8_t*>("A\0"), UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bytes(nullptr, UINT64_C(0)));
+
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(3), UINT64_C(2)));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("P"));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("I"));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_wstr(wide_nested.data(), wide_nested.size()));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_bytes(nested_opaque.data(), nested_opaque.size()));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_bytes(suffix.data(), suffix.size()));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str(""));
+        FASTDB_BINARY_SCENARIO_STEP(builder.begin_component());
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_str("repeat"));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_wstr(wide_a.data(), wide_a.size()));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.push_bytes(nested_opaque.data(), nested_opaque.size()));
+        FASTDB_BINARY_SCENARIO_STEP(builder.push_bytes(nullptr, UINT64_C(0)));
+        return builder.freeze();
+    }
+
     if (scenario != "fixed_scalars") {
         return Result<LogicalPayload>::failure(
             fastdb::payload::error::Error::from_details(
@@ -430,7 +506,7 @@ const BinaryGoldenCase* find_case(const std::vector<BinaryGoldenCase>& cases,
 int test_binary_goldens_determinism_hash_and_headers() {
     const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
         FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
-    require(corpus.size() == 4U);
+    require(corpus.size() == 5U);
     for (const BinaryGoldenCase& item : corpus) {
         auto first = encode_case(item);
         auto second = encode_case(item);
@@ -479,10 +555,11 @@ int test_binary_goldens_determinism_hash_and_headers() {
         require(!limited.has_value());
         require(limited.error().code() == FDB_PAYLOAD_E_RESOURCE_LIMIT);
         const std::string expected_short_path =
-            item.name == "empty" ? "/header"
-            : item.name == "fixed-scalars" ? "/regions/2"
-            : item.name == "numeric-edges" ? "/padding"
-                                             : "/entries/c_empty_many/1";
+            item.name == "empty"               ? "/header"
+            : item.name == "fixed-scalars"     ? "/regions/2"
+            : item.name == "numeric-edges"     ? "/padding"
+            : item.name == "nested-components" ? "/entries/c_empty_many/1"
+                                               : "/entries/nested/1/suffix";
         require(limited.error().path() == expected_short_path,
                 item.name + ":" + std::string(limited.error().path()));
         require(limited.error().details_json() ==
@@ -568,6 +645,10 @@ int require_resource_limit(
             exact_resource_details(actual, limit, resource));
     return EXIT_SUCCESS;
 }
+
+int require_reason_error(
+    const Result<fastdb::payload::view::PayloadIndex>& result,
+    std::uint32_t code, std::string_view path, std::string_view reason);
 
 int test_open_preflights_static_spec_limits_and_known_work() {
     const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
@@ -750,6 +831,341 @@ int test_region_matrix_zero_boundaries_and_partition_rules() {
     require(layout.value().regions()[0].byte_length == UINT64_C(0));
     require(layout.value().regions()[0].data_offset == UINT64_C(224));
     require(layout.value().total_length() == UINT64_C(224));
+    return EXIT_SUCCESS;
+}
+
+int test_task4_zero_length_pools_and_canonical_value_offsets() {
+    auto compiled = CompiledSpec::compile(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"texts","cardinality":"many","type":{"kind":"str"}},{"id":"wide","cardinality":"many","type":{"kind":"wstr"}},{"id":"blobs","cardinality":"many","type":{"kind":"bytes"}}],"components":[]})");
+    require(compiled.has_value());
+    auto builder = PayloadBuilder::create(compiled.value());
+    require(builder.has_value());
+    require(builder.value().begin_entry(UINT32_C(0), UINT64_C(0)).has_value());
+    require(builder.value().begin_entry(UINT32_C(1), UINT64_C(0)).has_value());
+    require(builder.value().begin_entry(UINT32_C(2), UINT64_C(0)).has_value());
+    auto values = builder.value().freeze();
+    auto runtime = RuntimeSchema::compile(compiled.value());
+    require(values.has_value() && runtime.has_value());
+    auto planned = RecordLayout::plan(runtime.value(), values.value());
+    require(planned.has_value());
+    require(planned.value().region_count() == UINT32_C(6));
+    require(planned.value().total_length() == UINT64_C(584));
+    const auto& regions = planned.value().regions();
+    require(regions[0].kind ==
+            fastdb::payload::layout::RegionKind::entry_values);
+    require(regions[1].kind ==
+            fastdb::payload::layout::RegionKind::entry_values);
+    require(regions[2].kind ==
+            fastdb::payload::layout::RegionKind::entry_values);
+    require(regions[3].kind == fastdb::payload::layout::RegionKind::utf8_pool);
+    require(regions[4].kind == fastdb::payload::layout::RegionKind::utf16_pool);
+    require(regions[5].kind == fastdb::payload::layout::RegionKind::bytes_pool);
+    for (const auto& region : regions) {
+        require(region.data_offset == UINT64_C(584));
+        require(region.byte_length == UINT64_C(0));
+    }
+    require(regions[3].element_count == UINT64_C(0));
+    require(regions[4].element_count == UINT64_C(0));
+    require(regions[5].element_count == UINT64_C(0));
+    VectorSink sink(planned.value().total_length());
+    require(fastdb::payload::build::encode_record(planned.value(),
+                                                  values.value(), sink)
+                .has_value());
+    auto opened = fastdb::payload::view::open_record(
+        compiled.value(), sink.bytes().data(), sink.bytes().size());
+    require(opened.has_value());
+    require(opened.value().variable_slots().empty());
+    require(opened.value()
+                .pool_metadata(fastdb::payload::layout::RegionKind::utf8_pool)
+                .value()
+                .byte_length == UINT64_C(0));
+    require(opened.value()
+                .pool_metadata(fastdb::payload::layout::RegionKind::utf16_pool)
+                .value()
+                .element_count == UINT64_C(0));
+    require(opened.value()
+                .pool_metadata(fastdb::payload::layout::RegionKind::bytes_pool)
+                .value()
+                .byte_length == UINT64_C(0));
+    return EXIT_SUCCESS;
+}
+
+int test_task4_pool_metadata_eager_lazy_and_traversal_order() {
+    const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
+        FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
+    const BinaryGoldenCase* text = find_case(corpus, "text-bytes");
+    require(text != nullptr);
+    auto encoded = encode_case(*text);
+    require(encoded.has_value());
+    const auto& regions = encoded.value().layout.regions();
+    require(encoded.value().layout.region_count() == UINT32_C(10));
+    require(encoded.value().layout.total_length() == UINT64_C(1416));
+    require(regions[7].kind == fastdb::payload::layout::RegionKind::utf8_pool);
+    require(regions[7].data_offset == UINT64_C(1336));
+    require(regions[7].byte_length == UINT64_C(33));
+    require(regions[8].kind == fastdb::payload::layout::RegionKind::utf16_pool);
+    require(regions[8].data_offset == UINT64_C(1370));
+    require(regions[8].byte_length == UINT64_C(24));
+    require(regions[8].element_count == UINT64_C(12));
+    require(regions[9].kind == fastdb::payload::layout::RegionKind::bytes_pool);
+    require(regions[9].data_offset == UINT64_C(1394));
+    require(regions[9].byte_length == UINT64_C(18));
+    require(encoded.value().layout.variable_values().size() == 29U);
+
+    auto eager = fastdb::payload::view::open_record(
+        encoded.value().spec, encoded.value().bytes.data(),
+        encoded.value().bytes.size());
+    require(eager.has_value());
+    require(eager.value().text_validated_eagerly());
+    require(eager.value().validation_work() ==
+            encoded.value().layout.validation_work());
+    require(eager.value().variable_slots().size() == 29U);
+    const auto& slots = eager.value().variable_slots();
+    require(!slots[0].present && slots[0].pool_relative_offset == UINT64_C(0) &&
+            slots[0].byte_length == UINT64_C(0));
+    require(slots[1].present && slots[1].pool_relative_offset == UINT64_C(0) &&
+            slots[1].byte_length == UINT64_C(0));
+    require(slots[2].pool_relative_offset == UINT64_C(0) &&
+            slots[2].byte_length == UINT64_C(5));
+    require(slots[4].pool_relative_offset == UINT64_C(9) &&
+            slots[5].pool_relative_offset == UINT64_C(15));
+    require(slots[7].kind == fastdb::payload::spec::TypeKind::wstr &&
+            !slots[7].present);
+    require(slots[9].pool_relative_offset == UINT64_C(0) &&
+            slots[9].byte_length == UINT64_C(2));
+    require(slots[19].kind == fastdb::payload::spec::TypeKind::str &&
+            slots[19].pool_relative_offset == UINT64_C(25));
+    require(slots[21].kind == fastdb::payload::spec::TypeKind::wstr &&
+            slots[21].pool_relative_offset == UINT64_C(12));
+    require(slots[22].kind == fastdb::payload::spec::TypeKind::bytes &&
+            slots[22].pool_relative_offset == UINT64_C(8));
+    require(slots[25].kind == fastdb::payload::spec::TypeKind::str &&
+            slots[25].pool_relative_offset == UINT64_C(27) &&
+            slots[25].byte_length == UINT64_C(6));
+    require(slots[27].kind == fastdb::payload::spec::TypeKind::bytes &&
+            slots[27].pool_relative_offset == UINT64_C(14));
+
+    auto invalid_utf8 = encoded.value().bytes;
+    invalid_utf8[static_cast<std::size_t>(regions[7].data_offset)] =
+        UINT8_C(0xff);
+    auto eager_invalid = fastdb::payload::view::open_record(
+        encoded.value().spec, invalid_utf8.data(), invalid_utf8.size());
+    require(!eager_invalid.has_value());
+    require(eager_invalid.error().code() ==
+            FDB_PAYLOAD_E_INVALID_TEXT_ENCODING);
+    require(eager_invalid.error().path() == "/entries/texts/2");
+    require(eager_invalid.error().details_json() ==
+            "{\"encoding\":\"utf-8\",\"reason\":\"invalid_sequence\"}");
+
+    auto lazy_limits = fastdb::payload::view::default_open_limits();
+    lazy_limits.validate_text_eager = false;
+    auto lazy = fastdb::payload::view::open_record(
+        encoded.value().spec, invalid_utf8.data(), invalid_utf8.size(),
+        lazy_limits);
+    require(lazy.has_value());
+    require(!lazy.value().text_validated_eagerly());
+    require(lazy.value().variable_slots().size() == 29U);
+    require(lazy.value().validation_work() + UINT64_C(45) ==
+            eager.value().validation_work());
+    require(lazy.value().retained_max_string_bytes() ==
+            lazy_limits.max_string_bytes);
+    require(lazy.value().retained_max_validation_work() ==
+            lazy_limits.max_validation_work);
+
+    auto string_limits = fastdb::payload::view::default_open_limits();
+    string_limits.max_string_bytes = UINT64_C(56);
+    require(require_resource_limit(
+                fastdb::payload::view::open_record(
+                    encoded.value().spec, encoded.value().bytes.data(),
+                    encoded.value().bytes.size(), string_limits),
+                "/pools/text", UINT64_C(57), UINT64_C(56),
+                "string_bytes") == EXIT_SUCCESS);
+    return EXIT_SUCCESS;
+}
+
+std::uint64_t region_field(std::uint32_t region_index,
+                           std::uint64_t field_offset) {
+    return fastdb::payload::layout::header_size +
+           static_cast<std::uint64_t>(region_index) *
+               fastdb::payload::layout::region_descriptor_size +
+           field_offset;
+}
+
+int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
+    const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
+        FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
+    const BinaryGoldenCase* text = find_case(corpus, "text-bytes");
+    require(text != nullptr);
+    auto encoded = encode_case(*text);
+    require(encoded.has_value());
+    const auto& layout = encoded.value().layout;
+    const auto& regions = layout.regions();
+    const auto open = [&](const std::vector<std::uint8_t>& bytes) {
+        return fastdb::payload::view::open_record(encoded.value().spec,
+                                                  bytes.data(), bytes.size());
+    };
+
+    auto wrong_kind = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u32_le(
+                wrong_kind.data(), wrong_kind.size(),
+                region_field(UINT32_C(7),
+                             fastdb::payload::layout::region_kind_offset),
+                FDB_PAYLOAD_REGION_BYTES_POOL, JsonPointer{})
+                .has_value());
+    require(require_reason_error(
+                open(wrong_kind), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/regions/7", "region_descriptor_contract") == EXIT_SUCCESS);
+
+    auto wrong_owner = encoded.value().bytes;
+    require(
+        fastdb::payload::layout::store_u32_le(
+            wrong_owner.data(), wrong_owner.size(),
+            region_field(UINT32_C(7),
+                         fastdb::payload::layout::region_owner_index_offset),
+            UINT32_C(0), JsonPointer{})
+            .has_value());
+    require(require_reason_error(
+                open(wrong_owner), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/regions/7", "region_descriptor_contract") == EXIT_SUCCESS);
+
+    auto wrong_alignment = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u32_le(
+                wrong_alignment.data(), wrong_alignment.size(),
+                region_field(UINT32_C(7),
+                             fastdb::payload::layout::region_alignment_offset),
+                UINT32_C(2), JsonPointer{})
+                .has_value());
+    require(require_reason_error(
+                open(wrong_alignment), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/regions/7", "region_descriptor_contract") == EXIT_SUCCESS);
+
+    auto overlap = encoded.value().bytes;
+    require(
+        fastdb::payload::layout::store_u64_le(
+            overlap.data(), overlap.size(),
+            region_field(UINT32_C(8),
+                         fastdb::payload::layout::region_data_offset_offset),
+            regions[7].data_offset, JsonPointer{})
+            .has_value());
+    require(require_reason_error(
+                open(overlap), FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/8",
+                "region_descriptor_contract") == EXIT_SUCCESS);
+
+    auto out_of_bounds = encoded.value().bytes;
+    require(
+        fastdb::payload::layout::store_u64_le(
+            out_of_bounds.data(), out_of_bounds.size(),
+            region_field(UINT32_C(7),
+                         fastdb::payload::layout::region_byte_length_offset),
+            encoded.value().bytes.size(), JsonPointer{})
+            .has_value());
+    require(open(out_of_bounds).error().code() == FDB_PAYLOAD_E_OUT_OF_BOUNDS);
+    require(open(out_of_bounds).error().path() == "/regions/7");
+
+    auto overflow = encoded.value().bytes;
+    require(
+        fastdb::payload::layout::store_u64_le(
+            overflow.data(), overflow.size(),
+            region_field(UINT32_C(7),
+                         fastdb::payload::layout::region_byte_length_offset),
+            UINT64_MAX, JsonPointer{})
+            .has_value());
+    require(open(overflow).error().code() == FDB_PAYLOAD_E_LENGTH_OVERFLOW);
+    require(open(overflow).error().path() == "/regions/7");
+
+    const std::uint64_t text_values = regions[1].data_offset;
+    auto nonzero_null = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u64_le(
+                nonzero_null.data(), nonzero_null.size(), text_values + 8U,
+                UINT64_C(1), JsonPointer{})
+                .has_value());
+    require(require_reason_error(
+                open(nonzero_null), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/entries/texts/0", "nonzero_null_storage") == EXIT_SUCCESS);
+
+    auto gap = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u64_le(
+                gap.data(), gap.size(), text_values + UINT64_C(3 * 16),
+                UINT64_C(6), JsonPointer{})
+                .has_value());
+    require(open(gap).error().code() == FDB_PAYLOAD_E_NON_CANONICAL_BINARY);
+    require(open(gap).error().path() == "/entries/texts/3");
+    require(
+        open(gap).error().details_json() ==
+        "{\"actual\":\"6\",\"expected\":\"5\",\"reason\":\"partition_cursor_"
+        "mismatch\"}");
+
+    auto alias = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u64_le(
+                alias.data(), alias.size(), text_values + UINT64_C(5 * 16),
+                UINT64_C(9), JsonPointer{})
+                .has_value());
+    require(open(alias).error().path() == "/entries/texts/5");
+    require(
+        open(alias).error().details_json() ==
+        "{\"actual\":\"9\",\"expected\":\"15\",\"reason\":\"partition_cursor_"
+        "mismatch\"}");
+
+    auto out_of_order = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u64_le(
+                out_of_order.data(), out_of_order.size(),
+                text_values + UINT64_C(4 * 16), UINT64_C(15), JsonPointer{})
+                .has_value());
+    require(open(out_of_order).error().path() == "/entries/texts/4");
+
+    const std::uint64_t wide_values = regions[3].data_offset;
+    auto odd_offset = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u64_le(
+                odd_offset.data(), odd_offset.size(),
+                wide_values + UINT64_C(2 * 16), UINT64_C(1), JsonPointer{})
+                .has_value());
+    require(require_reason_error(
+                open(odd_offset), FDB_PAYLOAD_E_MISALIGNED, "/entries/wide/2",
+                "utf16_descriptor_misaligned") == EXIT_SUCCESS);
+
+    auto odd_length = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u64_le(
+                odd_length.data(), odd_length.size(),
+                wide_values + UINT64_C(2 * 16 + 8), UINT64_C(3), JsonPointer{})
+                .has_value());
+    require(require_reason_error(
+                open(odd_length), FDB_PAYLOAD_E_MISALIGNED, "/entries/wide/2",
+                "utf16_descriptor_misaligned") == EXIT_SUCCESS);
+
+    auto invalid_utf16 = encoded.value().bytes;
+    invalid_utf16[static_cast<std::size_t>(regions[8].data_offset)] =
+        UINT8_C(0x00);
+    invalid_utf16[static_cast<std::size_t>(regions[8].data_offset + 1U)] =
+        UINT8_C(0xd8);
+    require(open(invalid_utf16).error().code() ==
+            FDB_PAYLOAD_E_INVALID_TEXT_ENCODING);
+    require(open(invalid_utf16).error().path() == "/entries/wide/2");
+    require(open(invalid_utf16).error().details_json() ==
+            "{\"encoding\":\"utf-16le\",\"reason\":\"unpaired_surrogate\"}");
+
+    auto tail = encoded.value().bytes;
+    require(
+        fastdb::payload::layout::store_u64_le(
+            tail.data(), tail.size(),
+            region_field(UINT32_C(9),
+                         fastdb::payload::layout::region_byte_length_offset),
+            UINT64_C(19), JsonPointer{})
+            .has_value());
+    require(
+        fastdb::payload::layout::store_u64_le(
+            tail.data(), tail.size(),
+            region_field(UINT32_C(9),
+                         fastdb::payload::layout::region_element_count_offset),
+            UINT64_C(19), JsonPointer{})
+            .has_value());
+    const auto tail_result = open(tail);
+    require(!tail_result.has_value());
+    require(tail_result.error().path() == "/pools/bytes",
+            std::string(tail_result.error().path()) + ":" +
+                std::string(tail_result.error().details_json()));
+    require(tail_result.error().details_json() ==
+            "{\"actual\":\"18\",\"expected\":\"19\",\"reason\":\"partition_not_"
+            "consumed\"}");
     return EXIT_SUCCESS;
 }
 
@@ -1145,13 +1561,13 @@ int test_component_malformed_bytes_have_exact_diagnostics() {
     return EXIT_SUCCESS;
 }
 
-int test_task3_layout_encode_open_allocation_sweeps() {
+int test_task4_layout_encode_open_allocation_sweeps() {
     const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
         FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
-    const BinaryGoldenCase* nested = find_case(corpus, "nested-components");
-    require(nested != nullptr);
-    auto compiled = CompiledSpec::compile(nested->success.source);
-    auto values = build_scenario(compiled.value(), nested->success.scenario);
+    const BinaryGoldenCase* text = find_case(corpus, "text-bytes");
+    require(text != nullptr);
+    auto compiled = CompiledSpec::compile(text->success.source);
+    auto values = build_scenario(compiled.value(), text->success.scenario);
     auto runtime = RuntimeSchema::compile(compiled.value());
     require(compiled.has_value() && values.has_value() && runtime.has_value());
 
@@ -1240,6 +1656,11 @@ int test_task3_layout_encode_open_allocation_sweeps() {
         ++open_failures;
     }
     require(opened.has_value());
+    require(opened.value().variable_slots().size() == 29U);
+    require(opened.value()
+                .pool_metadata(fastdb::payload::layout::RegionKind::utf16_pool)
+                .value()
+                .element_count == UINT64_C(12));
     require(open_failures > UINT64_C(0));
     return EXIT_SUCCESS;
 }
@@ -1361,6 +1782,18 @@ int main() {
         EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    if (test_task4_zero_length_pools_and_canonical_value_offsets() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_task4_pool_metadata_eager_lazy_and_traversal_order() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_task4_malformed_pools_and_descriptors_have_exact_errors() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
     if (test_task3_metadata_observation_and_nan_canonicalization() !=
         EXIT_SUCCESS) {
         return EXIT_FAILURE;
@@ -1375,7 +1808,7 @@ int main() {
         EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
-    if (test_task3_layout_encode_open_allocation_sweeps() != EXIT_SUCCESS) {
+    if (test_task4_layout_encode_open_allocation_sweeps() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     return test_open_observation_and_malformed_canonical_values();

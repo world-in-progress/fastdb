@@ -57,7 +57,7 @@ Error allocation_error() {
             "reason", JsonValue{"allocation_failed"}}}));
 }
 
-bool task3_fixed_kind(TypeKind kind) noexcept {
+bool task4_record_kind(TypeKind kind) noexcept {
     switch (kind) {
     case TypeKind::boolean:
     case TypeKind::u8:
@@ -68,16 +68,125 @@ bool task3_fixed_kind(TypeKind kind) noexcept {
     case TypeKind::f64:
     case TypeKind::u8n:
     case TypeKind::u16n:
-    case TypeKind::component:
-        return true;
     case TypeKind::str:
     case TypeKind::wstr:
     case TypeKind::bytes:
+    case TypeKind::component:
+        return true;
     case TypeKind::ref:
     case TypeKind::list:
         return false;
     }
     return false;
+}
+
+ValueTag variable_tag(TypeKind kind) noexcept {
+    switch (kind) {
+    case TypeKind::str:
+        return ValueTag::str;
+    case TypeKind::wstr:
+        return ValueTag::wstr;
+    case TypeKind::bytes:
+        return ValueTag::bytes;
+    default:
+        return ValueTag::null_value;
+    }
+}
+
+Result<void> collect_variable_values(
+    const RuntimeSchema& runtime, const LogicalPayload& values, NodeIndex root,
+    std::vector<NodeIndex>& output, std::uint64_t& utf8_bytes,
+    std::uint64_t& utf16_bytes, std::uint64_t& opaque_bytes) {
+    std::vector<NodeIndex> pending;
+    pending.push_back(root);
+    const std::uint64_t storage_size = values.byte_storage().size();
+    while (!pending.empty()) {
+        const NodeIndex node_index = pending.back();
+        pending.pop_back();
+        if (node_index == invalid_node_index ||
+            node_index >= values.nodes().size()) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("pools"), "pool_node_out_of_range"));
+        }
+        const ValueNode& node =
+            values.nodes()[static_cast<std::size_t>(node_index)];
+        const RuntimeType* const runtime_type =
+            runtime.find_type(node.runtime_type_id);
+        if (runtime_type == nullptr) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("pools"), "pool_runtime_type_missing"));
+        }
+        const TypeKind kind = runtime_type->source->kind;
+        if (kind == TypeKind::str || kind == TypeKind::wstr ||
+            kind == TypeKind::bytes) {
+            output.push_back(node_index);
+            if (node.tag == ValueTag::null_value) {
+                continue;
+            }
+            if (node.tag != variable_tag(kind)) {
+                return Result<void>::failure(layout_error(
+                    JsonPointer{}.append("pools"), "pool_value_tag_mismatch"));
+            }
+            auto storage_end =
+                checked_range_end(node.scalar_bits_or_offset, node.byte_length,
+                                  storage_size, JsonPointer{}.append("pools"));
+            if (!storage_end.has_value()) {
+                return Result<void>::failure(std::move(storage_end).error());
+            }
+            if (kind == TypeKind::wstr &&
+                node.byte_length % UINT64_C(2) != UINT64_C(0)) {
+                return Result<void>::failure(
+                    layout_error(JsonPointer{}.append("pools"),
+                                 "wide_text_storage_length_is_odd"));
+            }
+            std::uint64_t* total = kind == TypeKind::str    ? &utf8_bytes
+                                   : kind == TypeKind::wstr ? &utf16_bytes
+                                                            : &opaque_bytes;
+            auto added = checked_accumulate_u64(*total, node.byte_length,
+                                                JsonPointer{}.append("pools"));
+            if (!added.has_value()) {
+                return added;
+            }
+            continue;
+        }
+        if (kind != TypeKind::component || node.tag == ValueTag::null_value) {
+            continue;
+        }
+        if (node.tag != ValueTag::component) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("pools"), "component_value_mismatch"));
+        }
+        const ComponentLayout* const component =
+            runtime.component(runtime_type->source->resolved_component_index);
+        if (component == nullptr ||
+            node.child_count != component->fields.size()) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("pools"), "component_layout_mismatch"));
+        }
+        std::vector<NodeIndex> children;
+        children.reserve(component->fields.size());
+        NodeIndex child = node.first_child;
+        for (std::size_t index = 0U; index < component->fields.size();
+             ++index) {
+            if (child == invalid_node_index || child >= values.nodes().size()) {
+                return Result<void>::failure(
+                    layout_error(JsonPointer{}.append("pools"),
+                                 "component_child_out_of_range"));
+            }
+            children.push_back(child);
+            child =
+                values.nodes()[static_cast<std::size_t>(child)].next_sibling;
+        }
+        if (child != invalid_node_index) {
+            return Result<void>::failure(
+                layout_error(JsonPointer{}.append("pools"),
+                             "component_child_chain_too_long"));
+        }
+        for (auto it = children.rbegin(); it != children.rend(); ++it) {
+            pending.push_back(*it);
+        }
+    }
+    return Result<void>::success();
 }
 
 Result<std::vector<NodeIndex>> collect_entry_values(
@@ -164,6 +273,19 @@ Result<void> add_slot_validation_work(const RuntimeSchema& runtime,
             continue;
         }
         if (runtime_type->source->kind != TypeKind::component) {
+            if (node.tag != ValueTag::null_value &&
+                (runtime_type->source->kind == TypeKind::str ||
+                 runtime_type->source->kind == TypeKind::wstr)) {
+                const std::uint64_t units =
+                    runtime_type->source->kind == TypeKind::str
+                        ? node.byte_length
+                        : node.byte_length / UINT64_C(2);
+                auto added = checked_accumulate_u64(
+                    work, units, JsonPointer{}.append("validation_work"));
+                if (!added.has_value()) {
+                    return added;
+                }
+            }
             continue;
         }
         if (node.tag != ValueTag::component) {
@@ -261,11 +383,14 @@ Result<RecordLayout> RecordLayout::plan(
         }
         result.entries_.reserve(source_entries.size());
         result.entry_values_.reserve(source_entries.size());
+        std::uint64_t utf8_bytes = UINT64_C(0);
+        std::uint64_t utf16_bytes = UINT64_C(0);
+        std::uint64_t opaque_bytes = UINT64_C(0);
 
         for (std::uint32_t entry_index = UINT32_C(0);
              entry_index < entry_count.value(); ++entry_index) {
             const spec::Entry& entry = source_entries[entry_index];
-            if (!task3_fixed_kind(entry.type.kind)) {
+            if (!task4_record_kind(entry.type.kind)) {
                 return Result<RecordLayout>::failure(
                     unavailable(entry, "initial_record_layout_type_unavailable"));
             }
@@ -343,7 +468,36 @@ Result<RecordLayout> RecordLayout::plan(
                                                       : UINT32_C(2),
                 entry.type.nullable ? UINT32_C(1) : UINT32_C(0), value_count,
                 values_index.value(), validity_region});
+            for (const NodeIndex node : nodes.value()) {
+                auto collected = collect_variable_values(
+                    runtime_schema, values, node, result.variable_values_,
+                    utf8_bytes, utf16_bytes, opaque_bytes);
+                if (!collected.has_value()) {
+                    return Result<RecordLayout>::failure(
+                        std::move(collected).error());
+                }
+            }
             result.entry_values_.push_back(std::move(nodes).value());
+        }
+
+        auto add_pool = [&result](RegionKind kind, std::uint64_t byte_length,
+                                  std::uint64_t element_count,
+                                  std::uint32_t alignment) {
+            result.regions_.push_back(RegionDescriptor{
+                kind, UINT32_C(0), UINT32_MAX, UINT32_MAX, UINT64_C(0),
+                byte_length, element_count, UINT32_C(0), alignment});
+        };
+        if (runtime_schema.has_utf8_pool()) {
+            add_pool(RegionKind::utf8_pool, utf8_bytes, utf8_bytes,
+                     UINT32_C(1));
+        }
+        if (runtime_schema.has_utf16_pool()) {
+            add_pool(RegionKind::utf16_pool, utf16_bytes,
+                     utf16_bytes / UINT64_C(2), UINT32_C(2));
+        }
+        if (runtime_schema.has_bytes_pool()) {
+            add_pool(RegionKind::bytes_pool, opaque_bytes, opaque_bytes,
+                     UINT32_C(1));
         }
 
         auto region_count = checked_narrow_u32(
@@ -444,7 +598,7 @@ Result<RecordLayout> RecordLayout::plan(
             }
             if (region.kind == RegionKind::entry_validity) {
                 work_result = add_work(region.byte_length);
-            } else {
+            } else if (region.kind == RegionKind::entry_values) {
                 work_result = add_work(region.element_count);
             }
             if (!work_result.has_value()) {

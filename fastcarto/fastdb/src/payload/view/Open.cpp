@@ -8,14 +8,18 @@
 #include "payload/layout/NormalizedInteger.hpp"
 #include "payload/layout/RuntimeSchema.hpp"
 
+#include "payload/layout/TextEncoding.hpp"
+
 #include <fastdb_payload.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <new>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -131,7 +135,7 @@ Result<void> require_zero(const std::uint8_t* bytes,
     return Result<void>::success();
 }
 
-bool initial_fixed_kind(TypeKind kind) noexcept {
+bool task4_record_kind(TypeKind kind) noexcept {
     switch (kind) {
     case TypeKind::boolean:
     case TypeKind::u8:
@@ -142,12 +146,47 @@ bool initial_fixed_kind(TypeKind kind) noexcept {
     case TypeKind::f64:
     case TypeKind::u8n:
     case TypeKind::u16n:
+    case TypeKind::str:
+    case TypeKind::wstr:
+    case TypeKind::bytes:
     case TypeKind::component:
         return true;
     default:
         return false;
     }
 }
+
+bool variable_kind(TypeKind kind) noexcept {
+    return kind == TypeKind::str || kind == TypeKind::wstr ||
+           kind == TypeKind::bytes;
+}
+
+const PoolMetadata* find_pool(const std::vector<PoolMetadata>& pools,
+                              TypeKind kind) noexcept {
+    const RegionKind wanted = kind == TypeKind::str    ? RegionKind::utf8_pool
+                              : kind == TypeKind::wstr ? RegionKind::utf16_pool
+                                                       : RegionKind::bytes_pool;
+    const auto found = std::find_if(
+        pools.begin(), pools.end(),
+        [wanted](const PoolMetadata& pool) { return pool.kind == wanted; });
+    return found == pools.end() ? nullptr : &*found;
+}
+
+struct PoolCursors final {
+    std::uint64_t utf8{UINT64_C(0)};
+    std::uint64_t utf16{UINT64_C(0)};
+    std::uint64_t opaque{UINT64_C(0)};
+
+    std::uint64_t& for_kind(TypeKind kind) noexcept {
+        if (kind == TypeKind::str) {
+            return utf8;
+        }
+        if (kind == TypeKind::wstr) {
+            return utf16;
+        }
+        return opaque;
+    }
+};
 
 Result<void> require_access_span(const std::uint8_t* bytes,
                                  std::uint64_t byte_count,
@@ -270,15 +309,13 @@ struct ValidationSlot final {
     JsonPointer path;
 };
 
-Result<void> validate_fixed_slot(const RuntimeSchema& runtime,
-                                 const std::uint8_t* bytes,
-                                 std::uint64_t byte_count,
-                                 const spec::TypeNode& root_type,
-                                 std::uint64_t root_offset,
-                                 bool root_present,
-                                 WorkCounter& work,
-                                 std::uint64_t max_nesting_depth,
-                                 const JsonPointer& root_path) {
+Result<void> validate_fixed_slot(
+    const RuntimeSchema& runtime, const std::uint8_t* bytes,
+    std::uint64_t byte_count, const spec::TypeNode& root_type,
+    std::uint64_t root_offset, bool root_present, WorkCounter& work,
+    std::uint64_t max_nesting_depth, const std::vector<PoolMetadata>& pools,
+    PoolCursors& pool_cursors, std::vector<VariableSlotMetadata>& variables,
+    bool validate_text_eager, const JsonPointer& root_path) {
     std::vector<ValidationSlot> pending;
     const std::uint64_t root_depth =
         root_present && root_type.kind == TypeKind::component ? UINT64_C(1)
@@ -322,6 +359,92 @@ Result<void> validate_fixed_slot(const RuntimeSchema& runtime,
                 slot.type->kind == TypeKind::component);
             if (!zero.has_value()) {
                 return zero;
+            }
+            if (variable_kind(slot.type->kind)) {
+                variables.push_back(
+                    VariableSlotMetadata{slot.type->kind, slot.offset,
+                                         UINT64_C(0), UINT64_C(0), false});
+            }
+            continue;
+        }
+        if (variable_kind(slot.type->kind)) {
+            auto relative_offset =
+                read_u64(bytes, byte_count, slot.offset, slot.path);
+            auto length_offset =
+                layout::checked_add_u64(slot.offset, UINT64_C(8), slot.path);
+            if (!length_offset.has_value()) {
+                return Result<void>::failure(std::move(length_offset).error());
+            }
+            auto byte_length =
+                read_u64(bytes, byte_count, length_offset.value(), slot.path);
+            if (!relative_offset.has_value() || !byte_length.has_value()) {
+                return Result<void>::failure(simple_error(
+                    FDB_PAYLOAD_E_OUT_OF_BOUNDS, slot.path,
+                    "Portable payload variable descriptor is outside the image",
+                    "variable_descriptor_out_of_bounds"));
+            }
+            if (slot.type->kind == TypeKind::wstr &&
+                ((relative_offset.value() | byte_length.value()) &
+                 UINT64_C(1)) != UINT64_C(0)) {
+                return Result<void>::failure(simple_error(
+                    FDB_PAYLOAD_E_MISALIGNED, slot.path,
+                    "Portable payload UTF-16LE descriptor is misaligned",
+                    "utf16_descriptor_misaligned"));
+            }
+            const PoolMetadata* const pool = find_pool(pools, slot.type->kind);
+            if (pool == nullptr) {
+                return Result<void>::failure(simple_error(
+                    FDB_PAYLOAD_E_INTERNAL, slot.path,
+                    "Portable payload variable pool metadata is missing",
+                    "variable_pool_missing"));
+            }
+            std::uint64_t& cursor = pool_cursors.for_kind(slot.type->kind);
+            auto advanced = layout::checked_partition_advance(
+                cursor, relative_offset.value(), byte_length.value(),
+                pool->byte_length, slot.path);
+            if (!advanced.has_value()) {
+                return Result<void>::failure(std::move(advanced).error());
+            }
+            cursor = advanced.value();
+            auto absolute = layout::checked_add_u64(
+                pool->data_offset, relative_offset.value(), slot.path);
+            if (!absolute.has_value()) {
+                return Result<void>::failure(std::move(absolute).error());
+            }
+            auto bounded = layout::checked_range_end(
+                absolute.value(), byte_length.value(), byte_count, slot.path);
+            if (!bounded.has_value()) {
+                return Result<void>::failure(std::move(bounded).error());
+            }
+            variables.push_back(VariableSlotMetadata{
+                slot.type->kind, slot.offset, relative_offset.value(),
+                byte_length.value(), true});
+            if (validate_text_eager && slot.type->kind != TypeKind::bytes) {
+                const std::uint64_t units =
+                    slot.type->kind == TypeKind::str
+                        ? byte_length.value()
+                        : byte_length.value() / UINT64_C(2);
+                auto content_work = work.charge(units, slot.path);
+                if (!content_work.has_value()) {
+                    return content_work;
+                }
+                Result<void> valid =
+                    slot.type->kind == TypeKind::str
+                        ? layout::validate_utf8(
+                              std::string_view{
+                                  reinterpret_cast<const char*>(bytes) +
+                                      static_cast<std::ptrdiff_t>(
+                                          absolute.value()),
+                                  static_cast<std::size_t>(
+                                      byte_length.value())},
+                              slot.path)
+                        : layout::validate_utf16le(
+                              bytes +
+                                  static_cast<std::ptrdiff_t>(absolute.value()),
+                              byte_length.value(), slot.path);
+                if (!valid.has_value()) {
+                    return valid;
+                }
             }
             continue;
         }
@@ -475,10 +598,20 @@ Result<void> validate_fixed_slot(const RuntimeSchema& runtime,
 }  // namespace
 
 OpenLimits default_open_limits() noexcept {
-    return OpenLimits{
-        UINT64_C(1) << 30, UINT64_C(1000000), UINT64_C(65536),
-        UINT64_C(65536),    UINT64_C(1024),    UINT64_C(10000000),
-        UINT64_C(10000000), UINT64_C(1) << 30, UINT64_C(100000000)};
+    return OpenLimits{UINT64_C(1) << 30,   UINT64_C(1000000),
+                      UINT64_C(65536),     UINT64_C(65536),
+                      UINT64_C(1024),      UINT64_C(10000000),
+                      UINT64_C(10000000),  UINT64_C(1) << 30,
+                      UINT64_C(100000000), true};
+}
+
+std::optional<PoolMetadata>
+PayloadIndex::pool_metadata(layout::RegionKind kind) const noexcept {
+    const auto found = std::find_if(
+        pools_.begin(), pools_.end(),
+        [kind](const PoolMetadata& pool) { return pool.kind == kind; });
+    return found == pools_.end() ? std::nullopt
+                                 : std::optional<PoolMetadata>{*found};
 }
 
 Result<EntrySlotMetadata> PayloadIndex::entry_slot(
@@ -927,13 +1060,48 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 "runtime_entry_inventory_mismatch"));
         }
         for (const spec::Entry& entry : compiled.resolved().entries()) {
-            if (!initial_fixed_kind(entry.type.kind)) {
+            if (!task4_record_kind(entry.type.kind)) {
                 return Result<PayloadIndex>::failure(simple_error(
                     FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE,
                     JsonPointer{}.append("entries").append(entry.id),
                     "Portable record open does not implement this runtime type yet",
                     "initial_record_open_type_unavailable"));
             }
+        }
+        const std::uint64_t pool_count =
+            (runtime.value().has_utf8_pool() ? UINT64_C(1) : UINT64_C(0)) +
+            (runtime.value().has_utf16_pool() ? UINT64_C(1) : UINT64_C(0)) +
+            (runtime.value().has_bytes_pool() ? UINT64_C(1) : UINT64_C(0));
+        counted_work = layout::checked_accumulate_u64(
+            expected_regions, pool_count, JsonPointer{}.append("regions"));
+        if (!counted_work.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(counted_work).error());
+        }
+        known_minimum_work = UINT64_C(1);
+        counted_work = layout::checked_accumulate_u64(
+            known_minimum_work, expected_entries,
+            JsonPointer{}.append("validation_work"));
+        if (!counted_work.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(counted_work).error());
+        }
+        counted_work = layout::checked_accumulate_u64(
+            known_minimum_work, expected_regions,
+            JsonPointer{}.append("validation_work"));
+        if (!counted_work.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(counted_work).error());
+        }
+        if (expected_regions > limits.max_regions) {
+            return Result<PayloadIndex>::failure(
+                resource_error(JsonPointer{}.append("regions"), "regions",
+                               expected_regions, limits.max_regions));
+        }
+        if (known_minimum_work > limits.max_validation_work) {
+            return Result<PayloadIndex>::failure(resource_error(
+                JsonPointer{}.append("validation_work"), "validation_work",
+                known_minimum_work, limits.max_validation_work));
         }
 
         auto region_directory_offset = read_u64(
@@ -1119,6 +1287,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         regions.reserve(static_cast<std::size_t>(expected_regions));
         std::uint64_t cursor = data_start.value();
         std::uint32_t region_index = UINT32_C(0);
+        PoolCursors pool_cursors;
         for (const EntryDescriptor& entry : entries) {
             const spec::Entry& source =
                 runtime_entries[entry.entry_index];
@@ -1267,6 +1436,147 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
         }
 
+        const std::array<RegionKind, 3> pool_order{{RegionKind::utf8_pool,
+                                                    RegionKind::utf16_pool,
+                                                    RegionKind::bytes_pool}};
+        std::uint64_t text_pool_bytes = UINT64_C(0);
+        for (const RegionKind expected_kind : pool_order) {
+            const bool required = expected_kind == RegionKind::utf8_pool
+                                      ? runtime.value().has_utf8_pool()
+                                  : expected_kind == RegionKind::utf16_pool
+                                      ? runtime.value().has_utf16_pool()
+                                      : runtime.value().has_bytes_pool();
+            if (!required) {
+                continue;
+            }
+            const JsonPointer path =
+                JsonPointer{}.append("regions").append(region_index);
+            charged = work.charge(UINT64_C(1), path);
+            if (!charged.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(charged).error());
+            }
+            const std::uint64_t base =
+                layout::header_size + static_cast<std::uint64_t>(region_index) *
+                                          layout::region_descriptor_size;
+            auto kind = read_u32(bytes, byte_count,
+                                 base + layout::region_kind_offset, path);
+            auto region_flags = read_u32(
+                bytes, byte_count, base + layout::region_flags_offset, path);
+            auto owner =
+                read_u32(bytes, byte_count,
+                         base + layout::region_owner_index_offset, path);
+            auto type_id =
+                read_u32(bytes, byte_count,
+                         base + layout::region_runtime_type_id_offset, path);
+            auto data_offset =
+                read_u64(bytes, byte_count,
+                         base + layout::region_data_offset_offset, path);
+            auto byte_length =
+                read_u64(bytes, byte_count,
+                         base + layout::region_byte_length_offset, path);
+            auto element_count =
+                read_u64(bytes, byte_count,
+                         base + layout::region_element_count_offset, path);
+            auto stride = read_u32(bytes, byte_count,
+                                   base + layout::region_stride_offset, path);
+            auto alignment =
+                read_u32(bytes, byte_count,
+                         base + layout::region_alignment_offset, path);
+            auto reserved = read_u64(
+                bytes, byte_count, base + layout::region_reserved_offset, path);
+            if (!kind.has_value() || !region_flags.has_value() ||
+                !owner.has_value() || !type_id.has_value() ||
+                !data_offset.has_value() || !byte_length.has_value() ||
+                !element_count.has_value() || !stride.has_value() ||
+                !alignment.has_value() || !reserved.has_value()) {
+                return Result<PayloadIndex>::failure(simple_error(
+                    FDB_PAYLOAD_E_OUT_OF_BOUNDS, path,
+                    "Portable payload pool descriptor is outside the image",
+                    "region_descriptor_out_of_bounds"));
+            }
+            const std::uint32_t expected_alignment =
+                expected_kind == RegionKind::utf16_pool ? UINT32_C(2)
+                                                        : UINT32_C(1);
+            auto aligned =
+                layout::checked_align_up_u64(cursor, expected_alignment, path);
+            if (!aligned.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(aligned).error());
+            }
+            if (data_offset.value() % expected_alignment != UINT64_C(0)) {
+                return Result<PayloadIndex>::failure(
+                    simple_error(FDB_PAYLOAD_E_MISALIGNED, path,
+                                 "Portable payload pool offset is misaligned",
+                                 "region_offset_misaligned"));
+            }
+            if (kind.value() != static_cast<std::uint32_t>(expected_kind) ||
+                region_flags.value() != UINT32_C(0) ||
+                owner.value() != UINT32_MAX || type_id.value() != UINT32_MAX ||
+                data_offset.value() != aligned.value() ||
+                stride.value() != UINT32_C(0) ||
+                alignment.value() != expected_alignment ||
+                reserved.value() != UINT64_C(0)) {
+                return Result<PayloadIndex>::failure(
+                    noncanonical(path, "region_descriptor_contract"));
+            }
+            auto padding =
+                require_zero(bytes, byte_count, cursor, aligned.value(), work,
+                             JsonPointer{}.append("padding"),
+                             "nonzero_inter_region_padding");
+            if (!padding.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(padding).error());
+            }
+            auto end = layout::checked_range_end(
+                data_offset.value(), byte_length.value(), byte_count, path);
+            if (!end.has_value()) {
+                return Result<PayloadIndex>::failure(std::move(end).error());
+            }
+            if (expected_kind == RegionKind::utf16_pool &&
+                byte_length.value() % UINT64_C(2) != UINT64_C(0)) {
+                return Result<PayloadIndex>::failure(
+                    noncanonical(path, "odd_utf16_pool_length"));
+            }
+            const std::uint64_t expected_elements =
+                expected_kind == RegionKind::utf16_pool
+                    ? byte_length.value() / UINT64_C(2)
+                    : byte_length.value();
+            if (element_count.value() != expected_elements) {
+                return Result<PayloadIndex>::failure(
+                    noncanonical(path, "region_descriptor_contract"));
+            }
+            if (expected_kind != RegionKind::bytes_pool) {
+                auto accumulated = layout::checked_accumulate_u64(
+                    text_pool_bytes, byte_length.value(),
+                    JsonPointer{}.append("pools").append("text"));
+                if (!accumulated.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(accumulated).error());
+                }
+                if (text_pool_bytes > limits.max_string_bytes) {
+                    return Result<PayloadIndex>::failure(resource_error(
+                        JsonPointer{}.append("pools").append("text"),
+                        "string_bytes", text_pool_bytes,
+                        limits.max_string_bytes));
+                }
+            }
+            regions.push_back(RegionDescriptor{
+                expected_kind, UINT32_C(0), UINT32_MAX, UINT32_MAX,
+                data_offset.value(), byte_length.value(), element_count.value(),
+                UINT32_C(0), expected_alignment});
+            output.pools_.push_back(
+                PoolMetadata{expected_kind, data_offset.value(),
+                             byte_length.value(), element_count.value()});
+            cursor = end.value();
+            ++region_index;
+        }
+        if (region_index != region_count.value()) {
+            return Result<PayloadIndex>::failure(
+                noncanonical(JsonPointer{}.append("regions"),
+                             "region_inventory_not_consumed"));
+        }
+
         auto canonical_total = layout::checked_align_up_u64(
             cursor, UINT32_C(8), JsonPointer{}.append("total_length"));
         if (!canonical_total.has_value()) {
@@ -1394,7 +1704,9 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 const std::uint64_t offset = absolute_offset.value();
                 auto valid = validate_fixed_slot(
                     runtime.value(), bytes, byte_count, source.type, offset,
-                    present, work, limits.max_nesting_depth, path);
+                    present, work, limits.max_nesting_depth, output.pools_,
+                    pool_cursors, output.variable_slots_,
+                    limits.validate_text_eager, path);
                 if (!valid.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(valid).error());
@@ -1402,9 +1714,29 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
         }
 
+        for (const PoolMetadata& pool : output.pools_) {
+            const TypeKind kind =
+                pool.kind == RegionKind::utf8_pool    ? TypeKind::str
+                : pool.kind == RegionKind::utf16_pool ? TypeKind::wstr
+                                                      : TypeKind::bytes;
+            const char* name = pool.kind == RegionKind::utf8_pool    ? "utf8"
+                               : pool.kind == RegionKind::utf16_pool ? "utf16le"
+                                                                     : "bytes";
+            auto consumed = layout::require_partition_consumed(
+                pool_cursors.for_kind(kind), pool.byte_length,
+                JsonPointer{}.append("pools").append(name));
+            if (!consumed.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(consumed).error());
+            }
+        }
+
         output.runtime_schema_.emplace(std::move(runtime).value());
         output.total_length_ = byte_count;
         output.validation_work_ = work.value();
+        output.retained_max_string_bytes_ = limits.max_string_bytes;
+        output.retained_max_validation_work_ = limits.max_validation_work;
+        output.text_validated_eagerly_ = limits.validate_text_eager;
         return Result<PayloadIndex>::success(std::move(output));
     } catch (const std::bad_alloc&) {
         return Result<PayloadIndex>::failure(allocation_error());
