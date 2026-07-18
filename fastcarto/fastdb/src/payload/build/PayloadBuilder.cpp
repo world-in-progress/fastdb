@@ -4,6 +4,7 @@
 #include "payload/json/JsonValue.hpp"
 #include "payload/layout/InputSpan.hpp"
 #include "payload/layout/NormalizedInteger.hpp"
+#include "payload/layout/RuntimeSchema.hpp"
 #include "payload/layout/TextEncoding.hpp"
 
 #include <fastdb_payload.h>
@@ -18,7 +19,6 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -155,9 +155,6 @@ struct ExpectationFrame final {
     bool sequence_many;
 };
 
-using RuntimeTypeIds =
-    std::unordered_map<const TypeNode*, std::uint32_t>;
-
 const TypeNode* expected_type(const ExpectationFrame& frame) noexcept {
     if (frame.kind == FrameKind::component) {
         return &frame.component->fields[static_cast<std::size_t>(
@@ -195,21 +192,20 @@ void close_completed(std::vector<ExpectationFrame>& frames,
 }
 
 void refresh_type_id(ExpectationFrame& frame,
-                     const RuntimeTypeIds& type_ids) noexcept {
+                     const layout::RuntimeSchema& runtime_schema) noexcept {
     if (frame.remaining == UINT64_C(0)) {
         return;
     }
-    const auto found = type_ids.find(expected_type(frame));
-    frame.type_id = found == type_ids.end() ? UINT32_MAX : found->second;
+    frame.type_id = runtime_schema.runtime_id(*expected_type(frame));
 }
 
 void simulate_leaf(std::vector<ExpectationFrame>& frames,
                    std::vector<PathToken>& path,
-                   const RuntimeTypeIds& type_ids) {
+                   const layout::RuntimeSchema& runtime_schema) {
     ExpectationFrame& frame = frames.back();
     --frame.remaining;
     ++frame.next_index;
-    refresh_type_id(frame, type_ids);
+    refresh_type_id(frame, runtime_schema);
     close_completed(frames, path);
 }
 
@@ -308,18 +304,21 @@ struct PendingScalar final {
 }  // namespace
 
 struct PayloadBuilder::State final {
-    State(spec::CompiledSpec compiled, BuilderLimits builder_limits)
-        : spec(std::move(compiled)), limits(builder_limits) {}
+    State(spec::CompiledSpec compiled,
+          layout::RuntimeSchema compiled_runtime_schema,
+          BuilderLimits builder_limits)
+        : spec(std::move(compiled)),
+          runtime_schema(std::move(compiled_runtime_schema)),
+          limits(builder_limits) {}
 
     spec::CompiledSpec spec;
+    layout::RuntimeSchema runtime_schema;
     BuilderLimits limits;
     ValueArena arena;
     std::vector<NodeIndex> entry_roots;
     std::vector<std::uint8_t> authored_entries;
     std::vector<ExpectationFrame> frames;
     std::vector<PathToken> path;
-    std::vector<const TypeNode*> runtime_types;
-    RuntimeTypeIds runtime_type_ids;
     std::uint64_t list_elements{UINT64_C(0)};
     std::uint64_t text_bytes{UINT64_C(0)};
     std::uint64_t opaque_bytes{UINT64_C(0)};
@@ -344,49 +343,11 @@ struct PayloadBuilder::State final {
                            invalid_node_index);
         authored_entries.assign(spec.resolved().entries().size(), UINT8_C(0));
 
-        for (const Entry& entry : spec.resolved().entries()) {
-            auto assigned = assign_type_chain(entry.type);
-            if (!assigned.has_value()) {
-                return assigned;
-            }
-        }
-        for (const Component& component : spec.resolved().components()) {
-            for (const spec::Field& field : component.fields) {
-                auto assigned = assign_type_chain(field.type);
-                if (!assigned.has_value()) {
-                    return assigned;
-                }
-            }
-        }
-        return Result<void>::success();
-    }
-
-    Result<void> assign_type_chain(const TypeNode& root) {
-        const TypeNode* current = &root;
-        while (current != nullptr) {
-            if (runtime_types.size() >=
-                static_cast<std::size_t>(UINT32_MAX)) {
-                return Result<void>::failure(resource_error(
-                    JsonPointer{}.append("runtime").append("types"),
-                    "runtime_types",
-                    static_cast<std::uint64_t>(UINT32_MAX) + UINT64_C(1),
-                    static_cast<std::uint64_t>(UINT32_MAX)));
-            }
-            const auto id =
-                static_cast<std::uint32_t>(runtime_types.size());
-            runtime_types.push_back(current);
-            runtime_type_ids.emplace(current, id);
-            if (current->kind != TypeKind::list) {
-                break;
-            }
-            current = current->items.get();
-        }
         return Result<void>::success();
     }
 
     std::uint32_t runtime_id(const TypeNode& type) const noexcept {
-        const auto found = runtime_type_ids.find(&type);
-        return found == runtime_type_ids.end() ? UINT32_MAX : found->second;
+        return runtime_schema.runtime_id(type);
     }
 
     JsonPointer current_path() const { return make_path(path); }
@@ -572,7 +533,7 @@ struct PayloadBuilder::State final {
         link_child(frame, child);
         --frame.remaining;
         ++frame.next_index;
-        refresh_type_id(frame, runtime_type_ids);
+        refresh_type_id(frame, runtime_schema);
         close_completed(frames, path);
     }
 
@@ -636,7 +597,13 @@ Result<PayloadBuilder> PayloadBuilder::create(spec::CompiledSpec spec,
                         JsonValue{"runtime_slice_not_implemented"}},
                 })));
         }
-        auto state = std::make_unique<State>(std::move(spec), limits);
+        auto runtime_schema = layout::RuntimeSchema::compile(spec);
+        if (!runtime_schema.has_value()) {
+            return Result<PayloadBuilder>::failure(
+                std::move(runtime_schema).error());
+        }
+        auto state = std::make_unique<State>(
+            std::move(spec), std::move(runtime_schema).value(), limits);
         auto initialized = state->initialize();
         if (!initialized.has_value()) {
             return Result<PayloadBuilder>::failure(
@@ -1130,7 +1097,7 @@ Result<void> PayloadBuilder::begin_component_impl() {
     state.link_child(parent, node);
     --parent.remaining;
     ++parent.next_index;
-    refresh_type_id(parent, state.runtime_type_ids);
+    refresh_type_id(parent, state.runtime_schema);
     if (has_fields) {
         const std::size_t base = state.path.size();
         state.frames.push_back(ExpectationFrame{
@@ -1209,7 +1176,7 @@ Result<void> PayloadBuilder::begin_list_impl(std::uint64_t item_count) {
     state.link_child(parent, node);
     --parent.remaining;
     ++parent.next_index;
-    refresh_type_id(parent, state.runtime_type_ids);
+    refresh_type_id(parent, state.runtime_schema);
     if (has_items) {
         const std::size_t base = state.path.size();
         state.frames.push_back(ExpectationFrame{
@@ -1422,7 +1389,7 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
             pending.push_back(
                 PendingScalar{ValueTag::null_value, UINT64_C(0), true});
             simulate_leaf(simulated_frames, simulated_path,
-                          state.runtime_type_ids);
+                          state.runtime_schema);
             continue;
         }
 
@@ -1450,7 +1417,7 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
         }
         pending.push_back(PendingScalar{tag_for(type.kind), bits, false});
         simulate_leaf(simulated_frames, simulated_path,
-                      state.runtime_type_ids);
+                      state.runtime_schema);
     }
 
     auto capacity = state.reserve(run.count, UINT64_C(0), UINT64_C(0),

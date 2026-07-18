@@ -5,6 +5,13 @@ Core-owned portable payload contract. They help editors and external tooling,
 but they do not replace the C++ Core's strict parser, normalization, profile
 validation, resolution, canonicalization, or digest authority.
 
+[`fastdb.payload.bin.v1.md`](fastdb.payload.bin.v1.md) is the normative binary
+record-layout contract. It freezes byte offsets, directories, slot/component
+layout, canonical padding and partition rules, numeric representation,
+hardened-open accounting, and resource limits. Its first explicit ordered
+images are in the
+[binary golden index](../tests/golden/payload/v1/binary/index.json).
+
 `fastdb.payload.v1.schema.json` and
 `fastdb.payload.manifest.v1.schema.json` use JSON Schema draft 2020-12 and are
 embedded as raw UTF-8 source bytes by

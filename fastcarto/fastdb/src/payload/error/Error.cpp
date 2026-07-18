@@ -72,6 +72,10 @@ std::string_view symbol_for_code(std::uint32_t code) noexcept {
         return "INVALID_REFERENCE";
     case FDB_PAYLOAD_E_RESOURCE_LIMIT:
         return "RESOURCE_LIMIT";
+    case FDB_PAYLOAD_E_NON_CANONICAL_BINARY:
+        return "NON_CANONICAL_BINARY";
+    case FDB_PAYLOAD_E_INVALID_BINARY_VALUE:
+        return "INVALID_BINARY_VALUE";
     case FDB_PAYLOAD_E_VIEW_INVALIDATED:
         return "VIEW_INVALIDATED";
     case FDB_PAYLOAD_E_STALE_GENERATION:

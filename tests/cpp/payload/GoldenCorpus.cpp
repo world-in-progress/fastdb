@@ -176,6 +176,33 @@ GoldenCase load_case(const std::string& root, JsonCursor value) {
     return result;
 }
 
+BinaryGoldenCase load_binary_case(const std::string& root, JsonCursor value) {
+    if (!value.is_object() || value.size() != UINT64_C(2)) {
+        malformed("binary case must have name and success");
+    }
+    const std::string name = required_string(value, "name");
+    const JsonCursor success = required_member(value, "success");
+    if (!success.is_object() || success.size() != UINT64_C(4)) {
+        malformed("binary success must have four exact members");
+    }
+    const std::string source_path = required_string(success, "source");
+    const std::string binary_path = required_string(success, "binary_hex");
+    const std::string sha256_path = required_string(success, "sha256");
+    BinaryGoldenSuccess expected{
+        source_path,
+        load_binary_file(root + "/" + source_path),
+        required_string(success, "scenario"),
+        binary_path,
+        one_hex_line(root + "/" + binary_path),
+        sha256_path,
+        one_hex_line(root + "/" + sha256_path, 64U),
+    };
+    if (expected.source.empty() || expected.scenario.empty()) {
+        malformed("binary source and scenario must be non-empty");
+    }
+    return BinaryGoldenCase{name, std::move(expected)};
+}
+
 }  // namespace
 
 std::string load_binary_file(const std::string& path) {
@@ -220,6 +247,49 @@ std::vector<GoldenCase> load_spec_golden_corpus(const std::string& root) {
         }
         if (item.source.empty()) {
             malformed("source fixture is empty");
+        }
+        cases.push_back(std::move(item));
+    }
+    return cases;
+}
+
+std::vector<BinaryGoldenCase> load_binary_golden_corpus(
+    const std::string& root) {
+    const std::string index_source = load_binary_file(root + "/index.json");
+    auto parsed = JsonDocument::parse(
+        reinterpret_cast<const std::uint8_t*>(index_source.data()),
+        static_cast<std::uint64_t>(index_source.size()));
+    if (!parsed.has_value()) {
+        malformed("binary index is not strict JSON");
+    }
+    const JsonCursor document = parsed.value().root();
+    if (!document.is_object() || document.size() != UINT64_C(2) ||
+        required_string(document, "schema") !=
+            "fastdb.payload.golden.binary-index.v1") {
+        malformed("binary index root contract");
+    }
+    const JsonCursor cases_value = required_member(document, "cases");
+    if (!cases_value.is_array()) {
+        malformed("binary index cases is not an array");
+    }
+
+    std::vector<BinaryGoldenCase> cases;
+    cases.reserve(static_cast<std::size_t>(cases_value.size()));
+    std::set<std::string> names;
+    std::set<std::string> sources;
+    std::set<std::string> scenarios;
+    std::set<std::string> binary_paths;
+    std::set<std::string> sha256_paths;
+    auto elements = cases_value.elements();
+    JsonCursor element;
+    while (elements.next(element)) {
+        BinaryGoldenCase item = load_binary_case(root, element);
+        if (!names.insert(item.name).second ||
+            !sources.insert(item.success.source_relative_path).second ||
+            !scenarios.insert(item.success.scenario).second ||
+            !binary_paths.insert(item.success.binary_relative_path).second ||
+            !sha256_paths.insert(item.success.sha256_relative_path).second) {
+            malformed("binary case fields are listed more than once");
         }
         cases.push_back(std::move(item));
     }

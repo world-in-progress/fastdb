@@ -1,0 +1,23 @@
+{
+  "schema": "fastdb.payload.golden.binary-index.v1",
+  "cases": [
+    {
+      "name": "empty",
+      "success": {
+        "source": "spec/empty.source.json",
+        "scenario": "empty",
+        "binary_hex": "valid/empty.bin.hex",
+        "sha256": "valid/empty.sha256"
+      }
+    },
+    {
+      "name": "fixed-scalars",
+      "success": {
+        "source": "spec/fixed-scalars.source.json",
+        "scenario": "fixed_scalars",
+        "binary_hex": "valid/fixed-scalars.bin.hex",
+        "sha256": "valid/fixed-scalars.sha256"
+      }
+    }
+  ]
+}

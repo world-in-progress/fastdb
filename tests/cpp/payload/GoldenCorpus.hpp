@@ -28,7 +28,25 @@ struct GoldenCase final {
     std::variant<GoldenSuccess, GoldenError> expected;
 };
 
+struct BinaryGoldenSuccess final {
+    std::string source_relative_path;
+    std::string source;
+    std::string scenario;
+    std::string binary_relative_path;
+    std::string binary_hex;
+    std::string sha256_relative_path;
+    std::string sha256;
+};
+
+struct BinaryGoldenCase final {
+    std::string name;
+    BinaryGoldenSuccess success;
+};
+
 std::vector<GoldenCase> load_spec_golden_corpus(const std::string& root);
+
+std::vector<BinaryGoldenCase> load_binary_golden_corpus(
+    const std::string& root);
 
 std::string load_binary_file(const std::string& path);
 

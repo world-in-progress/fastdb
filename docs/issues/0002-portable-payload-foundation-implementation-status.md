@@ -12,12 +12,13 @@
 ## Purpose
 
 The accepted 0.2.0 design defines a complete portable-payload foundation. The
-current repository implements the P1 compiler/query boundary and still ships
+current repository implements the P1 compiler/query boundary, the P2 logical
+builder, and the first P2 binary-layout tranche, while it still ships
 the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 has completed local
 independent implementation review; its first hosted CI execution remains
-pending. P2-P5 runtime, language-parity, codegen, clean-cut, and release work
-is not implemented. This issue records that temporary gap through the 0.2.0
-clean cut.
+pending. The remaining P2 runtime/lifetime work and P3-P5 graph,
+language-parity, codegen, clean-cut, and release work are not implemented. This
+issue records that temporary gap through the 0.2.0 clean cut.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -46,7 +47,9 @@ Current repository state:
 - the first independent Task 9 review found two integration defects: fuzzer-only builds instrumented shared dependencies without supplying sanitizer runtimes to ordinary consumers, and the workflow aggregate accepted any skipped job without proving it was out of scope. The reviewed correction makes fuzzer mode a consistent sanitizer configuration and validates each aggregate job against its exact path scope. The final re-review reports zero Critical, Important, or Minor findings after clean fuzzer-only, combined-sanitizer, native, language, package, ABI, and aggregate-matrix gates;
 - the GitHub Actions definition now targets the documented standard `ubuntu-24.04` x64 and `macos-15` arm64 runners, asserts the actual architecture, and includes required native and Linux sanitizer/fuzz jobs in the aggregate result. No push is authorized in Task 9, so the first hosted execution remains pending and is not represented as a local pass;
 - P2 Task 1 now provides a Core-internal, record-profile logical-value builder over the frozen P1 `ResolvedSpec`: stable source-node runtime type IDs, flat `ValueNode`/index vectors, stable entry roots, copied text/wide-text/opaque storage, explicit iterative expectation frames, schema-driven `many + component` record batches, exact-width fixed runs, strict UTF-8/UTF-16 validation, exact bit-level normalized binary64 finite/range comparison, transactional retryable mutation, deterministic builder limits/accounting, and stable builder errors 2009-2013. Every authoring mutation computes its final logical frame accounting without cloned state and preflights node/storage/total limits before scratch, capacity growth, or input publication; empty container closure uses the same allocation-free cascade accounting as scalar and wide-text leaves. Fixed-run preflight accounts the consumed value count exactly: a partial run retains its top frame, while a complete multi-value run closes that frame and every completed ancestor before total-byte enforcement. Fixed-run logical limits are likewise preflighted before count-sized scratch or input traversal; native scalar inputs are loaded through exact-width typed objects; input spans are bounded by the Core's `size_t`/`ptrdiff_t` addressability helper before pointer arithmetic; and full-width error facts use lossless decimal strings;
-- the Task 1 builder is deliberately internal. No `fastdb.payload.bin.v1`, binary/layout encoder, `BuildPlan`, final backing, payload owner, open, checked view, materialization, object-graph runtime, public builder ABI, portable language projection, or payload code generator is currently shipped;
+- P2 Task 2 freezes the normative [`fastdb.payload.bin.v1`](../../schemas/fastdb.payload.bin.v1.md) header, seven-kind region matrix, entry directory, canonical offsets/padding, fixed/component slots, list/pool partitions, numeric rules, hardened-open work accounting, limits, and closed binary errors. `RuntimeSchema` is now the sole runtime-ID authority consumed by the Task 1 builder; its iterative reachability and component-layout passes preserve all-source IDs, exclude unreachable inventories without renumbering, reuse finite component DAG layouts, and reject internal cycles/refs without recursion;
+- Task 2 also adds an internal checked `RecordLayout`, ascending bounded `ByteSink` encoder, and strict byte-loading `open_record` for empty and component-free non-normalized fixed scalar records. The two-case ordered corpus pins exact hand-reviewed bytes and independent SHA-256 files, including zero-length boundaries, nullable storage, signed zero, infinities, canonical NaNs, digest embedding, and deterministic repeated builds. `NON_CANONICAL_BINARY` (`3009`) and `INVALID_BINARY_VALUE` (`3010`) are stable without adding any public function; the public ABI remains the frozen 33 symbols;
+- the builder, layout, encoder, and open reader remain private Core seams. Variable pools, lists, inline component value encoding, exact normalized quantize/dequantize, public `BuildPlan`, backing callbacks, direct/staged execution, `PayloadOwner`, checked views, materialization/invalidation, and the complete P2 C ABI remain open. The initial immutable `PayloadIndex` stores fully validated fixed-scalar observations rather than the later backing-owned metadata index; P2 Task 3 must replace/extend that limitation while adding exact platform-independent normalized arithmetic and wasm proof, not preserve it as a public model;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query slice is implemented, independently reviewed, and frozen
@@ -58,14 +61,15 @@ implemented.
 
 Users and downstream repositories can now compile and query
 `fastdb.payload.v1` through the independently reviewed C ABI or C++ facade.
-The Core now also has the first internal record authoring stage, but no public
-caller can create that builder or freeze it into a plan, and there are no
-portable binary bytes to build or open. Users still cannot build, open, view,
-materialize, invalidate, or generate a portable payload, and no Rust, Python,
-or TypeScript/WASM portable projection exists. C-Two may not replace those
-missing owner slices or depend on FastDB private headers; recreating FastDB
-semantics remains forbidden. Toodle consequently cannot yet treat the full
-structured-payload substrate as implemented.
+The Core now also has a private record authoring stage and the first exact
+empty/fixed-scalar encoder/open tranche. No public caller can create the
+builder, obtain a repeatable plan/backing, or call the private reader. Users
+still cannot build, open, view, materialize, invalidate, or generate a portable
+payload through supported APIs, and no Rust, Python, or TypeScript/WASM
+portable projection exists. C-Two may not replace those missing owner slices
+or depend on FastDB private headers; recreating FastDB semantics remains
+forbidden. Toodle consequently cannot yet treat the full structured-payload
+substrate as implemented.
 
 Raw-file/object bytes remain correctly outside FastDB in file/object storage. This implementation gap does not change that owner boundary and is not a reason to route raw files through the existing call-db path.
 
@@ -93,29 +97,34 @@ Collapsing these layers into one speculative change would make review and failur
 
 ### P2 record binary, runtime, and lifetime
 
-**Current limit:** P1 compiles and queries a specification, and P2 Task 1 has
-the internal flat logical arena and complete record-value authoring state
-machine. The builder is not a public ABI and can freeze only to an internal
-`LogicalPayload`; it does not produce binary bytes or a repeatable plan. There
-is still no `fastdb.payload.bin.v1` byte layout, binary encoder/open reader,
-`BuildPlan`, final-backing callback path, direct/staged execution,
-`PayloadOwner`, checked view, materialization, or invalidation.
+**Current limit:** P1 compiles/queries a specification, P2 Task 1 has the
+internal logical arena and record authoring state machine, and P2 Task 2 has
+the exact binary contract plus the first private deterministic encoder/open
+for empty and non-normalized fixed scalar records. It is not a public ABI or a
+repeatable `BuildPlan`. Variable pools, lists, inline component values, exact
+normalized wire arithmetic, final backing callbacks, direct/staged execution,
+`PayloadOwner`, checked views, materialization, and invalidation do not exist.
+The private initial `PayloadIndex` contains decoded fixed-scalar observations,
+not the final backing-owned metadata index.
 
-**Reason:** Binary and lifetime behavior must be designed from the frozen P1
-resolved model and must land atomically with its normative byte-layout document
-and deterministic goldens.
+**Reason:** The byte contract and first goldens had to land atomically before
+later storage/lifetime work. Exact normalized quantization specifically needs
+P2 Task 3's bounded arbitrary-width arithmetic, endpoint/tie goldens, decoded
+binary64 proof, and wasm parity; Task 2 therefore fails it precisely with
+`RUNTIME_UNAVAILABLE` rather than using host floating point.
 
-**Impact:** A C or C++ caller can inspect contract facts but cannot author or
-consume portable runtime values. Existing 0.1.x database/call-db bytes are not a
-substitute for the new portable format.
+**Impact:** Maintainers can review the exact bytes and Core-private fixed-scalar
+round trip, but a supported C/C++ caller still cannot author or consume the
+portable runtime. Existing 0.1.x database/call-db bytes are not a substitute.
 
 **Next owner slice:** FastDB P2.
 
-**Closure criteria:** Publish the exact `fastdb.payload.bin.v1` layout and
-goldens; implement the complete legal non-`ref` algebra through builder, plan,
-backing, build/open, owner, checked view, materialize, and invalidate; pass
-deterministic, malformed-input, backing-failure, lifetime, sanitizer, and
-cross-platform gates.
+**Closure criteria:** Extend the frozen layout through the complete legal
+non-`ref` algebra; P2 Task 3 must add exact normalized quantize/dequantize and
+the immutable backing metadata index; then implement plan, backing, build/open,
+owner, checked view, materialize, and invalidate. Pass deterministic,
+malformed-input, backing-failure, lifetime, sanitizer, wasm, and cross-platform
+gates.
 
 ### P3 object-graph runtime
 
@@ -285,7 +294,7 @@ result.
 | Slice | Status | Required closure evidence |
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
-| P2. Record binary/runtime/lifetime | In progress: internal logical arena and complete record builder implemented; binary/plan/backing/lifetime remain open | Exact binary layout document and goldens; builder/plan/backing; deterministic record build/open; checked views/materialize/invalidate for every legal non-`ref` type |
+| P2. Record binary/runtime/lifetime | In progress: logical builder plus exact wire document and first private empty/fixed-scalar encoder/open; variable/list/component/normalized, public plan/backing/lifetime remain open | Complete every legal non-`ref` type, exact normalized arithmetic and metadata index, plan/backing, deterministic build/open, checked views/materialize/invalidate |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P1-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |

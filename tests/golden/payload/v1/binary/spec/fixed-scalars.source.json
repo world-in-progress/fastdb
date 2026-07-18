@@ -1,0 +1,18 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {"id": "a_bool", "cardinality": "one", "type": {"kind": "bool"}},
+    {"id": "b_u8", "cardinality": "one", "type": {"kind": "u8"}},
+    {
+      "id": "c_u16_nullable",
+      "cardinality": "many",
+      "type": {"kind": "u16", "nullable": true}
+    },
+    {"id": "d_u32", "cardinality": "one", "type": {"kind": "u32"}},
+    {"id": "e_i32", "cardinality": "one", "type": {"kind": "i32"}},
+    {"id": "f_f32", "cardinality": "many", "type": {"kind": "f32"}},
+    {"id": "g_f64", "cardinality": "many", "type": {"kind": "f64"}}
+  ],
+  "components": []
+}
