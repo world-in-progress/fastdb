@@ -315,6 +315,43 @@ target_compile_definitions(
 )
 set_tests_properties(payload.record_binary PROPERTIES TIMEOUT 120)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    add_executable(
+        fastdb_payload_wasm_runtime_harness
+        ../wasm/payload_runtime_harness.cpp
+    )
+    target_include_directories(
+        fastdb_payload_wasm_runtime_harness
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+    )
+    target_compile_definitions(
+        fastdb_payload_wasm_runtime_harness
+        PRIVATE
+            "FASTDB_PAYLOAD_BINARY_FIXTURE_DIR=\"/payload-binary\""
+    )
+    target_link_libraries(
+        fastdb_payload_wasm_runtime_harness
+        PRIVATE fastdb_payload_core
+    )
+    target_link_options(
+        fastdb_payload_wasm_runtime_harness
+        PRIVATE
+            "-sENVIRONMENT=node"
+            "-sEXIT_RUNTIME=1"
+            "--embed-file"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary@/payload-binary"
+    )
+    set_target_properties(
+        fastdb_payload_wasm_runtime_harness
+        PROPERTIES
+            OUTPUT_NAME payload_runtime_harness
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/wasm-tests"
+            SUFFIX ".js"
+    )
+endif()
+
 add_executable(
     fastdb_payload_test_json_depth
     payload/test_json_depth.cpp

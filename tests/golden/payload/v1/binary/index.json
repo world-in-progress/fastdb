@@ -18,6 +18,24 @@
         "binary_hex": "valid/fixed-scalars.bin.hex",
         "sha256": "valid/fixed-scalars.sha256"
       }
+    },
+    {
+      "name": "numeric-edges",
+      "success": {
+        "source": "spec/numeric-edges.source.json",
+        "scenario": "numeric_edges",
+        "binary_hex": "valid/numeric-edges.bin.hex",
+        "sha256": "valid/numeric-edges.sha256"
+      }
+    },
+    {
+      "name": "nested-components",
+      "success": {
+        "source": "spec/nested-components.source.json",
+        "scenario": "nested_components",
+        "binary_hex": "valid/nested-components.bin.hex",
+        "sha256": "valid/nested-components.sha256"
+      }
     }
   ]
 }

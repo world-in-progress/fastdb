@@ -3,6 +3,7 @@
 #include "payload/build/PayloadBuilder.hpp"
 #include "payload/layout/BinaryFormat.hpp"
 #include "payload/layout/CheckedMath.hpp"
+#include "payload/layout/NormalizedInteger.hpp"
 #include "payload/layout/RecordLayout.hpp"
 #include "payload/layout/RuntimeSchema.hpp"
 #include "payload/spec/CompiledSpec.hpp"
@@ -245,7 +246,68 @@ int test_checked_math_and_little_endian_boundaries() {
     return EXIT_SUCCESS;
 }
 
-int test_normalized_wire_layout_is_deferred_to_exact_task3_arithmetic() {
+int test_exact_normalized_integer_authority() {
+    using fastdb::payload::layout::dequantize_normalized;
+    using fastdb::payload::layout::quantize_normalized;
+    const JsonPointer path = JsonPointer{}.append("normalized");
+
+    require(quantize_normalized(UINT64_C(0x0000000000000000), 0.0,
+                                255.0, UINT32_C(255), "u8n", path)
+                .value() == UINT32_C(0));
+    require(quantize_normalized(UINT64_C(0x406fe00000000000), 0.0,
+                                255.0, UINT32_C(255), "u8n", path)
+                .value() == UINT32_C(255));
+    require(quantize_normalized(UINT64_C(0x3fe0000000000000), 0.0,
+                                255.0, UINT32_C(255), "u8n", path)
+                .value() == UINT32_C(0));
+    require(quantize_normalized(UINT64_C(0x3ff8000000000000), 0.0,
+                                255.0, UINT32_C(255), "u8n", path)
+                .value() == UINT32_C(2));
+    require(quantize_normalized(UINT64_C(0x0000000000000001), 0.0,
+                                255.0, UINT32_C(255), "u8n", path)
+                .value() == UINT32_C(0));
+    require(quantize_normalized(UINT64_C(0x8000000000000000), 0.0,
+                                255.0, UINT32_C(255), "u8n", path)
+                .value() == UINT32_C(0));
+
+    require(dequantize_normalized(UINT32_C(0), 0.0, 255.0,
+                                  UINT32_C(255), "u8n", path)
+                .value() == UINT64_C(0x0000000000000000));
+    require(dequantize_normalized(UINT32_C(255), 0.0, 255.0,
+                                  UINT32_C(255), "u8n", path)
+                .value() == UINT64_C(0x406fe00000000000));
+    require(dequantize_normalized(UINT32_C(0), -32768.0, 32767.0,
+                                  UINT32_C(65535), "u16n", path)
+                .value() == UINT64_C(0xc0e0000000000000));
+    require(dequantize_normalized(UINT32_C(65535), -32768.0, 32767.0,
+                                  UINT32_C(65535), "u16n", path)
+                .value() == UINT64_C(0x40dfffc000000000));
+
+    constexpr double large_min = -0x1p1000;
+    constexpr double large_max = 0x1p1000;
+    require(dequantize_normalized(UINT32_C(127), large_min, large_max,
+                                  UINT32_C(255), "u8n", path)
+                .value() == UINT64_C(0xfdf0101010101010));
+    require(dequantize_normalized(UINT32_C(128), large_min, large_max,
+                                  UINT32_C(255), "u8n", path)
+                .value() == UINT64_C(0x7df0101010101010));
+    require(quantize_normalized(UINT64_C(0xfe70000000000000), large_min,
+                                large_max, UINT32_C(255), "u8n", path)
+                .value() == UINT32_C(0));
+    require(quantize_normalized(UINT64_C(0x7e70000000000000), large_min,
+                                large_max, UINT32_C(255), "u8n", path)
+                .value() == UINT32_C(255));
+
+    require(!quantize_normalized(UINT64_C(0xbca0000000000000), 0.0,
+                                 255.0, UINT32_C(255), "u8n", path)
+                 .has_value());
+    require(!quantize_normalized(UINT64_C(0x406fe00000000001), 0.0,
+                                 255.0, UINT32_C(255), "u8n", path)
+                 .has_value());
+    require(!quantize_normalized(UINT64_C(0x7ff0000000000000), 0.0,
+                                 255.0, UINT32_C(255), "u8n", path)
+                 .has_value());
+
     auto compiled = compile(
         R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"norm","cardinality":"one","type":{"kind":"u8n","min":-1,"max":1}}],"components":[]})");
     require(compiled.has_value());
@@ -261,11 +323,9 @@ int test_normalized_wire_layout_is_deferred_to_exact_task3_arithmetic() {
     require(frozen.has_value());
     auto layout = fastdb::payload::layout::RecordLayout::plan(
         runtime.value(), frozen.value());
-    require(!layout.has_value());
-    require(layout.error().code() == FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE);
-    require(layout.error().path() == "/entries/norm");
-    require(layout.error().details_json() ==
-            "{\"reason\":\"normalized_wire_quantization_unavailable\"}");
+    require(layout.has_value());
+    require(layout.value().regions().size() == 1U);
+    require(layout.value().regions()[0].stride == UINT32_C(1));
     return EXIT_SUCCESS;
 }
 
@@ -375,8 +435,7 @@ int main() {
     if (test_checked_math_and_little_endian_boundaries() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
-    if (test_normalized_wire_layout_is_deferred_to_exact_task3_arithmetic() !=
-        EXIT_SUCCESS) {
+    if (test_exact_normalized_integer_authority() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     if (test_unreachable_component_layout_overflow_is_not_compiled() !=

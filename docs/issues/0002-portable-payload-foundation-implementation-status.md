@@ -13,7 +13,7 @@
 
 The accepted 0.2.0 design defines a complete portable-payload foundation. The
 current repository implements the P1 compiler/query boundary, the P2 logical
-builder, and the first P2 binary-layout tranche, while it still ships
+builder, and the fixed-width/AoS P2 binary-layout tranche, while it still ships
 the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 has completed local
 independent implementation review; its first hosted CI execution remains
 pending. The remaining P2 runtime/lifetime work and P3-P5 graph,
@@ -49,7 +49,9 @@ Current repository state:
 - P2 Task 1 now provides a Core-internal, record-profile logical-value builder over the frozen P1 `ResolvedSpec`: stable source-node runtime type IDs, flat `ValueNode`/index vectors, stable entry roots, copied text/wide-text/opaque storage, explicit iterative expectation frames, schema-driven `many + component` record batches, exact-width fixed runs, strict UTF-8/UTF-16 validation, exact bit-level normalized binary64 finite/range comparison, transactional retryable mutation, deterministic builder limits/accounting, and stable builder errors 2009-2013. Every authoring mutation computes its final logical frame accounting without cloned state and preflights node/storage/total limits before scratch, capacity growth, or input publication; empty container closure uses the same allocation-free cascade accounting as scalar and wide-text leaves. Fixed-run preflight accounts the consumed value count exactly: a partial run retains its top frame, while a complete multi-value run closes that frame and every completed ancestor before total-byte enforcement. Fixed-run logical limits are likewise preflighted before count-sized scratch or input traversal; native scalar inputs are loaded through exact-width typed objects; input spans are bounded by the Core's `size_t`/`ptrdiff_t` addressability helper before pointer arithmetic; and full-width error facts use lossless decimal strings;
 - P2 Task 2 freezes the normative [`fastdb.payload.bin.v1`](../../schemas/fastdb.payload.bin.v1.md) header, seven-kind region matrix, entry directory, canonical offsets/padding, fixed/component slots, list/pool partitions, numeric rules, hardened-open work accounting, limits, and closed binary errors. `RuntimeSchema` is now the sole runtime-ID authority consumed by the Task 1 builder; its iterative reachability and linear component-layout passes preserve all-source IDs, compile/cache only the reachable component subgraph without renumbering, reuse finite component DAG layouts, and reject reachable internal cycles/refs without recursion. Layout planning composes digest-equal independently compiled specs by stable source index rather than pointer identity, and open preflights static spec counts plus known minimum descriptor work before runtime/index construction;
 - Task 2 also adds an internal checked `RecordLayout`, ascending bounded `ByteSink` encoder, and strict byte-loading `open_record` for empty and component-free non-normalized fixed scalar records. The two-case ordered corpus pins exact hand-reviewed bytes and independent SHA-256 files, including zero-length boundaries, nullable storage, signed zero, infinities, canonical NaNs, digest embedding, and deterministic repeated builds. `NON_CANONICAL_BINARY` (`3009`) and `INVALID_BINARY_VALUE` (`3010`) are stable without adding any public function; the public ABI remains the frozen 33 symbols;
-- the builder, layout, encoder, and open reader remain private Core seams. Variable pools, lists, inline component value encoding, exact normalized quantize/dequantize, public `BuildPlan`, backing callbacks, direct/staged execution, `PayloadOwner`, checked views, materialization/invalidation, and the complete P2 C ABI remain open. The initial immutable `PayloadIndex` stores fully validated fixed-scalar observations rather than the later backing-owned metadata index; P2 Task 3 must replace/extend that limitation while adding exact platform-independent normalized arithmetic and wasm proof, not preserve it as a public model;
+- P2 Task 3 extends that private Core runtime through every fixed-width scalar, including exact u8n/u16n quantize/dequantize, and through arbitrary finite acyclic inline component reuse under `one` and `many`. The normalized helper decomposes binary64 inputs into bounded integer limbs, applies exact nearest-even code selection, and rounds decoded rationals directly to binary64 bits without `long double`, `fenv`, fast-math, or a binding. Component encoding/open are iterative; immediate validity bytes lead each slot, every field is aligned, empty components use stride one, and every gap, tail, and null component slot is canonical zero;
+- Task 3 also replaces the decoded-observation index with immutable entry/field slot metadata. Observation requires the private caller to supply the same still-live immutable byte image accepted by `open_record`; the index validates span shape but owns no payload backing, cannot prove later pointer/content identity, and stores no second decoded value tree. The four-case ordered corpus adds independent numeric-edge and nested/reused-component bytes and hashes; malformed-byte, checked-arithmetic, exact validation-work, allocation-failure, native sanitizer, and Core-only wasm32/Node coverage exercise the new paths. This creates no binding projection or public runtime API, and the frozen public ABI remains exactly 33 symbols;
+- the builder, layout, encoder, and open reader remain private Core seams. Variable pools, lists, public `BuildPlan`, backing callbacks, direct/staged execution, `PayloadOwner`, checked backing-owned views, materialization/invalidation, and the complete P2 C ABI remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query slice is implemented, independently reviewed, and frozen
@@ -61,8 +63,8 @@ implemented.
 
 Users and downstream repositories can now compile and query
 `fastdb.payload.v1` through the independently reviewed C ABI or C++ facade.
-The Core now also has a private record authoring stage and the first exact
-empty/fixed-scalar encoder/open tranche. No public caller can create the
+The Core now also has a private record authoring stage and an exact
+fixed-width/AoS component encoder/open tranche. No public caller can create the
 builder, obtain a repeatable plan/backing, or call the private reader. Users
 still cannot build, open, view, materialize, invalidate, or generate a portable
 payload through supported APIs, and no Rust, Python, or TypeScript/WASM
@@ -98,33 +100,37 @@ Collapsing these layers into one speculative change would make review and failur
 ### P2 record binary, runtime, and lifetime
 
 **Current limit:** P1 compiles/queries a specification, P2 Task 1 has the
-internal logical arena and record authoring state machine, and P2 Task 2 has
-the exact binary contract plus the first private deterministic encoder/open
-for empty and non-normalized fixed scalar records. It is not a public ABI or a
-repeatable `BuildPlan`. Variable pools, lists, inline component values, exact
-normalized wire arithmetic, final backing callbacks, direct/staged execution,
-`PayloadOwner`, checked views, materialization, and invalidation do not exist.
-The private initial `PayloadIndex` contains decoded fixed-scalar observations,
-not the final backing-owned metadata index.
+internal logical arena and record authoring state machine, P2 Task 2 has the
+exact binary contract, and P2 Task 3 has the private deterministic encoder/open
+for all fixed-width scalars and arbitrary finite acyclic inline AoS components.
+Its immutable `PayloadIndex` contains entry/field slot metadata and observes
+only against the same still-live immutable byte image supplied to open; it
+checks the later span but cannot prove backing identity or lifetime, and it
+does not own a backing or a decoded value tree. This is not a public ABI or a
+repeatable `BuildPlan`.
+Variable pools, lists, final backing callbacks, direct/staged execution,
+`PayloadOwner`, checked backing-owned views, materialization, and invalidation
+do not exist.
 
-**Reason:** The byte contract and first goldens had to land atomically before
-later storage/lifetime work. Exact normalized quantization specifically needs
-P2 Task 3's bounded arbitrary-width arithmetic, endpoint/tie goldens, decoded
-binary64 proof, and wasm parity; Task 2 therefore fails it precisely with
-`RUNTIME_UNAVAILABLE` rather than using host floating point.
+**Reason:** Variable-width regions and public lifetime APIs must build on the
+now-proven fixed/AoS layout, exact normalized arithmetic, strict open, and
+metadata-only index without turning private Core seams into a second public
+model. Backing identity, access pins, and lifetime enforcement belong to the
+later `PayloadOwner` slice rather than this Task 3 value-layout tranche.
 
-**Impact:** Maintainers can review the exact bytes and Core-private fixed-scalar
-round trip, but a supported C/C++ caller still cannot author or consume the
-portable runtime. Existing 0.1.x database/call-db bytes are not a substitute.
+**Impact:** Maintainers can review exact fixed/AoS bytes and Core-private round
+trips, but private observation is sound only while its caller preserves the
+same immutable byte image. Mutation, substitution, or release between open and
+observation is not enforceable yet, and a supported C/C++ caller still cannot
+author or consume the portable runtime. Existing 0.1.x database/call-db bytes
+are not a substitute.
 
 **Next owner slice:** FastDB P2.
 
-**Closure criteria:** Extend the frozen layout through the complete legal
-non-`ref` algebra; P2 Task 3 must add exact normalized quantize/dequantize and
-the immutable backing metadata index; then implement plan, backing, build/open,
-owner, checked view, materialize, and invalidate. Pass deterministic,
-malformed-input, backing-failure, lifetime, sanitizer, wasm, and cross-platform
-gates.
+**Closure criteria:** Extend the frozen layout through variable pools and lists,
+then implement plan, backing, build/open, owner, checked view, materialize, and
+invalidate. Pass deterministic, malformed-input, backing-failure, lifetime,
+sanitizer, wasm, and cross-platform gates.
 
 ### P3 object-graph runtime
 

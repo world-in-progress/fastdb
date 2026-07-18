@@ -21,6 +21,7 @@ using build::LogicalPayload;
 using build::NodeIndex;
 using build::ValueNode;
 using build::ValueTag;
+using build::invalid_node_index;
 using error::Error;
 using error::Result;
 using json::JsonPointer;
@@ -56,7 +57,7 @@ Error allocation_error() {
             "reason", JsonValue{"allocation_failed"}}}));
 }
 
-bool initial_fixed_kind(TypeKind kind) noexcept {
+bool task3_fixed_kind(TypeKind kind) noexcept {
     switch (kind) {
     case TypeKind::boolean:
     case TypeKind::u8:
@@ -65,13 +66,13 @@ bool initial_fixed_kind(TypeKind kind) noexcept {
     case TypeKind::i32:
     case TypeKind::f32:
     case TypeKind::f64:
-        return true;
     case TypeKind::u8n:
     case TypeKind::u16n:
+    case TypeKind::component:
+        return true;
     case TypeKind::str:
     case TypeKind::wstr:
     case TypeKind::bytes:
-    case TypeKind::component:
     case TypeKind::ref:
     case TypeKind::list:
         return false;
@@ -127,6 +128,109 @@ Result<std::vector<NodeIndex>> collect_entry_values(
     return Result<std::vector<NodeIndex>>::success(std::move(result));
 }
 
+Result<void> add_slot_validation_work(const RuntimeSchema& runtime,
+                                      const LogicalPayload& values,
+                                      NodeIndex root,
+                                      std::uint64_t& work) {
+    std::vector<NodeIndex> pending;
+    pending.push_back(root);
+    while (!pending.empty()) {
+        const NodeIndex node_index = pending.back();
+        pending.pop_back();
+        if (node_index == invalid_node_index ||
+            node_index >= values.nodes().size()) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("validation_work"),
+                "slot_node_out_of_range"));
+        }
+        const ValueNode& node =
+            values.nodes()[static_cast<std::size_t>(node_index)];
+        const RuntimeType* const runtime_type =
+            runtime.find_type(node.runtime_type_id);
+        if (runtime_type == nullptr) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("validation_work"),
+                "slot_runtime_type_missing"));
+        }
+        if (node.tag == ValueTag::null_value) {
+            if (runtime_type->source->kind == TypeKind::component) {
+                auto added = checked_accumulate_u64(
+                    work, runtime_type->slot.stride,
+                    JsonPointer{}.append("validation_work"));
+                if (!added.has_value()) {
+                    return added;
+                }
+            }
+            continue;
+        }
+        if (runtime_type->source->kind != TypeKind::component) {
+            continue;
+        }
+        if (node.tag != ValueTag::component) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("validation_work"),
+                "component_value_mismatch"));
+        }
+        const ComponentLayout* const component = runtime.component(
+            runtime_type->source->resolved_component_index);
+        if (component == nullptr ||
+            node.child_count != component->fields.size()) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("validation_work"),
+                "component_layout_mismatch"));
+        }
+        auto added = checked_accumulate_u64(
+            work, component->validity_bytes,
+            JsonPointer{}.append("validation_work"));
+        if (!added.has_value()) {
+            return added;
+        }
+        std::uint64_t cursor = component->validity_bytes;
+        NodeIndex child = node.first_child;
+        for (const ComponentFieldLayout& field : component->fields) {
+            if (field.offset < cursor || child == invalid_node_index ||
+                child >= values.nodes().size()) {
+                return Result<void>::failure(layout_error(
+                    JsonPointer{}.append("validation_work"),
+                    "component_child_layout_mismatch"));
+            }
+            added = checked_accumulate_u64(
+                work, static_cast<std::uint64_t>(field.offset) - cursor,
+                JsonPointer{}.append("validation_work"));
+            if (!added.has_value()) {
+                return added;
+            }
+            added = checked_accumulate_u64(
+                work, UINT64_C(1),
+                JsonPointer{}.append("validation_work"));
+            if (!added.has_value()) {
+                return added;
+            }
+            auto field_end = checked_add_u64(
+                field.offset, field.slot_stride,
+                JsonPointer{}.append("validation_work"));
+            if (!field_end.has_value()) {
+                return Result<void>::failure(std::move(field_end).error());
+            }
+            cursor = field_end.value();
+            pending.push_back(child);
+            child = values.nodes()[static_cast<std::size_t>(child)].next_sibling;
+        }
+        if (child != invalid_node_index || cursor > component->stride) {
+            return Result<void>::failure(layout_error(
+                JsonPointer{}.append("validation_work"),
+                "component_child_chain_mismatch"));
+        }
+        added = checked_accumulate_u64(
+            work, static_cast<std::uint64_t>(component->stride) - cursor,
+            JsonPointer{}.append("validation_work"));
+        if (!added.has_value()) {
+            return added;
+        }
+    }
+    return Result<void>::success();
+}
+
 }  // namespace
 
 Result<RecordLayout> RecordLayout::plan(
@@ -161,12 +265,7 @@ Result<RecordLayout> RecordLayout::plan(
         for (std::uint32_t entry_index = UINT32_C(0);
              entry_index < entry_count.value(); ++entry_index) {
             const spec::Entry& entry = source_entries[entry_index];
-            if (entry.type.kind == TypeKind::u8n ||
-                entry.type.kind == TypeKind::u16n) {
-                return Result<RecordLayout>::failure(unavailable(
-                    entry, "normalized_wire_quantization_unavailable"));
-            }
-            if (!initial_fixed_kind(entry.type.kind)) {
+            if (!task3_fixed_kind(entry.type.kind)) {
                 return Result<RecordLayout>::failure(
                     unavailable(entry, "initial_record_layout_type_unavailable"));
             }
@@ -352,7 +451,24 @@ Result<RecordLayout> RecordLayout::plan(
                 return Result<RecordLayout>::failure(
                     std::move(work_result).error());
             }
-            previous_end = region.data_offset + region.byte_length;
+            auto region_end = checked_add_u64(
+                region.data_offset, region.byte_length,
+                JsonPointer{}.append("validation_work"));
+            if (!region_end.has_value()) {
+                return Result<RecordLayout>::failure(
+                    std::move(region_end).error());
+            }
+            previous_end = region_end.value();
+        }
+        for (const auto& entry_nodes : result.entry_values_) {
+            for (const NodeIndex node : entry_nodes) {
+                work_result = add_slot_validation_work(
+                    runtime_schema, values, node, work);
+                if (!work_result.has_value()) {
+                    return Result<RecordLayout>::failure(
+                        std::move(work_result).error());
+                }
+            }
         }
         result.validation_work_ = work;
         return Result<RecordLayout>::success(std::move(result));
