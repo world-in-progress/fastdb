@@ -63,6 +63,60 @@
         "binary_hex": "valid/component-list-composition.bin.hex",
         "sha256": "valid/component-list-composition.sha256"
       }
+    },
+    {
+      "name": "invalid-header-magic",
+      "invalid": {
+        "source": "spec/empty.source.json",
+        "binary_hex": "invalid/header-magic.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/header-magic.error.json"}
+      }
+    },
+    {
+      "name": "invalid-header-reserved",
+      "invalid": {
+        "source": "spec/empty.source.json",
+        "binary_hex": "invalid/header-reserved.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/header-reserved.error.json"}
+      }
+    },
+    {
+      "name": "invalid-directory-offset",
+      "invalid": {
+        "source": "spec/empty.source.json",
+        "binary_hex": "invalid/directory-offset.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/directory-offset.error.json"}
+      }
+    },
+    {
+      "name": "invalid-resource-total",
+      "invalid": {
+        "source": "spec/empty.source.json",
+        "binary_hex": "invalid/resource-total.bin.hex",
+        "open_options": {"max_total_bytes": 127},
+        "error": {"expectation": "invalid/resource-total.error.json"}
+      }
+    },
+    {
+      "name": "invalid-region-flags",
+      "invalid": {
+        "source": "spec/fixed-scalars.source.json",
+        "binary_hex": "invalid/region-flags.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/region-flags.error.json"}
+      }
+    },
+    {
+      "name": "invalid-entry-index",
+      "invalid": {
+        "source": "spec/fixed-scalars.source.json",
+        "binary_hex": "invalid/entry-index.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/entry-index.error.json"}
+      }
     }
   ]
 }

@@ -128,6 +128,19 @@ void operator delete[](void* value, std::size_t,
     allocation_failure::deallocate(value);
 }
 
+#if FASTDB_TASK6_HAS_BACKING_CALLBACKS
+namespace fastdb::payload::view {
+
+struct PayloadOwnerTestAccess final {
+    static const backing::CommittedBacking& backing(
+        const PayloadOwner& owner) noexcept {
+        return owner.state_->backing;
+    }
+};
+
+}  // namespace fastdb::payload::view
+#endif
+
 namespace fastdb::payload::backing {
 struct Callbacks;
 }
@@ -138,6 +151,33 @@ using fastdb::payload::build::PayloadBuilder;
 using fastdb::payload::build::BuildPlan;
 using fastdb::payload::error::Result;
 using fastdb::payload::spec::CompiledSpec;
+
+#if FASTDB_TASK6_HAS_BACKING_CALLBACKS
+const fastdb::payload::backing::CommittedBacking& owner_backing(
+    const fastdb::payload::view::PayloadOwner& owner) noexcept {
+    return fastdb::payload::view::PayloadOwnerTestAccess::backing(owner);
+}
+
+const std::uint8_t* owner_data(
+    const fastdb::payload::view::PayloadOwner& owner) noexcept {
+    return owner_backing(owner).readable_data();
+}
+
+std::uint64_t owner_size(
+    const fastdb::payload::view::PayloadOwner& owner) noexcept {
+    return owner_backing(owner).readable_size();
+}
+
+std::uint64_t owner_capacity(
+    const fastdb::payload::view::PayloadOwner& owner) noexcept {
+    return owner_backing(owner).capacity();
+}
+
+const fastdb::payload::build::ExecutionReport& owner_report(
+    const fastdb::payload::view::PayloadOwner& owner) {
+    return owner.execution_report().value();
+}
+#endif
 
 constexpr std::uint32_t allow_staging = UINT32_C(1);
 constexpr std::uint32_t require_direct = UINT32_C(2);
@@ -573,9 +613,9 @@ constexpr std::array<StateTransitionCase, 11> state_machine{{
     {"commit success", "reserved", "committed", UINT32_C(0), UINT32_C(0)},
     {"post-commit invalid committed-span validation -> BACKING_CONTRACT",
      "committed", "dead", UINT32_C(0), UINT32_C(1)},
-    {"PendingPayload move", "committed", "transferred", UINT32_C(0),
+    {"PayloadOwner move", "committed", "transferred", UINT32_C(0),
      UINT32_C(0)},
-    {"PendingPayload destruction", "committed", "dead", UINT32_C(0),
+    {"PayloadOwner destruction", "committed", "dead", UINT32_C(0),
      UINT32_C(1)},
 }};
 
@@ -889,6 +929,86 @@ int test_callback_status_classification() {
     return EXIT_SUCCESS;
 }
 
+struct RetainProbe final {
+    std::uint32_t status{success_status};
+    std::uint32_t retains{UINT32_C(0)};
+    std::uint32_t releases{UINT32_C(0)};
+
+    static std::uint32_t retain(void* context, void*) {
+        auto& self = *static_cast<RetainProbe*>(context);
+        ++self.retains;
+        return self.status;
+    }
+
+    static void release(void* context, void*) {
+        ++static_cast<RetainProbe*>(context)->releases;
+    }
+
+    fastdb::payload::backing::Callbacks callbacks() {
+        return fastdb::payload::backing::Callbacks{
+            this, nullptr, nullptr, nullptr, nullptr, &retain, &release};
+    }
+};
+
+int test_retained_backing_acquisition() {
+    using fastdb::payload::backing::RetainedBacking;
+    static_assert(!std::is_copy_constructible_v<RetainedBacking>);
+    static_assert(std::is_move_constructible_v<RetainedBacking>);
+
+    std::array<std::uint8_t, 3> bytes{{UINT8_C(1), UINT8_C(2), UINT8_C(3)}};
+    for (const bool omit_retain : {false, true}) {
+        RetainProbe missing;
+        auto callbacks = missing.callbacks();
+        if (omit_retain) {
+            callbacks.retain = nullptr;
+        } else {
+            callbacks.release = nullptr;
+        }
+        auto rejected = RetainedBacking::acquire(
+            callbacks, nullptr, bytes.data(), bytes.size());
+        require(!rejected.has_value());
+        require(rejected.error().code() == FDB_PAYLOAD_E_BACKING_CONTRACT);
+        require(rejected.error().path() == "/backing");
+        require(rejected.error().details_json() ==
+                "{\"reason\":\"missing_retain_or_release\"}");
+        require(missing.retains == UINT32_C(0));
+        require(missing.releases == UINT32_C(0));
+    }
+
+    RetainProbe success;
+    {
+        auto retained = RetainedBacking::acquire(
+            success.callbacks(), nullptr, bytes.data(), bytes.size());
+        require(retained.has_value());
+        require(success.retains == UINT32_C(1));
+        require(retained.value().readable_data() == bytes.data());
+        require(retained.value().readable_size() == bytes.size());
+        RetainedBacking moved = std::move(retained).value();
+        require(moved.readable_data() == bytes.data());
+    }
+    require(success.releases == UINT32_C(1));
+
+    for (const std::uint32_t status :
+         {FDB_PAYLOAD_E_ALLOCATION_FAILED, unknown_status}) {
+        RetainProbe failed;
+        failed.status = status;
+        auto rejected = RetainedBacking::acquire(
+            failed.callbacks(), nullptr, bytes.data(), bytes.size());
+        require(!rejected.has_value());
+        require(rejected.error().code() ==
+                (status == FDB_PAYLOAD_E_ALLOCATION_FAILED
+                     ? FDB_PAYLOAD_E_ALLOCATION_FAILED
+                     : FDB_PAYLOAD_E_BACKING_CONTRACT));
+        require(failed.retains == UINT32_C(1));
+        require(failed.releases == UINT32_C(0));
+        if (status == unknown_status) {
+            require(rejected.error().details_json() ==
+                    "{\"callback\":\"retain\",\"callback_status\":1779953677}");
+        }
+    }
+    return EXIT_SUCCESS;
+}
+
 int test_heap_container_limit_failure_is_structured() {
     const auto& callbacks = fastdb::payload::backing::heap_callbacks();
     const std::uint64_t request =
@@ -949,10 +1069,10 @@ int verify_wished_for_direct_execution(const Plan& plan) {
     } else {
         auto heap = plan.execute(allow_staging, nullptr);
         require(heap.has_value());
-        require(heap.value().readable_data() != nullptr);
-        require(heap.value().readable_size() == plan.info().total_bytes);
-        require(heap.value().backing_capacity() >= plan.info().total_bytes);
-        const auto& heap_report = heap.value().execution_report();
+        require(owner_data(heap.value()) != nullptr);
+        require(owner_size(heap.value()) == plan.info().total_bytes);
+        require(owner_capacity(heap.value()) >= plan.info().total_bytes);
+        const auto& heap_report = owner_report(heap.value());
         require(heap_report.mode == direct_mode);
         require(heap_report.fallback_reason == UINT32_C(0));
         require(heap_report.requested_bytes == plan.info().total_bytes);
@@ -960,7 +1080,7 @@ int verify_wished_for_direct_execution(const Plan& plan) {
         require(heap_report.staging_bytes == UINT64_C(0));
         require(heap_report.region_count == plan.info().region_count);
         require(heap_report.backing_capacity ==
-                heap.value().backing_capacity());
+                owner_capacity(heap.value()));
 
 #if FASTDB_TASK6_HAS_BACKING_CALLBACKS
         FakeBacking stable(BackingShape::stable_span,
@@ -968,13 +1088,13 @@ int verify_wished_for_direct_execution(const Plan& plan) {
         auto callbacks = stable.production_callbacks(false);
         auto external = plan.execute(require_direct, &callbacks);
         require(external.has_value());
-        require(external.value().readable_size() ==
-                heap.value().readable_size());
+        require(owner_size(external.value()) ==
+                owner_size(heap.value()));
         require(std::equal(
-            heap.value().readable_data(),
-            heap.value().readable_data() + heap.value().readable_size(),
-            external.value().readable_data()));
-        const auto& external_report = external.value().execution_report();
+            owner_data(heap.value()),
+            owner_data(heap.value()) + owner_size(heap.value()),
+            owner_data(external.value())));
+        const auto& external_report = owner_report(external.value());
         require(external_report.mode == direct_mode);
         require(external_report.fallback_reason == UINT32_C(0));
         require(external_report.requested_bytes == plan.info().total_bytes);
@@ -1093,23 +1213,23 @@ int test_range_staged_and_policy() {
     auto before_mutation = planned.value().execute(allow_staging, nullptr);
     require(before_mutation.has_value());
     std::vector<std::uint8_t> frozen_bytes(
-        before_mutation.value().readable_data(),
-        before_mutation.value().readable_data() +
+        owner_data(before_mutation.value()),
+        owner_data(before_mutation.value()) +
             static_cast<std::size_t>(
-                before_mutation.value().readable_size()));
+                owner_size(before_mutation.value())));
     const auto frozen_report =
-        before_mutation.value().execution_report();
+        owner_report(before_mutation.value());
 
     std::fill(caller_text.begin(), caller_text.end(), '\0');
     std::fill(caller_wide.begin(), caller_wide.end(), UINT16_C(0));
     std::fill(caller_bytes.begin(), caller_bytes.end(), UINT8_C(0));
     auto heap = planned.value().execute(allow_staging, nullptr);
     require(heap.has_value());
-    require(heap.value().readable_size() == frozen_bytes.size());
+    require(owner_size(heap.value()) == frozen_bytes.size());
     require(std::equal(frozen_bytes.begin(), frozen_bytes.end(),
-                       heap.value().readable_data()));
+                       owner_data(heap.value())));
     require(reports_equal(frozen_report,
-                          heap.value().execution_report()));
+                          owner_report(heap.value())));
 
     FakeBacking range_only(BackingShape::range_write_only,
                            planned.value().info().total_bytes);
@@ -1119,13 +1239,13 @@ int test_range_staged_and_policy() {
     require(range.has_value(),
             range.has_value() ? std::string_view{}
                               : range.error().details_json());
-    require(range.value().execution_report().mode == direct_mode);
-    require(range.value().execution_report().fallback_reason == UINT32_C(0));
-    require(range.value().execution_report().staging_bytes == UINT64_C(0));
-    require(std::equal(heap.value().readable_data(),
-                       heap.value().readable_data() +
-                           heap.value().readable_size(),
-                       range.value().readable_data()));
+    require(owner_report(range.value()).mode == direct_mode);
+    require(owner_report(range.value()).fallback_reason == UINT32_C(0));
+    require(owner_report(range.value()).staging_bytes == UINT64_C(0));
+    require(std::equal(owner_data(heap.value()),
+                       owner_data(heap.value()) +
+                           owner_size(heap.value()),
+                       owner_data(range.value())));
     require(require_complete_range_writes(
                 range_only, planned.value().info().total_bytes) ==
             EXIT_SUCCESS);
@@ -1138,15 +1258,15 @@ int test_range_staged_and_policy() {
     auto staged_result =
         planned.value().execute(allow_staging, &staged_callbacks);
     require(staged_result.has_value());
-    require(staged_result.value().execution_report().mode == staged_mode);
-    require(staged_result.value().execution_report().fallback_reason ==
+    require(owner_report(staged_result.value()).mode == staged_mode);
+    require(owner_report(staged_result.value()).fallback_reason ==
             UINT32_C(2));
-    require(staged_result.value().execution_report().staging_bytes ==
+    require(owner_report(staged_result.value()).staging_bytes ==
             planned.value().info().total_bytes);
-    require(std::equal(heap.value().readable_data(),
-                       heap.value().readable_data() +
-                           heap.value().readable_size(),
-                       staged_result.value().readable_data()));
+    require(std::equal(owner_data(heap.value()),
+                       owner_data(heap.value()) +
+                           owner_size(heap.value()),
+                       owner_data(staged_result.value())));
     require(require_complete_range_writes(
                 staged, planned.value().info().total_bytes) == EXIT_SUCCESS);
 
@@ -1281,10 +1401,10 @@ int test_execution_allocation_sweeps() {
     {
         auto heap = planned.value().execute(require_direct, nullptr);
         require(heap.has_value());
-        expected.assign(heap.value().readable_data(),
-                        heap.value().readable_data() +
+        expected.assign(owner_data(heap.value()),
+                        owner_data(heap.value()) +
                             static_cast<std::size_t>(
-                                heap.value().readable_size()));
+                                owner_size(heap.value())));
     }
 
     std::uint64_t direct_failures = UINT64_C(0);
@@ -1305,19 +1425,33 @@ int test_execution_allocation_sweeps() {
             allocation_failure::fail_after.store(
                 INT64_C(-1), std::memory_order_relaxed);
             if (result.has_value()) {
-                require(result.value().readable_size() == expected.size());
+                require(owner_size(result.value()) == expected.size());
                 require(std::equal(expected.begin(), expected.end(),
-                                   result.value().readable_data()));
+                                   owner_data(result.value())));
                 succeeded = true;
             } else {
                 require(result.error().code() ==
                         FDB_PAYLOAD_E_ALLOCATION_FAILED);
                 require(callback_count(backing, CallbackKind::reserve) ==
                         UINT64_C(1));
-                require(callback_count(backing, CallbackKind::rollback) ==
-                        allocation_matrix[1].expected_rollbacks);
-                require(callback_count(backing, CallbackKind::release) ==
-                        allocation_matrix[1].expected_releases);
+                if (callback_count(backing, CallbackKind::commit) ==
+                    UINT64_C(0)) {
+                    require(callback_count(
+                                backing, CallbackKind::rollback) ==
+                            allocation_matrix[1].expected_rollbacks);
+                    require(callback_count(
+                                backing, CallbackKind::release) ==
+                            allocation_matrix[1].expected_releases);
+                } else {
+                    require(callback_count(backing, CallbackKind::commit) ==
+                            UINT64_C(1));
+                    require(callback_count(
+                                backing, CallbackKind::rollback) ==
+                            UINT64_C(0));
+                    require(callback_count(
+                                backing, CallbackKind::release) ==
+                            UINT64_C(1));
+                }
                 ++direct_failures;
 
                 FakeBacking retry(BackingShape::stable_span, total);
@@ -1326,7 +1460,7 @@ int test_execution_allocation_sweeps() {
                     require_direct, &retry_callbacks);
                 require(retried.has_value());
                 require(std::equal(expected.begin(), expected.end(),
-                                   retried.value().readable_data()));
+                                   owner_data(retried.value())));
             }
         }
         require(allocation_failure::current_live_bytes.load(
@@ -1358,20 +1492,43 @@ int test_execution_allocation_sweeps() {
             allocation_failure::fail_after.store(
                 INT64_C(-1), std::memory_order_relaxed);
             if (result.has_value()) {
-                require(result.value().execution_report().mode ==
+                require(owner_report(result.value()).mode ==
                         staged_mode);
                 require(std::equal(expected.begin(), expected.end(),
-                                   result.value().readable_data()));
+                                   owner_data(result.value())));
                 succeeded = true;
             } else {
                 require(result.error().code() ==
                         FDB_PAYLOAD_E_ALLOCATION_FAILED);
-                require(callback_count(backing, CallbackKind::reserve) ==
-                        UINT64_C(1));
-                require(callback_count(backing, CallbackKind::rollback) ==
-                        allocation_matrix[2].expected_rollbacks);
-                require(callback_count(backing, CallbackKind::release) ==
-                        allocation_matrix[2].expected_releases);
+                if (callback_count(backing, CallbackKind::commit) ==
+                    UINT64_C(0)) {
+                    const std::uint64_t reserve_count =
+                        callback_count(backing, CallbackKind::reserve);
+                    require(reserve_count == UINT64_C(1) ||
+                            reserve_count == UINT64_C(2));
+                    const std::uint64_t expected_rollbacks =
+                        reserve_count == UINT64_C(1)
+                            ? allocation_matrix[2].expected_rollbacks
+                            : UINT64_C(1);
+                    require(callback_count(backing,
+                                           CallbackKind::rollback) ==
+                            expected_rollbacks);
+                    require(callback_count(
+                                backing, CallbackKind::release) ==
+                            allocation_matrix[2].expected_releases);
+                } else {
+                    require(callback_count(backing,
+                                           CallbackKind::reserve) ==
+                            UINT64_C(2));
+                    require(callback_count(backing, CallbackKind::commit) ==
+                            UINT64_C(1));
+                    require(callback_count(
+                                backing, CallbackKind::rollback) ==
+                            UINT64_C(0));
+                    require(callback_count(
+                                backing, CallbackKind::release) ==
+                            UINT64_C(1));
+                }
                 ++staged_failures;
 
                 FakeBacking retry(
@@ -1380,10 +1537,10 @@ int test_execution_allocation_sweeps() {
                 auto retried = planned.value().execute(
                     allow_staging, &retry_callbacks);
                 require(retried.has_value());
-                require(retried.value().execution_report().mode ==
+                require(owner_report(retried.value()).mode ==
                         staged_mode);
                 require(std::equal(expected.begin(), expected.end(),
-                                   retried.value().readable_data()));
+                                   owner_data(retried.value())));
             }
         }
         require(allocation_failure::current_live_bytes.load(
@@ -1407,11 +1564,11 @@ int test_repeatable_concurrent_and_reentrant_execution() {
     {
         auto heap = planned.value().execute(require_direct, nullptr);
         require(heap.has_value());
-        expected.assign(heap.value().readable_data(),
-                        heap.value().readable_data() +
+        expected.assign(owner_data(heap.value()),
+                        owner_data(heap.value()) +
                             static_cast<std::size_t>(
-                                heap.value().readable_size()));
-        expected_report = heap.value().execution_report();
+                                owner_size(heap.value())));
+        expected_report = owner_report(heap.value());
     }
 
     constexpr std::size_t thread_count = 32U;
@@ -1432,10 +1589,10 @@ int test_repeatable_concurrent_and_reentrant_execution() {
             if (!result.has_value()) {
                 return;
             }
-            reports[index] = result.value().execution_report();
-            passed[index] = result.value().readable_size() == total &&
+            reports[index] = owner_report(result.value());
+            passed[index] = owner_size(result.value()) == total &&
                             std::equal(expected.begin(), expected.end(),
-                                       result.value().readable_data());
+                                       owner_data(result.value()));
         });
     }
     for (std::thread& thread : threads) {
@@ -1460,7 +1617,7 @@ int test_repeatable_concurrent_and_reentrant_execution() {
         auto result = planned.value().execute(require_direct, &outer_callbacks);
         require(result.has_value());
         require(std::equal(expected.begin(), expected.end(),
-                           result.value().readable_data()));
+                           owner_data(result.value())));
     }
     require(outer.nested_succeeded());
     require(nested.storage_equals(expected.data(), expected.size()));
@@ -1691,7 +1848,7 @@ int test_state_status_and_cleanup() {
         require(first.has_value());
         auto second = std::move(first).value();
         auto third = std::move(second);
-        require(third.readable_size() == total);
+        require(owner_size(third) == total);
     }
     require(callback_count(moved, CallbackKind::retain) == UINT64_C(0));
     require(callback_count(moved, CallbackKind::rollback) == UINT64_C(0));
@@ -1854,8 +2011,8 @@ int test_callback_requirements_and_prefix_copy() {
     {
         auto result = planned.value().execute(require_direct, &callbacks);
         require(result.has_value());
-        require(result.value().backing_capacity() == larger_capacity);
-        require(result.value().execution_report().backing_capacity ==
+        require(owner_capacity(result.value()) == larger_capacity);
+        require(owner_report(result.value()).backing_capacity ==
                 larger_capacity);
         const auto reserve_receipt = std::find_if(
             optional_retain.receipts().begin(),
@@ -1900,6 +2057,9 @@ int main() {
     }
 #if FASTDB_TASK6_HAS_BACKING_CALLBACKS
     if (test_callback_status_classification() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_retained_backing_acquisition() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     if (test_heap_container_limit_failure_is_structured() != EXIT_SUCCESS) {

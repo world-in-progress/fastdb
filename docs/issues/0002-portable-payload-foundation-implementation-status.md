@@ -13,13 +13,17 @@
 
 The accepted 0.2.0 design defines a complete portable-payload foundation. The
 current repository implements the P1 compiler/query boundary, the P2 logical
-builder, and the complete non-reference record algebra in the private P2
-binary-layout tranche, while
-it still ships the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 has completed local
+builder, the complete non-reference record algebra, and the current
+Core-private Task 7 hardened-open/owning-payload tranche, while it still ships
+the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 has completed local
 independent implementation review; its first hosted CI execution remains
-pending. The remaining P2 runtime/lifetime work and P3-P5 graph,
-language-parity, codegen, clean-cut, and release work are not implemented. This
-issue records that temporary gap through the 0.2.0 clean cut.
+pending. Task 7's local Debug, Release, sanitizer, Core-wasm, language/package,
+and ABI-33 gates pass; controller pre-commit review and independent completion
+review both pass, with the independent review reporting zero Critical,
+Important, or Minor findings. P2 Task 8 views/lifetime barrier and Task 9 public
+runtime ABI, plus P3-P5 graph, language-parity, codegen, clean-cut, and release
+work, are not implemented. This issue records that temporary gap through the
+0.2.0 clean cut.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -53,10 +57,15 @@ Current repository state:
 - P2 Task 3 extends that private Core runtime through every fixed-width scalar, including exact u8n/u16n quantize/dequantize, and through arbitrary finite acyclic inline component reuse under `one` and `many`. The normalized helper decomposes binary64 inputs into bounded integer limbs, applies exact nearest-even code selection, and rounds decoded rationals directly to binary64 bits without `long double`, `fenv`, fast-math, or a binding. Component encoding/open are iterative; immediate validity bytes lead each slot, every field is aligned, empty components use stride one, and every gap, tail, and null component slot is canonical zero;
 - Task 3 also replaces the decoded-observation index with immutable entry/field slot metadata. Observation requires the private caller to supply the same still-live immutable byte image accepted by `open_record`; the index validates span shape but owns no payload backing, cannot prove later pointer/content identity, and stores no second decoded value tree. The four-case ordered corpus adds independent numeric-edge and nested/reused-component bytes and hashes; malformed-byte, checked-arithmetic, exact validation-work, allocation-failure, native sanitizer, and Core-only wasm32/Node coverage exercise the new paths. This creates no binding projection or public runtime API, and the frozen public ABI remains exactly 33 symbols;
 - P2 Task 4 adds deterministic UTF-8, UTF-16LE, and opaque-byte pools to that same private runtime. Canonical traversal covers root and nested component values without deduplication, every variable slot carries a checked offset/length descriptor, and strict open rejects pool inventory, range, partition, padding, UTF-8, and UTF-16LE violations in deterministic order. The fifth ordered binary golden pins embedded NULs, supplementary UTF-16, repeated equal values, empty present values, nulls, and arbitrary opaque octets; an independent byte receipt and Core-only wasm32/Node coverage pin little-endian text bytes and exact pool offsets;
-- Task 4 also stages only a private eager/lazy text-validation switch. Eager open validates all text content and charges UTF-8 bytes plus UTF-16 code units; lazy open validates the complete bounded metadata/partition shape but retains no unchecked text pointer or text accessor. This is not the public Task 7 `OpenOptions` surface and adds no Task 8 access pin or lifetime guarantee;
+- Task 4 also staged only a private eager/lazy text-validation switch. Eager open validates all text content and charges UTF-8 bytes plus UTF-16 code units; lazy open validates the complete bounded metadata/partition shape but retains no unchecked text pointer or text accessor. Task 7 now governs that switch through its Core-private `OpenOptions`; this is still not a public API and adds no Task 8 access pin or lifetime guarantee;
 - P2 Task 5 completes the private `record.v1` non-reference algebra with recursive lists of every scalar, variable, component, and list item type. One immutable sparse descriptor-fact set and one aggregate per reachable list runtime type are produced by the same iterative canonical DFS that owns list and pool cursors; encoder writes consume those facts rather than recreate traversal state. Strict open validates the complete ordered `LIST_VALIDITY`/`LIST_ITEMS` inventory, checked descriptor partitions, null-zero storage, list-element limits, exact work/depth accounting, and final consumption without recursion. The sixth and seventh ordered goldens cover nested lists and the full root/component/list algebra matrix; independent no-Core directory reconstruction and exact Core-only wasm32 round trips pin both images;
-- P2 Task 6 now adds a private immutable, repeatable `BuildPlan`, exact plan facts, Core heap and validated external backing execution, byte-identical direct/range/staged images, operation-specific closed callback-status classification, explicit reservation ownership, and a move-only inline `PendingPayload`. Plan-allocation failure leaves the builder retryable; normal successful commit-to-result handoff is inline and `noexcept`, while invalid committed spans release the committed reference once and never roll back. Core heap reserve checks alignment padding against both platform size arithmetic and the actual byte-vector container limit before allocation, and maps both allocation and container-length failures to `ALLOCATION_FAILED`; native and wasm32 regressions prove oversized requests return structurally without adopting backing ownership;
-- the builder, plan, backing execution, encoder, and open reader remain private Core seams. Public `OpenOptions`, `PayloadOwner`, checked backing-owned views, materialization/invalidation, and the complete P2 C ABI remain open;
+- P2 Task 6 added a private immutable, repeatable `BuildPlan`, exact plan facts, Core heap and validated external backing execution, byte-identical direct/range/staged images, operation-specific closed callback-status classification, explicit reservation ownership, and the interim move-only inline `PendingPayload`. Plan-allocation failure leaves the builder retryable; successful commit transfers one reference, while invalid committed spans release that reference once and never roll back. Core heap reserve checks alignment padding against both platform size arithmetic and the actual byte-vector container limit before allocation, and maps allocation and container-length failures to `ALLOCATION_FAILED`; native and wasm32 regressions prove oversized requests return structurally without adopting backing ownership;
+- P2 Task 7 cleanly removes `PendingPayload` and the old private `OpenLimits` spelling. Core now has one safe-default `OpenOptions`, one dependency-neutral `ExecutionReport`, and move-only `RetainedBacking` acquisition that requires retain/release, binds one exact base/size, classifies retain status through the shared callback taxonomy, and transfers exactly one retained reference into an owner without a second retain;
+- Task 7 `PayloadOwner::open_copy` preflights null/addressability/total-byte limits before allocation or read, copies into committed Core heap backing, and validates that owned image through the shared reader. `open_external` requires the repeated span to match the retained base/size exactly before reading, then runs the same reader; any validation/publication failure releases the retained reference once. Both paths contain `bad_alloc` and `length_error` as stable `ALLOCATION_FAILED` results;
+- the new cheaply copyable, logically immutable `PayloadOwner` shares one `State` containing exactly one committed/retained backing reference, one `CompiledSpec`, one completely validated `PayloadIndex`, and one real optional `ExecutionReport`. Byte-open owners report `std::nullopt`; plan-created owners retain the exact direct/staged report. Owner copies share State without another backing retain, and digest/profile remain independent of caller spec, source bytes, builder, or plan lifetime;
+- `BuildPlan::execute` now uses a `.cpp`-local move-only committed-image handoff for direct/staged composition and validates only the final committed image through `open_record` before shared-State publication. Publication options take the maximum of safe defaults and immutable plan/spec facts, including stable entry/component counts. Non-allocation reader failures become `BACKING_CONTRACT` with original reader facts; reader or State allocation failures remain `ALLOCATION_FAILED`; every post-commit failure releases once and never rolls back. A commit-returned readable base may legally differ from the writable base: exact non-null/size/capacity shape is checked, and the shared reader validates the returned image;
+- Task 7 focused Debug evidence passes `payload.record_binary`, `payload.payload_backing`, and `payload.payload_open`, including exact physical `/binary/...` diagnostics, retained-span ownership, final-image reader validation, post-commit allocation cleanup, retry/live-byte balance, and legal relocated commit spans. Full Debug and Release each pass 24/24 tests; ASan+UBSan passes 24/24; the available focused TSan backing/concurrency target passes; the Core wasm32/Node harness passes; the existing ABI remains exactly 33 symbols; Python passes 413 tests, compileall, sdist, and wheel build; TypeScript/WASM passes 76 tests after a clean binding rebuild. Controller pre-commit review passes, and the independent completion review reports zero Critical, Important, or Minor findings after independently rerunning full Debug, the three focused targets, ABI-33, strict JSON/corpus inventory, and diff checks;
+- the builder, plan, backing execution, encoder, hardened open, and owner remain private Core seams. Task 8 checked views/access barrier/materialization/invalidation and Task 9 public C/C++ runtime/ABI have not been implemented; bindings and P3+ remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query slice is implemented, independently reviewed, and frozen
@@ -68,15 +77,16 @@ implemented.
 
 Users and downstream repositories can now compile and query
 `fastdb.payload.v1` through the independently reviewed C ABI or C++ facade.
-The Core now also has a private record authoring stage and an exact encoder/open
-tranche for the complete non-reference `record.v1` algebra. No public caller can create the
-builder, obtain a repeatable plan/backing, or call the private reader. Users
-still cannot build, open, view, materialize, invalidate, or generate a portable
-payload through supported APIs, and no Rust, Python, or TypeScript/WASM
-portable projection exists. C-Two may not replace those missing owner slices
-or depend on FastDB private headers; recreating FastDB semantics remains
-forbidden. Toodle consequently cannot yet treat the full structured-payload
-substrate as implemented.
+The Core now also has a private record authoring stage, exact encoder/reader,
+hardened copy/external open, retained backing, and shared owning payload for the
+complete non-reference `record.v1` algebra. That internal owner does not make a
+supported runtime API: no public caller can create the builder, obtain or
+execute a plan/backing, open an owner, or access its values. Users still cannot
+build, open, view, materialize, invalidate, or generate a portable payload
+through supported APIs, and no Rust, Python, or TypeScript/WASM portable
+projection exists. C-Two may not replace Task 8/9 or depend on FastDB private
+headers; recreating FastDB semantics remains forbidden. Toodle consequently
+cannot yet treat the full structured-payload substrate as implemented.
 
 Raw-file/object bytes remain correctly outside FastDB in file/object storage. This implementation gap does not change that owner boundary and is not a reason to route raw files through the existing call-db path.
 
@@ -109,50 +119,57 @@ internal logical arena and record authoring state machine, P2 Task 2 has the
 exact binary contract, and P2 Tasks 3-5 have the private deterministic
 encoder/open for all fixed-width scalars, arbitrary finite acyclic inline AoS
 components, canonical UTF-8, UTF-16LE, and opaque-byte pools, and recursive
-lists across the complete non-reference algebra. P2 Task 6 adds the private
-repeatable plan and truthful final-backing execution, but not an opened owner.
-Its immutable `PayloadIndex` contains entry/field slot metadata and observes
-only against the same still-live immutable byte image supplied to open; it
-checks the later span but cannot prove backing identity or lifetime, and it
-does not own a backing or a decoded value tree. That Task 5 `PayloadIndex` is
-not a public ABI and is distinct from Task 6's private repeatable `BuildPlan`.
-Its private lazy mode exposes only validated variable-slot and pool metadata;
-it deliberately exposes no unchecked text. Public planning/backing callbacks,
-public open options, `PayloadOwner`, checked backing-owned views,
-materialization, and invalidation do not exist. Task 6 callbacks may perform
-distinct-context nested execution because Core holds no unrelated lock, but a
-callback must not synchronously re-enter execution through the same backing
-context/token.
+lists across the complete non-reference algebra. P2 Task 6 has the private
+repeatable plan and truthful final-backing execution. Task 7 now adds
+Core-private safe-default `OpenOptions`, hardened copy/external open,
+exact-span `RetainedBacking`, and one shared immutable `PayloadOwner` whose
+State owns the backing, compiled spec, validated offset-only index, and a real
+optional execution report. Plan execution validates only its final direct or
+staged committed image through the same reader before publication; post-commit
+reader/publication failure releases once and never rolls back. Commit
+relocation remains legal: a successful commit may return a different readable
+base from its writable base when non-null/size/capacity shape and reader
+validation succeed.
 
-**Reason:** Public lifetime APIs must build on the now-proven complete
-non-reference algebra, exact normalized arithmetic, strict open, and
-metadata-only index without turning private Core seams into a second public
-model. Task 6 callback execution is synchronous and serialized within one
-execution, while an external adapter may itself serialize or mutate one owner
-context/token; Core cannot safely invent reentrancy for that external state.
-The inline `PendingPayload` handoff deliberately has no heap publication state;
-the first real owner/shared-state allocation belongs to Task 7.
+Task 8 still has no access barrier, generation, checked `View`/`Access`,
+materialization, or invalidation. Task 9 still has no public builder, plan,
+backing, build/open/owner C ABI or corresponding C++ runtime projection. The
+existing public surface remains the P1 compile/query ABI and query-only C++
+facade, so users cannot reach Task 7 through supported APIs. Rust, Python,
+TypeScript/WASM, P3 object graphs, and later slices remain absent. Task 6/7
+callbacks may perform distinct-context nested execution because Core holds no
+unrelated lock, but a callback must not synchronously re-enter execution
+through the same backing context/token.
 
-**Impact:** Maintainers can now review repeatable Core-private build bytes and
-balanced backing ownership, but private observation is sound only while its
-caller preserves the same immutable byte image. Mutation, substitution, or
-release between open and observation is not enforceable yet, and a supported
-C/C++ caller still cannot author or consume the portable runtime. The absence
-of a Task 6 post-commit result allocation is a smaller failure surface, not a
-missing capability. Same-context/token callback reentry remains an adapter
-precondition; distinct-context execution and nested execution are supported.
-Existing 0.1.x database/call-db bytes are not a substitute.
+**Reason:** Checked access and invalidation must reuse the single Task 7 owner
+and offset-only index, then the public ABI must project that reviewed lifetime
+model rather than expose private headers or invent a second reader. Callback
+execution is synchronous within one execution, while an external adapter may
+serialize or mutate one owner context/token; Core cannot safely infer a
+same-context/token reentrant ownership contract. Relocated commit spans are an
+accepted backing capability, so pointer identity cannot replace reader
+validation.
 
-**Next owner slice:** FastDB P2.
+**Impact:** Maintainers can exercise a complete owning Core-private open path
+and prove retained/committed reference cleanup, but a supported C/C++ caller
+still cannot author or consume the portable runtime. No checked borrowed value
+access or drain-before-release invalidation exists, and no binding may bypass
+that gap. Same-context/token callback reentry remains an adapter precondition;
+distinct-context execution and nested execution are supported. Existing 0.1.x
+database/call-db bytes are not a substitute.
 
-**Closure criteria:** Task 7 must validate committed bytes into the first real
-`PayloadOwner` shared state, inject allocation failure at that publication
-point, and prove one release with no rollback. A future same-context/token
+**Next owner slice:** FastDB P2 Task 8, followed by Task 9.
+
+**Closure criteria:** Task 7's local gates and zero-finding completion review
+are closed. Task 8 must add the one shared
+access barrier, generation, checked views/accesses, detached materialization,
+and drain-before-release invalidation. Task 9 must expose
+builder/plan/backing/build/open/owner through the reviewed public C ABI and C++
+runtime facade. A future same-context/token
 reentrant callback contract requires explicit adapter ownership/serialization
 semantics and hostile nested-callback tests; until then only distinct contexts
-may re-enter. Then implement public plan/build/open, checked view, materialize,
-and invalidate, and pass deterministic, malformed-input, backing-failure,
-lifetime, sanitizer, wasm, and cross-platform gates.
+may re-enter. Pass deterministic, malformed-input, backing-failure, lifetime,
+sanitizer, wasm, ABI, and cross-platform gates before calling P2 public.
 
 ### P3 object-graph runtime
 
@@ -350,7 +367,7 @@ result.
 | Slice | Status | Required closure evidence |
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
-| P2. Record binary/runtime/lifetime | In progress: logical builder, exact wire document, complete private non-reference encoder/open, and private repeatable plan/backing execution are implemented; public ABI, opened owner/lifetime, and views remain open | Publish deterministic plan/build/open only through the reviewed C ABI, then replace the same-live-immutable-image private observation limit with an owning payload, checked backing-owned views, materialize, and invalidate |
+| P2. Record binary/runtime/lifetime | In progress: logical builder, exact wire document, complete private non-reference encoder/reader, repeatable plan/backing execution, hardened copy/external open, retained backing, and shared owning payload are implemented and independently reviewed through Task 7; Task 8 views/barrier/materialize/invalidate and Task 9 public C/C++ runtime ABI remain open | Add the single checked access/invalidation lifetime model in Task 8; then publish deterministic builder/plan/backing/build/open/owner only through the reviewed Task 9 C ABI and C++ projection |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P1-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |

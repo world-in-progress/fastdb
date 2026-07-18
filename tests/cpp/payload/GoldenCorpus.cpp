@@ -176,19 +176,15 @@ GoldenCase load_case(const std::string& root, JsonCursor value) {
     return result;
 }
 
-BinaryGoldenCase load_binary_case(const std::string& root, JsonCursor value) {
-    if (!value.is_object() || value.size() != UINT64_C(2)) {
-        malformed("binary case must have name and success");
-    }
-    const std::string name = required_string(value, "name");
-    const JsonCursor success = required_member(value, "success");
+BinaryGoldenSuccess load_binary_success(const std::string& root,
+                                        JsonCursor success) {
     if (!success.is_object() || success.size() != UINT64_C(4)) {
         malformed("binary success must have four exact members");
     }
     const std::string source_path = required_string(success, "source");
     const std::string binary_path = required_string(success, "binary_hex");
     const std::string sha256_path = required_string(success, "sha256");
-    BinaryGoldenSuccess expected{
+    return BinaryGoldenSuccess{
         source_path,
         load_binary_file(root + "/" + source_path),
         required_string(success, "scenario"),
@@ -197,10 +193,119 @@ BinaryGoldenCase load_binary_case(const std::string& root, JsonCursor value) {
         sha256_path,
         one_hex_line(root + "/" + sha256_path, 64U),
     };
-    if (expected.source.empty() || expected.scenario.empty()) {
-        malformed("binary source and scenario must be non-empty");
+}
+
+std::uint64_t required_u64(JsonCursor object, std::string_view name) {
+    const JsonCursor value = required_member(object, name);
+    if (!value.is_number()) {
+        malformed("binary open option is not a number: " +
+                  std::string(name));
     }
-    return BinaryGoldenCase{name, std::move(expected)};
+    const double number = value.number();
+    if (!std::isfinite(number) || number < 0.0 ||
+        number > static_cast<double>(UINT64_C(9007199254740991)) ||
+        std::floor(number) != number) {
+        malformed("binary open option is outside exact JSON uint64: " +
+                  std::string(name));
+    }
+    return static_cast<std::uint64_t>(number);
+}
+
+BinaryOpenOptions load_binary_open_options(JsonCursor value) {
+    if (!value.is_object()) {
+        malformed("binary invalid open_options must be an object");
+    }
+    BinaryOpenOptions options;
+    auto members = value.members();
+    std::string_view name;
+    JsonCursor member;
+    while (members.next(name, member)) {
+        if (name == "validate_text_eager") {
+            if (!member.is_boolean()) {
+                malformed("validate_text_eager must be Boolean");
+            }
+            options.validate_text_eager = member.boolean();
+        } else if (name == "max_total_bytes") {
+            options.max_total_bytes = required_u64(value, name);
+        } else if (name == "max_regions") {
+            options.max_regions = required_u64(value, name);
+        } else if (name == "max_entries") {
+            options.max_entries = required_u64(value, name);
+        } else if (name == "max_components") {
+            options.max_components = required_u64(value, name);
+        } else if (name == "max_nesting_depth") {
+            options.max_nesting_depth = required_u64(value, name);
+        } else if (name == "max_list_elements") {
+            options.max_list_elements = required_u64(value, name);
+        } else if (name == "max_graph_objects") {
+            options.max_graph_objects = required_u64(value, name);
+        } else if (name == "max_string_bytes") {
+            options.max_string_bytes = required_u64(value, name);
+        } else if (name == "max_validation_work") {
+            options.max_validation_work = required_u64(value, name);
+        } else {
+            malformed("unknown binary open option: " + std::string(name));
+        }
+    }
+    return options;
+}
+
+BinaryGoldenInvalid load_binary_invalid(const std::string& root,
+                                        JsonCursor invalid) {
+    if (!invalid.is_object() || invalid.size() != UINT64_C(4)) {
+        malformed("binary invalid must have four exact members");
+    }
+    const std::string source_path = required_string(invalid, "source");
+    const std::string binary_path = required_string(invalid, "binary_hex");
+    const JsonCursor error = required_member(invalid, "error");
+    if (!error.is_object() || error.size() != UINT64_C(1)) {
+        malformed("binary invalid error must name one expectation");
+    }
+    const std::string expectation_path =
+        required_string(error, "expectation");
+    return BinaryGoldenInvalid{
+        source_path,
+        load_binary_file(root + "/" + source_path),
+        binary_path,
+        one_hex_line(root + "/" + binary_path),
+        load_binary_open_options(required_member(invalid, "open_options")),
+        expectation_path,
+        load_error(root + "/" + expectation_path),
+    };
+}
+
+BinaryOpenGoldenCase load_binary_open_case(const std::string& root,
+                                           JsonCursor value) {
+    if (!value.is_object() || value.size() != UINT64_C(2)) {
+        malformed("binary case must have name and one expectation");
+    }
+    const std::string name = required_string(value, "name");
+    auto members = value.members();
+    std::string_view member_name;
+    JsonCursor member_value;
+    bool has_success = false;
+    bool has_invalid = false;
+    BinaryGoldenSuccess success{};
+    BinaryGoldenInvalid invalid{};
+    while (members.next(member_name, member_value)) {
+        if (member_name == "success") {
+            has_success = true;
+            success = load_binary_success(root, member_value);
+        } else if (member_name == "invalid") {
+            has_invalid = true;
+            invalid = load_binary_invalid(root, member_value);
+        } else if (member_name != "name") {
+            malformed("unknown binary case member");
+        }
+    }
+    if (has_success == has_invalid) {
+        malformed("binary case must choose success or invalid exactly once");
+    }
+    BinaryOpenGoldenCase result{name, std::move(success)};
+    if (has_invalid) {
+        result.expected = std::move(invalid);
+    }
+    return result;
 }
 
 }  // namespace
@@ -255,6 +360,19 @@ std::vector<GoldenCase> load_spec_golden_corpus(const std::string& root) {
 
 std::vector<BinaryGoldenCase> load_binary_golden_corpus(
     const std::string& root) {
+    const auto all = load_binary_open_golden_corpus(root);
+    std::vector<BinaryGoldenCase> successes;
+    for (const BinaryOpenGoldenCase& item : all) {
+        const auto* success = std::get_if<BinaryGoldenSuccess>(&item.expected);
+        if (success != nullptr) {
+            successes.push_back(BinaryGoldenCase{item.name, *success});
+        }
+    }
+    return successes;
+}
+
+std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
+    const std::string& root) {
     const std::string index_source = load_binary_file(root + "/index.json");
     auto parsed = JsonDocument::parse(
         reinterpret_cast<const std::uint8_t*>(index_source.data()),
@@ -273,23 +391,38 @@ std::vector<BinaryGoldenCase> load_binary_golden_corpus(
         malformed("binary index cases is not an array");
     }
 
-    std::vector<BinaryGoldenCase> cases;
+    std::vector<BinaryOpenGoldenCase> cases;
     cases.reserve(static_cast<std::size_t>(cases_value.size()));
     std::set<std::string> names;
     std::set<std::string> sources;
     std::set<std::string> scenarios;
     std::set<std::string> binary_paths;
     std::set<std::string> sha256_paths;
+    std::set<std::string> expectation_paths;
     auto elements = cases_value.elements();
     JsonCursor element;
     while (elements.next(element)) {
-        BinaryGoldenCase item = load_binary_case(root, element);
-        if (!names.insert(item.name).second ||
-            !sources.insert(item.success.source_relative_path).second ||
-            !scenarios.insert(item.success.scenario).second ||
-            !binary_paths.insert(item.success.binary_relative_path).second ||
-            !sha256_paths.insert(item.success.sha256_relative_path).second) {
-            malformed("binary case fields are listed more than once");
+        BinaryOpenGoldenCase item = load_binary_open_case(root, element);
+        if (!names.insert(item.name).second) {
+            malformed("binary case name is listed more than once");
+        }
+        if (const auto* success =
+                std::get_if<BinaryGoldenSuccess>(&item.expected)) {
+            if (success->source.empty() || success->scenario.empty() ||
+                !sources.insert(success->source_relative_path).second ||
+                !scenarios.insert(success->scenario).second ||
+                !binary_paths.insert(success->binary_relative_path).second ||
+                !sha256_paths.insert(success->sha256_relative_path).second) {
+                malformed("binary success fields are listed more than once");
+            }
+        } else {
+            const auto& invalid = std::get<BinaryGoldenInvalid>(item.expected);
+            if (invalid.source.empty() ||
+                !binary_paths.insert(invalid.binary_relative_path).second ||
+                !expectation_paths.insert(
+                     invalid.expectation_relative_path).second) {
+                malformed("binary invalid fields are listed more than once");
+            }
         }
         cases.push_back(std::move(item));
     }

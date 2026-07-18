@@ -946,7 +946,7 @@ int test_binary_goldens_determinism_hash_and_headers() {
                     std::to_string(opened.value().validation_work()) +
                     ":planned=" +
                     std::to_string(first.value().layout.validation_work()));
-        auto exact_limits = fastdb::payload::view::default_open_limits();
+        auto exact_limits = fastdb::payload::view::default_open_options();
         exact_limits.max_validation_work =
             first.value().layout.validation_work();
         require(fastdb::payload::view::open_record(
@@ -960,9 +960,9 @@ int test_binary_goldens_determinism_hash_and_headers() {
         require(!limited.has_value());
         require(limited.error().code() == FDB_PAYLOAD_E_RESOURCE_LIMIT);
         const std::string expected_short_path =
-            item.name == "empty"               ? "/header"
-            : item.name == "fixed-scalars"     ? "/regions/2"
-            : item.name == "numeric-edges"     ? "/padding"
+            item.name == "empty"               ? "/binary/header"
+            : item.name == "fixed-scalars"     ? "/binary/regions/2"
+            : item.name == "numeric-edges"     ? "/binary/header/total_length"
             : item.name == "nested-components" ? "/entries/c_empty_many/1"
             : item.name == "text-bytes" ? "/entries/nested/1/suffix"
             : item.name == "nested-lists" ? "/entries/matrices/2/2"
@@ -1057,6 +1057,25 @@ int require_reason_error(
     const Result<fastdb::payload::view::PayloadIndex>& result,
     std::uint32_t code, std::string_view path, std::string_view reason);
 
+int require_exact_error(
+    const Result<fastdb::payload::view::PayloadIndex>& result,
+    std::uint32_t code,
+    std::string_view path,
+    std::uint64_t actual,
+    std::uint64_t expected,
+    std::string_view reason) {
+    require(!result.has_value());
+    require(result.error().code() == code);
+    require(result.error().path() == path,
+            std::string(result.error().path()) + ":" +
+                std::string(result.error().details_json()));
+    require(result.error().details_json() ==
+            "{\"actual\":\"" + std::to_string(actual) +
+                "\",\"expected\":\"" + std::to_string(expected) +
+                "\",\"reason\":\"" + std::string(reason) + "\"}");
+    return EXIT_SUCCESS;
+}
+
 int test_open_preflights_static_spec_limits_and_known_work() {
     const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
         FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
@@ -1066,28 +1085,30 @@ int test_open_preflights_static_spec_limits_and_known_work() {
     require(compiled.has_value());
     const auto bytes = decode_hex(fixed->success.binary_hex);
 
-    auto limits = fastdb::payload::view::default_open_limits();
+    auto limits = fastdb::payload::view::default_open_options();
     limits.max_entries = UINT64_C(6);
     require(require_resource_limit(fastdb::payload::view::open_record(
                                        compiled.value(), bytes.data(),
                                        bytes.size(), limits),
-                                   "/entries", UINT64_C(7), UINT64_C(6),
+                                   "/binary/header/entry_count", UINT64_C(7),
+                                   UINT64_C(6),
                                    "entries") == EXIT_SUCCESS);
 
-    limits = fastdb::payload::view::default_open_limits();
+    limits = fastdb::payload::view::default_open_options();
     limits.max_regions = UINT64_C(7);
     require(require_resource_limit(fastdb::payload::view::open_record(
                                        compiled.value(), bytes.data(),
                                        bytes.size(), limits),
-                                   "/regions", UINT64_C(8), UINT64_C(7),
+                                   "/binary/header/region_count", UINT64_C(8),
+                                   UINT64_C(7),
                                    "regions") == EXIT_SUCCESS);
 
-    limits = fastdb::payload::view::default_open_limits();
+    limits = fastdb::payload::view::default_open_options();
     limits.max_validation_work = UINT64_C(15);
     require(require_resource_limit(fastdb::payload::view::open_record(
                                        compiled.value(), bytes.data(),
                                        bytes.size(), limits),
-                                   "/validation_work", UINT64_C(16),
+                                   "/binary/header", UINT64_C(16),
                                    UINT64_C(15), "validation_work") ==
             EXIT_SUCCESS);
 
@@ -1098,17 +1119,18 @@ int test_open_preflights_static_spec_limits_and_known_work() {
     std::copy(wide.value().digest().begin(), wide.value().digest().end(),
               wide_bytes.begin() + static_cast<std::ptrdiff_t>(
                                        fastdb::payload::layout::header_spec_digest_offset));
-    limits = fastdb::payload::view::default_open_limits();
+    limits = fastdb::payload::view::default_open_options();
     limits.max_components = UINT64_C(33);
     require(require_resource_limit(fastdb::payload::view::open_record(
                                        wide.value(), wide_bytes.data(),
                                        wide_bytes.size(), limits),
-                                   "/components", UINT64_C(34), UINT64_C(33),
+                                   "/binary/header", UINT64_C(34),
+                                   UINT64_C(33),
                                    "components") == EXIT_SUCCESS);
 
     auto bad_magic = bytes;
     bad_magic[0] ^= UINT8_C(1);
-    limits = fastdb::payload::view::default_open_limits();
+    limits = fastdb::payload::view::default_open_options();
     limits.max_entries = UINT64_C(0);
     require(fastdb::payload::view::open_record(
                 compiled.value(), bad_magic.data(), bad_magic.size(), limits)
@@ -1382,7 +1404,7 @@ int test_task4_pool_metadata_eager_lazy_and_traversal_order() {
     require(eager_invalid.error().details_json() ==
             "{\"encoding\":\"utf-8\",\"reason\":\"invalid_sequence\"}");
 
-    auto lazy_limits = fastdb::payload::view::default_open_limits();
+    auto lazy_limits = fastdb::payload::view::default_open_options();
     lazy_limits.validate_text_eager = false;
     auto lazy = fastdb::payload::view::open_record(
         encoded.value().spec, invalid_utf8.data(), invalid_utf8.size(),
@@ -1397,13 +1419,13 @@ int test_task4_pool_metadata_eager_lazy_and_traversal_order() {
     require(lazy.value().retained_max_validation_work() ==
             lazy_limits.max_validation_work);
 
-    auto string_limits = fastdb::payload::view::default_open_limits();
+    auto string_limits = fastdb::payload::view::default_open_options();
     string_limits.max_string_bytes = UINT64_C(56);
     require(require_resource_limit(
                 fastdb::payload::view::open_record(
                     encoded.value().spec, encoded.value().bytes.data(),
                     encoded.value().bytes.size(), string_limits),
-                "/pools/text", UINT64_C(57), UINT64_C(56),
+                "/binary/regions/8/byte_length", UINT64_C(57), UINT64_C(56),
                 "string_bytes") == EXIT_SUCCESS);
     return EXIT_SUCCESS;
 }
@@ -1437,9 +1459,13 @@ int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
                              fastdb::payload::layout::region_kind_offset),
                 FDB_PAYLOAD_REGION_BYTES_POOL, JsonPointer{})
                 .has_value());
-    require(require_reason_error(
+    require(require_exact_error(
                 open(wrong_kind), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
-                "/regions/7", "region_descriptor_contract") == EXIT_SUCCESS);
+                "/binary/regions/7/kind",
+                static_cast<std::uint32_t>(
+                    fastdb::payload::layout::RegionKind::bytes_pool),
+                static_cast<std::uint32_t>(regions[7].kind), "region_kind") ==
+            EXIT_SUCCESS);
 
     auto wrong_owner = encoded.value().bytes;
     require(
@@ -1449,9 +1475,10 @@ int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
                          fastdb::payload::layout::region_owner_index_offset),
             UINT32_C(0), JsonPointer{})
             .has_value());
-    require(require_reason_error(
+    require(require_exact_error(
                 open(wrong_owner), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
-                "/regions/7", "region_descriptor_contract") == EXIT_SUCCESS);
+                "/binary/regions/7/owner_index", UINT64_C(0), UINT32_MAX,
+                "region_owner_index") == EXIT_SUCCESS);
 
     auto wrong_alignment = encoded.value().bytes;
     require(fastdb::payload::layout::store_u32_le(
@@ -1460,9 +1487,10 @@ int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
                              fastdb::payload::layout::region_alignment_offset),
                 UINT32_C(2), JsonPointer{})
                 .has_value());
-    require(require_reason_error(
+    require(require_exact_error(
                 open(wrong_alignment), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
-                "/regions/7", "region_descriptor_contract") == EXIT_SUCCESS);
+                "/binary/regions/7/alignment", UINT64_C(2),
+                regions[7].alignment, "region_alignment") == EXIT_SUCCESS);
 
     auto overlap = encoded.value().bytes;
     require(
@@ -1472,9 +1500,11 @@ int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
                          fastdb::payload::layout::region_data_offset_offset),
             regions[7].data_offset, JsonPointer{})
             .has_value());
-    require(require_reason_error(
-                open(overlap), FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/8",
-                "region_descriptor_contract") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(overlap), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/8/data_offset", regions[7].data_offset,
+                regions[8].data_offset, "region_data_offset") ==
+            EXIT_SUCCESS);
 
     auto out_of_bounds = encoded.value().bytes;
     require(
@@ -1484,8 +1514,16 @@ int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
                          fastdb::payload::layout::region_byte_length_offset),
             encoded.value().bytes.size(), JsonPointer{})
             .has_value());
+    require(fastdb::payload::layout::store_u64_le(
+                out_of_bounds.data(), out_of_bounds.size(),
+                region_field(
+                    UINT32_C(7),
+                    fastdb::payload::layout::region_element_count_offset),
+                encoded.value().bytes.size(), JsonPointer{})
+                .has_value());
     require(open(out_of_bounds).error().code() == FDB_PAYLOAD_E_OUT_OF_BOUNDS);
-    require(open(out_of_bounds).error().path() == "/regions/7");
+    require(open(out_of_bounds).error().path() ==
+            "/binary/regions/7/byte_length");
 
     auto overflow = encoded.value().bytes;
     require(
@@ -1495,8 +1533,16 @@ int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
                          fastdb::payload::layout::region_byte_length_offset),
             UINT64_MAX, JsonPointer{})
             .has_value());
+    require(fastdb::payload::layout::store_u64_le(
+                overflow.data(), overflow.size(),
+                region_field(
+                    UINT32_C(7),
+                    fastdb::payload::layout::region_element_count_offset),
+                UINT64_MAX, JsonPointer{})
+                .has_value());
     require(open(overflow).error().code() == FDB_PAYLOAD_E_LENGTH_OVERFLOW);
-    require(open(overflow).error().path() == "/regions/7");
+    require(open(overflow).error().path() ==
+            "/binary/regions/7/byte_length");
 
     const std::uint64_t text_values = regions[1].data_offset;
     auto nonzero_null = encoded.value().bytes;
@@ -1585,7 +1631,8 @@ int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
             .has_value());
     const auto tail_result = open(tail);
     require(!tail_result.has_value());
-    require(tail_result.error().path() == "/pools/bytes",
+    require(tail_result.error().path() ==
+                "/binary/regions/9/byte_length",
             std::string(tail_result.error().path()) + ":" +
                 std::string(tail_result.error().details_json()));
     require(tail_result.error().details_json() ==
@@ -1700,7 +1747,7 @@ int test_open_component_nesting_depth_limits() {
 
     auto numeric_encoded = encode_case(*numeric);
     require(numeric_encoded.has_value());
-    auto scalar_limits = fastdb::payload::view::default_open_limits();
+    auto scalar_limits = fastdb::payload::view::default_open_options();
     scalar_limits.max_nesting_depth = UINT64_C(0);
     require(fastdb::payload::view::open_record(
                 numeric_encoded.value().spec,
@@ -1715,7 +1762,7 @@ int test_open_component_nesting_depth_limits() {
         nested_encoded.value().bytes.size());
     require(unrestricted.has_value());
 
-    auto exact_limits = fastdb::payload::view::default_open_limits();
+    auto exact_limits = fastdb::payload::view::default_open_options();
     exact_limits.max_nesting_depth = UINT64_C(3);
     auto exact_first = fastdb::payload::view::open_record(
         nested_encoded.value().spec, nested_encoded.value().bytes.data(),
@@ -1783,7 +1830,7 @@ int test_open_component_nesting_depth_limits() {
                 nullable_layout.value(), nullable_values.value(), nullable_sink)
                 .has_value());
 
-    auto nullable_limits = fastdb::payload::view::default_open_limits();
+    auto nullable_limits = fastdb::payload::view::default_open_options();
     nullable_limits.max_nesting_depth = UINT64_C(1);
     const auto nullable_opened = fastdb::payload::view::open_record(
         nullable_spec.value(), nullable_sink.bytes().data(),
@@ -1852,7 +1899,7 @@ int test_large_many_component_stride_and_count_overflow() {
         compiled.value(), overflow.data(), overflow.size());
     require(!rejected.has_value());
     require(rejected.error().code() == FDB_PAYLOAD_E_LENGTH_OVERFLOW);
-    require(rejected.error().path() == "/regions/0",
+    require(rejected.error().path() == "/binary/entries/0/value_count",
             std::string(rejected.error().path()) + ":" +
                 std::string(rejected.error().details_json()));
     require(rejected.error().details_json() ==
@@ -1889,11 +1936,12 @@ int test_component_malformed_bytes_have_exact_diagnostics() {
     auto bad_tail_bit = encoded.value().bytes;
     bad_tail_bit[static_cast<std::size_t>(validity1.data_offset)] |=
         UINT8_C(0x80);
-    require(require_reason_error(
+    require(require_exact_error(
                 fastdb::payload::view::open_record(
                     encoded.value().spec, bad_tail_bit.data(),
                     bad_tail_bit.size()),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/1",
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/1/data", UINT64_C(128), UINT64_C(0),
                 "nonzero_validity_tail") == EXIT_SUCCESS);
 
     auto bad_field_padding = encoded.value().bytes;
@@ -1933,12 +1981,13 @@ int test_component_malformed_bytes_have_exact_diagnostics() {
                 region0 + fastdb::payload::layout::region_stride_offset,
                 value0.stride + UINT32_C(1), JsonPointer{})
                 .has_value());
-    require(require_reason_error(
+    require(require_exact_error(
                 fastdb::payload::view::open_record(
                     encoded.value().spec, wrong_stride.data(),
                     wrong_stride.size()),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/0",
-                "region_descriptor_contract") == EXIT_SUCCESS);
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/0/stride", value0.stride + UINT32_C(1),
+                value0.stride, "region_stride") == EXIT_SUCCESS);
 
     auto wrong_alignment = encoded.value().bytes;
     require(fastdb::payload::layout::store_u32_le(
@@ -1946,12 +1995,13 @@ int test_component_malformed_bytes_have_exact_diagnostics() {
                 region0 + fastdb::payload::layout::region_alignment_offset,
                 UINT32_C(4), JsonPointer{})
                 .has_value());
-    require(require_reason_error(
+    require(require_exact_error(
                 fastdb::payload::view::open_record(
                     encoded.value().spec, wrong_alignment.data(),
                     wrong_alignment.size()),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/0",
-                "region_descriptor_contract") == EXIT_SUCCESS);
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/0/alignment", UINT64_C(4),
+                value0.alignment, "region_alignment") == EXIT_SUCCESS);
 
     auto wrong_type = encoded.value().bytes;
     require(fastdb::payload::layout::store_u32_le(
@@ -1960,11 +2010,13 @@ int test_component_malformed_bytes_have_exact_diagnostics() {
                     fastdb::payload::layout::region_runtime_type_id_offset,
                 UINT32_C(999), JsonPointer{})
                 .has_value());
-    require(require_reason_error(
+    require(require_exact_error(
                 fastdb::payload::view::open_record(
                     encoded.value().spec, wrong_type.data(), wrong_type.size()),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/0",
-                "region_descriptor_contract") == EXIT_SUCCESS);
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/0/runtime_type_id", UINT64_C(999),
+                entry0.runtime_type_id, "region_runtime_type_id") ==
+            EXIT_SUCCESS);
 
     auto truncated = encoded.value().bytes;
     truncated.resize(static_cast<std::size_t>(value0.data_offset +
@@ -1979,7 +2031,8 @@ int test_component_malformed_bytes_have_exact_diagnostics() {
         encoded.value().spec, truncated.data(), truncated.size());
     require(!truncated_result.has_value());
     require(truncated_result.error().code() == FDB_PAYLOAD_E_OUT_OF_BOUNDS);
-    require(truncated_result.error().path() == "/regions/0");
+    require(truncated_result.error().path() ==
+            "/binary/regions/0/byte_length");
     require(truncated_result.error().details_json() ==
             "{\"available\":\"543\",\"end\":\"544\",\"reason\":"
             "\"wire_range_out_of_bounds\"}");
@@ -2173,7 +2226,7 @@ int test_open_observation_and_malformed_canonical_values() {
                 .error()
                 .code() == FDB_PAYLOAD_E_DIGEST_MISMATCH);
 
-    auto limits = fastdb::payload::view::default_open_limits();
+    auto limits = fastdb::payload::view::default_open_options();
     limits.max_total_bytes = UINT64_C(128);
     require(fastdb::payload::view::open_record(
                 encoded.value().spec, encoded.value().bytes.data(),
@@ -2569,10 +2622,11 @@ int test_task5_list_region_descriptor_and_partition_failures() {
                     fastdb::payload::layout::header_region_count_offset,
                     declared_regions, JsonPointer{})
                     .has_value());
-        require(require_reason_error(
+        require(require_exact_error(
                     open(wrong_inventory),
-                    FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/header",
-                    "directory_header_contract") == EXIT_SUCCESS);
+                    FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                    "/binary/header/region_count", declared_regions,
+                    regions.size(), "region_count") == EXIT_SUCCESS);
     }
 
     const auto mutate_u32 = [&](std::uint32_t region,
@@ -2599,105 +2653,132 @@ int test_task5_list_region_descriptor_and_partition_failures() {
         }
         return bytes;
     };
-    require(require_reason_error(
+    require(require_exact_error(
                 open(mutate_u64(
                     UINT32_C(3),
                     fastdb::payload::layout::region_element_count_offset,
                     UINT64_C(5))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/3/byte_length", regions[3].byte_length,
+                UINT64_C(5), "region_byte_length") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(3),
                     fastdb::payload::layout::region_kind_offset,
                     static_cast<std::uint32_t>(
                         fastdb::payload::layout::RegionKind::list_validity))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/3/kind",
+                static_cast<std::uint32_t>(
+                    fastdb::payload::layout::RegionKind::list_validity),
+                static_cast<std::uint32_t>(regions[3].kind), "region_kind") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(UINT32_C(3),
                                 fastdb::payload::layout::region_stride_offset,
                                 UINT32_C(2))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
-                "region_descriptor_contract") == EXIT_SUCCESS);
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/3/stride", UINT64_C(2), regions[3].stride,
+                "region_stride") == EXIT_SUCCESS);
 
-    require(require_reason_error(
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(2),
                     fastdb::payload::layout::region_kind_offset,
                     static_cast<std::uint32_t>(
                         fastdb::payload::layout::RegionKind::list_items))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/2/kind",
+                static_cast<std::uint32_t>(
+                    fastdb::payload::layout::RegionKind::list_items),
+                static_cast<std::uint32_t>(regions[2].kind), "region_kind") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u64(
                     UINT32_C(2),
                     fastdb::payload::layout::region_byte_length_offset,
                     UINT64_C(2))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/2/byte_length", UINT64_C(2),
+                regions[2].byte_length, "region_byte_length") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(2),
                     fastdb::payload::layout::region_stride_offset,
                     UINT32_C(1))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/2/stride", UINT64_C(1), regions[2].stride,
+                "region_stride") == EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(2),
                     fastdb::payload::layout::region_owner_index_offset,
                     UINT32_C(7))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/2/owner_index", UINT64_C(7),
+                regions[2].owner_index, "region_owner_index") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(2),
                     fastdb::payload::layout::region_runtime_type_id_offset,
                     UINT32_MAX)),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/2/runtime_type_id", UINT32_MAX,
+                regions[2].runtime_type_id, "region_runtime_type_id") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(2),
                     fastdb::payload::layout::region_alignment_offset,
                     UINT32_C(2))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/2",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/2/alignment", UINT64_C(2),
+                regions[2].alignment, "region_alignment") == EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u64(
                     UINT32_C(2),
                     fastdb::payload::layout::region_element_count_offset,
                     UINT64_C(5))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/3/element_count",
+                regions[3].element_count, UINT64_C(5),
+                "list_validity_element_count") == EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(3),
                     fastdb::payload::layout::region_owner_index_offset,
                     UINT32_C(7))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/3/owner_index", UINT64_C(7),
+                regions[3].owner_index, "region_owner_index") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(3),
                     fastdb::payload::layout::region_runtime_type_id_offset,
                     UINT32_MAX)),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
-                "region_descriptor_contract") == EXIT_SUCCESS);
-    require(require_reason_error(
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/3/runtime_type_id", UINT32_MAX,
+                regions[3].runtime_type_id, "region_runtime_type_id") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
                 open(mutate_u32(
                     UINT32_C(3),
                     fastdb::payload::layout::region_alignment_offset,
                     UINT32_C(2))),
-                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/regions/3",
-                "region_descriptor_contract") == EXIT_SUCCESS);
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/3/alignment", UINT64_C(2),
+                regions[3].alignment, "region_alignment") == EXIT_SUCCESS);
 
     auto bad_tail = encoded.value().bytes;
     bad_tail[static_cast<std::size_t>(regions[2].data_offset)] |= UINT8_C(0x80);
-    require(require_reason_error(open(bad_tail),
+    require(require_exact_error(open(bad_tail),
                                 FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
-                                "/regions/2", "nonzero_validity_tail") ==
+                                "/binary/regions/2/data", UINT64_C(128),
+                                UINT64_C(0), "nonzero_validity_tail") ==
             EXIT_SUCCESS);
 
     const std::uint64_t descriptor_base = regions[1].data_offset;
@@ -2779,7 +2860,8 @@ int test_task5_list_region_descriptor_and_partition_failures() {
                     fastdb::payload::layout::region_element_count_offset),
                 UINT64_C(5), JsonPointer{})
                 .has_value());
-    require(require_partition_error(open(unconsumed), "/lists/0",
+    require(require_partition_error(open(unconsumed),
+                                    "/binary/regions/3/element_count",
                                     UINT64_C(5), UINT64_C(4),
                                     "partition_not_consumed") ==
             EXIT_SUCCESS);
@@ -2843,7 +2925,7 @@ int test_task5_list_region_descriptor_and_partition_failures() {
 int test_task5_list_limits_and_20000_level_iteration() {
     auto simple = encode_source_scenario(simple_list_source(), "simple_lists");
     require(simple.has_value());
-    auto limits = fastdb::payload::view::default_open_limits();
+    auto limits = fastdb::payload::view::default_open_options();
     limits.max_list_elements = UINT64_C(4);
     require(fastdb::payload::view::open_record(
                 simple.value().spec, simple.value().bytes.data(),
@@ -2856,7 +2938,9 @@ int test_task5_list_limits_and_20000_level_iteration() {
     const auto limited_second = fastdb::payload::view::open_record(
         simple.value().spec, simple.value().bytes.data(),
         simple.value().bytes.size(), limits);
-    require(require_resource_limit(limited_first, "/lists/0", UINT64_C(4),
+    require(require_resource_limit(limited_first,
+                                   "/binary/regions/3/element_count",
+                                   UINT64_C(4),
                                    UINT64_C(3), "list_elements") ==
             EXIT_SUCCESS);
     require(limited_second.error().path() == limited_first.error().path());
@@ -2867,7 +2951,7 @@ int test_task5_list_limits_and_20000_level_iteration() {
         simple.value().spec, simple.value().bytes.data(),
         simple.value().bytes.size());
     require(simple_unrestricted.has_value());
-    auto work_limits = fastdb::payload::view::default_open_limits();
+    auto work_limits = fastdb::payload::view::default_open_options();
     work_limits.max_validation_work =
         simple_unrestricted.value().validation_work();
     require(fastdb::payload::view::open_record(
@@ -2901,7 +2985,7 @@ int test_task5_list_limits_and_20000_level_iteration() {
     auto nested_order =
         encode_source_scenario(nested_order_source, "nested_lists");
     require(nested_order.has_value());
-    auto logical_order_limits = fastdb::payload::view::default_open_limits();
+    auto logical_order_limits = fastdb::payload::view::default_open_options();
     logical_order_limits.max_validation_work = UINT64_C(103);
     const auto logical_order_first = fastdb::payload::view::open_record(
         nested_order.value().spec, nested_order.value().bytes.data(),
@@ -2945,7 +3029,7 @@ int test_task5_list_limits_and_20000_level_iteration() {
                 wide_budget_layout.value(), wide_budget_values.value(),
                 wide_budget_sink)
                 .has_value());
-    auto wide_work_limits = fastdb::payload::view::default_open_limits();
+    auto wide_work_limits = fastdb::payload::view::default_open_options();
     wide_work_limits.max_validation_work =
         wide_budget_layout.value().validation_work() - wide_width;
     allocation_failure::largest_allocation.store(
@@ -3014,7 +3098,7 @@ int test_task5_list_limits_and_20000_level_iteration() {
                 wide_component_values.value(), wide_component_sink)
                 .has_value());
     auto component_work_limits =
-        fastdb::payload::view::default_open_limits();
+        fastdb::payload::view::default_open_options();
     component_work_limits.max_validation_work =
         wide_component_layout.value().validation_work() - component_width;
     allocation_failure::largest_allocation.store(
@@ -3035,7 +3119,7 @@ int test_task5_list_limits_and_20000_level_iteration() {
                 std::to_string(largest_component_open_allocation) +
                 ", limit=" +
                 std::to_string(component_work_limits.max_validation_work));
-    auto mixed_limits = fastdb::payload::view::default_open_limits();
+    auto mixed_limits = fastdb::payload::view::default_open_options();
     mixed_limits.max_nesting_depth = UINT64_C(3);
     require(fastdb::payload::view::open_record(
                 composition.value().spec, composition.value().bytes.data(),
@@ -3089,7 +3173,7 @@ int test_task5_list_limits_and_20000_level_iteration() {
     require(fastdb::payload::build::encode_record(
                 planned.value(), values.value(), sink)
                 .has_value());
-    auto open_limits = fastdb::payload::view::default_open_limits();
+    auto open_limits = fastdb::payload::view::default_open_options();
     open_limits.max_regions = UINT64_C(50000);
     open_limits.max_nesting_depth = depth;
     open_limits.max_list_elements = depth;
@@ -3266,7 +3350,7 @@ int test_task5_list_allocation_failure_sweeps() {
         }
         require(result.error().code() == FDB_PAYLOAD_E_NON_CANONICAL_BINARY);
         require(result.error().details_json() ==
-                R"({"reason":"nonzero_validity_tail"})");
+                R"({"actual":"128","expected":"0","reason":"nonzero_validity_tail"})");
         reached_validation_error = true;
         break;
     }

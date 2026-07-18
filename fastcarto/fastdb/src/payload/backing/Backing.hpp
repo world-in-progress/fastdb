@@ -1,6 +1,9 @@
 #pragma once
 
+#include "payload/error/Result.hpp"
+
 #include <cstdint>
+#include <utility>
 
 namespace fastdb::payload::backing {
 
@@ -85,6 +88,38 @@ private:
     std::uint64_t readable_size_{UINT64_C(0)};
     std::uint64_t capacity_{UINT64_C(0)};
     bool active_{false};
+};
+
+class RetainedBacking final {
+public:
+    static error::Result<RetainedBacking> acquire(
+        Callbacks callbacks,
+        void* owner_token,
+        const std::uint8_t* readable_data,
+        std::uint64_t readable_size);
+
+    RetainedBacking(const RetainedBacking&) = delete;
+    RetainedBacking& operator=(const RetainedBacking&) = delete;
+    RetainedBacking(RetainedBacking&&) noexcept = default;
+    RetainedBacking& operator=(RetainedBacking&&) noexcept = default;
+    ~RetainedBacking() = default;
+
+    const std::uint8_t* readable_data() const noexcept {
+        return backing_.readable_data();
+    }
+    std::uint64_t readable_size() const noexcept {
+        return backing_.readable_size();
+    }
+
+    CommittedBacking take_committed() && noexcept {
+        return std::move(backing_);
+    }
+
+private:
+    explicit RetainedBacking(CommittedBacking backing) noexcept
+        : backing_(std::move(backing)) {}
+
+    CommittedBacking backing_;
 };
 
 class BackingReservation final {

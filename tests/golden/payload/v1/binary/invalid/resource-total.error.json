@@ -1,0 +1,7 @@
+{
+  "status": 3008,
+  "symbol": "RESOURCE_LIMIT",
+  "path": "/binary/header",
+  "message": "Portable payload open resource limit exceeded",
+  "details_json": "{\"actual\":\"128\",\"limit\":\"127\",\"resource\":\"total_bytes\"}"
+}

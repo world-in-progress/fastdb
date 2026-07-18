@@ -715,7 +715,7 @@ int run() {
             "{\"encoding\":\"utf-8\",\"reason\":\"invalid_sequence\"}") {
         return 25;
     }
-    auto lazy_limits = fastdb::payload::view::default_open_limits();
+    auto lazy_limits = fastdb::payload::view::default_open_options();
     lazy_limits.validate_text_eager = false;
     auto lazy_opened = fastdb::payload::view::open_record(
         text_spec.value(), invalid_utf8.data(), invalid_utf8.size(),

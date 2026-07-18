@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <new>
+#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -57,6 +58,29 @@ Error callback_contract_error(const char* callback,
         }));
 }
 
+Error committed_image_validation_error(const Error& original) {
+    return Error::from_details(
+        FDB_PAYLOAD_E_BACKING_CONTRACT,
+        JsonPointer{}.append("backing"),
+        "Committed portable payload image failed validation",
+        JsonValue::object({
+            JsonValue::Member{
+                "original_code",
+                JsonValue{static_cast<double>(original.code())}},
+            JsonValue::Member{
+                "original_details_json",
+                JsonValue{std::string(original.details_json())}},
+            JsonValue::Member{
+                "original_path", JsonValue{std::string(original.path())}},
+            JsonValue::Member{
+                "original_symbol",
+                JsonValue{std::string(original.symbol())}},
+            JsonValue::Member{
+                "reason",
+                JsonValue{"committed_image_validation_failed"}},
+        }));
+}
+
 Error rollback_failure(const Error& original, std::uint32_t status) {
     const std::uint32_t classified = backing::classify_callback_status(
         backing::CallbackOperation::rollback, status);
@@ -82,14 +106,30 @@ Error rollback_failure(const Error& original, std::uint32_t status) {
         JsonValue::object(std::move(details)));
 }
 
-Result<PendingPayload> fail_reserved(
+class CommittedImage final {
+public:
+    CommittedImage(backing::CommittedBacking backing_value,
+                   ExecutionReport report_value) noexcept
+        : backing(std::move(backing_value)), report(report_value) {}
+
+    CommittedImage(const CommittedImage&) = delete;
+    CommittedImage& operator=(const CommittedImage&) = delete;
+    CommittedImage(CommittedImage&&) noexcept = default;
+    CommittedImage& operator=(CommittedImage&&) noexcept = default;
+    ~CommittedImage() = default;
+
+    backing::CommittedBacking backing;
+    ExecutionReport report;
+};
+
+Result<CommittedImage> fail_reserved(
     backing::BackingReservation& reservation,
     Error original) {
     const std::uint32_t rollback_status = reservation.rollback();
     if (rollback_status == success_status) {
-        return Result<PendingPayload>::failure(std::move(original));
+        return Result<CommittedImage>::failure(std::move(original));
     }
-    return Result<PendingPayload>::failure(
+    return Result<CommittedImage>::failure(
         rollback_failure(original, rollback_status));
 }
 
@@ -268,13 +308,41 @@ Result<BuildPlan> BuildPlan::create(LogicalPayload&& values) try {
         std::move(values), std::move(record_layout).value(), info));
 } catch (const std::bad_alloc&) {
     return Result<BuildPlan>::failure(allocation_error());
+} catch (const std::length_error&) {
+    return Result<BuildPlan>::failure(allocation_error());
 }
 
-Result<PendingPayload> BuildPlan::execute(
+view::OpenOptions BuildPlan::publication_options(
+    const PlanInfo& info) const noexcept {
+    view::OpenOptions options = view::default_open_options();
+    options.max_total_bytes =
+        std::max(options.max_total_bytes, info.total_bytes);
+    options.max_regions = std::max(options.max_regions, info.region_count);
+    options.max_entries = std::max(
+        options.max_entries,
+        static_cast<std::uint64_t>(
+            values_.spec().resolved().entries().size()));
+    options.max_components = std::max(
+        options.max_components,
+        static_cast<std::uint64_t>(
+            values_.spec().resolved().components().size()));
+    options.max_nesting_depth =
+        std::max(options.max_nesting_depth, info.logical_value_count);
+    options.max_list_elements =
+        std::max(options.max_list_elements, info.list_element_count);
+    options.max_string_bytes =
+        std::max(options.max_string_bytes, info.text_bytes);
+    options.max_validation_work =
+        std::max(options.max_validation_work, info.validation_work);
+    options.validate_text_eager = true;
+    return options;
+}
+
+Result<view::PayloadOwner> BuildPlan::execute(
     std::uint32_t policy,
     const backing::Callbacks* callbacks) const try {
     if (policy != UINT32_C(1) && policy != UINT32_C(2)) {
-        return Result<PendingPayload>::failure(
+        return Result<view::PayloadOwner>::failure(
             backing_error(FDB_PAYLOAD_E_INVALID_ARGUMENT,
                           "invalid_execution_policy"));
     }
@@ -282,7 +350,7 @@ Result<PendingPayload> BuildPlan::execute(
         callbacks == nullptr ? backing::heap_callbacks() : *callbacks;
     if (selected.reserve == nullptr || selected.commit == nullptr ||
         selected.rollback == nullptr || selected.release == nullptr) {
-        return Result<PendingPayload>::failure(
+        return Result<view::PayloadOwner>::failure(
             backing_error(FDB_PAYLOAD_E_BACKING_CONTRACT,
                           "missing_required_callback"));
     }
@@ -290,11 +358,11 @@ Result<PendingPayload> BuildPlan::execute(
     auto reserve_failure = [](std::uint32_t status,
                               std::uint32_t classified) {
         if (classified == FDB_PAYLOAD_E_ALLOCATION_FAILED) {
-            return Result<PendingPayload>::failure(backing_error(
+            return Result<view::PayloadOwner>::failure(backing_error(
                 FDB_PAYLOAD_E_ALLOCATION_FAILED,
                 "reserve_allocation_failed"));
         }
-        return Result<PendingPayload>::failure(
+        return Result<view::PayloadOwner>::failure(
             callback_contract_error("reserve", status));
     };
 
@@ -303,7 +371,7 @@ Result<PendingPayload> BuildPlan::execute(
                           std::uint32_t mode,
                           std::uint32_t fallback_reason,
                           const std::uint8_t* staged_image)
-        -> Result<PendingPayload> {
+        -> Result<CommittedImage> {
         const bool misaligned =
             reservation.writable_data() != nullptr &&
             (reinterpret_cast<std::uintptr_t>(
@@ -376,7 +444,7 @@ Result<PendingPayload> BuildPlan::execute(
              info_.total_bytes != UINT64_C(0)) ||
             committed.readable_size() != info_.total_bytes ||
             info_.total_bytes > committed.capacity()) {
-            return Result<PendingPayload>::failure(
+            return Result<CommittedImage>::failure(
                 backing_error(FDB_PAYLOAD_E_BACKING_CONTRACT,
                               "invalid_committed_span"));
         }
@@ -390,8 +458,26 @@ Result<PendingPayload> BuildPlan::execute(
             info_.region_count,
             committed.capacity(),
         };
-        return Result<PendingPayload>::success(
-            PendingPayload(std::move(committed), report));
+        return Result<CommittedImage>::success(
+            CommittedImage{std::move(committed), report});
+    };
+
+    auto publish_image = [this](CommittedImage image)
+        -> Result<view::PayloadOwner> {
+        auto opened = view::open_record(
+            values_.spec(), image.backing.readable_data(),
+            image.backing.readable_size(), publication_options(info_));
+        if (!opened.has_value()) {
+            if (opened.error().code() == FDB_PAYLOAD_E_ALLOCATION_FAILED) {
+                return Result<view::PayloadOwner>::failure(
+                    std::move(opened).error());
+            }
+            return Result<view::PayloadOwner>::failure(
+                committed_image_validation_error(opened.error()));
+        }
+        return view::PayloadOwner::publish(
+            std::move(image.backing), values_.spec(),
+            std::move(opened).value(), image.report);
     };
 
     backing::BackingReservation direct(selected);
@@ -401,20 +487,36 @@ Result<PendingPayload> BuildPlan::execute(
         backing::classify_callback_status(
             backing::CallbackOperation::reserve_direct, direct_status);
     if (direct_classification == success_status) {
-        return execute_reserved(direct, UINT32_C(1), UINT32_C(0), nullptr);
+        auto image = execute_reserved(
+            direct, UINT32_C(1), UINT32_C(0), nullptr);
+        if (!image.has_value()) {
+            return Result<view::PayloadOwner>::failure(
+                std::move(image).error());
+        }
+        return publish_image(std::move(image).value());
     }
     if (direct_classification != FDB_PAYLOAD_E_DIRECT_UNAVAILABLE) {
         return reserve_failure(direct_status, direct_classification);
     }
     if (policy == UINT32_C(2)) {
-        return Result<PendingPayload>::failure(
+        return Result<view::PayloadOwner>::failure(
             backing_error(FDB_PAYLOAD_E_DIRECT_UNAVAILABLE,
                           "backing_declined_direct"));
     }
 
-    auto heap_image = execute(UINT32_C(2), nullptr);
+    backing::BackingReservation heap(backing::heap_callbacks());
+    const std::uint32_t heap_status = heap.reserve(
+        UINT32_C(1), info_.total_bytes, info_.max_alignment);
+    const std::uint32_t heap_classification =
+        backing::classify_callback_status(
+            backing::CallbackOperation::reserve_direct, heap_status);
+    if (heap_classification != success_status) {
+        return reserve_failure(heap_status, heap_classification);
+    }
+    auto heap_image = execute_reserved(
+        heap, UINT32_C(1), UINT32_C(0), nullptr);
     if (!heap_image.has_value()) {
-        return Result<PendingPayload>::failure(
+        return Result<view::PayloadOwner>::failure(
             std::move(heap_image).error());
     }
     backing::BackingReservation staged(selected);
@@ -426,10 +528,18 @@ Result<PendingPayload> BuildPlan::execute(
     if (staged_classification != success_status) {
         return reserve_failure(staged_status, staged_classification);
     }
-    return execute_reserved(staged, UINT32_C(2), UINT32_C(2),
-                            heap_image.value().readable_data());
+    auto final_image = execute_reserved(
+        staged, UINT32_C(2), UINT32_C(2),
+        heap_image.value().backing.readable_data());
+    if (!final_image.has_value()) {
+        return Result<view::PayloadOwner>::failure(
+            std::move(final_image).error());
+    }
+    return publish_image(std::move(final_image).value());
 } catch (const std::bad_alloc&) {
-    return Result<PendingPayload>::failure(allocation_error());
+    return Result<view::PayloadOwner>::failure(allocation_error());
+} catch (const std::length_error&) {
+    return Result<view::PayloadOwner>::failure(allocation_error());
 }
 
 }  // namespace fastdb::payload::build

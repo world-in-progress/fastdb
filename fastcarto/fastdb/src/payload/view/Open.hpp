@@ -11,7 +11,8 @@
 
 namespace fastdb::payload::view {
 
-struct OpenLimits final {
+struct OpenOptions final {
+    bool validate_text_eager;
     std::uint64_t max_total_bytes;
     std::uint64_t max_regions;
     std::uint64_t max_entries;
@@ -21,10 +22,9 @@ struct OpenLimits final {
     std::uint64_t max_graph_objects;
     std::uint64_t max_string_bytes;
     std::uint64_t max_validation_work;
-    bool validate_text_eager;
 };
 
-OpenLimits default_open_limits() noexcept;
+OpenOptions default_open_options() noexcept;
 
 struct ObservedScalar final {
     bool present;
@@ -53,6 +53,7 @@ struct FieldSlotMetadata final {
 
 struct PoolMetadata final {
     layout::RegionKind kind;
+    std::uint32_t region_index;
     std::uint64_t data_offset;
     std::uint64_t byte_length;
     std::uint64_t element_count;
@@ -117,7 +118,7 @@ private:
         const spec::CompiledSpec&,
         const std::uint8_t*,
         std::uint64_t,
-        OpenLimits);
+        OpenOptions);
 
     std::vector<EntrySlotMetadata> entries_;
     std::vector<PoolMetadata> pools_;
@@ -134,6 +135,6 @@ error::Result<PayloadIndex> open_record(
     const spec::CompiledSpec& spec,
     const std::uint8_t* bytes,
     std::uint64_t byte_count,
-    OpenLimits limits = default_open_limits());
+    OpenOptions limits = default_open_options());
 
 }  // namespace fastdb::payload::view

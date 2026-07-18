@@ -1,10 +1,40 @@
 #include "payload/backing/Backing.hpp"
 
+#include "payload/json/JsonPointer.hpp"
+#include "payload/json/JsonValue.hpp"
+
 #include <fastdb_payload.h>
 
 #include <utility>
 
 namespace fastdb::payload::backing {
+namespace {
+
+using error::Error;
+using error::Result;
+using json::JsonPointer;
+using json::JsonValue;
+
+Error missing_retain_or_release_error() {
+    return Error::from_details(
+        FDB_PAYLOAD_E_BACKING_CONTRACT, JsonPointer{}.append("backing"),
+        "Portable payload retained backing callbacks are incomplete",
+        JsonValue::object({JsonValue::Member{
+            "reason", JsonValue{"missing_retain_or_release"}}}));
+}
+
+Error retain_callback_error(std::uint32_t code, std::uint32_t status) {
+    return Error::from_details(
+        code, JsonPointer{}.append("backing"),
+        "Portable payload backing retain failed",
+        JsonValue::object({
+            JsonValue::Member{"callback", JsonValue{"retain"}},
+            JsonValue::Member{"callback_status",
+                              JsonValue{static_cast<double>(status)}},
+        }));
+}
+
+}  // namespace
 
 std::uint32_t classify_callback_status(CallbackOperation operation,
                                        std::uint32_t status) noexcept {
@@ -79,6 +109,28 @@ void CommittedBacking::release() noexcept {
     }
     active_ = false;
     callbacks_.release(callbacks_.context, owner_token_);
+}
+
+Result<RetainedBacking> RetainedBacking::acquire(
+    Callbacks callbacks,
+    void* owner_token,
+    const std::uint8_t* readable_data,
+    std::uint64_t readable_size) {
+    if (callbacks.retain == nullptr || callbacks.release == nullptr) {
+        return Result<RetainedBacking>::failure(
+            missing_retain_or_release_error());
+    }
+    const std::uint32_t status =
+        callbacks.retain(callbacks.context, owner_token);
+    const std::uint32_t classified =
+        classify_callback_status(CallbackOperation::retain, status);
+    if (classified != UINT32_C(0)) {
+        return Result<RetainedBacking>::failure(
+            retain_callback_error(classified, status));
+    }
+    return Result<RetainedBacking>::success(RetainedBacking{
+        CommittedBacking{callbacks, owner_token, readable_data, readable_size,
+                         readable_size}});
 }
 
 BackingReservation::~BackingReservation() {

@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <limits>
 #include <new>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -53,6 +54,53 @@ Error simple_error(std::uint32_t code,
 Error noncanonical(const JsonPointer& path, const char* reason) {
     return simple_error(FDB_PAYLOAD_E_NON_CANONICAL_BINARY, path,
                         "Portable payload binary is not canonical", reason);
+}
+
+Error noncanonical_exact(const JsonPointer& path,
+                         const char* reason,
+                         std::string actual,
+                         std::string expected) {
+    return Error::from_details(
+        FDB_PAYLOAD_E_NON_CANONICAL_BINARY, path,
+        "Portable payload binary is not canonical",
+        JsonValue::object({
+            JsonValue::Member{"actual", JsonValue{std::move(actual)}},
+            JsonValue::Member{"expected", JsonValue{std::move(expected)}},
+            JsonValue::Member{"reason", JsonValue{reason}},
+        }));
+}
+
+Result<void> require_canonical_u64(std::uint64_t actual,
+                                   std::uint64_t expected,
+                                   const JsonPointer& path,
+                                   const char* reason) {
+    if (actual == expected) {
+        return Result<void>::success();
+    }
+    return Result<void>::failure(noncanonical_exact(
+        path, reason, std::to_string(actual), std::to_string(expected)));
+}
+
+JsonPointer binary_header_path() {
+    return JsonPointer{}.append("binary").append("header");
+}
+
+JsonPointer binary_region_path(std::uint32_t index) {
+    return JsonPointer{}.append("binary").append("regions").append(index);
+}
+
+JsonPointer binary_entry_path(std::uint32_t index) {
+    return JsonPointer{}.append("binary").append("entries").append(index);
+}
+
+std::string byte_hex(const std::uint8_t* bytes, std::size_t size) {
+    constexpr char digits[] = "0123456789abcdef";
+    std::string result(size * 2U, '0');
+    for (std::size_t index = 0U; index < size; ++index) {
+        result[index * 2U] = digits[bytes[index] >> 4U];
+        result[index * 2U + 1U] = digits[bytes[index] & UINT8_C(0x0f)];
+    }
+    return result;
 }
 
 Error invalid_value(const JsonPointer& path, const char* reason) {
@@ -112,7 +160,8 @@ Result<void> require_zero(const std::uint8_t* bytes,
                           WorkCounter& work,
                           const JsonPointer& path,
                           const char* reason,
-                          bool charge_units = true) {
+                          bool charge_units = true,
+                          bool exact_facts = false) {
     if (end < begin) {
         return Result<void>::failure(simple_error(
             FDB_PAYLOAD_E_LENGTH_OVERFLOW, path,
@@ -131,6 +180,12 @@ Result<void> require_zero(const std::uint8_t* bytes,
     }
     for (std::uint64_t offset = begin; offset < end; ++offset) {
         if (bytes[static_cast<std::ptrdiff_t>(offset)] != UINT8_C(0)) {
+            if (exact_facts) {
+                return Result<void>::failure(noncanonical_exact(
+                    path, reason,
+                    std::to_string(bytes[static_cast<std::ptrdiff_t>(offset)]),
+                    "0"));
+            }
             return Result<void>::failure(noncanonical(path, reason));
         }
     }
@@ -352,39 +407,105 @@ Result<RegionFields> read_region_fields(const std::uint8_t* bytes,
         layout::header_size + static_cast<std::uint64_t>(region_index) *
                                   layout::region_descriptor_size;
     auto kind = read_u32(bytes, byte_count, base + layout::region_kind_offset,
-                         path);
+                         path.append("kind"));
+    if (!kind.has_value()) {
+        return Result<RegionFields>::failure(std::move(kind).error());
+    }
     auto flags = read_u32(bytes, byte_count,
-                          base + layout::region_flags_offset, path);
+                          base + layout::region_flags_offset,
+                          path.append("flags"));
+    if (!flags.has_value()) {
+        return Result<RegionFields>::failure(std::move(flags).error());
+    }
     auto owner = read_u32(bytes, byte_count,
-                          base + layout::region_owner_index_offset, path);
+                          base + layout::region_owner_index_offset,
+                          path.append("owner_index"));
+    if (!owner.has_value()) {
+        return Result<RegionFields>::failure(std::move(owner).error());
+    }
     auto type_id = read_u32(bytes, byte_count,
-                            base + layout::region_runtime_type_id_offset, path);
+                            base + layout::region_runtime_type_id_offset,
+                            path.append("runtime_type_id"));
+    if (!type_id.has_value()) {
+        return Result<RegionFields>::failure(std::move(type_id).error());
+    }
     auto data_offset = read_u64(bytes, byte_count,
-                                base + layout::region_data_offset_offset, path);
+                                base + layout::region_data_offset_offset,
+                                path.append("data_offset"));
+    if (!data_offset.has_value()) {
+        return Result<RegionFields>::failure(std::move(data_offset).error());
+    }
     auto byte_length = read_u64(bytes, byte_count,
-                                base + layout::region_byte_length_offset, path);
+                                base + layout::region_byte_length_offset,
+                                path.append("byte_length"));
+    if (!byte_length.has_value()) {
+        return Result<RegionFields>::failure(std::move(byte_length).error());
+    }
     auto element_count = read_u64(
-        bytes, byte_count, base + layout::region_element_count_offset, path);
+        bytes, byte_count, base + layout::region_element_count_offset,
+        path.append("element_count"));
+    if (!element_count.has_value()) {
+        return Result<RegionFields>::failure(std::move(element_count).error());
+    }
     auto stride = read_u32(bytes, byte_count,
-                           base + layout::region_stride_offset, path);
+                           base + layout::region_stride_offset,
+                           path.append("stride"));
+    if (!stride.has_value()) {
+        return Result<RegionFields>::failure(std::move(stride).error());
+    }
     auto alignment = read_u32(bytes, byte_count,
-                              base + layout::region_alignment_offset, path);
+                              base + layout::region_alignment_offset,
+                              path.append("alignment"));
+    if (!alignment.has_value()) {
+        return Result<RegionFields>::failure(std::move(alignment).error());
+    }
     auto reserved = read_u64(bytes, byte_count,
-                             base + layout::region_reserved_offset, path);
-    if (!kind.has_value() || !flags.has_value() || !owner.has_value() ||
-        !type_id.has_value() || !data_offset.has_value() ||
-        !byte_length.has_value() || !element_count.has_value() ||
-        !stride.has_value() || !alignment.has_value() ||
-        !reserved.has_value()) {
-        return Result<RegionFields>::failure(simple_error(
-            FDB_PAYLOAD_E_OUT_OF_BOUNDS, path,
-            "Portable payload region descriptor is outside the image",
-            "region_descriptor_out_of_bounds"));
+                             base + layout::region_reserved_offset,
+                             path.append("reserved"));
+    if (!reserved.has_value()) {
+        return Result<RegionFields>::failure(std::move(reserved).error());
     }
     return Result<RegionFields>::success(RegionFields{
         kind.value(), flags.value(), owner.value(), type_id.value(),
         data_offset.value(), byte_length.value(), element_count.value(),
         stride.value(), alignment.value(), reserved.value()});
+}
+
+Result<void> validate_region_fields(const RegionFields& actual,
+                                    const RegionFields& expected,
+                                    const JsonPointer& path) {
+    struct Field final {
+        std::uint64_t actual;
+        std::uint64_t expected;
+        const char* name;
+        const char* reason;
+    };
+    const std::array<Field, 10> fields{{
+        {actual.kind, expected.kind, "kind", "region_kind"},
+        {actual.flags, expected.flags, "flags", "region_flags"},
+        {actual.owner, expected.owner, "owner_index", "region_owner_index"},
+        {actual.runtime_type_id, expected.runtime_type_id,
+         "runtime_type_id", "region_runtime_type_id"},
+        {actual.data_offset, expected.data_offset, "data_offset",
+         "region_data_offset"},
+        {actual.byte_length, expected.byte_length, "byte_length",
+         "region_byte_length"},
+        {actual.element_count, expected.element_count, "element_count",
+         "region_element_count"},
+        {actual.stride, expected.stride, "stride", "region_stride"},
+        {actual.alignment, expected.alignment, "alignment",
+         "region_alignment"},
+        {actual.reserved, expected.reserved, "reserved", "region_reserved"},
+    }};
+    for (const Field& field : fields) {
+        auto valid = require_canonical_u64(
+            field.actual, field.expected, path.append(field.name),
+            field.reason);
+        if (!valid.has_value()) {
+            return valid;
+        }
+    }
+    return Result<void>::success();
 }
 
 struct ValidationSlot final {
@@ -851,12 +972,13 @@ Result<void> validate_fixed_slot(
 
 }  // namespace
 
-OpenLimits default_open_limits() noexcept {
-    return OpenLimits{UINT64_C(1) << 30,   UINT64_C(1000000),
+OpenOptions default_open_options() noexcept {
+    return OpenOptions{true,                 UINT64_C(1) << 30,
+                      UINT64_C(1000000),
                       UINT64_C(65536),     UINT64_C(65536),
                       UINT64_C(1024),      UINT64_C(10000000),
                       UINT64_C(10000000),  UINT64_C(1) << 30,
-                      UINT64_C(100000000), true};
+                      UINT64_C(100000000)};
 }
 
 std::optional<PoolMetadata>
@@ -1141,9 +1263,9 @@ Result<ObservedScalar> PayloadIndex::field_scalar(
 Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                                  const std::uint8_t* bytes,
                                  std::uint64_t byte_count,
-                                 OpenLimits limits) {
+                                 OpenOptions limits) {
     try {
-        const JsonPointer header_path = JsonPointer{}.append("header");
+        const JsonPointer header_path = binary_header_path();
         if (byte_count > limits.max_total_bytes) {
             return Result<PayloadIndex>::failure(resource_error(
                 header_path, "total_bytes", byte_count,
@@ -1168,10 +1290,20 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         }
         if (!std::equal(layout::binary_magic.begin(),
                         layout::binary_magic.end(), bytes)) {
-            return Result<PayloadIndex>::failure(simple_error(
-                FDB_PAYLOAD_E_INVALID_MAGIC,
-                header_path.append("magic"),
-                "Portable payload magic is invalid", "invalid_magic"));
+            return Result<PayloadIndex>::failure(Error::from_details(
+                FDB_PAYLOAD_E_INVALID_MAGIC, header_path.append("magic"),
+                "Portable payload magic is invalid",
+                JsonValue::object({
+                    JsonValue::Member{
+                        "actual",
+                        JsonValue{byte_hex(bytes,
+                                           layout::binary_magic.size())}},
+                    JsonValue::Member{
+                        "expected",
+                        JsonValue{byte_hex(layout::binary_magic.data(),
+                                           layout::binary_magic.size())}},
+                    JsonValue::Member{"reason", JsonValue{"invalid_magic"}},
+                })));
         }
         auto major = layout::load_u16_le(
             bytes, byte_count, layout::header_major_offset,
@@ -1185,13 +1317,35 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         if (!minor.has_value()) {
             return Result<PayloadIndex>::failure(std::move(minor).error());
         }
-        if (major.value() != layout::binary_major ||
-            minor.value() != layout::binary_minor) {
-            return Result<PayloadIndex>::failure(simple_error(
+        if (major.value() != layout::binary_major) {
+            return Result<PayloadIndex>::failure(Error::from_details(
                 FDB_PAYLOAD_E_UNSUPPORTED_BINARY_VERSION,
-                header_path.append("version"),
+                header_path.append("major"),
                 "Portable payload binary version is unsupported",
-                "unsupported_binary_version"));
+                JsonValue::object({
+                    JsonValue::Member{
+                        "actual", JsonValue{std::to_string(major.value())}},
+                    JsonValue::Member{
+                        "expected",
+                        JsonValue{std::to_string(layout::binary_major)}},
+                    JsonValue::Member{"reason",
+                                      JsonValue{"unsupported_binary_major"}},
+                })));
+        }
+        if (minor.value() != layout::binary_minor) {
+            return Result<PayloadIndex>::failure(Error::from_details(
+                FDB_PAYLOAD_E_UNSUPPORTED_BINARY_VERSION,
+                header_path.append("minor"),
+                "Portable payload binary version is unsupported",
+                JsonValue::object({
+                    JsonValue::Member{
+                        "actual", JsonValue{std::to_string(minor.value())}},
+                    JsonValue::Member{
+                        "expected",
+                        JsonValue{std::to_string(layout::binary_minor)}},
+                    JsonValue::Member{"reason",
+                                      JsonValue{"unsupported_binary_minor"}},
+                })));
         }
 
         auto header_size_value = read_u32(
@@ -1205,18 +1359,35 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         auto total = read_u64(bytes, byte_count,
                               layout::header_total_length_offset,
                               header_path.append("total_length"));
-        if (!header_size_value.has_value() || !profile.has_value() ||
-            !flags.has_value() || !total.has_value()) {
-            return Result<PayloadIndex>::failure(simple_error(
-                FDB_PAYLOAD_E_OUT_OF_BOUNDS, header_path,
-                "Portable payload header field is outside the image",
-                "header_field_out_of_bounds"));
-        }
-        if (header_size_value.value() != layout::header_size ||
-            profile.value() != FDB_PAYLOAD_PROFILE_RECORD_V1 ||
-            flags.value() != UINT32_C(0)) {
+        if (!header_size_value.has_value()) {
             return Result<PayloadIndex>::failure(
-                noncanonical(header_path, "header_contract"));
+                std::move(header_size_value).error());
+        }
+        if (!profile.has_value()) {
+            return Result<PayloadIndex>::failure(std::move(profile).error());
+        }
+        if (!flags.has_value()) {
+            return Result<PayloadIndex>::failure(std::move(flags).error());
+        }
+        if (!total.has_value()) {
+            return Result<PayloadIndex>::failure(std::move(total).error());
+        }
+        if (header_size_value.value() != layout::header_size) {
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("size"), "header_size",
+                std::to_string(header_size_value.value()),
+                std::to_string(layout::header_size)));
+        }
+        if (profile.value() != FDB_PAYLOAD_PROFILE_RECORD_V1) {
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("profile"), "profile",
+                std::to_string(profile.value()),
+                std::to_string(FDB_PAYLOAD_PROFILE_RECORD_V1)));
+        }
+        if (flags.value() != UINT32_C(0)) {
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("flags"), "header_flags",
+                std::to_string(flags.value()), "0"));
         }
         if (total.value() > byte_count) {
             return Result<PayloadIndex>::failure(simple_error(
@@ -1226,22 +1397,36 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 "declared_total_out_of_bounds"));
         }
         if (total.value() != byte_count) {
-            return Result<PayloadIndex>::failure(noncanonical(
-                header_path.append("total_length"), "trailing_binary_bytes"));
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("total_length"), "trailing_binary_bytes",
+                std::to_string(total.value()), std::to_string(byte_count)));
         }
         if (!std::equal(compiled.digest().begin(), compiled.digest().end(),
                         bytes + static_cast<std::ptrdiff_t>(
                                     layout::header_spec_digest_offset))) {
-            return Result<PayloadIndex>::failure(simple_error(
+            return Result<PayloadIndex>::failure(Error::from_details(
                 FDB_PAYLOAD_E_DIGEST_MISMATCH,
                 header_path.append("spec_sha256"),
                 "Portable payload spec digest does not match",
-                "spec_digest_mismatch"));
+                JsonValue::object({
+                    JsonValue::Member{
+                        "actual",
+                        JsonValue{byte_hex(
+                            bytes + static_cast<std::ptrdiff_t>(
+                                        layout::header_spec_digest_offset),
+                            compiled.digest().size())}},
+                    JsonValue::Member{
+                        "expected",
+                        JsonValue{byte_hex(compiled.digest().data(),
+                                           compiled.digest().size())}},
+                    JsonValue::Member{"reason",
+                                      JsonValue{"spec_digest_mismatch"}},
+                })));
         }
         auto header_reserved = require_zero(
             bytes, byte_count, layout::header_reserved_offset,
             layout::header_size, work, header_path.append("reserved"),
-            "nonzero_header_reserved", false);
+            "nonzero_header_reserved", false, true);
         if (!header_reserved.has_value()) {
             return Result<PayloadIndex>::failure(
                 std::move(header_reserved).error());
@@ -1282,22 +1467,22 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         }
         if (expected_entries > limits.max_entries) {
             return Result<PayloadIndex>::failure(resource_error(
-                JsonPointer{}.append("entries"), "entries", expected_entries,
+                header_path.append("entry_count"), "entries", expected_entries,
                 limits.max_entries));
         }
         if (expected_regions > limits.max_regions) {
             return Result<PayloadIndex>::failure(resource_error(
-                JsonPointer{}.append("regions"), "regions", expected_regions,
+                header_path.append("region_count"), "regions", expected_regions,
                 limits.max_regions));
         }
         if (expected_components > limits.max_components) {
             return Result<PayloadIndex>::failure(resource_error(
-                JsonPointer{}.append("components"), "components",
+                header_path, "components",
                 expected_components, limits.max_components));
         }
         if (known_minimum_work > limits.max_validation_work) {
             return Result<PayloadIndex>::failure(resource_error(
-                JsonPointer{}.append("validation_work"), "validation_work",
+                header_path, "validation_work",
                 known_minimum_work, limits.max_validation_work));
         }
 
@@ -1369,12 +1554,12 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         }
         if (expected_regions > limits.max_regions) {
             return Result<PayloadIndex>::failure(
-                resource_error(JsonPointer{}.append("regions"), "regions",
+                resource_error(header_path.append("region_count"), "regions",
                                expected_regions, limits.max_regions));
         }
         if (known_minimum_work > limits.max_validation_work) {
             return Result<PayloadIndex>::failure(resource_error(
-                JsonPointer{}.append("validation_work"), "validation_work",
+                header_path, "validation_work",
                 known_minimum_work, limits.max_validation_work));
         }
 
@@ -1399,52 +1584,98 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         auto root_value_count = read_u64(
             bytes, byte_count, layout::header_root_value_count_offset,
             header_path.append("root_value_count"));
-        if (!region_directory_offset.has_value() || !region_count.has_value() ||
-            !region_size.has_value() || !entry_directory_offset.has_value() ||
-            !entry_count.has_value() || !entry_size.has_value() ||
-            !root_value_count.has_value()) {
-            return Result<PayloadIndex>::failure(simple_error(
-                FDB_PAYLOAD_E_OUT_OF_BOUNDS, header_path,
-                "Portable payload directory header is outside the image",
-                "directory_header_out_of_bounds"));
-        }
-        if (region_directory_offset.value() != layout::header_size ||
-            region_count.value() != expected_regions ||
-            region_size.value() != layout::region_descriptor_size ||
-            entry_count.value() != expected_entries ||
-            entry_size.value() != layout::entry_descriptor_size) {
+        if (!region_directory_offset.has_value()) {
             return Result<PayloadIndex>::failure(
-                noncanonical(header_path, "directory_header_contract"));
+                std::move(region_directory_offset).error());
+        }
+        if (!region_count.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(region_count).error());
+        }
+        if (!region_size.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(region_size).error());
+        }
+        if (!entry_directory_offset.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(entry_directory_offset).error());
+        }
+        if (!entry_count.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(entry_count).error());
+        }
+        if (!entry_size.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(entry_size).error());
+        }
+        if (!root_value_count.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(root_value_count).error());
+        }
+        if (region_directory_offset.value() != layout::header_size) {
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("region_directory_offset"),
+                "region_directory_offset",
+                std::to_string(region_directory_offset.value()),
+                std::to_string(layout::header_size)));
+        }
+        if (region_count.value() != expected_regions) {
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("region_count"), "region_count",
+                std::to_string(region_count.value()),
+                std::to_string(expected_regions)));
+        }
+        if (region_size.value() != layout::region_descriptor_size) {
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("region_descriptor_size"),
+                "region_descriptor_size",
+                std::to_string(region_size.value()),
+                std::to_string(layout::region_descriptor_size)));
+        }
+        if (entry_count.value() != expected_entries) {
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("entry_count"), "entry_count",
+                std::to_string(entry_count.value()),
+                std::to_string(expected_entries)));
+        }
+        if (entry_size.value() != layout::entry_descriptor_size) {
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("entry_descriptor_size"),
+                "entry_descriptor_size",
+                std::to_string(entry_size.value()),
+                std::to_string(layout::entry_descriptor_size)));
         }
         auto region_bytes = layout::checked_multiply_u64(
             region_count.value(), layout::region_descriptor_size,
-            JsonPointer{}.append("regions"));
+            header_path.append("region_count"));
         if (!region_bytes.has_value()) {
             return Result<PayloadIndex>::failure(
                 std::move(region_bytes).error());
         }
         auto canonical_entry_offset = layout::checked_add_u64(
             layout::header_size, region_bytes.value(),
-            JsonPointer{}.append("entries"));
+            header_path.append("entry_directory_offset"));
         if (!canonical_entry_offset.has_value()) {
             return Result<PayloadIndex>::failure(
                 std::move(canonical_entry_offset).error());
         }
         if (entry_directory_offset.value() != canonical_entry_offset.value()) {
-            return Result<PayloadIndex>::failure(noncanonical(
+            return Result<PayloadIndex>::failure(noncanonical_exact(
                 header_path.append("entry_directory_offset"),
-                "entry_directory_not_contiguous"));
+                "entry_directory_not_contiguous",
+                std::to_string(entry_directory_offset.value()),
+                std::to_string(canonical_entry_offset.value())));
         }
         auto entry_bytes = layout::checked_multiply_u64(
             entry_count.value(), layout::entry_descriptor_size,
-            JsonPointer{}.append("entries"));
+            header_path.append("entry_count"));
         if (!entry_bytes.has_value()) {
             return Result<PayloadIndex>::failure(
                 std::move(entry_bytes).error());
         }
         auto entry_end = layout::checked_range_end(
             entry_directory_offset.value(), entry_bytes.value(), byte_count,
-            JsonPointer{}.append("entries"));
+            header_path.append("entry_directory_offset"));
         if (!entry_end.has_value()) {
             return Result<PayloadIndex>::failure(std::move(entry_end).error());
         }
@@ -1458,8 +1689,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         for (std::uint32_t index = UINT32_C(0);
              index < entry_count.value(); ++index) {
             const spec::Entry& source = runtime_entries[index];
-            const JsonPointer path =
-                JsonPointer{}.append("entries").append(source.id);
+            const JsonPointer path = binary_entry_path(index);
             charged = work.charge(UINT64_C(1), path);
             if (!charged.has_value()) {
                 return Result<PayloadIndex>::failure(
@@ -1470,34 +1700,63 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 static_cast<std::uint64_t>(index) *
                     layout::entry_descriptor_size;
             auto actual_index = read_u32(
-                bytes, byte_count, base + layout::entry_index_offset, path);
+                bytes, byte_count, base + layout::entry_index_offset,
+                path.append("index"));
+            if (!actual_index.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(actual_index).error());
+            }
             auto type_id = read_u32(
                 bytes, byte_count,
-                base + layout::entry_runtime_type_id_offset, path);
+                base + layout::entry_runtime_type_id_offset,
+                path.append("runtime_type_id"));
+            if (!type_id.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(type_id).error());
+            }
             auto cardinality = read_u32(
                 bytes, byte_count, base + layout::entry_cardinality_offset,
-                path);
+                path.append("cardinality"));
+            if (!cardinality.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(cardinality).error());
+            }
             auto entry_flags = read_u32(
-                bytes, byte_count, base + layout::entry_flags_offset, path);
+                bytes, byte_count, base + layout::entry_flags_offset,
+                path.append("flags"));
+            if (!entry_flags.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(entry_flags).error());
+            }
             auto value_count = read_u64(
                 bytes, byte_count, base + layout::entry_value_count_offset,
-                path);
+                path.append("value_count"));
+            if (!value_count.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(value_count).error());
+            }
             auto values_region = read_u32(
                 bytes, byte_count,
-                base + layout::entry_values_region_index_offset, path);
+                base + layout::entry_values_region_index_offset,
+                path.append("values_region_index"));
+            if (!values_region.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(values_region).error());
+            }
             auto validity_region = read_u32(
                 bytes, byte_count,
-                base + layout::entry_validity_region_index_offset, path);
+                base + layout::entry_validity_region_index_offset,
+                path.append("validity_region_index"));
+            if (!validity_region.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(validity_region).error());
+            }
             auto reserved = read_u64(
-                bytes, byte_count, base + layout::entry_reserved_offset, path);
-            if (!actual_index.has_value() || !type_id.has_value() ||
-                !cardinality.has_value() || !entry_flags.has_value() ||
-                !value_count.has_value() || !values_region.has_value() ||
-                !validity_region.has_value() || !reserved.has_value()) {
-                return Result<PayloadIndex>::failure(simple_error(
-                    FDB_PAYLOAD_E_OUT_OF_BOUNDS, path,
-                    "Portable payload entry descriptor is outside the image",
-                    "entry_descriptor_out_of_bounds"));
+                bytes, byte_count, base + layout::entry_reserved_offset,
+                path.append("reserved"));
+            if (!reserved.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(reserved).error());
             }
             const std::uint32_t expected_type =
                 runtime.value().runtime_id(source.type);
@@ -1516,17 +1775,54 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             const std::uint32_t expected_validity =
                 source.type.nullable ? next_region++ : UINT32_MAX;
             const std::uint32_t expected_values = next_region++;
-            if (actual_index.value() != index ||
-                type_id.value() != expected_type ||
-                cardinality.value() != expected_cardinality ||
-                entry_flags.value() != expected_flags ||
-                values_region.value() != expected_values ||
-                validity_region.value() != expected_validity ||
-                reserved.value() != UINT64_C(0) ||
-                (source.cardinality == Cardinality::one &&
-                 value_count.value() != UINT64_C(1))) {
-                return Result<PayloadIndex>::failure(
-                    noncanonical(path, "entry_descriptor_contract"));
+            if (actual_index.value() != index) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("index"), "entry_index",
+                    std::to_string(actual_index.value()),
+                    std::to_string(index)));
+            }
+            if (type_id.value() != expected_type) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("runtime_type_id"), "entry_runtime_type_id",
+                    std::to_string(type_id.value()),
+                    std::to_string(expected_type)));
+            }
+            if (cardinality.value() != expected_cardinality) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("cardinality"), "entry_cardinality",
+                    std::to_string(cardinality.value()),
+                    std::to_string(expected_cardinality)));
+            }
+            if (entry_flags.value() != expected_flags) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("flags"), "entry_flags",
+                    std::to_string(entry_flags.value()),
+                    std::to_string(expected_flags)));
+            }
+            if (values_region.value() != expected_values) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("values_region_index"),
+                    "entry_values_region_index",
+                    std::to_string(values_region.value()),
+                    std::to_string(expected_values)));
+            }
+            if (validity_region.value() != expected_validity) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("validity_region_index"),
+                    "entry_validity_region_index",
+                    std::to_string(validity_region.value()),
+                    std::to_string(expected_validity)));
+            }
+            if (reserved.value() != UINT64_C(0)) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("reserved"), "entry_reserved",
+                    std::to_string(reserved.value()), "0"));
+            }
+            if (source.cardinality == Cardinality::one &&
+                value_count.value() != UINT64_C(1)) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("value_count"), "entry_one_value_count",
+                    std::to_string(value_count.value()), "1"));
             }
             auto sum = layout::checked_add_u64(summed_roots,
                                                value_count.value(), path);
@@ -1539,19 +1835,23 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 value_count.value(), expected_values, expected_validity});
         }
         if (summed_roots != root_value_count.value()) {
-            return Result<PayloadIndex>::failure(noncanonical(
+            return Result<PayloadIndex>::failure(noncanonical_exact(
                 header_path.append("root_value_count"),
-                "root_value_count_mismatch"));
+                "root_value_count_mismatch",
+                std::to_string(root_value_count.value()),
+                std::to_string(summed_roots)));
         }
 
         auto data_start = layout::checked_align_up_u64(
-            entry_end.value(), UINT32_C(8), JsonPointer{}.append("regions"));
+            entry_end.value(), UINT32_C(8),
+            header_path.append("entry_directory_offset"));
         if (!data_start.has_value()) {
             return Result<PayloadIndex>::failure(std::move(data_start).error());
         }
         auto directory_padding = require_zero(
             bytes, byte_count, entry_end.value(), data_start.value(), work,
-            JsonPointer{}.append("padding"), "nonzero_directory_padding");
+            header_path.append("entry_directory_offset"),
+            "nonzero_directory_padding", true, true);
         if (!directory_padding.has_value()) {
             return Result<PayloadIndex>::failure(
                 std::move(directory_padding).error());
@@ -1581,54 +1881,17 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             for (std::uint32_t local = UINT32_C(0); local < count; ++local) {
                 const bool validity = source.type.nullable && local == 0U;
                 const JsonPointer path =
-                    JsonPointer{}.append("regions").append(region_index);
+                    binary_region_path(region_index);
                 charged = work.charge(UINT64_C(1), path);
                 if (!charged.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(charged).error());
                 }
-                const std::uint64_t base =
-                    layout::header_size +
-                    static_cast<std::uint64_t>(region_index) *
-                        layout::region_descriptor_size;
-                auto kind = read_u32(bytes, byte_count,
-                                     base + layout::region_kind_offset, path);
-                auto region_flags = read_u32(
-                    bytes, byte_count, base + layout::region_flags_offset,
-                    path);
-                auto owner = read_u32(
-                    bytes, byte_count, base + layout::region_owner_index_offset,
-                    path);
-                auto type_id = read_u32(
-                    bytes, byte_count,
-                    base + layout::region_runtime_type_id_offset, path);
-                auto data_offset = read_u64(
-                    bytes, byte_count, base + layout::region_data_offset_offset,
-                    path);
-                auto byte_length = read_u64(
-                    bytes, byte_count,
-                    base + layout::region_byte_length_offset, path);
-                auto element_count = read_u64(
-                    bytes, byte_count,
-                    base + layout::region_element_count_offset, path);
-                auto stride = read_u32(
-                    bytes, byte_count, base + layout::region_stride_offset,
-                    path);
-                auto alignment = read_u32(
-                    bytes, byte_count, base + layout::region_alignment_offset,
-                    path);
-                auto reserved = read_u64(
-                    bytes, byte_count, base + layout::region_reserved_offset,
-                    path);
-                if (!kind.has_value() || !region_flags.has_value() ||
-                    !owner.has_value() || !type_id.has_value() ||
-                    !data_offset.has_value() || !byte_length.has_value() ||
-                    !element_count.has_value() || !stride.has_value() ||
-                    !alignment.has_value() || !reserved.has_value()) {
-                    return Result<PayloadIndex>::failure(simple_error(
-                        FDB_PAYLOAD_E_OUT_OF_BOUNDS, path,
-                        "Portable payload region descriptor is outside the image",
-                        "region_descriptor_out_of_bounds"));
+                auto fields = read_region_fields(
+                    bytes, byte_count, region_index, path);
+                if (!fields.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(fields).error());
                 }
                 const RegionKind expected_kind =
                     validity ? RegionKind::entry_validity
@@ -1639,10 +1902,15 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     validity ? UINT32_C(1) : slot.alignment;
                 Result<std::uint64_t> expected_length =
                     layout::checked_multiply_u64(entry.value_count,
-                                                 slot.stride, path);
+                                                 slot.stride,
+                                                 binary_entry_path(
+                                                     entry.entry_index)
+                                                     .append("value_count"));
                 if (validity) {
                     auto rounded = layout::checked_add_u64(
-                        entry.value_count, UINT64_C(7), path);
+                        entry.value_count, UINT64_C(7),
+                        binary_entry_path(entry.entry_index)
+                            .append("value_count"));
                     if (!rounded.has_value()) {
                         return Result<PayloadIndex>::failure(
                             std::move(rounded).error());
@@ -1662,49 +1930,51 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     }
                 }
                 auto aligned = layout::checked_align_up_u64(
-                    cursor, expected_alignment, path);
+                    cursor, expected_alignment, path.append("data_offset"));
                 if (!aligned.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(aligned).error());
                 }
-                if (data_offset.value() % expected_alignment != UINT64_C(0)) {
+                if (fields.value().data_offset % expected_alignment !=
+                    UINT64_C(0)) {
                     return Result<PayloadIndex>::failure(simple_error(
-                        FDB_PAYLOAD_E_MISALIGNED, path,
+                        FDB_PAYLOAD_E_MISALIGNED,
+                        path.append("data_offset"),
                         "Portable payload region offset is misaligned",
                         "region_offset_misaligned"));
                 }
-                if (kind.value() !=
-                        static_cast<std::uint32_t>(expected_kind) ||
-                    region_flags.value() != UINT32_C(0) ||
-                    owner.value() != entry.entry_index ||
-                    type_id.value() != entry.runtime_type_id ||
-                    data_offset.value() != aligned.value() ||
-                    byte_length.value() != expected_length.value() ||
-                    element_count.value() != entry.value_count ||
-                    stride.value() != expected_stride ||
-                    alignment.value() != expected_alignment ||
-                    reserved.value() != UINT64_C(0)) {
+                const RegionFields expected{
+                    static_cast<std::uint32_t>(expected_kind), UINT32_C(0),
+                    entry.entry_index, entry.runtime_type_id, aligned.value(),
+                    expected_length.value(), entry.value_count,
+                    expected_stride, expected_alignment, UINT64_C(0)};
+                auto descriptor = validate_region_fields(fields.value(),
+                                                         expected, path);
+                if (!descriptor.has_value()) {
                     return Result<PayloadIndex>::failure(
-                        noncanonical(path, "region_descriptor_contract"));
+                        std::move(descriptor).error());
                 }
                 auto padding = require_zero(
                     bytes, byte_count, cursor, aligned.value(), work,
-                    JsonPointer{}.append("padding"),
-                    "nonzero_inter_region_padding");
+                    path.append("data_offset"),
+                    "nonzero_inter_region_padding", true, true);
                 if (!padding.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(padding).error());
                 }
                 auto end = layout::checked_range_end(
-                    data_offset.value(), byte_length.value(), byte_count, path);
+                    fields.value().data_offset,
+                    fields.value().byte_length, byte_count,
+                    path.append("byte_length"));
                 if (!end.has_value()) {
                     return Result<PayloadIndex>::failure(std::move(end).error());
                 }
                 cursor = end.value();
                 regions.push_back(RegionDescriptor{
                     expected_kind, UINT32_C(0), entry.entry_index,
-                    entry.runtime_type_id, data_offset.value(),
-                    byte_length.value(), entry.value_count, expected_stride,
+                    entry.runtime_type_id, fields.value().data_offset,
+                    fields.value().byte_length, entry.value_count,
+                    expected_stride,
                     expected_alignment});
                 ++region_index;
             }
@@ -1726,7 +1996,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             std::uint32_t validity_region_index = UINT32_MAX;
             if (list.item_nullable) {
                 const JsonPointer path =
-                    JsonPointer{}.append("regions").append(region_index);
+                    binary_region_path(region_index);
                 charged = work.charge(UINT64_C(1), path);
                 if (!charged.has_value()) {
                     return Result<PayloadIndex>::failure(
@@ -1750,26 +2020,23 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     return Result<PayloadIndex>::failure(
                         std::move(aligned).error());
                 }
-                if (fields.value().kind !=
-                        static_cast<std::uint32_t>(
-                            RegionKind::list_validity) ||
-                    fields.value().flags != UINT32_C(0) ||
-                    fields.value().owner != list.owner_runtime_type_id ||
-                    fields.value().runtime_type_id !=
-                        list.item_runtime_type_id ||
-                    fields.value().data_offset != aligned.value() ||
-                    fields.value().byte_length !=
-                        rounded.value() / UINT64_C(8) ||
-                    fields.value().stride != UINT32_C(0) ||
-                    fields.value().alignment != UINT32_C(1) ||
-                    fields.value().reserved != UINT64_C(0)) {
-                    return Result<PayloadIndex>::failure(noncanonical(
-                        path, "region_descriptor_contract"));
+                const RegionFields expected{
+                    static_cast<std::uint32_t>(RegionKind::list_validity),
+                    UINT32_C(0), list.owner_runtime_type_id,
+                    list.item_runtime_type_id, aligned.value(),
+                    rounded.value() / UINT64_C(8),
+                    fields.value().element_count, UINT32_C(0), UINT32_C(1),
+                    UINT64_C(0)};
+                auto descriptor = validate_region_fields(fields.value(),
+                                                         expected, path);
+                if (!descriptor.has_value()) {
+                    return Result<PayloadIndex>::failure(
+                        std::move(descriptor).error());
                 }
                 auto padding = require_zero(
                     bytes, byte_count, cursor, aligned.value(), work,
-                    JsonPointer{}.append("padding"),
-                    "nonzero_inter_region_padding");
+                    path.append("data_offset"),
+                    "nonzero_inter_region_padding", true, true);
                 if (!padding.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(padding).error());
@@ -1794,7 +2061,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
 
             const JsonPointer path =
-                JsonPointer{}.append("regions").append(region_index);
+                binary_region_path(region_index);
             charged = work.charge(UINT64_C(1), path);
             if (!charged.has_value()) {
                 return Result<PayloadIndex>::failure(
@@ -1825,50 +2092,52 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     "Portable payload list item region offset is misaligned",
                     "region_offset_misaligned"));
             }
-            if (fields.value().kind !=
-                    static_cast<std::uint32_t>(RegionKind::list_items) ||
-                fields.value().flags != UINT32_C(0) ||
-                fields.value().owner != list.owner_runtime_type_id ||
-                fields.value().runtime_type_id !=
-                    list.item_runtime_type_id ||
-                fields.value().data_offset != aligned.value() ||
-                fields.value().byte_length != expected_length.value() ||
-                fields.value().stride != list.item_stride ||
-                fields.value().alignment != list.item_alignment ||
-                fields.value().reserved != UINT64_C(0) ||
-                (list.item_nullable &&
-                 validity_descriptor.element_count !=
-                     fields.value().element_count)) {
+            const RegionFields expected{
+                static_cast<std::uint32_t>(RegionKind::list_items),
+                UINT32_C(0), list.owner_runtime_type_id,
+                list.item_runtime_type_id, aligned.value(),
+                expected_length.value(), fields.value().element_count,
+                list.item_stride, list.item_alignment, UINT64_C(0)};
+            auto descriptor = validate_region_fields(fields.value(), expected,
+                                                     path);
+            if (!descriptor.has_value()) {
                 return Result<PayloadIndex>::failure(
-                    noncanonical(path, "region_descriptor_contract"));
+                    std::move(descriptor).error());
+            }
+            if (list.item_nullable &&
+                validity_descriptor.element_count !=
+                    fields.value().element_count) {
+                return Result<PayloadIndex>::failure(noncanonical_exact(
+                    path.append("element_count"),
+                    "list_validity_element_count",
+                    std::to_string(fields.value().element_count),
+                    std::to_string(validity_descriptor.element_count)));
             }
             auto padding = require_zero(
                 bytes, byte_count, cursor, aligned.value(), work,
-                JsonPointer{}.append("padding"),
-                "nonzero_inter_region_padding");
+                path.append("data_offset"),
+                "nonzero_inter_region_padding", true, true);
             if (!padding.has_value()) {
                 return Result<PayloadIndex>::failure(
                     std::move(padding).error());
             }
             auto end = layout::checked_range_end(
                 fields.value().data_offset, fields.value().byte_length,
-                byte_count, path);
+                byte_count, path.append("byte_length"));
             if (!end.has_value()) {
                 return Result<PayloadIndex>::failure(
                     std::move(end).error());
             }
             auto accumulated = layout::checked_accumulate_u64(
                 total_list_elements, fields.value().element_count,
-                JsonPointer{}.append("lists").append(
-                    list.owner_runtime_type_id));
+                path.append("element_count"));
             if (!accumulated.has_value()) {
                 return Result<PayloadIndex>::failure(
                     std::move(accumulated).error());
             }
             if (total_list_elements > limits.max_list_elements) {
                 return Result<PayloadIndex>::failure(resource_error(
-                    JsonPointer{}.append("lists").append(
-                        list.owner_runtime_type_id),
+                    path.append("element_count"),
                     "list_elements", total_list_elements,
                     limits.max_list_elements));
             }
@@ -1913,147 +2182,127 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 continue;
             }
             const JsonPointer path =
-                JsonPointer{}.append("regions").append(region_index);
+                binary_region_path(region_index);
             charged = work.charge(UINT64_C(1), path);
             if (!charged.has_value()) {
                 return Result<PayloadIndex>::failure(
                     std::move(charged).error());
             }
-            const std::uint64_t base =
-                layout::header_size + static_cast<std::uint64_t>(region_index) *
-                                          layout::region_descriptor_size;
-            auto kind = read_u32(bytes, byte_count,
-                                 base + layout::region_kind_offset, path);
-            auto region_flags = read_u32(
-                bytes, byte_count, base + layout::region_flags_offset, path);
-            auto owner =
-                read_u32(bytes, byte_count,
-                         base + layout::region_owner_index_offset, path);
-            auto type_id =
-                read_u32(bytes, byte_count,
-                         base + layout::region_runtime_type_id_offset, path);
-            auto data_offset =
-                read_u64(bytes, byte_count,
-                         base + layout::region_data_offset_offset, path);
-            auto byte_length =
-                read_u64(bytes, byte_count,
-                         base + layout::region_byte_length_offset, path);
-            auto element_count =
-                read_u64(bytes, byte_count,
-                         base + layout::region_element_count_offset, path);
-            auto stride = read_u32(bytes, byte_count,
-                                   base + layout::region_stride_offset, path);
-            auto alignment =
-                read_u32(bytes, byte_count,
-                         base + layout::region_alignment_offset, path);
-            auto reserved = read_u64(
-                bytes, byte_count, base + layout::region_reserved_offset, path);
-            if (!kind.has_value() || !region_flags.has_value() ||
-                !owner.has_value() || !type_id.has_value() ||
-                !data_offset.has_value() || !byte_length.has_value() ||
-                !element_count.has_value() || !stride.has_value() ||
-                !alignment.has_value() || !reserved.has_value()) {
-                return Result<PayloadIndex>::failure(simple_error(
-                    FDB_PAYLOAD_E_OUT_OF_BOUNDS, path,
-                    "Portable payload pool descriptor is outside the image",
-                    "region_descriptor_out_of_bounds"));
+            auto fields = read_region_fields(
+                bytes, byte_count, region_index, path);
+            if (!fields.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(fields).error());
             }
             const std::uint32_t expected_alignment =
                 expected_kind == RegionKind::utf16_pool ? UINT32_C(2)
                                                         : UINT32_C(1);
             auto aligned =
-                layout::checked_align_up_u64(cursor, expected_alignment, path);
+                layout::checked_align_up_u64(
+                    cursor, expected_alignment, path.append("data_offset"));
             if (!aligned.has_value()) {
                 return Result<PayloadIndex>::failure(
                     std::move(aligned).error());
             }
-            if (data_offset.value() % expected_alignment != UINT64_C(0)) {
+            if (fields.value().data_offset % expected_alignment !=
+                UINT64_C(0)) {
                 return Result<PayloadIndex>::failure(
-                    simple_error(FDB_PAYLOAD_E_MISALIGNED, path,
+                    simple_error(FDB_PAYLOAD_E_MISALIGNED,
+                                 path.append("data_offset"),
                                  "Portable payload pool offset is misaligned",
                                  "region_offset_misaligned"));
             }
-            if (kind.value() != static_cast<std::uint32_t>(expected_kind) ||
-                region_flags.value() != UINT32_C(0) ||
-                owner.value() != UINT32_MAX || type_id.value() != UINT32_MAX ||
-                data_offset.value() != aligned.value() ||
-                stride.value() != UINT32_C(0) ||
-                alignment.value() != expected_alignment ||
-                reserved.value() != UINT64_C(0)) {
+            if (expected_kind == RegionKind::utf16_pool &&
+                fields.value().byte_length % UINT64_C(2) != UINT64_C(0)) {
                 return Result<PayloadIndex>::failure(
-                    noncanonical(path, "region_descriptor_contract"));
+                    noncanonical_exact(path.append("byte_length"),
+                                       "odd_utf16_pool_length",
+                                       std::to_string(
+                                           fields.value().byte_length),
+                                       "even"));
             }
-            auto padding =
-                require_zero(bytes, byte_count, cursor, aligned.value(), work,
-                             JsonPointer{}.append("padding"),
-                             "nonzero_inter_region_padding");
+            const std::uint64_t expected_elements =
+                expected_kind == RegionKind::utf16_pool
+                    ? fields.value().byte_length / UINT64_C(2)
+                    : fields.value().byte_length;
+            const RegionFields expected{
+                static_cast<std::uint32_t>(expected_kind), UINT32_C(0),
+                UINT32_MAX, UINT32_MAX, aligned.value(),
+                fields.value().byte_length, expected_elements, UINT32_C(0),
+                expected_alignment, UINT64_C(0)};
+            auto descriptor = validate_region_fields(fields.value(), expected,
+                                                     path);
+            if (!descriptor.has_value()) {
+                return Result<PayloadIndex>::failure(
+                    std::move(descriptor).error());
+            }
+            auto padding = require_zero(
+                bytes, byte_count, cursor, aligned.value(), work,
+                path.append("data_offset"), "nonzero_inter_region_padding",
+                true, true);
             if (!padding.has_value()) {
                 return Result<PayloadIndex>::failure(
                     std::move(padding).error());
             }
             auto end = layout::checked_range_end(
-                data_offset.value(), byte_length.value(), byte_count, path);
+                fields.value().data_offset, fields.value().byte_length,
+                byte_count, path.append("byte_length"));
             if (!end.has_value()) {
                 return Result<PayloadIndex>::failure(std::move(end).error());
             }
-            if (expected_kind == RegionKind::utf16_pool &&
-                byte_length.value() % UINT64_C(2) != UINT64_C(0)) {
-                return Result<PayloadIndex>::failure(
-                    noncanonical(path, "odd_utf16_pool_length"));
-            }
-            const std::uint64_t expected_elements =
-                expected_kind == RegionKind::utf16_pool
-                    ? byte_length.value() / UINT64_C(2)
-                    : byte_length.value();
-            if (element_count.value() != expected_elements) {
-                return Result<PayloadIndex>::failure(
-                    noncanonical(path, "region_descriptor_contract"));
-            }
             if (expected_kind != RegionKind::bytes_pool) {
                 auto accumulated = layout::checked_accumulate_u64(
-                    text_pool_bytes, byte_length.value(),
-                    JsonPointer{}.append("pools").append("text"));
+                    text_pool_bytes, fields.value().byte_length,
+                    path.append("byte_length"));
                 if (!accumulated.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(accumulated).error());
                 }
                 if (text_pool_bytes > limits.max_string_bytes) {
                     return Result<PayloadIndex>::failure(resource_error(
-                        JsonPointer{}.append("pools").append("text"),
+                        path.append("byte_length"),
                         "string_bytes", text_pool_bytes,
                         limits.max_string_bytes));
                 }
             }
             regions.push_back(RegionDescriptor{
                 expected_kind, UINT32_C(0), UINT32_MAX, UINT32_MAX,
-                data_offset.value(), byte_length.value(), element_count.value(),
-                UINT32_C(0), expected_alignment});
+                fields.value().data_offset, fields.value().byte_length,
+                fields.value().element_count, UINT32_C(0),
+                expected_alignment});
             output.pools_.push_back(
-                PoolMetadata{expected_kind, data_offset.value(),
-                             byte_length.value(), element_count.value()});
+                PoolMetadata{expected_kind, region_index,
+                             fields.value().data_offset,
+                             fields.value().byte_length,
+                             fields.value().element_count});
             cursor = end.value();
             ++region_index;
         }
         if (region_index != region_count.value()) {
-            return Result<PayloadIndex>::failure(
-                noncanonical(JsonPointer{}.append("regions"),
-                             "region_inventory_not_consumed"));
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("region_count"),
+                "region_inventory_not_consumed",
+                std::to_string(region_count.value()),
+                std::to_string(region_index)));
         }
 
         auto canonical_total = layout::checked_align_up_u64(
-            cursor, UINT32_C(8), JsonPointer{}.append("total_length"));
+            cursor, UINT32_C(8), header_path.append("total_length"));
         if (!canonical_total.has_value()) {
             return Result<PayloadIndex>::failure(
                 std::move(canonical_total).error());
         }
         if (canonical_total.value() != byte_count) {
-            return Result<PayloadIndex>::failure(noncanonical(
-                JsonPointer{}.append("total_length"),
-                "canonical_total_length_mismatch"));
+            return Result<PayloadIndex>::failure(noncanonical_exact(
+                header_path.append("total_length"),
+                "canonical_total_length_mismatch",
+                std::to_string(byte_count),
+                std::to_string(canonical_total.value())));
         }
         auto final_padding = require_zero(
             bytes, byte_count, cursor, canonical_total.value(), work,
-            JsonPointer{}.append("padding"), "nonzero_final_padding");
+            header_path.append("total_length"), "nonzero_final_padding",
+            true, true);
         if (!final_padding.has_value()) {
             return Result<PayloadIndex>::failure(
                 std::move(final_padding).error());
@@ -2063,9 +2312,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             if (list.validity_region_index == UINT32_MAX) {
                 continue;
             }
-            const JsonPointer path = JsonPointer{}
-                                         .append("regions")
-                                         .append(list.validity_region_index);
+            const JsonPointer path = binary_region_path(list.validity_region_index);
             charged = work.charge(list.validity.byte_length, path);
             if (!charged.has_value()) {
                 return Result<PayloadIndex>::failure(
@@ -2087,8 +2334,10 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 const std::uint8_t mask = static_cast<std::uint8_t>(
                     UINT8_C(0xff) << used);
                 if ((tail & mask) != UINT8_C(0)) {
-                    return Result<PayloadIndex>::failure(noncanonical(
-                        path, "nonzero_validity_tail"));
+                    return Result<PayloadIndex>::failure(noncanonical_exact(
+                        path.append("data"), "nonzero_validity_tail",
+                        std::to_string(static_cast<std::uint32_t>(tail & mask)),
+                        "0"));
                 }
             }
         }
@@ -2131,8 +2380,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             if (validity_region != nullptr) {
                 charged = work.charge(
                     validity_region->byte_length,
-                    JsonPointer{}.append("regions").append(
-                        entry.validity_region_index));
+                    binary_region_path(entry.validity_region_index));
                 if (!charged.has_value()) {
                     return Result<PayloadIndex>::failure(
                         std::move(charged).error());
@@ -2142,8 +2390,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     auto tail_offset = layout::checked_add_u64(
                         validity_region->data_offset,
                         validity_region->byte_length - UINT64_C(1),
-                        JsonPointer{}.append("regions").append(
-                            entry.validity_region_index));
+                        binary_region_path(entry.validity_region_index));
                     if (!tail_offset.has_value()) {
                         return Result<PayloadIndex>::failure(
                             std::move(tail_offset).error());
@@ -2155,10 +2402,15 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     const std::uint8_t mask = static_cast<std::uint8_t>(
                         UINT8_C(0xff) << used);
                     if ((tail & mask) != UINT8_C(0)) {
-                        return Result<PayloadIndex>::failure(noncanonical(
-                            JsonPointer{}.append("regions").append(
-                                entry.validity_region_index),
-                            "nonzero_validity_tail"));
+                        return Result<PayloadIndex>::failure(
+                            noncanonical_exact(
+                                binary_region_path(
+                                    entry.validity_region_index)
+                                    .append("data"),
+                                "nonzero_validity_tail",
+                                std::to_string(static_cast<std::uint32_t>(
+                                    tail & mask)),
+                                "0"));
                     }
                 }
             }
@@ -2214,8 +2466,8 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         for (const ListRegionState& list : list_partitions.states) {
             auto consumed = layout::require_partition_consumed(
                 list.cursor, list.items.element_count,
-                JsonPointer{}.append("lists").append(
-                    list.owner_runtime_type_id));
+                binary_region_path(list.items_region_index)
+                    .append("element_count"));
             if (!consumed.has_value()) {
                 return Result<PayloadIndex>::failure(
                     std::move(consumed).error());
@@ -2227,12 +2479,9 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 pool.kind == RegionKind::utf8_pool    ? TypeKind::str
                 : pool.kind == RegionKind::utf16_pool ? TypeKind::wstr
                                                       : TypeKind::bytes;
-            const char* name = pool.kind == RegionKind::utf8_pool    ? "utf8"
-                               : pool.kind == RegionKind::utf16_pool ? "utf16le"
-                                                                     : "bytes";
             auto consumed = layout::require_partition_consumed(
                 pool_cursors.for_kind(kind), pool.byte_length,
-                JsonPointer{}.append("pools").append(name));
+                binary_region_path(pool.region_index).append("byte_length"));
             if (!consumed.has_value()) {
                 return Result<PayloadIndex>::failure(
                     std::move(consumed).error());
@@ -2247,6 +2496,8 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         output.text_validated_eagerly_ = limits.validate_text_eager;
         return Result<PayloadIndex>::success(std::move(output));
     } catch (const std::bad_alloc&) {
+        return Result<PayloadIndex>::failure(allocation_error());
+    } catch (const std::length_error&) {
         return Result<PayloadIndex>::failure(allocation_error());
     }
 }
