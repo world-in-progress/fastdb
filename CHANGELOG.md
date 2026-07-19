@@ -120,9 +120,11 @@ When a binding is released (tagged), its section is automatically copied to the 
   corpus with reproducible hashes, and an executable mapping for all 14
   mandatory malformed/runtime-lifetime classes.
 
-Task 11 complete fresh local gates are green. Its independent P2 review,
-object-graph runtime, Rust/Python/TypeScript-WASM portable projections, and
-payload code generation remain open in [Issue
+Task 11 complete fresh local gates are green, and its same-reviewer final P2
+review reports zero Critical, Important, or Minor findings after closing both
+initial Important findings. P2 is locally complete and frozen. Object-graph
+runtime, Rust/Python/TypeScript-WASM portable projections, and payload code
+generation remain open in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 The public call-db/`ColumnEngine` surface remains 0.1.x migration input until
 the planned 0.2.0 clean cut; this change does not bump a package version or

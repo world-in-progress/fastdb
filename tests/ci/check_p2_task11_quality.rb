@@ -311,8 +311,7 @@ def check_documentation
   require_quality(compact.call(changelog).include?("P2 record binary/runtime/lifetime"),
                   "changelog lacks the P2 local implementation entry")
   expected_index =
-    "P2 implementation in progress; " \
-    "Task 11 local gates green/final review pending"
+    "P2 locally complete/frozen; P3-P5 and hosted evidence pending"
   require_quality(compact.call(index).include?(expected_index),
                   "issue index overstates or omits the P2 review state")
 end

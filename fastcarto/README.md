@@ -7,8 +7,9 @@ This directory contains the native implementation that the higher-level bindings
 > backing, checked-view, materialization, and invalidation behavior. The public
 > C ABI contains exactly 99 reviewed `fdb_payload_v1_*` symbols, and the C++17
 > facade projects that ABI. Task 11 now includes its reviewed binary-open
-> corpus/robustness target and its complete fresh local gate is green; the final
-> review and P3-P5 remain open. No Rust/Python/TypeScript portable projection
+> corpus/robustness target; its complete fresh local gate is green and its
+> same-reviewer final review reports zero findings. P2 is locally frozen, while
+> P3-P5 remain open. No Rust/Python/TypeScript portable projection
 > or 0.2.0 release is claimed. See the [current status
 > issue](../docs/issues/0002-portable-payload-foundation-implementation-status.md)
 > and [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).

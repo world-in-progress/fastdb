@@ -25,8 +25,10 @@ ordinary tests, and the libFuzzer executable.
 Task 11 workflow, package, compatibility, traceability, and binary-opening
 quality gates are present, including a reviewed 10-seed corpus and a named
 14-class malformed-input proof map. The complete fresh Task 11 local gate is
-green; P2 remains in progress until its final independent review closes. The
-single-thread WebAssembly runtime-ABI proof uses
+green, and its same-reviewer final review reports zero Critical, Important, or
+Minor findings after closing both initial Important findings. P2 is locally
+complete and frozen at the exact 99-symbol C ABI. The single-thread WebAssembly
+runtime-ABI proof uses
 the public `fastdb` CMake target and verifies that injected allocation failures
 remain contained as stable C status/error pairs. WebAssembly pthread behavior
 is not inferred from that proof; native tests plus ThreadSanitizer remain the
@@ -65,7 +67,7 @@ This repository now contains three closely related layers:
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — the 0.2.0 target makes the C++ Core, rather than a language binding, the semantic authority
 - **Schema-driven codegen** — the target Core returns deterministic C++/Rust/Python/TypeScript payload artifacts in memory
-- **Portable record payload runtime** — P1 provides canonical identity and P2 now provides the C/C++ record build/open/view/materialize/invalidate path at the exact 99-symbol boundary; the Task 11 final review and P3-P5 remain open
+- **Portable record payload runtime** — P1 provides canonical identity and P2 now provides the locally frozen C/C++ record build/open/view/materialize/invalidate path at the exact 99-symbol boundary; P3-P5 remain open
 
 ## Documentation map
 
