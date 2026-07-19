@@ -227,6 +227,11 @@ def check_workflow
   package = jobs.fetch("package_tests")
   require_quality(package.fetch("runs-on") == "ubuntu-24.04",
                   "package_tests must use ubuntu-24.04")
+  package_strategy = package.fetch("strategy")
+  require_quality(package_strategy.fetch("fail-fast") == false &&
+                  package_strategy.fetch("matrix").fetch("python-version") ==
+                    %w[3.10 3.12],
+                  "package_tests must cover exact Python 3.10/3.12 matrix")
   package_build = step_run(package, "Build Python sdist and wheel")
   require_quality(package_build.include?("set -o pipefail") &&
                   package_build.include?("tee build/package-build.log"),

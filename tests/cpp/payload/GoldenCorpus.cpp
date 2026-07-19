@@ -394,7 +394,6 @@ std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
     std::vector<BinaryOpenGoldenCase> cases;
     cases.reserve(static_cast<std::size_t>(cases_value.size()));
     std::set<std::string> names;
-    std::set<std::string> sources;
     std::set<std::string> scenarios;
     std::set<std::string> binary_paths;
     std::set<std::string> sha256_paths;
@@ -409,7 +408,6 @@ std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
         if (const auto* success =
                 std::get_if<BinaryGoldenSuccess>(&item.expected)) {
             if (success->source.empty() || success->scenario.empty() ||
-                !sources.insert(success->source_relative_path).second ||
                 !scenarios.insert(success->scenario).second ||
                 !binary_paths.insert(success->binary_relative_path).second ||
                 !sha256_paths.insert(success->sha256_relative_path).second) {

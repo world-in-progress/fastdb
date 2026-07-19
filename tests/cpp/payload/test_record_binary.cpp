@@ -324,6 +324,14 @@ Result<LogicalPayload> build_scenario(CompiledSpec spec,
         }                                                                    \
     } while (false)
 
+    if (scenario == "component_list_empty") {
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(0), UINT64_C(0)));
+        FASTDB_BINARY_SCENARIO_STEP(
+            builder.begin_entry(UINT32_C(1), UINT64_C(0)));
+        return builder.freeze();
+    }
+
     if (scenario == "numeric_edges" ||
         scenario == "numeric_edges_alt_nan") {
         const bool alternate_nan = scenario == "numeric_edges_alt_nan";
@@ -933,7 +941,7 @@ const BinaryGoldenCase* find_case(const std::vector<BinaryGoldenCase>& cases,
 int test_binary_goldens_determinism_hash_and_headers() {
     const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
         FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
-    require(corpus.size() == 7U);
+    require(corpus.size() == 8U);
     for (const BinaryGoldenCase& item : corpus) {
         auto first = encode_case(item);
         auto second = encode_case(item);
@@ -988,7 +996,9 @@ int test_binary_goldens_determinism_hash_and_headers() {
             : item.name == "nested-components" ? "/entries/c_empty_many/1"
             : item.name == "text-bytes" ? "/entries/nested/1/suffix"
             : item.name == "nested-lists" ? "/entries/matrices/2/2"
-                                           : "/entries/leaf_lists/2/1/label";
+            : item.name == "component-list-empty"
+                ? "/binary/header"
+                : "/entries/leaf_lists/2/1/label";
         require(limited.error().path() == expected_short_path,
                 item.name + ":" + std::string(limited.error().path()));
         require(limited.error().details_json() ==

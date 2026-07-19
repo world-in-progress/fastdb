@@ -4,68 +4,96 @@
     {
       "name": "valid-empty.bin",
       "class": "valid-empty",
-      "source_hex": "tests/golden/payload/v1/binary/valid/empty.bin.hex",
-      "sha256": "0ac923d7ec53314116dada8ad54f44590cc403738f7710d23b1cc0b3313202df"
+      "source_hex": "tests/golden/payload/v1/binary/valid/component-list-empty.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "04c62573387235786bb63ff63eb2abd2e6c729d3e1b2f053a857237ae1ed55d6"
     },
     {
       "name": "valid-fixed.bin",
       "class": "valid-fixed",
-      "source_hex": "tests/golden/payload/v1/binary/valid/fixed-scalars.bin.hex",
-      "sha256": "879da9218873979daabdc0cb45448b293500ac6d28a9fb16b86bd68ef00d62db"
+      "source_hex": "tests/golden/payload/v1/binary/valid/component-list-composition.bin.hex",
+      "patches": [
+        {"offset": 2345, "before": "08", "after": "09"}
+      ],
+      "expected": {"status": 0, "path": ""},
+      "sha256": "6baba904ca557809b3551c0df6e197b3f7ade7c3fedb157caf754e2fa4878f71"
     },
     {
       "name": "valid-text.bin",
       "class": "valid-text",
-      "source_hex": "tests/golden/payload/v1/binary/valid/text-bytes.bin.hex",
-      "sha256": "9033c95633c07e9737246afac8fcf4c0da407b0965a6a9612d0b3c926e75a7e6"
+      "source_hex": "tests/golden/payload/v1/binary/valid/component-list-composition.bin.hex",
+      "patches": [
+        {"offset": 3476, "before": "63", "after": "43"}
+      ],
+      "expected": {"status": 0, "path": ""},
+      "sha256": "96abffc82a4474c7e04084141505cb6aa44759b0778072aa011aabca1430b1cb"
     },
     {
       "name": "valid-list.bin",
       "class": "valid-list",
       "source_hex": "tests/golden/payload/v1/binary/valid/component-list-composition.bin.hex",
+      "expected": {"status": 0, "path": ""},
       "sha256": "e77d4f3d221a74db0e6d13dd695c4c89a0855ecd2be4ab8c01725e9f897f5993"
     },
     {
       "name": "malformed-magic.bin",
       "class": "malformed-magic",
-      "source_hex": "tests/golden/payload/v1/binary/valid/empty.bin.hex",
-      "mutation": {"offset": 0, "before": "46", "after": "47"},
-      "sha256": "27f480e951233ab810812e5e7e93b75747ddbce5f08d03604e01a810acca2131"
+      "source_seed": "valid-empty.bin",
+      "patches": [
+        {"offset": 0, "before": "46", "after": "47"}
+      ],
+      "expected": {"status": 3001, "path": "/binary/header/magic"},
+      "sha256": "3b618d860346777c28b9d70e73287f07c2cd4715c28598b9426e1eeff7ad0b34"
     },
     {
       "name": "malformed-length.bin",
       "class": "malformed-length",
-      "source_hex": "tests/golden/payload/v1/binary/valid/empty.bin.hex",
-      "mutation": {"offset": 24, "before": "80", "after": "7f"},
-      "sha256": "be0ef4656a0ed3b619d10f5b9d495023e1828185ca6ed5f623420f35e3e1aa04"
+      "source_seed": "valid-empty.bin",
+      "patches": [
+        {"offset": 24, "before": "20", "after": "1f"}
+      ],
+      "expected": {"status": 3009, "path": "/binary/header/total_length"},
+      "sha256": "44a9dbc0b97c7efb7586adc8730c38e9dc79037bb4aa28e4e6fabebeabee38a8"
     },
     {
       "name": "malformed-offset.bin",
       "class": "malformed-offset",
-      "source_hex": "tests/golden/payload/v1/binary/valid/empty.bin.hex",
-      "mutation": {"offset": 64, "before": "80", "after": "81"},
-      "sha256": "4269c0f37a66c9f73a2ea750954b35db384aa0bf60b07e132c1e1f2a90ab644e"
+      "source_seed": "valid-list.bin",
+      "patches": [
+        {"offset": 144, "before": "20", "after": "21"}
+      ],
+      "expected": {"status": 3005, "path": "/binary/regions/0/data_offset"},
+      "sha256": "a71d0b59f9ab730afb03b481553dba4f613614dd56040286ecaef19b820be400"
     },
     {
       "name": "malformed-validity.bin",
       "class": "malformed-validity",
-      "source_hex": "tests/golden/payload/v1/binary/valid/fixed-scalars.bin.hex",
-      "mutation": {"offset": 858, "before": "05", "after": "85"},
-      "sha256": "573e8899260a0b12eb25e2f6f6ef7492c2c994d88ba32b0ab31f01af80cb3345"
+      "source_seed": "valid-list.bin",
+      "patches": [
+        {"offset": 3008, "before": "06", "after": "86"}
+      ],
+      "expected": {"status": 3009, "path": "/binary/regions/1/data"},
+      "sha256": "4c1bf9f734663f1fa154e27950cf827abe5c935905045985ed9349c2a96f62af"
     },
     {
       "name": "malformed-text.bin",
       "class": "malformed-text",
-      "source_hex": "tests/golden/payload/v1/binary/valid/text-bytes.bin.hex",
-      "mutation": {"offset": 1336, "before": "41", "after": "80"},
-      "sha256": "1bcae750c32e6800706d3e1b01090f22e97ac9928ce63d1be050014aee4e0a53"
+      "source_seed": "valid-text.bin",
+      "patches": [
+        {"offset": 3476, "before": "43", "after": "80"}
+      ],
+      "expected": {"status": 2010, "path": "/entries/records/0/scalars/j_str"},
+      "sha256": "6670a6162e229a79fe8cef254a02d67f80f2ee64fce43b894d34b5d70e70f6dd"
     },
     {
       "name": "malformed-list.bin",
       "class": "malformed-list",
-      "source_hex": "tests/golden/payload/v1/binary/valid/nested-lists.bin.hex",
-      "mutation": {"offset": 1576, "before": "00", "after": "01"},
-      "sha256": "95e55123f11fe6306a5d14a119f3e9c98ca50550c8e840cd83a65f1d622ffcb9"
+      "source_seed": "valid-list.bin",
+      "patches": [
+        {"offset": 2424, "before": "00", "after": "01"}
+      ],
+      "expected": {"status": 3004, "path": "/entries/records/0/bools"},
+      "sha256": "b38f73b7484055715151eaa593ea0dd2d5adecaaea9b5643818fb2aed761c494"
     }
   ]
 }

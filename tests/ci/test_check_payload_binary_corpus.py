@@ -43,6 +43,16 @@ class BinaryCorpusGateTests(unittest.TestCase):
             with self.assertRaises(MODULE.CheckError):
                 MODULE.load_manifest()
 
+    def test_rejects_an_expected_result_change(self) -> None:
+        document = json.loads(self.original_manifest.read_text(encoding="utf-8"))
+        document["cases"][4]["expected"]["path"] = "/different/path"
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "binary-corpus.json"
+            manifest.write_text(json.dumps(document), encoding="utf-8")
+            MODULE.MANIFEST = manifest
+            with self.assertRaises(MODULE.CheckError):
+                MODULE.load_manifest()
+
     def test_rejects_non_file_debris_in_the_corpus_directory(self) -> None:
         cases = MODULE.load_manifest()
         with tempfile.TemporaryDirectory() as directory:

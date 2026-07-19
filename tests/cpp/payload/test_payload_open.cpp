@@ -263,7 +263,7 @@ int verify_golden_inventory() {
     const auto corpus =
         fastdb::test::payload::load_binary_open_golden_corpus(
             FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
-    require(corpus.size() == 13U);
+    require(corpus.size() == 14U);
     std::size_t success_count = 0U;
     std::size_t invalid_count = 0U;
     for (const auto& item : corpus) {
@@ -284,14 +284,14 @@ int verify_golden_inventory() {
         require(invalid.expected.details_json.front() == '{');
         require(invalid.expected.details_json.back() == '}');
     }
-    require(success_count == 7U);
+    require(success_count == 8U);
     require(invalid_count == 6U);
-    require(corpus[7].name == "invalid-header-magic");
-    require(corpus[8].name == "invalid-header-reserved");
-    require(corpus[9].name == "invalid-directory-offset");
-    require(corpus[10].name == "invalid-resource-total");
-    require(corpus[11].name == "invalid-region-flags");
-    require(corpus[12].name == "invalid-entry-index");
+    require(corpus[8].name == "invalid-header-magic");
+    require(corpus[9].name == "invalid-header-reserved");
+    require(corpus[10].name == "invalid-directory-offset");
+    require(corpus[11].name == "invalid-resource-total");
+    require(corpus[12].name == "invalid-region-flags");
+    require(corpus[13].name == "invalid-entry-index");
     return EXIT_SUCCESS;
 }
 

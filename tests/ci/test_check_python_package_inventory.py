@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import shutil
+import subprocess
 import unittest
 
 
@@ -64,6 +66,41 @@ class SwigDiagnosticTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_cli_help_starts_on_supported_python_3_10(self) -> None:
+        python310 = shutil.which("python3.10")
+        if python310 is None:
+            self.skipTest("python3.10 is not installed")
+        completed = subprocess.run(
+            [python310, str(MODULE_PATH), "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_distribution_identity_normalizes_only_name_separators(self) -> None:
+        self.assertEqual(
+            MODULE.canonical_distribution_name("FastDB_4.py"), "fastdb-4-py"
+        )
+
+    def test_metadata_identity_rejects_duplicate_name(self) -> None:
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.metadata_identity(
+                b"Name: first\nName: second\nVersion: 1\n\n", "fixture"
+            )
+
+    def test_artifact_identity_rejects_name_or_version_drift(self) -> None:
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.artifact_identity(
+                Path("fastdb4py-0.1.22.tar.gz"),
+                Path("other-0.1.22-py3-none-any.whl"),
+            )
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.artifact_identity(
+                Path("fastdb4py-0.1.22.tar.gz"),
+                Path("fastdb4py-0.1.23-py3-none-any.whl"),
+            )
+
     def test_rejects_top_level_build_and_dist_directories(self) -> None:
         for path in ("build/leaked.o", "dist/leaked.whl"):
             with self.subTest(path=path), self.assertRaises(MODULE.CheckError):

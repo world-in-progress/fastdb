@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
 import re
 import tarfile
-import tomllib
 import zipfile
 
 
@@ -66,6 +67,8 @@ SWIG_DIAGNOSTIC = re.compile(
     re.MULTILINE,
 )
 NATIVE_ARTIFACT = re.compile(r"\.(?:so(?:\.\d+)*|dylib|dll|pyd)$")
+NORMALIZED_NAME_SEPARATOR = re.compile(r"[-_.]+")
+DIST_AUXILIARY_FILES = {".gitignore"}
 
 
 def strip_sdist_root(names: list[str], root: str) -> set[str]:
@@ -151,44 +154,131 @@ def check_swig_diagnostics(build_log: str) -> None:
         )
 
 
+def canonical_distribution_name(name: str) -> str:
+    return NORMALIZED_NAME_SEPARATOR.sub("-", name).lower()
+
+
+def metadata_identity(contents: bytes, label: str) -> tuple[str, str]:
+    metadata = BytesParser(policy=policy.compat32).parsebytes(contents)
+    names = metadata.get_all("Name", [])
+    versions = metadata.get_all("Version", [])
+    if len(names) != 1 or len(versions) != 1 or not names[0] or not versions[0]:
+        raise CheckError(f"{label} must contain exactly one Name and Version")
+    return names[0], versions[0]
+
+
+def artifact_identity(
+    sdist: Path, wheel: Path
+) -> tuple[str, str, str, str]:
+    sdist_suffix = ".tar.gz"
+    if not sdist.name.endswith(sdist_suffix):
+        raise CheckError(f"unsupported sdist filename: {sdist.name}")
+    sdist_root = sdist.name[: -len(sdist_suffix)]
+    sdist_name, separator, sdist_version = sdist_root.rpartition("-")
+    if not separator or not sdist_name or not sdist_version:
+        raise CheckError(f"sdist filename has no exact name/version: {sdist.name}")
+
+    if wheel.suffix != ".whl":
+        raise CheckError(f"unsupported wheel filename: {wheel.name}")
+    wheel_parts = wheel.stem.split("-")
+    if len(wheel_parts) not in {5, 6}:
+        raise CheckError(f"wheel filename has invalid tag fields: {wheel.name}")
+    wheel_name, wheel_version = wheel_parts[:2]
+    if (
+        canonical_distribution_name(sdist_name)
+        != canonical_distribution_name(wheel_name)
+        or sdist_version != wheel_version
+    ):
+        raise CheckError(
+            "sdist/wheel filename identities differ: "
+            f"{sdist_name}-{sdist_version} vs {wheel_name}-{wheel_version}"
+        )
+    return sdist_root, sdist_name, sdist_version, wheel_name
+
+
+def exact_dist_artifacts(dist: Path) -> tuple[Path, Path]:
+    entries = sorted(dist.iterdir(), key=lambda path: path.name)
+    invalid = [
+        path.name for path in entries if path.is_symlink() or not path.is_file()
+    ]
+    sdists = [path for path in entries if path.name.endswith(".tar.gz")]
+    wheels = [path for path in entries if path.suffix == ".whl"]
+    expected = set(sdists + wheels)
+    unexpected = [
+        path.name
+        for path in entries
+        if path not in expected and path.name not in DIST_AUXILIARY_FILES
+    ]
+    if invalid or len(sdists) != 1 or len(wheels) != 1 or unexpected:
+        raise CheckError(
+            "dist directory must contain exactly one regular sdist and wheel; "
+            f"invalid={invalid}, unexpected={unexpected}, "
+            f"sdists={len(sdists)}, wheels={len(wheels)}"
+        )
+    return sdists[0], wheels[0]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dist-dir", required=True, type=Path)
     parser.add_argument("--build-log", required=True, type=Path)
-    parser.add_argument(
-        "--pyproject", type=Path, default=Path(__file__).resolve().parent.parent / "pyproject.toml"
-    )
     args = parser.parse_args()
     check_swig_diagnostics(args.build_log.read_text(encoding="utf-8"))
-    metadata = tomllib.loads(args.pyproject.read_text(encoding="utf-8"))["project"]
-    normalized = metadata["name"].replace("-", "_")
-    version = metadata["version"]
     dist = args.dist_dir.resolve(strict=True)
-    sdists = sorted(dist.glob(f"{normalized}-{version}.tar.gz"))
-    wheels = sorted(dist.glob(f"{normalized}-{version}-*.whl"))
-    if len(sdists) != 1 or len(wheels) != 1:
-        raise CheckError(
-            f"expected one sdist and one wheel for {normalized}-{version}; "
-            f"found {len(sdists)} and {len(wheels)}"
-        )
+    sdist, wheel = exact_dist_artifacts(dist)
+    root, filename_name, version, _ = artifact_identity(sdist, wheel)
 
-    with tarfile.open(sdists[0], "r:gz") as archive:
+    with tarfile.open(sdist, "r:gz") as archive:
         raw_names = archive.getnames()
-    root = f"{normalized}-{version}"
+        if len(raw_names) != len(set(raw_names)):
+            raise CheckError("sdist contains duplicate member names")
+        package_info = archive.extractfile(f"{root}/PKG-INFO")
+        if package_info is None:
+            raise CheckError("sdist is missing its root PKG-INFO")
+        sdist_metadata = metadata_identity(package_info.read(), "sdist PKG-INFO")
     sdist_names = strip_sdist_root(raw_names, root)
     missing = sorted(SDIST_REQUIRED - sdist_names)
     if missing:
         raise CheckError(f"sdist is missing required portable-payload files: {missing}")
     reject_debris(sdist_names, "sdist")
 
-    with zipfile.ZipFile(wheels[0]) as archive:
-        wheel_names = set(archive.namelist())
+    with zipfile.ZipFile(wheel) as archive:
+        raw_wheel_names = archive.namelist()
+        if len(raw_wheel_names) != len(set(raw_wheel_names)):
+            raise CheckError("wheel contains duplicate member names")
+        wheel_names = set(raw_wheel_names)
+        metadata_paths = sorted(
+            name
+            for name in wheel_names
+            if PurePosixPath(name).parts[-1:] == ("METADATA",)
+            and len(PurePosixPath(name).parts) == 2
+            and PurePosixPath(name).parts[0].endswith(".dist-info")
+        )
+        if len(metadata_paths) != 1:
+            raise CheckError(
+                "wheel must contain exactly one top-level dist-info/METADATA"
+            )
+        wheel_metadata = metadata_identity(
+            archive.read(metadata_paths[0]), "wheel METADATA"
+        )
+
+    expected_identity = (canonical_distribution_name(filename_name), version)
+    actual_identities = {
+        "sdist": (canonical_distribution_name(sdist_metadata[0]), sdist_metadata[1]),
+        "wheel": (canonical_distribution_name(wheel_metadata[0]), wheel_metadata[1]),
+    }
+    for label, identity in actual_identities.items():
+        if identity != expected_identity:
+            raise CheckError(
+                f"{label} metadata identity {identity} differs from filename "
+                f"identity {expected_identity}"
+            )
     check_wheel_native_artifacts(wheel_names)
     reject_debris(wheel_names, "wheel")
 
     print(
         "Python package diagnostics and inventory check passed: "
-        f"{sdists[0].name}, {wheels[0].name}"
+        f"{sdist.name}, {wheel.name}"
     )
     return 0
 

@@ -65,6 +65,15 @@
       }
     },
     {
+      "name": "component-list-empty",
+      "success": {
+        "source": "spec/component-list-composition.source.json",
+        "scenario": "component_list_empty",
+        "binary_hex": "valid/component-list-empty.bin.hex",
+        "sha256": "valid/component-list-empty.sha256"
+      }
+    },
+    {
       "name": "invalid-header-magic",
       "invalid": {
         "source": "spec/empty.source.json",
