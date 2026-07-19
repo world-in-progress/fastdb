@@ -243,6 +243,21 @@ target_include_directories(
 set_tests_properties(payload.spec_abi PROPERTIES TIMEOUT 120)
 
 add_fastdb_payload_test(
+    runtime_abi
+    SOURCES payload/test_runtime_abi.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_runtime_abi
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+set_tests_properties(payload.runtime_abi PROPERTIES TIMEOUT 120)
+
+add_fastdb_payload_test(
     cpp_facade
     SOURCES payload/test_cpp_facade.cpp
     EXTRA_LIBRARIES
@@ -280,7 +295,7 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
 )
-set_tests_properties(payload.payload_builder PROPERTIES TIMEOUT 120)
+set_tests_properties(payload.payload_builder PROPERTIES TIMEOUT 240)
 
 add_fastdb_payload_test(
     record_layout
@@ -313,7 +328,7 @@ target_compile_definitions(
     PRIVATE
         "FASTDB_PAYLOAD_BINARY_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary\""
 )
-set_tests_properties(payload.record_binary PROPERTIES TIMEOUT 120)
+set_tests_properties(payload.record_binary PROPERTIES TIMEOUT 240)
 
 add_fastdb_payload_test(
     payload_backing

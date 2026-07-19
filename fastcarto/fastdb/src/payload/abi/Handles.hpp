@@ -4,12 +4,16 @@
 
 #include "payload/error/Error.hpp"
 #include "payload/error/Result.hpp"
+#include "payload/build/BuildPlan.hpp"
+#include "payload/build/PayloadBuilder.hpp"
 #include "payload/spec/CompiledSpec.hpp"
+#include "payload/view/PayloadOwner.hpp"
 
 #include <atomic>
 #include <cstdint>
 #include <exception>
 #include <limits>
+#include <memory>
 #include <new>
 #include <utility>
 #include <vector>
@@ -78,6 +82,33 @@ struct fdb_payload_v1_blob final {
 
     std::atomic<std::uint64_t> references{UINT64_C(1)};
     const std::vector<std::uint8_t> bytes;
+};
+
+struct fdb_payload_v1_builder final {
+    explicit fdb_payload_v1_builder(
+        std::unique_ptr<fastdb::payload::build::PayloadBuilder> initial_value)
+        noexcept
+        : value(std::move(initial_value)) {}
+
+    std::unique_ptr<fastdb::payload::build::PayloadBuilder> value;
+};
+
+struct fdb_payload_v1_plan final {
+    explicit fdb_payload_v1_plan(
+        fastdb::payload::build::BuildPlan initial_value) noexcept
+        : value(std::move(initial_value)) {}
+
+    std::atomic<std::uint64_t> references{UINT64_C(1)};
+    const fastdb::payload::build::BuildPlan value;
+};
+
+struct fdb_payload_v1_payload final {
+    explicit fdb_payload_v1_payload(
+        fastdb::payload::view::PayloadOwner initial_value) noexcept
+        : value(std::move(initial_value)) {}
+
+    std::atomic<std::uint64_t> references{UINT64_C(1)};
+    const fastdb::payload::view::PayloadOwner value;
 };
 
 struct fdb_payload_v1_error {

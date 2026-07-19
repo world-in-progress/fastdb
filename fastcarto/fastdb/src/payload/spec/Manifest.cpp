@@ -38,6 +38,21 @@ struct MemberRule final {
     ValueClass value_class;
 };
 
+struct RuntimeFacts final {
+    bool utf8{false};
+    bool utf16le{false};
+    bool bytes{false};
+    bool list_items{false};
+    bool objects{false};
+    bool references{false};
+    bool roots{false};
+    bool fixed_width_values_only{true};
+    bool has_runtime_sized_regions{false};
+    std::uint64_t reachable_type_count{UINT64_C(0)};
+    std::uint64_t reachable_component_count{UINT64_C(0)};
+    std::uint64_t reachable_list_type_count{UINT64_C(0)};
+};
+
 bool is_class(const JsonValue& value, ValueClass expected) {
     const JsonValue::Storage& storage = value.storage();
     switch (expected) {
@@ -313,6 +328,148 @@ std::string_view type_name(TypeKind kind) {
     return {};
 }
 
+RuntimeFacts derive_runtime_facts(const ResolvedSpec& resolved) {
+    RuntimeFacts facts;
+    std::vector<const TypeNode*> pending;
+    pending.reserve(resolved.entries().size());
+    std::vector<bool> visited_components(resolved.components().size(), false);
+    const bool graph = resolved.profile() == Profile::object_graph_v1;
+
+    const auto enqueue_component = [&](std::uint32_t component_index) {
+        const std::size_t index = static_cast<std::size_t>(component_index);
+        if (index >= resolved.components().size() ||
+            visited_components[index]) {
+            return;
+        }
+        visited_components[index] = true;
+        ++facts.reachable_component_count;
+        if (graph) {
+            facts.objects = true;
+        }
+        const auto& fields = resolved.components()[index].fields;
+        for (auto field = fields.rbegin(); field != fields.rend(); ++field) {
+            pending.push_back(&field->type);
+        }
+    };
+
+    for (const Entry& entry : resolved.entries()) {
+        pending.push_back(&entry.type);
+        if (entry.cardinality == Cardinality::many) {
+            facts.has_runtime_sized_regions = true;
+        }
+        if (graph) {
+            const TypeNode* root = &entry.type;
+            while (root->kind == TypeKind::list && root->items != nullptr) {
+                root = root->items.get();
+            }
+            if (root->kind == TypeKind::component ||
+                root->kind == TypeKind::ref) {
+                facts.roots = true;
+            }
+        }
+    }
+
+    while (!pending.empty()) {
+        const TypeNode* const type = pending.back();
+        pending.pop_back();
+        ++facts.reachable_type_count;
+        switch (type->kind) {
+        case TypeKind::str:
+            facts.utf8 = true;
+            facts.fixed_width_values_only = false;
+            facts.has_runtime_sized_regions = true;
+            break;
+        case TypeKind::wstr:
+            facts.utf16le = true;
+            facts.fixed_width_values_only = false;
+            facts.has_runtime_sized_regions = true;
+            break;
+        case TypeKind::bytes:
+            facts.bytes = true;
+            facts.fixed_width_values_only = false;
+            facts.has_runtime_sized_regions = true;
+            break;
+        case TypeKind::list:
+            facts.list_items = true;
+            facts.fixed_width_values_only = false;
+            facts.has_runtime_sized_regions = true;
+            ++facts.reachable_list_type_count;
+            if (type->items != nullptr) {
+                pending.push_back(type->items.get());
+            }
+            break;
+        case TypeKind::component:
+            enqueue_component(type->resolved_component_index);
+            break;
+        case TypeKind::ref:
+            facts.references = true;
+            facts.fixed_width_values_only = false;
+            facts.has_runtime_sized_regions = true;
+            if (graph) {
+                enqueue_component(type->resolved_component_index);
+            }
+            break;
+        case TypeKind::boolean:
+        case TypeKind::u8:
+        case TypeKind::u16:
+        case TypeKind::u32:
+        case TypeKind::i32:
+        case TypeKind::u8n:
+        case TypeKind::u16n:
+        case TypeKind::f32:
+        case TypeKind::f64:
+            break;
+        }
+    }
+
+    if (graph && (facts.objects || facts.references || facts.roots)) {
+        facts.has_runtime_sized_regions = true;
+    }
+    return facts;
+}
+
+JsonValue runtime_value(const ResolvedSpec& resolved) {
+    const RuntimeFacts facts = derive_runtime_facts(resolved);
+    JsonValue::Array pools;
+    const auto append_pool = [&pools](bool required, const char* name) {
+        if (required) {
+            pools.push_back(JsonValue{name});
+        }
+    };
+    append_pool(facts.utf8, "utf8");
+    append_pool(facts.utf16le, "utf16le");
+    append_pool(facts.bytes, "bytes");
+    append_pool(facts.list_items, "list_items");
+    append_pool(facts.objects, "objects");
+    append_pool(facts.references, "references");
+    append_pool(facts.roots, "roots");
+
+    const bool record = resolved.profile() == Profile::record_v1;
+    return JsonValue::object({
+        JsonValue::Member{"status",
+                          JsonValue{record ? "available"
+                                           : "not_evaluated"}},
+        JsonValue::Member{"layout_model",
+                          JsonValue{record ? "record_aos"
+                                           : "object_pool_aos"}},
+        JsonValue::Member{"required_pools",
+                          JsonValue::array(std::move(pools))},
+        JsonValue::Member{"fixed_width_values_only",
+                          JsonValue{facts.fixed_width_values_only}},
+        JsonValue::Member{"has_runtime_sized_regions",
+                          JsonValue{facts.has_runtime_sized_regions}},
+        JsonValue::Member{
+            "reachable_type_count",
+            JsonValue{static_cast<double>(facts.reachable_type_count)}},
+        JsonValue::Member{
+            "reachable_component_count",
+            JsonValue{static_cast<double>(facts.reachable_component_count)}},
+        JsonValue::Member{
+            "reachable_list_type_count",
+            JsonValue{static_cast<double>(facts.reachable_list_type_count)}},
+    });
+}
+
 JsonValue projected_terminal_type(const TypeNode& type) {
     JsonValue::Object members;
     members.emplace_back("kind", JsonValue{std::string(type_name(type.kind))});
@@ -393,6 +550,16 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
     }
 
     const SemanticFacts& facts = resolved.facts();
+    const bool record = resolved.profile() == Profile::record_v1;
+    JsonValue::Array operations{
+        JsonValue{"compile"},
+        JsonValue{"query"},
+    };
+    if (record) {
+        operations.push_back(JsonValue{"build"});
+        operations.push_back(JsonValue{"open"});
+        operations.push_back(JsonValue{"invalidate"});
+    }
     return JsonValue::object({
         JsonValue::Member{"schema",
                           JsonValue{"fastdb.payload.manifest.v1"}},
@@ -410,6 +577,7 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
         JsonValue::Member{"entries", JsonValue::array(std::move(entries))},
         JsonValue::Member{"components",
                           JsonValue::array(std::move(components))},
+        JsonValue::Member{"runtime", runtime_value(resolved)},
         JsonValue::Member{
             "facts",
             JsonValue::object({
@@ -428,17 +596,19 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
             JsonValue::object({
                 JsonValue::Member{
                     "operations",
-                    JsonValue::array(
-                        {JsonValue{"compile"}, JsonValue{"query"}})},
+                    JsonValue::array(std::move(operations))},
                 JsonValue::Member{"codegen_targets", JsonValue::array({})},
                 JsonValue::Member{
                     "direct_build",
                     JsonValue::object({
                         JsonValue::Member{"status",
-                                          JsonValue{"not_evaluated"}},
+                                          JsonValue{record ? "eligible"
+                                                           : "not_evaluated"}},
                         JsonValue::Member{
                             "reason",
-                            JsonValue{"runtime_slice_not_implemented"}},
+                            JsonValue{record
+                                          ? "record_layout_exact"
+                                          : "runtime_slice_not_implemented"}},
                     })},
             })},
     });
@@ -455,11 +625,12 @@ Error invalid_derived_manifest() {
 }  // namespace
 
 bool manifest_value_conforms(const JsonValue& manifest) {
-    constexpr std::array<MemberRule, 6> root_rules = {{
+    constexpr std::array<MemberRule, 7> root_rules = {{
         {"schema", ValueClass::string},
         {"payload", ValueClass::object},
         {"entries", ValueClass::array},
         {"components", ValueClass::array},
+        {"runtime", ValueClass::object},
         {"facts", ValueClass::object},
         {"capabilities", ValueClass::object},
     }};
@@ -491,6 +662,16 @@ bool manifest_value_conforms(const JsonValue& manifest) {
         {"has_nullable", ValueClass::boolean},
         {"has_references", ValueClass::boolean},
         {"has_variable_width", ValueClass::boolean},
+    }};
+    constexpr std::array<MemberRule, 8> runtime_rules = {{
+        {"status", ValueClass::string},
+        {"layout_model", ValueClass::string},
+        {"required_pools", ValueClass::array},
+        {"fixed_width_values_only", ValueClass::boolean},
+        {"has_runtime_sized_regions", ValueClass::boolean},
+        {"reachable_type_count", ValueClass::number},
+        {"reachable_component_count", ValueClass::number},
+        {"reachable_list_type_count", ValueClass::number},
     }};
     constexpr std::array<MemberRule, 3> capability_rules = {{
         {"operations", ValueClass::array},
@@ -582,6 +763,52 @@ bool manifest_value_conforms(const JsonValue& manifest) {
     if (!exact_object(*member(root, "facts"), fact_rules)) {
         return false;
     }
+    const JsonValue& runtime = *member(root, "runtime");
+    if (!exact_object(runtime, runtime_rules)) {
+        return false;
+    }
+    const JsonValue::Object& runtime_object = *object_value(runtime);
+    const auto* runtime_status =
+        string_value(*member(runtime_object, "status"));
+    const auto* layout_model =
+        string_value(*member(runtime_object, "layout_model"));
+    const bool record = *profile == "record.v1";
+    if (runtime_status == nullptr || layout_model == nullptr ||
+        (record && (*runtime_status != "available" ||
+                    *layout_model != "record_aos")) ||
+        (!record && (*runtime_status != "not_evaluated" ||
+                     *layout_model != "object_pool_aos")) ||
+        !is_index(*member(runtime_object, "reachable_type_count")) ||
+        !is_index(*member(runtime_object, "reachable_component_count")) ||
+        !is_index(*member(runtime_object, "reachable_list_type_count"))) {
+        return false;
+    }
+    constexpr std::array<std::string_view, 7> pool_order{{
+        "utf8", "utf16le", "bytes", "list_items", "objects",
+        "references", "roots"}};
+    const JsonValue::Array& required_pools =
+        *array_value(*member(runtime_object, "required_pools"));
+    std::size_t previous = 0U;
+    bool first_pool = true;
+    for (const JsonValue& pool_value : required_pools) {
+        const auto* pool = string_value(pool_value);
+        if (pool == nullptr) {
+            return false;
+        }
+        std::size_t current = pool_order.size();
+        for (std::size_t index = 0U; index < pool_order.size(); ++index) {
+            if (*pool == pool_order[index]) {
+                current = index;
+                break;
+            }
+        }
+        if (current == pool_order.size() ||
+            (!first_pool && current <= previous)) {
+            return false;
+        }
+        first_pool = false;
+        previous = current;
+    }
     const JsonValue& capabilities = *member(root, "capabilities");
     if (!exact_object(capabilities, capability_rules)) {
         return false;
@@ -591,11 +818,21 @@ bool manifest_value_conforms(const JsonValue& manifest) {
         *array_value(*member(capability_object, "operations"));
     const JsonValue::Array& targets =
         *array_value(*member(capability_object, "codegen_targets"));
-    if (operations.size() != 2U || targets.size() != 0U ||
+    const std::size_t expected_operations = record ? 5U : 2U;
+    if (operations.size() != expected_operations || targets.size() != 0U ||
         string_value(operations[0]) == nullptr ||
         *string_value(operations[0]) != "compile" ||
         string_value(operations[1]) == nullptr ||
         *string_value(operations[1]) != "query") {
+        return false;
+    }
+    if (record &&
+        (string_value(operations[2]) == nullptr ||
+         *string_value(operations[2]) != "build" ||
+         string_value(operations[3]) == nullptr ||
+         *string_value(operations[3]) != "open" ||
+         string_value(operations[4]) == nullptr ||
+         *string_value(operations[4]) != "invalidate")) {
         return false;
     }
     const JsonValue& direct = *member(capability_object, "direct_build");
@@ -605,8 +842,11 @@ bool manifest_value_conforms(const JsonValue& manifest) {
     const JsonValue::Object& direct_object = *object_value(direct);
     const auto* status = string_value(*member(direct_object, "status"));
     const auto* reason = string_value(*member(direct_object, "reason"));
-    return status != nullptr && *status == "not_evaluated" &&
-           reason != nullptr && *reason == "runtime_slice_not_implemented";
+    return status != nullptr && reason != nullptr &&
+           ((record && *status == "eligible" &&
+             *reason == "record_layout_exact") ||
+            (!record && *status == "not_evaluated" &&
+             *reason == "runtime_slice_not_implemented"));
 }
 
 Result<ManifestArtifact> build_manifest(
@@ -624,10 +864,17 @@ Result<ManifestArtifact> build_manifest(
             JsonValue::object({JsonValue::Member{
                 "reason", JsonValue{"manifest_jcs_failure"}}})));
     }
+    const bool record = resolved.profile() == Profile::record_v1;
     ManifestCapabilities capabilities{
-        FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY,
-        UINT64_C(0), FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED,
-        "runtime_slice_not_implemented"};
+        FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
+            (record ? FDB_PAYLOAD_OPERATION_BUILD |
+                          FDB_PAYLOAD_OPERATION_OPEN |
+                          FDB_PAYLOAD_OPERATION_INVALIDATE
+                    : UINT64_C(0)),
+        UINT64_C(0),
+        record ? FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE
+               : FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED,
+        record ? "record_layout_exact" : "runtime_slice_not_implemented"};
     return Result<ManifestArtifact>::success(ManifestArtifact{
         std::get<std::string>(std::move(serialized)),
         std::move(capabilities)});

@@ -345,12 +345,14 @@ int test_manifest_indexes_facts_and_capabilities() {
 
     const std::string digest_text = sha256_lower_hex(compiled.digest());
     require(compiled.capabilities().operation_flags ==
-            (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY));
+            (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
+             FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
+             FDB_PAYLOAD_OPERATION_INVALIDATE));
     require(compiled.capabilities().codegen_target_flags == UINT64_C(0));
     require(compiled.capabilities().direct_build_status ==
-            FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED);
+            FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
     require(compiled.capabilities().direct_build_reason ==
-            "runtime_slice_not_implemented");
+            "record_layout_exact");
 
     auto manifest = JsonDocument::parse(
         reinterpret_cast<const std::uint8_t*>(compiled.manifest_bytes().data()),
@@ -360,6 +362,22 @@ int test_manifest_indexes_facts_and_capabilities() {
     const JsonCursor root = manifest.value().root();
     require(required_member(required_member(root, "payload"), "sha256")
                 .string() == digest_text);
+    const JsonCursor runtime = required_member(root, "runtime");
+    require(required_member(runtime, "status").string() == "available");
+    require(required_member(runtime, "layout_model").string() ==
+            "record_aos");
+    const JsonCursor required_pools =
+        required_member(runtime, "required_pools");
+    require(array_at(required_pools, UINT64_C(0)).string() == "utf8");
+    require(!array_at(required_pools, UINT64_C(1)).is_string());
+    require(!required_member(runtime, "fixed_width_values_only").boolean());
+    require(required_member(runtime, "has_runtime_sized_regions").boolean());
+    require(required_member(runtime, "reachable_type_count").number() ==
+            4.0);
+    require(required_member(runtime, "reachable_component_count").number() ==
+            2.0);
+    require(required_member(runtime, "reachable_list_type_count").number() ==
+            0.0);
     std::string wrong_variant(compiled.manifest_bytes());
     const std::size_t component_index =
         wrong_variant.find(R"("component_index":0)");
@@ -372,6 +390,32 @@ int test_manifest_indexes_facts_and_capabilities() {
         static_cast<std::uint64_t>(wrong_variant.size()));
     require(wrong_manifest.has_value());
     require(!manifest_value_conforms(wrong_manifest.value().to_json_value()));
+    const auto rejects_replacement = [&compiled](std::string_view from,
+                                                  std::string_view to) {
+        std::string candidate(compiled.manifest_bytes());
+        const std::size_t offset = candidate.find(from);
+        if (offset == std::string::npos) {
+            return false;
+        }
+        candidate.replace(offset, from.size(), to);
+        auto parsed = JsonDocument::parse(
+            reinterpret_cast<const std::uint8_t*>(candidate.data()),
+            static_cast<std::uint64_t>(candidate.size()));
+        return parsed.has_value() &&
+               !manifest_value_conforms(parsed.value().to_json_value());
+    };
+    require(rejects_replacement(
+        R"("reason":"record_layout_exact")",
+        R"("reason":"runtime_slice_not_implemented")"));
+    require(rejects_replacement(R"("status":"eligible")",
+                                R"("status":"not_evaluated")"));
+    require(rejects_replacement(R"("layout_model":"record_aos")",
+                                R"("layout_model":"object_pool_aos")"));
+    require(rejects_replacement(
+        R"("operations":["compile","query","build","open","invalidate"])",
+        R"("operations":["compile","query"])"));
+    require(rejects_replacement(R"("profile":"record.v1")",
+                                R"("profile":"object_graph.v1")"));
     const JsonCursor entries = required_member(root, "entries");
     const JsonCursor entry = array_at(entries, UINT64_C(0));
     require(required_member(entry, "index").number() == 0.0);
@@ -406,6 +450,41 @@ int test_manifest_indexes_facts_and_capabilities() {
             UINT32_C(1));
     require(!compiled.entry_index("missing").has_value());
     require(!compiled.component_index("missing").has_value());
+
+    const GoldenCase* graph_item = find_case(cases, "object-graph");
+    require(graph_item != nullptr);
+    auto graph_result = compile(graph_item->source);
+    require(graph_result.has_value());
+    const CompiledSpec& graph = graph_result.value();
+    require(graph.capabilities().operation_flags ==
+            (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY));
+    require(graph.capabilities().direct_build_status ==
+            FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED);
+    auto graph_manifest = JsonDocument::parse(
+        reinterpret_cast<const std::uint8_t*>(graph.manifest_bytes().data()),
+        static_cast<std::uint64_t>(graph.manifest_bytes().size()));
+    require(graph_manifest.has_value());
+    const JsonCursor graph_runtime =
+        required_member(graph_manifest.value().root(), "runtime");
+    require(required_member(graph_runtime, "status").string() ==
+            "not_evaluated");
+    require(required_member(graph_runtime, "layout_model").string() ==
+            "object_pool_aos");
+    const JsonCursor graph_pools =
+        required_member(graph_runtime, "required_pools");
+    constexpr std::array<std::string_view, 5> expected_pools{{
+        "utf16le", "list_items", "objects", "references", "roots"}};
+    for (std::uint64_t index = UINT64_C(0);
+         index < expected_pools.size(); ++index) {
+        require(array_at(graph_pools, index).string() ==
+                expected_pools[static_cast<std::size_t>(index)]);
+    }
+    require(required_member(graph_runtime, "reachable_type_count").number() ==
+            9.0);
+    require(required_member(graph_runtime,
+                            "reachable_component_count").number() == 1.0);
+    require(required_member(graph_runtime,
+                            "reachable_list_type_count").number() == 3.0);
     return EXIT_SUCCESS;
 }
 
@@ -516,6 +595,81 @@ int test_schema_artifacts_and_manifest_schema_contract() {
     }
     require(saw_component);
     require(saw_ref);
+
+    const JsonCursor conditional =
+        array_at(required_member(root, "allOf"), UINT64_C(0));
+    const JsonCursor if_payload = required_member(
+        required_member(required_member(conditional, "if"), "properties"),
+        "payload");
+    require(required_member(
+                required_member(required_member(if_payload, "properties"),
+                                "profile"),
+                "const")
+                .string() == "record.v1");
+    const auto conditional_branch = [&conditional](std::string_view branch) {
+        return required_member(required_member(conditional, branch),
+                               "properties");
+    };
+    const auto runtime_constant = [](JsonCursor branch,
+                                     std::string_view field) {
+        return required_member(
+            required_member(required_member(branch, "runtime"),
+                            "properties"),
+            field);
+    };
+    const auto capability_properties = [](JsonCursor branch) {
+        return required_member(required_member(branch, "capabilities"),
+                               "properties");
+    };
+    const JsonCursor record_branch = conditional_branch("then");
+    require(required_member(runtime_constant(record_branch, "status"),
+                            "const")
+                .string() == "available");
+    require(required_member(runtime_constant(record_branch, "layout_model"),
+                            "const")
+                .string() == "record_aos");
+    const JsonCursor record_capabilities =
+        capability_properties(record_branch);
+    const JsonCursor record_operations = required_member(
+        required_member(record_capabilities, "operations"), "const");
+    constexpr std::array<std::string_view, 5> record_operation_names{{
+        "compile", "query", "build", "open", "invalidate"}};
+    for (std::uint64_t index = UINT64_C(0);
+         index < record_operation_names.size(); ++index) {
+        require(array_at(record_operations, index).string() ==
+                record_operation_names[static_cast<std::size_t>(index)]);
+    }
+    const JsonCursor record_direct = required_member(
+        required_member(record_capabilities, "direct_build"), "properties");
+    require(required_member(required_member(record_direct, "status"),
+                            "const")
+                .string() == "eligible");
+    require(required_member(required_member(record_direct, "reason"),
+                            "const")
+                .string() == "record_layout_exact");
+
+    const JsonCursor graph_branch = conditional_branch("else");
+    require(required_member(runtime_constant(graph_branch, "status"),
+                            "const")
+                .string() == "not_evaluated");
+    require(required_member(runtime_constant(graph_branch, "layout_model"),
+                            "const")
+                .string() == "object_pool_aos");
+    const JsonCursor graph_capabilities =
+        capability_properties(graph_branch);
+    const JsonCursor graph_operations = required_member(
+        required_member(graph_capabilities, "operations"), "const");
+    require(graph_operations.size() == UINT64_C(2));
+    require(array_at(graph_operations, UINT64_C(0)).string() == "compile");
+    require(array_at(graph_operations, UINT64_C(1)).string() == "query");
+    const JsonCursor graph_direct = required_member(
+        required_member(graph_capabilities, "direct_build"), "properties");
+    require(required_member(required_member(graph_direct, "status"),
+                            "const")
+                .string() == "not_evaluated");
+    require(required_member(required_member(graph_direct, "reason"),
+                            "const")
+                .string() == "runtime_slice_not_implemented");
     return EXIT_SUCCESS;
 }
 
@@ -546,7 +700,7 @@ int test_deep_manifest_allocation() {
         auto result = compile(source, limits);
         compiled = result.has_value() &&
                    result.value().manifest_bytes().find(
-                       "runtime_slice_not_implemented") != std::string::npos;
+                       "record_layout_exact") != std::string::npos;
     } catch (const std::bad_alloc&) {
         compiled = false;
     }

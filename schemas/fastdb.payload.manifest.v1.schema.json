@@ -14,6 +14,7 @@
       "type": "array",
       "items": {"$ref": "#/$defs/component"}
     },
+    "runtime": {"$ref": "#/$defs/runtime"},
     "facts": {"$ref": "#/$defs/facts"},
     "capabilities": {"$ref": "#/$defs/capabilities"}
   },
@@ -22,10 +23,68 @@
     "payload",
     "entries",
     "components",
+    "runtime",
     "facts",
     "capabilities"
   ],
   "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "payload": {
+            "properties": {"profile": {"const": "record.v1"}},
+            "required": ["profile"]
+          }
+        },
+        "required": ["payload"]
+      },
+      "then": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "status": {"const": "available"},
+              "layout_model": {"const": "record_aos"}
+            }
+          },
+          "capabilities": {
+            "properties": {
+              "operations": {
+                "const": ["compile", "query", "build", "open", "invalidate"]
+              },
+              "direct_build": {
+                "properties": {
+                  "status": {"const": "eligible"},
+                  "reason": {"const": "record_layout_exact"}
+                }
+              }
+            }
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "runtime": {
+            "properties": {
+              "status": {"const": "not_evaluated"},
+              "layout_model": {"const": "object_pool_aos"}
+            }
+          },
+          "capabilities": {
+            "properties": {
+              "operations": {"const": ["compile", "query"]},
+              "direct_build": {
+                "properties": {
+                  "status": {"const": "not_evaluated"},
+                  "reason": {"const": "runtime_slice_not_implemented"}
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "id": {
       "type": "string",
@@ -102,11 +161,47 @@
       ],
       "additionalProperties": false
     },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "status": {"enum": ["available", "not_evaluated"]},
+        "layout_model": {"enum": ["record_aos", "object_pool_aos"]},
+        "required_pools": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "utf8", "utf16le", "bytes", "list_items", "objects",
+              "references", "roots"
+            ]
+          },
+          "uniqueItems": true,
+          "maxItems": 7
+        },
+        "fixed_width_values_only": {"type": "boolean"},
+        "has_runtime_sized_regions": {"type": "boolean"},
+        "reachable_type_count": {"$ref": "#/$defs/index"},
+        "reachable_component_count": {"$ref": "#/$defs/index"},
+        "reachable_list_type_count": {"$ref": "#/$defs/index"}
+      },
+      "required": [
+        "status",
+        "layout_model",
+        "required_pools",
+        "fixed_width_values_only",
+        "has_runtime_sized_regions",
+        "reachable_type_count",
+        "reachable_component_count",
+        "reachable_list_type_count"
+      ],
+      "additionalProperties": false
+    },
     "direct_build": {
       "type": "object",
       "properties": {
-        "status": {"const": "not_evaluated"},
-        "reason": {"const": "runtime_slice_not_implemented"}
+        "status": {"enum": ["eligible", "not_evaluated"]},
+        "reason": {
+          "enum": ["record_layout_exact", "runtime_slice_not_implemented"]
+        }
       },
       "required": ["status", "reason"],
       "additionalProperties": false
@@ -115,14 +210,31 @@
       "type": "object",
       "properties": {
         "operations": {
-          "type": "array",
-          "prefixItems": [
-            {"const": "compile"},
-            {"const": "query"}
-          ],
-          "items": false,
-          "minItems": 2,
-          "maxItems": 2
+          "oneOf": [
+            {
+              "type": "array",
+              "prefixItems": [
+                {"const": "compile"},
+                {"const": "query"}
+              ],
+              "items": false,
+              "minItems": 2,
+              "maxItems": 2
+            },
+            {
+              "type": "array",
+              "prefixItems": [
+                {"const": "compile"},
+                {"const": "query"},
+                {"const": "build"},
+                {"const": "open"},
+                {"const": "invalidate"}
+              ],
+              "items": false,
+              "minItems": 5,
+              "maxItems": 5
+            }
+          ]
         },
         "codegen_targets": {
           "type": "array",

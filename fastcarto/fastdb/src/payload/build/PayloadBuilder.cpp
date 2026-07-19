@@ -585,18 +585,6 @@ const PayloadBuilder::State* PayloadBuilder::state_pointer() const noexcept {
 Result<PayloadBuilder> PayloadBuilder::create(spec::CompiledSpec spec,
                                                BuilderLimits limits) {
     try {
-        if (spec.profile() == spec::Profile::object_graph_v1) {
-            return Result<PayloadBuilder>::failure(Error::from_details(
-                FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE, JsonPointer{},
-                "Payload runtime is unavailable for this profile",
-                details({
-                    JsonValue::Member{"profile",
-                                      JsonValue{"object_graph.v1"}},
-                    JsonValue::Member{
-                        "reason",
-                        JsonValue{"runtime_slice_not_implemented"}},
-                })));
-        }
         auto runtime_schema = layout::RuntimeSchema::compile(spec);
         if (!runtime_schema.has_value()) {
             return Result<PayloadBuilder>::failure(

@@ -50,6 +50,8 @@ struct ListNodeLayout final {
 
 class RuntimeSchema final {
 public:
+    static error::Result<void> require_record_runtime(
+        const spec::CompiledSpec& spec);
     static error::Result<RuntimeSchema> compile(
         const spec::CompiledSpec& spec);
 

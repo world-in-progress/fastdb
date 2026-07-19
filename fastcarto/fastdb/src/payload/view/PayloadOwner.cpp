@@ -4,6 +4,7 @@
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
 #include "payload/layout/InputSpan.hpp"
+#include "payload/layout/RuntimeSchema.hpp"
 #include "payload/view/View.hpp"
 
 #include <fastdb_payload.h>
@@ -127,6 +128,11 @@ Result<PayloadOwner> PayloadOwner::open_copy(
     const std::uint8_t* bytes,
     std::uint64_t byte_count,
     OpenOptions options) try {
+    auto available = layout::RuntimeSchema::require_record_runtime(spec);
+    if (!available.has_value()) {
+        return Result<PayloadOwner>::failure(
+            std::move(available).error());
+    }
     if (byte_count > options.max_total_bytes || bytes == nullptr ||
         !layout::input_span_is_addressable(byte_count)) {
         auto rejected = open_record(spec, bytes, byte_count, options);
@@ -162,6 +168,11 @@ Result<PayloadOwner> PayloadOwner::open_external(
     std::uint64_t byte_count,
     backing::RetainedBacking retained,
     OpenOptions options) try {
+    auto available = layout::RuntimeSchema::require_record_runtime(spec);
+    if (!available.has_value()) {
+        return Result<PayloadOwner>::failure(
+            std::move(available).error());
+    }
     if (bytes != retained.readable_data() ||
         byte_count != retained.readable_size()) {
         return Result<PayloadOwner>::failure(
@@ -234,7 +245,7 @@ Result<View> PayloadOwner::entry_view(std::uint32_t entry_index) const try {
     return Result<View>::failure(allocation_error());
 }
 
-Result<void> PayloadOwner::invalidate() {
+Result<void> PayloadOwner::invalidate() const {
     AccessBarrierState& barrier = state_->barrier;
     std::optional<backing::CommittedBacking> released;
     std::unique_lock<std::mutex> lock(barrier.mutex);

@@ -66,13 +66,27 @@ SlotLayout primitive_slot(TypeKind kind) noexcept {
 
 }  // namespace
 
+Result<void> RuntimeSchema::require_record_runtime(
+    const spec::CompiledSpec& compiled) {
+    if (compiled.profile() == Profile::record_v1) {
+        return Result<void>::success();
+    }
+    return Result<void>::failure(Error::from_details(
+        FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE, JsonPointer{},
+        "Payload runtime is unavailable for this profile",
+        JsonValue::object({
+            JsonValue::Member{"profile", JsonValue{"object_graph.v1"}},
+            JsonValue::Member{"reason",
+                              JsonValue{"runtime_slice_not_implemented"}},
+        })));
+}
+
 Result<RuntimeSchema> RuntimeSchema::compile(
     const spec::CompiledSpec& compiled) {
-    if (compiled.profile() != Profile::record_v1) {
-        return Result<RuntimeSchema>::failure(runtime_error(
-            JsonPointer{}.append("profile"), FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE,
-            "Portable record runtime is unavailable for this profile",
-            "object_graph_runtime_unavailable"));
+    auto available = require_record_runtime(compiled);
+    if (!available.has_value()) {
+        return Result<RuntimeSchema>::failure(
+            std::move(available).error());
     }
     RuntimeSchema schema(compiled);
     auto assigned = schema.assign_all_types();

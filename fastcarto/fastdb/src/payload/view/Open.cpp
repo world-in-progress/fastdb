@@ -1734,6 +1734,11 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                                  std::uint64_t byte_count,
                                  OpenOptions limits) {
     try {
+        auto available = RuntimeSchema::require_record_runtime(compiled);
+        if (!available.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(available).error());
+        }
         const JsonPointer header_path = binary_header_path();
         if (byte_count > limits.max_total_bytes) {
             return Result<PayloadIndex>::failure(resource_error(

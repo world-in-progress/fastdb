@@ -284,7 +284,11 @@ int test_compile_and_every_query_round_trip() {
             UINT32_C(0));
     require(!blob_view(canonical).empty());
     require(!blob_view(manifest).empty());
-    require(blob_view(manifest).find("\"operations\":[\"compile\",\"query\"]") !=
+    require(blob_view(manifest).find(
+                "\"operations\":[\"compile\",\"query\",\"build\",\"open\",\"invalidate\"]") !=
+            std::string_view::npos);
+    require(blob_view(manifest).find(
+                "\"runtime\":{\"fixed_width_values_only\":false") !=
             std::string_view::npos);
 
     std::array<std::uint8_t, 32> digest{};
@@ -312,10 +316,12 @@ int test_compile_and_every_query_round_trip() {
              FDB_PAYLOAD_SEMANTIC_HAS_VARIABLE_WIDTH |
              FDB_PAYLOAD_SEMANTIC_HAS_NORMALIZED_INTEGERS));
     require(capabilities.operation_flags ==
-            (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY));
+            (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
+             FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
+             FDB_PAYLOAD_OPERATION_INVALIDATE));
     require(capabilities.codegen_target_flags == UINT64_C(0));
     require(capabilities.direct_build_status ==
-            FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED);
+            FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
 
     std::uint32_t count = UINT32_C(0);
     require(fdb_payload_v1_spec_entry_count(spec, &count, &error) ==
@@ -1508,10 +1514,10 @@ int test_sixteen_thread_query_consistency() {
                          FDB_PAYLOAD_V1_CAPABILITIES_V1_SIZE ||
                      capabilities.profile != FDB_PAYLOAD_PROFILE_RECORD_V1 ||
                      capabilities.semantic_flags != UINT64_C(27) ||
-                     capabilities.operation_flags != UINT64_C(3) ||
+                     capabilities.operation_flags != UINT64_C(79) ||
                      capabilities.codegen_target_flags != UINT64_C(0) ||
                      capabilities.direct_build_status !=
-                         FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED)) {
+                         FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE)) {
                     ok = false;
                 }
                 if (ok &&

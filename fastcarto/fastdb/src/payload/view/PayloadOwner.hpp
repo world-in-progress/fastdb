@@ -70,7 +70,7 @@ public:
     }
     error::Result<Access> acquire() const;
     error::Result<View> entry_view(std::uint32_t entry_index) const;
-    error::Result<void> invalidate();
+    error::Result<void> invalidate() const;
 
 private:
     explicit PayloadOwner(std::shared_ptr<PayloadOwnerState> state) noexcept
