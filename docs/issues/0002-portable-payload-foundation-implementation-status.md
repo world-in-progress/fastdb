@@ -29,9 +29,11 @@ test-harness alignment diagnostics; the corrected cumulative Task 10
 halt-on-error sanitizer proof supersedes those earlier cleanliness claims as
 recorded below. P2 Task 10 local implementation and gates are complete with the
 exact 99-symbol ABI, and its final independent review reports zero Critical,
-Important, or Minor findings. Task 11 final
-hardening, CI/package proof, and P2 review evidence,
-plus P3-P5 graph, language-parity, codegen, clean-cut, and release work, remain
+Important, or Minor findings. Task 11 workflow/package quality,
+source-build Emscripten propagation, proof mapping, reviewed binary-open
+corpus, and deterministic/fuzz robustness targets are now implemented locally;
+its complete fresh local gate is green and its final P2 review remains open.
+P3-P5 graph, language-parity, codegen, clean-cut, and release work also remain
 open. This issue records that temporary gap through the 0.2.0 clean cut.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
@@ -87,7 +89,11 @@ Current repository state:
 - P2 Task 10 locally projects the reviewed Core view/access/materialization model through exactly 27 additive C exports, freezing the sorted public ABI at exactly 99 symbols. View handles retain atomically, access handles own one unique live pin, no view call exposes a backing pointer, payload/UTF-8/opaque spans may alias only while an `Access` lives, and wide text is copied into aligned host-endian units from explicit UTF-16LE loads. The header-only C++17 facade remains a thin C-ABI projection and checks every public `uint64_t` to `size_t` conversion before exposing a span;
 - Task 10 record manifests now report `compile,query,build,open,view,materialize,invalidate`; object-graph capabilities remain unchanged, and canonical specification bytes and payload digests remain unchanged. The new C ABI and C++ facade exercise navigation, every non-reference kind, owner/view/access lifetime, stale generations, drain-before-release invalidation, detached materialization, allocation-failure retry, and output clearing;
 - Task 10 is independently reviewed and locally complete: Debug and Release each pass 27/27; the cumulative halt-on-error ASan+UBSan run above passes 27/27 with a zero-diagnostic retained-log scan; focused ThreadSanitizer passes runtime ABI/C++ facade/backing/checked-view 4/4; the Core numeric/binary wasm32 harness, pure-C wasm link smoke, and selected C++ facade wasm paths pass; Python passes 413/413 plus compileall/sdist/wheel; TypeScript/WASM passes 76/76; the arm64/x86_64/wasm32 C11 header checks pass; and the exact symbol gate proves 99 unique exports. The package inventories contain the normative binary document, both schemas and the digest pin, vendored provenance, public headers, and native library without build/cache/corpus/generated-image debris. A full wasm runtime-ABI claim is explicitly excluded below. The final independent review reports zero Critical, Important, or Minor findings, and Task 11 remains open;
-- the exception-based C++ facade requires Emscripten exception catching in both compilation and linking; the verified local consumer used `-fexceptions` for both. The repository does not yet provide a propagating public facade interface target or public build instructions, so default `emcc` configuration is not claimed to work. Task 11 must close that consumer-facing integration/documentation prerequisite;
+- Task 10 exposed an Emscripten prerequisite: the exception-based C++ facade needs matching exception catching at Core/consumer compile and final link. Its consumer-only experiment was intentionally not a passing public source-build contract;
+- Task 11 now selects the broadly compatible JavaScript-based Emscripten exception model through one source-build CMake interface contract. Core catch sites, real `fastdb` C++ consumers, and final links receive `-fexceptions`; pure-C compilation does not. The real public target passes the Core harness, pure-C smoke, C++ facade, and single-thread injected-failure runtime-ABI proof under Node. This closes the Task 10 exception-propagation prerequisite without claiming pthread coverage;
+- Task 11 also defines separate Emscripten and Python package jobs, native and wasm exact ABI-99 checks, exact sdist/wheel inventory validation, the exact seven-diagnostic SWIG baseline owned by Issue 0003, and one executable path-aware aggregate whose 16 scope combinations and every incorrect job result are tested. These are hosted job definitions only until an authorized run exists;
+- Task 11 adds `fuzz_payload_open` over borrowed input with bounded options, one fixed matching spec and one deliberate digest-mismatch spec. The same harness is driven deterministically over 10 reviewed named seeds covering valid empty/fixed/text/list payloads and malformed magic/length/offset/validity/text/list shapes. Successful opens traverse every value kind through the public C ABI, exercise scoped spans, materialize before invalidation, and traverse the detached result afterward; failures are opened twice and compared across status, code, symbol, path, message, and canonical details. A machine-checked 14-class map names the hostile binary, backing, allocation, generation, and access-drain proofs;
+- Task 11's complete fresh local gate is green: Debug and Release each pass 30/30 with exact native ABI-99; the hard-fail ASan+UBSan suite passes 30/30 with a zero-diagnostic retained-log scan; focused ThreadSanitizer passes 4/4; the Core, pure-C, C++ facade, and single-thread injected-failure Emscripten paths pass with exact wasm ABI-99 and structural flag inspection; arm64/x86-64/wasm32 C11 checks pass; Python passes 413/413 plus compileall and fresh exact sdist/wheel inventory; and TypeScript/WASM passes 76/76. The local libFuzzer and LeakSanitizer toolchain limits remain explicitly bounded below. Final independent P2 review remains open;
 - Rust, Python, TypeScript/WASM portable-payload projections and P3+ remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
@@ -103,9 +109,11 @@ now author, build, open, copy, inspect metadata for, and invalidate a complete
 non-reference `record.v1` payload through the public C ABI, navigate checked
 views, hold scoped borrowed access, materialize detached values, and use the
 thin C++ runtime facade. No Rust, Python, or TypeScript/WASM portable projection
-exists. P2 is not closed because Task 11 final robustness, hosted CI/package
-integration, public build guidance, proof mapping, and final independent review
-remain open. C-Two may consume only
+exists. Task 11 now defines the workflow/package gates, public build guidance,
+proof mapping, binary-opening robustness, and single-thread wasm
+failure-containment proof. P2 is not closed because the complete fresh local
+gate is green but final independent review remains open; hosted outcomes are
+also pending. C-Two may consume only
 reviewed public FastDB contracts and must not depend on private headers or
 recreate FastDB semantics. Toodle consequently cannot yet treat the full
 structured-payload substrate as implemented.
@@ -131,6 +139,75 @@ Collapsing these layers into one speculative change would make review and failur
 - Python and TypeScript code currently under call-db remains migration source only and must not gain new portable authority.
 - No package version may be raised to 0.2.0 and no release note may claim the foundation while any P1-P5 non-deferrable gate remains open.
 - Each merged slice must update this issue's current surface, remaining impact, and checklist in the same change.
+
+## P2 requirement-to-test traceability
+
+This table maps the accepted P2 contract to the current Core authority and
+named local evidence. It is a proof index, not a claim that later phases or
+hosted jobs have completed. Task 11's complete fresh local gate is green;
+independent P2 review remains open at this point.
+
+| Accepted requirement | Implementation authority | Exact proof |
+|---|---|---|
+| Design Section 7: one immutable compiled specification owns canonical bytes, digest, indexes, manifest, and capabilities | `CompiledSpec`, `SchemaRepository`, and `Manifest.cpp` in `fastcarto/fastdb/src/payload/spec/` | `payload.compiled_spec`, `payload.spec_abi`, ordered specification and binary golden indexes |
+| Section 7: record runtime facts are Core-derived without changing specification identity | `Manifest.cpp`, `RuntimeSchema`, `fdb_payload_v1_spec_manifest_json` | `test_manifest_indexes_facts_and_capabilities`, `payload.runtime_abi`; canonical specification bytes/digests remain pinned by the P1 corpus |
+| Section 7/10: every all-source runtime ID is stable and the builder consumes the same resolved identity | `RuntimeSchema`, `RecordLayout`, `PayloadBuilder` | `test_runtime_ids_reachability_and_component_layout`, `test_builder_consumes_the_same_runtime_schema_ids` in `payload.record_layout` |
+| Section 8.1: schema-driven record authoring, including the record-batch frame and exact-width fixed runs | `PayloadBuilder`, `fdb_payload_v1_builder_entry_begin`, `fdb_payload_v1_builder_value_fixed_run` | `test_record_batch_components_and_lists`, `test_fixed_runs_and_transactional_failures` in `payload.payload_builder`; C parity in `payload.runtime_abi` |
+| Section 8.1: all non-`ref` scalar, component, text/bytes, and recursive-list values with missing/null distinctions | `ValueArena`, `PayloadBuilder`, `RuntimeSchema` | `payload.payload_builder`, `payload.record_binary`, `payload.runtime_abi`; `fixed-scalars`, `text-bytes`, `nested-components`, `nested-lists`, and `component-list-composition` goldens |
+| Section 8.2: freeze seals the builder and publishes an immutable repeatable plan | `PayloadBuilder::freeze`, `BuildPlan` | `payload.payload_builder`, `payload.payload_backing`, `payload.runtime_abi` |
+| Section 8.3: one immutable owner retains the validated backing/spec/index/report | `PayloadOwner::State`, `PayloadOwner::open_copy`, `PayloadOwner::open_external` | `payload.payload_open`, `payload.checked_view`, `payload.runtime_abi` |
+| Section 8.4: checked views capture generation and detached materialization survives source invalidation | `View`, `Access`, `materialize`, C ABI view/access/materialize families | `payload.checked_view`, `payload.runtime_abi`, `payload.runtime_cpp_facade` |
+| Section 8.5: immutable reads are concurrent and invalidation drains active access before release | `AccessBarrier`, `PayloadOwner::invalidate` | `payload.checked_view`, `payload.runtime_abi`; focused native ThreadSanitizer is the concurrency authority |
+| Section 8.5/9: callbacks run outside unrelated Core locks; distinct-context reentry works while same-context/token reentry remains an explicit V1 precondition | `BuildPlan::execute`, `Backing`, `AccessBarrier` | `test_repeatable_concurrent_and_reentrant_execution`, `payload.runtime_abi`; the same-context/token limitation and closure criterion remain recorded below |
+| Section 9: Core heap and caller external backing have explicit reserve/write/commit/rollback/retain/release ownership | `Backing`, `HeapBacking`, `BuildPlan::execute`, public `fdb_payload_v1_backing_v1_t` | `payload.payload_backing`, `payload.payload_open`, `payload.runtime_abi` |
+| Section 9: direct/staged truth and `REQUIRE_DIRECT` never silently fall back | `ExecutionReport`, `BuildPlan::execute` | `payload.payload_backing`, `payload.runtime_abi` |
+| Section 9: callback status mapping, relocated committed spans, rollback, and post-commit cleanup | `Backing.cpp`, `RetainedBacking`, `BuildPlan.cpp` | `payload.payload_backing`, `payload.payload_open`, `payload.runtime_abi` |
+| Section 10: exact 128-byte header, 56-byte region descriptor, 40-byte entry descriptor, seven region kinds, each count unit, relative variable descriptors, order/alignment/zero rules | `BinaryFormat.hpp`, `RecordLayout`, `RecordEncoder`, `open_record`; normative `schemas/fastdb.payload.bin.v1.md` | `test_region_matrix_zero_boundaries_and_partition_rules`, `test_task4_malformed_pools_and_descriptors_have_exact_errors`, `test_task5_list_region_descriptor_and_partition_failures`; seven ordered binary goldens |
+| Section 10: numeric bits, canonical NaNs, normalized endpoints/ties, UTF-8/UTF-16LE, pool/list partitions | `NormalizedInteger`, `TextEncoding`, `RecordEncoder`, shared `open_record` validation | `payload.record_binary`, Core `payload_runtime_harness.js`; `numeric-edges`, `text-bytes`, `nested-lists`, and `component-list-composition` goldens |
+| Section 10: bounded open validates before publishing a view and charges static plus selected-span work exactly | `OpenOptions`, `open_record`, `PayloadOwner::open_copy/open_external` | `test_open_preflights_static_spec_limits_and_known_work`, `test_lazy_selected_span_work_boundary`, `payload.runtime_abi` |
+| Section 11: fixed-width pure-C ABI, opaque handles, explicit ownership, future-tail structs | `fastdb_payload.h`, `fastdb_payload.cpp` | `payload.c_header_smoke`, `payload.spec_abi`, `payload.runtime_abi`, future-tail canaries |
+| Section 11: exact public ABI is frozen at 99 symbols on native and applicable wasm objects | `tests/abi/fastdb_payload_v1_symbols.txt` | `tools/check_payload_abi_symbols.py --build-dir ...` and `--wasm-build-dir ...` |
+| Section 11: C++17 is a thin RAII projection over the C ABI | `fastdb_payload.hpp` | `payload.cpp_facade`, `payload.runtime_cpp_facade`; C/C++ parity assertions |
+| Section 12: stable code/path/message/canonical-details errors and no exception crosses the C boundary | `Error`, `Result`, ABI catch/owned-error publication in `fastdb_payload.cpp` | `payload.error`, `payload.spec_abi`, `payload.runtime_abi` |
+| Section 18.2: build/open/value matrix for every P2 type and entry/component/list context | shared builder/layout/open/view paths | `payload.payload_builder`, `payload.record_binary`, `payload.checked_view`, `payload.runtime_abi`; ordered binary corpus |
+| Section 18.2: null versus empty, signed zero/infinities/NaNs, normalized ties, invalid text, counts/limits/work | shared Core layout/open validation | `payload.record_binary`, `payload.payload_builder`, Core wasm runtime harness |
+| Section 18.4: heap/external, direct/range/staged, injected callback failures, retain/release balance | `BuildPlan`, `Backing`, `PayloadOwner` | `payload.payload_backing`, `payload.payload_open`, `payload.runtime_abi` |
+| Section 18.4: checked owner/view retention, stale generation, active-access drain, and detached lifetime | `AccessBarrier`, `View`, `Materialize` | `payload.checked_view`, `payload.runtime_abi`, `payload.runtime_cpp_facade` |
+| Section 18.4: `wstr` access is copied, aligned, host-endian, and valid only for the scoped access lifetime | `Access::wstr`, detached-arena projection, C ABI access family | `test_checked_view_access_materialize_and_barrier_abi`, `payload.checked_view`; assertions prove aligned values and storage disjoint from UTF-16LE payload bytes |
+| Section 18.5: pure-C compile, exact layouts, malformed-format classes, resource limits, and deterministic diagnostics | C header plus the one Core binary reader | `payload.c_header_smoke`, `payload.record_binary`, `payload.payload_open`, `payload.binary_open_corpus`, `fuzz_payload_open`, `tools/check_payload_binary_corpus.py`, and `tests/ci/p2_malformed_class_map.json` |
+| Section 18.5: memory/undefined-behavior instrumentation | shared CMake sanitizer configuration | complete ASan+UBSan CTest with halt/abort-on-error and retained-log zero-diagnostic scan; local macOS uses `detect_leaks=0` because Apple ASan rejects LeakSanitizer, while hosted Linux keeps `detect_leaks=1`; historical Task 7-9 cleanliness wording remains superseded |
+| Section 18.7: macOS arm64 and wasm32 local compatibility | native CTest/C11/ABI gates; Core/C/C++ Emscripten targets | current local arm64 native gates; `payload_runtime_harness.js` exercises Core numeric/binary wasm32, and the public target also proves C/C++/single-thread runtime status paths |
+| Section 18.7: Linux x86-64 and macOS arm64 hosted compatibility | `.github/workflows/tests.yml` native matrix and path-aware aggregate | workflow definition only. Hosted results remain pending until an authorized push/run |
+| Goal P2: deterministic byte-identical direct/staged record payloads | one `RecordLayout`/`RecordEncoder`/`open_record` authority | `payload.record_binary`, `payload.payload_backing`, binary SHA-256 receipts |
+| Goal P2: open, traverse, scoped borrow, materialize, invalidate, and release through C/C++ | 99-symbol C ABI and `fastdb_payload.hpp` | `payload.runtime_abi`, `payload.runtime_cpp_facade`, `payload.checked_view` |
+| Goal P2: source-build WebAssembly contains Core failures as stable C statuses | `fastdb_payload_emscripten_exception_model`, public `fastdb` target, ABI catch sites | `fastdb_payload_wasm_runtime_abi_single_thread --single-thread-injected-failure`, `tools/check_emscripten_exception_flags.py` |
+| Goal P2: package surfaces contain the normative contract, Python extension, and native libraries without build debris or unreviewed SWIG diagnostics | `MANIFEST.in`, Python build configuration, Issue 0003 baseline | `tests/ci/test_check_python_package_inventory.py` and `tools/check_python_package_inventory.py` over the retained build log, one sdist, and one wheel |
+| P3 boundary: graph specifications compile, but no partial graph runtime exists | stable `RUNTIME_UNAVAILABLE` projection | `payload.runtime_abi`; Object-graph runtime remains P3 |
+
+### Emscripten exception choice and current closure
+
+The selected source-build model is JavaScript-based `-fexceptions`. The
+[official Emscripten exception
+documentation](https://emscripten.org/docs/porting/exceptions.html) states
+that exception catching is disabled by default, that `-fexceptions` must be
+used at compile and link time, and that this model works in all JavaScript
+engines with WebAssembly support at higher overhead. Native WebAssembly
+exceptions can reduce overhead but are not supported by every engine.
+
+The CMake contract therefore applies the C++ compile option to Core catch
+sites, propagates it to C++ source consumers of the real `fastdb` target, and
+propagates the final-link option to C and C++ consumers. Pure-C compilation is
+left unchanged. The single-thread WebAssembly runtime-ABI mode exercises
+injected allocation failures without executing any worker phase and requires
+stable C status/error mapping. It does not claim pthread support; native plus
+ThreadSanitizer remains the concurrency evidence.
+
+The workflow defines Linux/macOS native, Linux sanitizer, Emscripten runtime,
+Python package, Python regression, and TypeScript regression jobs with an
+exhaustively tested path/result aggregate. Hosted results remain pending; a
+workflow definition is not a hosted pass. Task 11 now requires only its
+independent final review before P2 can be called locally frozen; its complete
+fresh local gates are green.
 
 ## Remaining P2-P5 gaps
 
@@ -163,32 +240,32 @@ locally exposes checked view/access/materialization and the thin C++ runtime
 projection through the complete exact 99-symbol C ABI. Its local native,
 sanitizer, Core numeric/binary wasm, pure-C wasm smoke, selected C++ facade
 wasm, language/package, cross-target C11, and symbol gates pass, and its
-independent review is accepted with zero findings. Task 11
-final hardening, hosted CI/package proof, public consumer guidance, proof
-mapping, and final independent review remain open. Rust, Python,
+independent review is accepted with zero findings. Task 11 workflow/package
+structure, public consumer guidance, proof mapping, reviewed binary-open
+corpus/targets, and the single-thread wasm status proof are implemented
+locally, and its complete fresh local gate is green. Hosted execution and final
+independent review remain open.
+
+Rust, Python,
 TypeScript/WASM portable-payload projections, P3 object graphs, and later
 slices remain absent. Task 6/7
 callbacks may perform distinct-context nested execution because Core holds no
 unrelated lock, but a callback must not synchronously re-enter execution
 through the same backing context/token.
 
-The exception-based C++ runtime facade has also exposed one concrete wasm32
-consumer prerequisite: Emscripten must enable exception catching in both the
-facade consumer's compile and link steps. The local proof used `-fexceptions`
-in both places. There is not yet a public propagating facade interface target,
-so default `emcc` settings are not evidence of support; Task 11 must make this
-requirement consumable and document it.
+Task 11 closes the concrete wasm32 source-build prerequisite exposed by Task
+10. The public `fastdb` target now propagates JavaScript-based `-fexceptions`
+to Core/C++ compile and final link steps while leaving pure-C compilation
+unchanged. The Core numeric/binary harness, pure-C header/link smoke, C++
+runtime facade, and a deliberately single-threaded runtime-ABI allocation-
+failure mode all execute under Node through the real public target. Structural
+inspection pins the option at each required phase and proves that the
+single-thread target does not enable pthreads.
 
-The current wasm proof is deliberately narrower than the native runtime ABI
-suite. The Core numeric/binary harness, pure-C header/link smoke, and selected
-C++ runtime-facade paths execute under Node. An exploratory build of the full
-`payload.runtime_abi` test is not a pass: the current Emscripten configuration
-has neither a public Core/final-consumer exception-handling propagation
-contract nor pthread support for that test's worker phases, and Node terminates
-with an unhandled C++ exception. Enabling `-fexceptions` only on the test
-consumer does not fix the deeper Core/thread boundary. Task 10 therefore makes
-no claim that wasm32 has passed injected allocation-failure containment or the
-full concurrent runtime-ABI matrix.
+The wasm proof remains deliberately narrower than the native runtime ABI
+suite. It does not execute the worker phases of `payload.runtime_abi` and does
+not claim generic WebAssembly pthread support. Native plus ThreadSanitizer
+remains the concurrency authority.
 
 **Reason:** Checked access and invalidation reuse the single Task 7 owner and
 offset-only index. The public ABI must project that reviewed lifetime model
@@ -200,38 +277,38 @@ accepted backing capability, so pointer identity cannot replace reader
 validation. Emscripten disables C++ exception catching by default, while the
 Core uses exception containment internally to project stable C statuses; that
 compile/link requirement and the separation of single-thread failure proof
-from optional pthread concurrency require an explicit public build contract,
-not an ad hoc test-only flag.
+from optional pthread concurrency require the explicit public build contract
+and separate proof modes now supplied by Task 11.
 
 **Impact:** Supported C and C++ callers can author and own portable record
 bytes, navigate typed values, hold scoped borrowed spans, and materialize a
-detached value through public handles. This local surface cannot yet be called
-the completed P2 contract because Task 11 remains open. No binding may bypass
+detached value through public handles. The binary reader now also has reviewed
+deterministic and coverage-guided robustness entry points. This local surface
+cannot yet be called the completed P2 contract because the Task 11 final review
+remains open. No binding may bypass
 the public access/lifetime rules or replace them
 with private Core access.
 Same-context/token callback reentry remains an adapter precondition;
 distinct-context execution and nested execution are supported. Existing 0.1.x
-database/call-db bytes are not a substitute. On wasm32, consumers may rely only
-on the named passing proofs above; full C-ABI allocation-failure containment
-and concurrency remain unproven until Task 11.
+database/call-db bytes are not a substitute. On wasm32, the named
+single-thread C-ABI allocation-failure proof is supported; concurrency remains
+outside that proof.
 
-**Next owner slice:** FastDB P2 Task 11.
+**Next owner slice:** Finish FastDB P2 Task 11 review, then begin FastDB P3.
 
 **Closure criteria:** Task 9 exposes builder/plan/backing/build/open/owner
 through the public C ABI. Task 10 locally exposes the already reviewed checked
 view/access/materialization behavior and C++ runtime facade without changing
 the Task 9 contracts; its final independent review reports zero unresolved
-findings. Task 11 must now close binary robustness, exact CI/package gates,
-consumer build guidance, the complete proof map, and final independent P2
-review before P2 is called complete. Its wasm closure must compile Core catch
-sites with the chosen Emscripten exception model, propagate the required final
-link/consumer options, run a single-thread runtime-ABI mode that proves injected
-allocation failures become stable C statuses, and test pthread concurrency
-separately only when that environment is enabled. A future same-context/token
-reentrant callback contract requires explicit adapter ownership/serialization
-semantics and hostile nested-callback tests; until then only distinct contexts
-may re-enter. Pass deterministic, malformed-input, backing-failure, lifetime,
-sanitizer, wasm, ABI, and cross-platform gates before calling P2 public.
+findings. Task 11 has now closed workflow/package structure, consumer build
+guidance, proof mapping, binary-opening quality, and the single-thread wasm
+exception-propagation requirement, and its complete fresh local gate is green.
+It must still obtain final independent P2 review before P2 is called complete.
+A future same-context/token reentrant callback contract requires
+explicit adapter ownership/serialization semantics and invalid nested-callback
+tests; until then only distinct contexts may re-enter. Pass deterministic,
+malformed-input, backing-failure, lifetime, sanitizer, wasm, ABI, and
+cross-platform gates before calling P2 public.
 
 ### P3 object-graph runtime
 
@@ -353,47 +430,76 @@ residual cleanup and package-warning gate.
 **Closure criteria:** Close Issue 0003 through the legacy/P5 clean-cut criteria,
 or earlier if a listed warning blocks a required package build.
 
-### Hosted native CI evidence
+### Hosted workflow evidence
 
-**Current limit:** Task 9 defines the required runner labels, architecture
-assertions, native matrix, sanitizer suite, default-schedule fuzz smoke, and
-aggregate-result handling, but the branch has not been pushed and no hosted run
-exists yet.
+**Current limit:** Task 11 extends the Task 9 runner labels, architecture
+assertions, native matrix, and sanitizer suite with Emscripten runtime, exact
+native/wasm ABI, Python package, and executable path-aware aggregate gates, but
+the branch has not been pushed and no hosted run exists yet.
 
-**Reason:** Push, tag, publication, and release operations are outside Task 9
+**Reason:** Push, tag, publication, and release operations are outside Task 11
 authorization.
 
 **Impact:** Local author evidence validates the workflow structure and the
-underlying commands, while Linux x86-64 and macOS arm64 hosted outcomes remain
-pending. A workflow definition is not a hosted pass.
+underlying commands, while Linux x86-64, macOS arm64, Emscripten, and package
+hosted outcomes remain pending. A workflow definition is not a hosted pass.
 
 **Closure criteria:** The first authorized GitHub Actions execution must show
-successful `native_tests` matrix legs and `native_sanitizers`; any runner-image
-or command failure must be fixed and re-run before P1 receives hosted evidence.
+successful `native_tests` matrix legs, `native_sanitizers`, `wasm_core`,
+`package_tests`, language jobs, and the final aggregate; any runner-image or
+command failure must be fixed and re-run before hosted evidence is recorded.
 
-### Local macOS libFuzzer schedule evidence
+### Local macOS libFuzzer evidence and toolchain limits
 
-**Current limit:** On Darwin 25.5.0 arm64, Homebrew LLVM 22.1.6 with matching
-libc++, ASan, and libFuzzer aborts inside libFuzzer's own
+**Historical P1 compiler-harness evidence:** On Darwin 25.5.0 arm64, Homebrew
+LLVM 22.1.6 with matching libc++, ASan, and libFuzzer aborts inside libFuzzer's own
 `InputCorpus::AddRareFeature`, through libc++
 `__uninitialized_allocator_relocate`, with an ASan heap-buffer-overflow while
 loading the seed corpus under its default entropic power schedule. The stack
 has not entered a FastDB input failure. LLVM 21.1.7 instead spins during ASan
 shadow initialization on this OS.
 
-**Reason:** This is a local compiler-runtime compatibility limit. Task 9 does
+**Reason:** This is a local compiler-runtime compatibility limit. Task 9 did
 not change Core or harness behavior to mask it.
 
-**Impact:** Each of the four tracked seeds is executed separately through the
-ASan+UBSan harness, and the same matching LLVM 22 build completes 10,000
+**Historical impact:** Each of the four tracked specification seeds was
+executed separately through the ASan+UBSan harness, and the same matching LLVM
+22 build completes 10,000
 coverage-guided runs with libFuzzer's supported `-entropic=0` schedule. This is
 valid local product evidence with an explicit schedule limit, not a
-default-schedule pass and not a FastDB defect. The Linux hosted sanitizer job
-retains the exact default schedule for its 1,000-run smoke.
+default-schedule pass and not a FastDB defect.
 
-**Closure criteria:** Obtain a successful default-schedule run on the hosted
-Linux job and retain the local adjusted-schedule evidence; refresh the local
-default-schedule run when a compatible macOS LLVM runtime is available.
+**Current Task 11 binary-open limit:** AppleClang 21 compiles
+`fuzz_payload_open.cpp` with the requested sanitizer instrumentation, but its
+installed Xcode toolchain has no `libclang_rt.fuzzer_osx.a`, so the executable
+cannot link. The previously used Homebrew LLVM 22 binary currently cannot
+start: it is linked to `libz3.4.15.dylib`, while the installed Z3 package
+provides 4.16. No system package, dylib link, or compiler installation is
+mutated to manufacture a local pass.
+
+**Current Task 11 local leak-check limit:** AppleClang 21's AddressSanitizer
+rejects `detect_leaks=1` before any test starts because LeakSanitizer is not
+supported on this macOS platform. The fresh fully instrumented Task 11 build
+therefore ran with `ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:detect_leaks=0`
+and `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`: all 30 CTest targets
+passed in 81.12 seconds and the retained logs contained no runtime, ASan, UBSan,
+or leak diagnostic. This is memory- and undefined-behavior evidence, not a
+local LeakSanitizer pass. The hosted Linux job deliberately retains
+`detect_leaks=1`; its result remains pending until an authorized run exists.
+
+**Current Task 11 impact:** A local 10,000-iteration coverage-guided
+`fuzz_payload_open` result is therefore not claimed. The exact harness source
+compiles, its reviewed 10-seed corpus is reproduced and hash-checked, the same
+harness executes deterministically as `payload.binary_open_corpus`, and the
+complete hard-fail ASan+UBSan CTest suite supplies local product evidence. The
+Linux hosted sanitizer definition retains default 1,000-run smokes for both
+the specification compiler and binary opener, but remains an expected job
+definition until an authorized run exists.
+
+**Closure criteria:** Obtain successful default-schedule runs for both fuzz
+targets on the hosted Linux job and retain the historical local adjusted-
+schedule evidence; run the Task 11 binary opener for 10,000 local iterations
+when a matching launchable macOS Clang/libFuzzer toolchain is available.
 
 ## P1 observations closed during implementation
 
@@ -438,7 +544,7 @@ result.
 | Slice | Status | Required closure evidence |
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
-| P2. Record binary/runtime/lifetime | In progress: Core behavior is independently reviewed through Task 8; the Task 9 builder/plan/build/open/owner C ABI is independently reviewed at exactly 72 symbols; and Task 10 checked view/access/materialization plus the C++ RAII runtime facade are independently reviewed with all local gates green at exactly 99 symbols. Task 11 is open | Close Task 11 final robustness, hosted CI/package integration, public consumer guidance, proof mapping, and final independent P2 review evidence |
+| P2. Record binary/runtime/lifetime | In progress: Core behavior is independently reviewed through Task 10 at exactly 99 symbols. Task 11 workflow/package structure, public consumer guidance, proof mapping, binary-opening robustness, single-thread wasm status mapping, and complete fresh local gates are green; final review remains open | Obtain final independent P2 review; keep hosted outcomes pending until an authorized run exists |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P1-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |

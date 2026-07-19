@@ -8,6 +8,7 @@ import difflib
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 
@@ -30,11 +31,18 @@ def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--build-dir",
-        required=True,
         type=Path,
         help="CMake build directory containing the FastDB shared library",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--wasm-build-dir",
+        type=Path,
+        help="Emscripten CMake build directory containing the C ABI object",
+    )
+    arguments = parser.parse_args()
+    if (arguments.build_dir is None) == (arguments.wasm_build_dir is None):
+        parser.error("provide exactly one of --build-dir or --wasm-build-dir")
+    return arguments
 
 
 def platform_configuration() -> tuple[str, list[str], bool]:
@@ -189,12 +197,34 @@ def exact_diff(expected: list[str], actual: list[str], library: Path) -> str:
 def main() -> int:
     try:
         arguments = parse_arguments()
-        build_directory = resolved_build_directory(arguments.build_dir)
-        library_name, nm_command, strip_platform_underscore = (
-            platform_configuration()
-        )
-        library = locate_library(build_directory, library_name)
         expected = read_allowlist(ALLOWLIST)
+        if len(expected) != 99:
+            raise CheckError(
+                f"reviewed portable payload ABI must contain exactly 99 symbols, found {len(expected)}"
+            )
+        if arguments.wasm_build_dir is not None:
+            build_directory = resolved_build_directory(arguments.wasm_build_dir)
+            candidates = sorted(
+                build_directory.rglob("fastdb_payload.cpp.o"),
+                key=lambda value: os.fspath(value),
+            )
+            if len(candidates) != 1:
+                raise CheckError(
+                    "expected exactly one Emscripten fastdb_payload.cpp.o, "
+                    f"found {len(candidates)}"
+                )
+            emnm = shutil.which("emnm")
+            if emnm is None:
+                raise CheckError("emnm is required for wasm ABI inspection")
+            library = candidates[0]
+            nm_command = [emnm, "--defined-only"]
+            strip_platform_underscore = False
+        else:
+            build_directory = resolved_build_directory(arguments.build_dir)
+            library_name, nm_command, strip_platform_underscore = (
+                platform_configuration()
+            )
+            library = locate_library(build_directory, library_name)
         actual = exported_payload_symbols(
             library, nm_command, strip_platform_underscore
         )

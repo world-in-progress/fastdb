@@ -1942,6 +1942,181 @@ int require_reason_error(
     return EXIT_SUCCESS;
 }
 
+int test_task11_header_directory_and_descriptor_failures() {
+    const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
+        FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
+    const BinaryGoldenCase* empty = find_case(corpus, "empty");
+    require(empty != nullptr);
+    auto encoded = encode_case(*empty);
+    require(encoded.has_value());
+    const auto& spec = encoded.value().spec;
+    const auto& canonical = encoded.value().bytes;
+    const auto open = [&](const std::vector<std::uint8_t>& bytes) {
+        return fastdb::payload::view::open_record(spec, bytes.data(),
+                                                  bytes.size());
+    };
+    const auto mutate_u16 = [&](std::uint64_t offset, std::uint16_t value) {
+        auto bytes = canonical;
+        if (!fastdb::payload::layout::store_u16_le(
+                 bytes.data(), bytes.size(), offset, value, JsonPointer{})
+                 .has_value()) {
+            std::abort();
+        }
+        return bytes;
+    };
+    const auto mutate_u32 = [&](std::uint64_t offset, std::uint32_t value) {
+        auto bytes = canonical;
+        if (!fastdb::payload::layout::store_u32_le(
+                 bytes.data(), bytes.size(), offset, value, JsonPointer{})
+                 .has_value()) {
+            std::abort();
+        }
+        return bytes;
+    };
+    const auto mutate_u64 = [&](std::uint64_t offset, std::uint64_t value) {
+        auto bytes = canonical;
+        if (!fastdb::payload::layout::store_u64_le(
+                 bytes.data(), bytes.size(), offset, value, JsonPointer{})
+                 .has_value()) {
+            std::abort();
+        }
+        return bytes;
+    };
+
+    auto bad_magic = canonical;
+    bad_magic[0] ^= UINT8_C(1);
+    const auto magic_result = open(bad_magic);
+    require(!magic_result.has_value());
+    require(magic_result.error().code() == FDB_PAYLOAD_E_INVALID_MAGIC);
+    require(magic_result.error().path() == "/binary/header/magic");
+
+    require(require_exact_error(
+                open(mutate_u16(
+                    fastdb::payload::layout::header_major_offset,
+                    UINT16_C(2))),
+                FDB_PAYLOAD_E_UNSUPPORTED_BINARY_VERSION,
+                "/binary/header/major", UINT64_C(2), UINT64_C(1),
+                "unsupported_binary_major") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u16(
+                    fastdb::payload::layout::header_minor_offset,
+                    UINT16_C(1))),
+                FDB_PAYLOAD_E_UNSUPPORTED_BINARY_VERSION,
+                "/binary/header/minor", UINT64_C(1), UINT64_C(0),
+                "unsupported_binary_minor") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u32(
+                    fastdb::payload::layout::header_size_offset,
+                    UINT32_C(127))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/binary/header/size",
+                UINT64_C(127), UINT64_C(128), "header_size") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u32(
+                    fastdb::payload::layout::header_profile_offset,
+                    FDB_PAYLOAD_PROFILE_OBJECT_GRAPH_V1)),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/profile",
+                FDB_PAYLOAD_PROFILE_OBJECT_GRAPH_V1,
+                FDB_PAYLOAD_PROFILE_RECORD_V1, "profile") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u32(
+                    fastdb::payload::layout::header_flags_offset,
+                    UINT32_C(1))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY, "/binary/header/flags",
+                UINT64_C(1), UINT64_C(0), "header_flags") == EXIT_SUCCESS);
+    require(require_reason_error(
+                open(mutate_u64(
+                    fastdb::payload::layout::header_total_length_offset,
+                    UINT64_C(129))),
+                FDB_PAYLOAD_E_OUT_OF_BOUNDS,
+                "/binary/header/total_length",
+                "declared_total_out_of_bounds") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u64(
+                    fastdb::payload::layout::header_total_length_offset,
+                    UINT64_C(127))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/total_length", UINT64_C(127),
+                UINT64_C(128), "trailing_binary_bytes") == EXIT_SUCCESS);
+
+    auto wrong_digest = canonical;
+    wrong_digest[static_cast<std::size_t>(
+        fastdb::payload::layout::header_spec_digest_offset)] ^= UINT8_C(1);
+    const auto digest_result = open(wrong_digest);
+    require(!digest_result.has_value());
+    require(digest_result.error().code() == FDB_PAYLOAD_E_DIGEST_MISMATCH);
+    require(digest_result.error().path() == "/binary/header/spec_sha256");
+
+    auto reserved = canonical;
+    reserved[static_cast<std::size_t>(
+        fastdb::payload::layout::header_reserved_offset)] = UINT8_C(1);
+    require(require_exact_error(open(reserved),
+                                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                                "/binary/header/reserved", UINT64_C(1),
+                                UINT64_C(0), "nonzero_header_reserved") ==
+            EXIT_SUCCESS);
+
+    require(require_exact_error(
+                open(mutate_u64(
+                    fastdb::payload::layout::header_region_directory_offset,
+                    UINT64_C(129))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/region_directory_offset", UINT64_C(129),
+                UINT64_C(128), "region_directory_offset") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u32(
+                    fastdb::payload::layout::header_region_count_offset,
+                    UINT32_C(1))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/region_count", UINT64_C(1), UINT64_C(0),
+                "region_count") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u32(
+                    fastdb::payload::layout::header_region_descriptor_size_offset,
+                    UINT32_C(55))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/region_descriptor_size", UINT64_C(55),
+                UINT64_C(56), "region_descriptor_size") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u64(
+                    fastdb::payload::layout::header_entry_directory_offset,
+                    UINT64_C(129))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/entry_directory_offset", UINT64_C(129),
+                UINT64_C(128), "entry_directory_not_contiguous") ==
+            EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u32(
+                    fastdb::payload::layout::header_entry_count_offset,
+                    UINT32_C(1))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/entry_count", UINT64_C(1), UINT64_C(0),
+                "entry_count") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u32(
+                    fastdb::payload::layout::header_entry_descriptor_size_offset,
+                    UINT32_C(39))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/entry_descriptor_size", UINT64_C(39),
+                UINT64_C(40), "entry_descriptor_size") == EXIT_SUCCESS);
+    require(require_exact_error(
+                open(mutate_u64(
+                    fastdb::payload::layout::header_root_value_count_offset,
+                    UINT64_C(1))),
+                FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/header/root_value_count", UINT64_C(1),
+                UINT64_C(0), "root_value_count_mismatch") == EXIT_SUCCESS);
+
+    auto truncated = canonical;
+    truncated.resize(static_cast<std::size_t>(
+        fastdb::payload::layout::header_size - UINT32_C(1)));
+    require(require_reason_error(open(truncated), FDB_PAYLOAD_E_OUT_OF_BOUNDS,
+                                "/binary/header", "header_out_of_bounds") ==
+            EXIT_SUCCESS);
+    return EXIT_SUCCESS;
+}
+
 int test_component_malformed_bytes_have_exact_diagnostics() {
     const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
         FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
@@ -3408,6 +3583,10 @@ int main() {
         return EXIT_FAILURE;
     }
     if (test_open_preflights_static_spec_limits_and_known_work() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_task11_header_directory_and_descriptor_failures() !=
         EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }

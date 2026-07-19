@@ -32,6 +32,8 @@ jobs:
               - 'tools/vendor_portable_payload_deps.sh'
               - 'tools/generate_embedded_payload_schemas.py'
               - 'tools/check_payload_abi_symbols.py'
+              - 'tools/check_emscripten_exception_flags.py'
+              - 'tools/check_payload_binary_corpus.py'
               - 'fastcarto/**'
               - 'fastcarto/fastdb/**'
               - 'fastcarto/lib/yyjson/**'
@@ -49,6 +51,7 @@ jobs:
             python:
               - 'python/**'
               - 'tests/python/**'
+              - 'tools/check_python_package_inventory.py'
               - 'py_utils.sh'
             ts:
               - 'ts/**'
@@ -56,6 +59,7 @@ jobs:
               - 'package.json'
             workflow:
               - '.github/workflows/tests.yml'
+              - 'tests/ci/**'
 
   python_tests:
     needs: detect_changes
@@ -115,6 +119,61 @@ jobs:
       - name: Run TypeScript tests
         run: npm run test:ts
 
+  wasm_core:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Emscripten 5.0.2
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          cd "$RUNNER_TEMP/emsdk"
+          ./emsdk install 5.0.2
+          ./emsdk activate 5.0.2
+          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Configure portable payload WASM proofs
+        run: >-
+          emcmake cmake -S fastcarto -B build/wasm-core
+          -DBUILD_TESTING=ON
+          -DBUILD_TOOLS=OFF
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build portable payload WASM proofs
+        run: >-
+          cmake --build build/wasm-core --parallel
+          --target
+          fastdb_payload_wasm_runtime_harness
+          fastdb_payload_test_c_header_smoke
+          fastdb_payload_test_runtime_cpp_facade
+          fastdb_payload_wasm_runtime_abi_single_thread
+
+      - name: Run portable payload WASM proofs
+        run: |
+          node build/wasm-core/wasm-tests/payload_runtime_harness.js
+          node build/wasm-core/tests/cpp/fastdb_payload_test_c_header_smoke.js
+          node build/wasm-core/tests/cpp/fastdb_payload_test_runtime_cpp_facade.js
+          node build/wasm-core/wasm-tests/payload_runtime_abi_single_thread.js \
+            --single-thread-injected-failure
+
+      - name: Verify Emscripten exception propagation
+        run: |
+          python3 tests/ci/test_check_emscripten_exception_flags.py
+          python3 tools/check_emscripten_exception_flags.py --build-dir build/wasm-core
+
+      - name: Verify portable payload WASM ABI symbols
+        run: python3 tools/check_payload_abi_symbols.py --wasm-build-dir build/wasm-core
+
   native_tests:
     needs: detect_changes
     if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
@@ -145,6 +204,11 @@ jobs:
       - name: Verify embedded payload schemas
         run: python3 tools/generate_embedded_payload_schemas.py --check
 
+      - name: Verify reviewed binary-open corpus
+        run: |
+          python3 tests/ci/test_check_payload_binary_corpus.py
+          python3 tools/check_payload_binary_corpus.py --check
+
       - name: Configure native tests
         run: >-
           cmake -S fastcarto -B build/native
@@ -165,6 +229,9 @@ jobs:
     needs: detect_changes
     if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
     runs-on: ubuntu-24.04
+    env:
+      ASAN_OPTIONS: halt_on_error=1:abort_on_error=1:detect_leaks=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -189,15 +256,77 @@ jobs:
         run: cmake --build build/native-sanitizers --parallel
 
       - name: Run deterministic sanitizer suite
-        run: ctest --test-dir build/native-sanitizers --output-on-failure
-
-      - name: Run portable payload fuzz smoke
         run: |
-          cmake -E make_directory build/native-sanitizers/runtime-corpus
+          set -o pipefail
+          ctest --test-dir build/native-sanitizers --output-on-failure \
+            2>&1 | tee build/native-sanitizers/ctest-sanitizer.log
+
+      - name: Run portable payload parser quality smokes
+        run: |
+          set -o pipefail
+          cmake -E make_directory \
+            build/native-sanitizers/spec-runtime-corpus \
+            build/native-sanitizers/binary-runtime-corpus \
+            build/native-sanitizers/parser-artifacts
           build/native-sanitizers/tests/cpp/fuzz_payload_spec_compile \
-            build/native-sanitizers/runtime-corpus \
+            build/native-sanitizers/spec-runtime-corpus \
             tests/fuzz/payload/corpus \
-            -runs=1000 -max_len=1048576
+            -runs=1000 -max_len=1048576 \
+            -artifact_prefix=build/native-sanitizers/parser-artifacts/ \
+            2>&1 | tee build/native-sanitizers/spec-parser-quality.log
+          build/native-sanitizers/tests/cpp/fuzz_payload_open \
+            build/native-sanitizers/binary-runtime-corpus \
+            tests/fuzz/payload/binary-corpus \
+            -runs=1000 -max_len=1048576 \
+            -artifact_prefix=build/native-sanitizers/parser-artifacts/ \
+            2>&1 | tee build/native-sanitizers/binary-parser-quality.log
+
+      - name: Reject sanitizer diagnostics and artifacts
+        run: |
+          if grep -E \
+            'runtime error:|ERROR: (AddressSanitizer|LeakSanitizer)|SUMMARY: (AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer)' \
+            build/native-sanitizers/*-sanitizer.log \
+            build/native-sanitizers/*-parser-quality.log; then
+            echo "sanitizer diagnostic found in retained logs"
+            exit 1
+          fi
+          if find build/native-sanitizers/parser-artifacts \
+            -type f -print -quit | grep -q .; then
+            echo "parser quality run produced an artifact"
+            find build/native-sanitizers/parser-artifacts -type f -print
+            exit 1
+          fi
+
+  package_tests:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.python == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Compile Python sources
+        run: uv run python -m compileall -q python/fastdb4py tests/python
+
+      - name: Build Python sdist and wheel
+        run: |
+          set -o pipefail
+          uv build --out-dir build/package-dist 2>&1 | tee build/package-build.log
+
+      - name: Verify Python package inventories
+        run: |
+          python3 tests/ci/test_check_python_package_inventory.py
+          python3 tools/check_python_package_inventory.py \
+            --dist-dir build/package-dist \
+            --build-log build/package-build.log
 
   test:
     name: test
@@ -207,9 +336,14 @@ jobs:
       - ts_tests
       - native_tests
       - native_sanitizers
+      - wasm_core
+      - package_tests
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
       - name: Validate required test results
         env:
           DETECT_RESULT: ${{ needs.detect_changes.result }}
@@ -217,71 +351,10 @@ jobs:
           PYTHON_SCOPE: ${{ needs.detect_changes.outputs.python }}
           TS_SCOPE: ${{ needs.detect_changes.outputs.ts }}
           WORKFLOW_SCOPE: ${{ needs.detect_changes.outputs.workflow }}
-          PYTHON_RESULT: ${{ needs.python_tests.result }}
-          TS_RESULT: ${{ needs.ts_tests.result }}
-          NATIVE_RESULT: ${{ needs.native_tests.result }}
-          SANITIZER_RESULT: ${{ needs.native_sanitizers.result }}
-        run: |
-          echo "detect_changes result: ${DETECT_RESULT}"
-          echo "python_tests result: ${PYTHON_RESULT}"
-          echo "ts_tests result: ${TS_RESULT}"
-          echo "native_tests result: ${NATIVE_RESULT}"
-          echo "native_sanitizers result: ${SANITIZER_RESULT}"
-
-          if [ "${DETECT_RESULT}" != "success" ]; then
-            echo "detect_changes did not succeed"
-            exit 1
-          fi
-
-          validate_scope() {
-            case "$2" in
-              true|false) ;;
-              *)
-                echo "$1 scope has unexpected value: $2"
-                exit 1
-                ;;
-            esac
-          }
-
-          validate_scope core "${CORE_SCOPE}"
-          validate_scope python "${PYTHON_SCOPE}"
-          validate_scope ts "${TS_SCOPE}"
-          validate_scope workflow "${WORKFLOW_SCOPE}"
-
-          python_expected=false
-          if [ "${CORE_SCOPE}" = "true" ] || [ "${PYTHON_SCOPE}" = "true" ] || [ "${WORKFLOW_SCOPE}" = "true" ]; then
-            python_expected=true
-          fi
-
-          ts_expected=false
-          if [ "${CORE_SCOPE}" = "true" ] || [ "${TS_SCOPE}" = "true" ] || [ "${WORKFLOW_SCOPE}" = "true" ]; then
-            ts_expected=true
-          fi
-
-          native_expected=false
-          if [ "${CORE_SCOPE}" = "true" ] || [ "${WORKFLOW_SCOPE}" = "true" ]; then
-            native_expected=true
-          fi
-
-          require_job_result() {
-            job_name="$1"
-            expected_to_run="$2"
-            actual_result="$3"
-
-            required_result=skipped
-            if [ "${expected_to_run}" = "true" ]; then
-              required_result=success
-            fi
-
-            if [ "${actual_result}" != "${required_result}" ]; then
-              echo "${job_name} result ${actual_result} does not match required ${required_result}"
-              exit 1
-            fi
-          }
-
-          require_job_result python_tests "${python_expected}" "${PYTHON_RESULT}"
-          require_job_result ts_tests "${ts_expected}" "${TS_RESULT}"
-          require_job_result native_tests "${native_expected}" "${NATIVE_RESULT}"
-          require_job_result native_sanitizers "${native_expected}" "${SANITIZER_RESULT}"
-
-          echo "All test job results match their detected scopes."
+          PYTHON_TESTS_RESULT: ${{ needs.python_tests.result }}
+          TS_TESTS_RESULT: ${{ needs.ts_tests.result }}
+          NATIVE_TESTS_RESULT: ${{ needs.native_tests.result }}
+          NATIVE_SANITIZERS_RESULT: ${{ needs.native_sanitizers.result }}
+          WASM_CORE_RESULT: ${{ needs.wasm_core.result }}
+          PACKAGE_TESTS_RESULT: ${{ needs.package_tests.result }}
+        run: ruby tests/ci/check_p2_task11_quality.rb --validate-results

@@ -2725,7 +2725,16 @@ int test_errors_prefixes_callbacks_and_graph_unavailable() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 2 &&
+        std::string_view{argv[1]} ==
+            "--single-thread-injected-failure") {
+        require(verify_allocation_harness_invariants() == EXIT_SUCCESS);
+        require(test_handle_allocation_boundaries_and_owner_projection() ==
+                EXIT_SUCCESS);
+        return EXIT_SUCCESS;
+    }
+
     require(verify_allocation_harness_invariants() == EXIT_SUCCESS);
     require(test_initializers_and_constants() == EXIT_SUCCESS);
     require(test_complete_record_runtime() == EXIT_SUCCESS);

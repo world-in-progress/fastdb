@@ -2,12 +2,14 @@
 
 This directory contains the native implementation that the higher-level bindings build on.
 
-> **Portable payload status:** The C++ Core now owns the P1
-> `fastdb.payload.v1` compiler, RFC 8785 canonicalization, SHA-256 identity,
-> manifest/index/capability facts, stable owned errors, and the exact 33-symbol
-> C query ABI plus C++17 RAII facade. P1 does not include
-> `fastdb.payload.bin.v1`, layout/build/open, checked lifetimes, final backing,
-> language projections, or payload code generation. See the [current status
+> **Portable payload status:** The C++ Core owns P1 specification compilation
+> and identity plus the P2 non-reference `record.v1` binary, build/open,
+> backing, checked-view, materialization, and invalidation behavior. The public
+> C ABI contains exactly 99 reviewed `fdb_payload_v1_*` symbols, and the C++17
+> facade projects that ABI. Task 11 now includes its reviewed binary-open
+> corpus/robustness target and its complete fresh local gate is green; the final
+> review and P3-P5 remain open. No Rust/Python/TypeScript portable projection
+> or 0.2.0 release is claimed. See the [current status
 > issue](../docs/issues/0002-portable-payload-foundation-implementation-status.md)
 > and [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
 
@@ -52,9 +54,33 @@ The current 0.1.x storage API lives in:
 - `fastcarto/fastdb/include/fastdb.h`
 - `fastcarto/fastdb/include/fastdb-config.h`
 
-The implemented P1 portable surface adds the stable C header
-`fastdb_payload.h` and the query-only C++ RAII facade `fastdb_payload.hpp`.
-Later runtime/lifetime families remain required by the accepted 0.2.0 design.
+The implemented portable surface adds the stable C header
+`fastdb_payload.h` and the thin C++ RAII facade `fastdb_payload.hpp`. Both
+expose the P1 compile/query and P2 record runtime/lifetime families; neither
+binding owns independent wire-format semantics.
+
+## Emscripten exception model
+
+FastDB uses C++ exceptions internally to contain allocation and library
+failures before returning stable C status/error pairs. Emscripten disables
+exception catching by default, so source-build consumers must receive one
+exception option at Core compile time, C++ consumer compile time, and final
+link time. The public `fastdb` CMake target propagates the broadly compatible
+JavaScript-based `-fexceptions` model. Its compile usage requirement is limited
+to C++ sources; pure-C sources remain ordinary C11, while their final link still
+receives the required Emscripten option.
+
+This choice works across JavaScript engines that support WebAssembly, with
+more size/runtime overhead than native WebAssembly exceptions. The alternative
+`-fwasm-exceptions` model can be smaller and faster but is not supported by
+every WebAssembly engine. Both models require matching compile and link flags,
+as documented by the [official Emscripten exception
+guide](https://emscripten.org/docs/porting/exceptions.html).
+
+The checked WebAssembly proof is intentionally single-threaded: it exercises
+injected allocation failures through the real `fastdb` target and requires
+stable C statuses. Pthread concurrency is a separate environment; native plus
+ThreadSanitizer remains the current concurrency proof.
 
 Important public classes:
 

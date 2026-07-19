@@ -1,0 +1,100 @@
+{
+  "schema": "fastdb.payload.p2-malformed-class-map.v1",
+  "classes": [
+    {
+      "class": "header-identity-version-profile-length-digest",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task11_header_directory_and_descriptor_failures"}
+      ]
+    },
+    {
+      "class": "truncation",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task11_header_directory_and_descriptor_failures"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_component_malformed_bytes_have_exact_diagnostics"}
+      ]
+    },
+    {
+      "class": "directory-arithmetic",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task11_header_directory_and_descriptor_failures"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task5_list_region_descriptor_and_partition_failures"}
+      ]
+    },
+    {
+      "class": "region-overlap-gap-misalignment-order",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task4_malformed_pools_and_descriptors_have_exact_errors"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task5_list_region_descriptor_and_partition_failures"}
+      ]
+    },
+    {
+      "class": "descriptor-size-flags-reserved",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task11_header_directory_and_descriptor_failures"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_component_malformed_bytes_have_exact_diagnostics"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task5_list_region_descriptor_and_partition_failures"}
+      ]
+    },
+    {
+      "class": "validity-length-tail-null-storage",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_component_malformed_bytes_have_exact_diagnostics"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task5_list_region_descriptor_and_partition_failures"}
+      ]
+    },
+    {
+      "class": "boolean-and-nan-canonicality",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_open_observation_and_malformed_canonical_values"}
+      ]
+    },
+    {
+      "class": "string-and-list-partitions",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task4_malformed_pools_and_descriptors_have_exact_errors"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task5_list_region_descriptor_and_partition_failures"}
+      ]
+    },
+    {
+      "class": "utf8-and-utf16",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task4_pool_metadata_eager_lazy_and_traversal_order"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task4_malformed_pools_and_descriptors_have_exact_errors"}
+      ]
+    },
+    {
+      "class": "counts-limits-and-work",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_open_preflights_static_spec_limits_and_known_work"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task5_list_limits_and_20000_level_iteration"}
+      ]
+    },
+    {
+      "class": "allocation-failure",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task4_layout_encode_open_allocation_sweeps"},
+        {"file": "tests/cpp/payload/test_record_binary.cpp", "test": "test_task5_list_allocation_failure_sweeps"}
+      ]
+    },
+    {
+      "class": "backing-callbacks",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_payload_backing.cpp", "test": "test_callback_status_classification"},
+        {"file": "tests/cpp/payload/test_payload_open.cpp", "test": "test_external_open_ownership"}
+      ]
+    },
+    {
+      "class": "stale-generation",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_runtime_abi.cpp", "test": "test_stale_generation_c_projection"}
+      ]
+    },
+    {
+      "class": "active-access-drain",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_checked_view.cpp", "test": "test_decisive_invalidation_barrier"}
+      ]
+    }
+  ]
+}

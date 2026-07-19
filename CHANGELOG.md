@@ -96,20 +96,34 @@ When a binding is released (tagged), its section is automatically copied to the 
 ## fastdb C++ core
 
 ### Added
-- P1 `fastdb.payload.v1` compile/query support in the C++ Core, exposed through
-  an exact 33-symbol pure-C `fdb_payload_v1_*` ABI and a header-only C++17 RAII
-  facade. The shipped P1 facts are strict source validation, normalized RFC
-  8785 canonical JSON, SHA-256 identity, manifest/profile/capability/index
-  queries, source-schema bytes/digest, and stable owned diagnostics.
+- P1 `fastdb.payload.v1` compile/query support and the P2 record
+  binary/runtime/lifetime implementation in the C++ Core, exposed through an
+  exact 99-symbol pure-C `fdb_payload_v1_*` ABI and a header-only C++17 RAII
+  facade. P2 covers every non-`ref` record value composition, immutable plans,
+  heap/external backing, deterministic build/open, checked access,
+  materialization, and invalidation.
 - Native ABI allowlist, deep object/shared-child lifetime regressions, a
   Clang/ASan/UBSan libFuzzer compiler harness and seed corpus, and GitHub
   Actions definitions for Linux x86-64, macOS arm64, and Linux sanitizer/fuzz
   gates.
+- Workflow definitions for the full native P2 suite, exact native/wasm ABI-99
+  checks, Emscripten Core/C/C++ runtime proofs, and exact sdist/wheel inventory
+  plus seven-diagnostic legacy SWIG checks. The path-aware aggregate is covered
+  by an exhaustive scope/result truth table.
+- A public Emscripten source-build exception contract: the real `fastdb` CMake
+  target compiles Core catch sites and propagates JavaScript-based
+  `-fexceptions` to C++ consumers and final links without adding the C++ flag
+  to pure-C compilation. A single-thread runtime-ABI test proves injected
+  failures return stable C statuses; pthread behavior is not claimed by it.
+- A deterministic public-C binary-open robustness runner, matching
+  coverage-guided `fuzz_payload_open` target, reviewed 10-seed valid/malformed
+  corpus with reproducible hashes, and an executable mapping for all 14
+  mandatory malformed/runtime-lifetime classes.
 
-P1 does not ship `fastdb.payload.bin.v1`, portable build/open/view/
-materialize/invalidate behavior, Rust/Python/TypeScript-WASM portable
-projections, or payload code generation. Those are non-deferrable P2-P5 work
-tracked in [Issue 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
+Task 11 complete fresh local gates are green. Its independent P2 review,
+object-graph runtime, Rust/Python/TypeScript-WASM portable projections, and
+payload code generation remain open in [Issue
+0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 The public call-db/`ColumnEngine` surface remains 0.1.x migration input until
 the planned 0.2.0 clean cut; this change does not bump a package version or
 claim a 0.2.0 release. Only capabilities deliberately deferred beyond 0.2.0

@@ -20,6 +20,20 @@ add_source_by_dir(${PROJECT_DIR} SOURCES)
 file(GLOB_RECURSE EXCLUED_FILES ${PROJECT_DIR}/swig/*.*)
 list(REMOVE_ITEM SOURCES ${EXCLUED_FILES})
 
+add_library(fastdb_payload_emscripten_exception_model INTERFACE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    # JavaScript-based Emscripten exceptions are the broadly compatible V1
+    # source-build contract. The option is required at compile and final link.
+    target_compile_options(
+        fastdb_payload_emscripten_exception_model
+        INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:-fexceptions>"
+    )
+    target_link_options(
+        fastdb_payload_emscripten_exception_model
+        INTERFACE -fexceptions
+    )
+endif()
+
 file(
     GLOB_RECURSE FASTDB_PAYLOAD_CORE_SOURCES
     CONFIGURE_DEPENDS
@@ -74,6 +88,7 @@ target_link_libraries(
         fastdb_yyjson
         fastdb_double_conversion
         fastdb_picosha2
+        fastdb_payload_emscripten_exception_model
 )
 fastdb_apply_sanitizers(fastdb_payload_core)
 
@@ -91,6 +106,8 @@ add_library(
 )
 target_link_libraries(
     ${PROJECT_NAME}
+    PUBLIC
+        fastdb_payload_emscripten_exception_model
     PRIVATE
         gaiageo
         Clipper2

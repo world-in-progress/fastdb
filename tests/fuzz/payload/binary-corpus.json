@@ -1,0 +1,71 @@
+{
+  "schema": "fastdb.payload.binary-fuzz-corpus.v1",
+  "cases": [
+    {
+      "name": "valid-empty.bin",
+      "class": "valid-empty",
+      "source_hex": "tests/golden/payload/v1/binary/valid/empty.bin.hex",
+      "sha256": "0ac923d7ec53314116dada8ad54f44590cc403738f7710d23b1cc0b3313202df"
+    },
+    {
+      "name": "valid-fixed.bin",
+      "class": "valid-fixed",
+      "source_hex": "tests/golden/payload/v1/binary/valid/fixed-scalars.bin.hex",
+      "sha256": "879da9218873979daabdc0cb45448b293500ac6d28a9fb16b86bd68ef00d62db"
+    },
+    {
+      "name": "valid-text.bin",
+      "class": "valid-text",
+      "source_hex": "tests/golden/payload/v1/binary/valid/text-bytes.bin.hex",
+      "sha256": "9033c95633c07e9737246afac8fcf4c0da407b0965a6a9612d0b3c926e75a7e6"
+    },
+    {
+      "name": "valid-list.bin",
+      "class": "valid-list",
+      "source_hex": "tests/golden/payload/v1/binary/valid/component-list-composition.bin.hex",
+      "sha256": "e77d4f3d221a74db0e6d13dd695c4c89a0855ecd2be4ab8c01725e9f897f5993"
+    },
+    {
+      "name": "malformed-magic.bin",
+      "class": "malformed-magic",
+      "source_hex": "tests/golden/payload/v1/binary/valid/empty.bin.hex",
+      "mutation": {"offset": 0, "before": "46", "after": "47"},
+      "sha256": "27f480e951233ab810812e5e7e93b75747ddbce5f08d03604e01a810acca2131"
+    },
+    {
+      "name": "malformed-length.bin",
+      "class": "malformed-length",
+      "source_hex": "tests/golden/payload/v1/binary/valid/empty.bin.hex",
+      "mutation": {"offset": 24, "before": "80", "after": "7f"},
+      "sha256": "be0ef4656a0ed3b619d10f5b9d495023e1828185ca6ed5f623420f35e3e1aa04"
+    },
+    {
+      "name": "malformed-offset.bin",
+      "class": "malformed-offset",
+      "source_hex": "tests/golden/payload/v1/binary/valid/empty.bin.hex",
+      "mutation": {"offset": 64, "before": "80", "after": "81"},
+      "sha256": "4269c0f37a66c9f73a2ea750954b35db384aa0bf60b07e132c1e1f2a90ab644e"
+    },
+    {
+      "name": "malformed-validity.bin",
+      "class": "malformed-validity",
+      "source_hex": "tests/golden/payload/v1/binary/valid/fixed-scalars.bin.hex",
+      "mutation": {"offset": 858, "before": "05", "after": "85"},
+      "sha256": "573e8899260a0b12eb25e2f6f6ef7492c2c994d88ba32b0ab31f01af80cb3345"
+    },
+    {
+      "name": "malformed-text.bin",
+      "class": "malformed-text",
+      "source_hex": "tests/golden/payload/v1/binary/valid/text-bytes.bin.hex",
+      "mutation": {"offset": 1336, "before": "41", "after": "80"},
+      "sha256": "1bcae750c32e6800706d3e1b01090f22e97ac9928ce63d1be050014aee4e0a53"
+    },
+    {
+      "name": "malformed-list.bin",
+      "class": "malformed-list",
+      "source_hex": "tests/golden/payload/v1/binary/valid/nested-lists.bin.hex",
+      "mutation": {"offset": 1576, "before": "00", "after": "01"},
+      "sha256": "95e55123f11fe6306a5d14a119f3e9c98ca50550c8e840cd83a65f1d622ffcb9"
+    }
+  ]
+}

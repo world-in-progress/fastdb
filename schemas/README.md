@@ -11,6 +11,15 @@ layout, canonical padding and partition rules, numeric representation,
 hardened-open accounting, and resource limits. Its first explicit ordered
 images are in the
 [binary golden index](../tests/golden/payload/v1/binary/index.json).
+The current mapping from accepted P2 requirements to Core symbols, named
+tests, and ordered goldens is the [P2 requirement-to-test
+traceability](../docs/issues/0002-portable-payload-foundation-implementation-status.md#p2-requirement-to-test-traceability)
+table. That table records local evidence only and keeps hosted results and
+later runtime/binding stages explicitly open.
+The reviewed binary-open seed inventory and exact byte recipes live in
+[`tests/fuzz/payload/binary-corpus.json`](../tests/fuzz/payload/binary-corpus.json);
+the deterministic runner and coverage-guided target both consume those bytes
+through the public C ABI without introducing another binary reader.
 
 `fastdb.payload.v1.schema.json` and
 `fastdb.payload.manifest.v1.schema.json` use JSON Schema draft 2020-12 and are

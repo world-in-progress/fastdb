@@ -53,6 +53,64 @@ function(add_fastdb_payload_test name)
     add_test(NAME payload.${name} COMMAND ${target_name})
 endfunction()
 
+set(FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/component-list-composition.source.json
+)
+set(FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/numeric-edges.source.json
+)
+set(FASTDB_PAYLOAD_FUZZ_SPEC_DEFINITIONS
+    "FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC_PATH=\"${FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC}\""
+    "FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC_PATH=\"${FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC}\""
+)
+
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    file(
+        GLOB FASTDB_PAYLOAD_REVIEWED_BINARY_SEEDS
+        CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/../fuzz/payload/binary-corpus/*.bin
+    )
+    list(SORT FASTDB_PAYLOAD_REVIEWED_BINARY_SEEDS)
+    list(LENGTH FASTDB_PAYLOAD_REVIEWED_BINARY_SEEDS
+         FASTDB_PAYLOAD_REVIEWED_BINARY_SEED_COUNT)
+    if(NOT FASTDB_PAYLOAD_REVIEWED_BINARY_SEED_COUNT EQUAL 10)
+        message(FATAL_ERROR
+            "The reviewed portable payload binary corpus must contain exactly "
+            "10 seeds; found ${FASTDB_PAYLOAD_REVIEWED_BINARY_SEED_COUNT}"
+        )
+    endif()
+
+    add_executable(
+        fastdb_payload_test_binary_open_corpus
+        ../fuzz/payload/fuzz_payload_open.cpp
+        ../fuzz/payload/run_payload_open_corpus.cpp
+    )
+    target_include_directories(
+        fastdb_payload_test_binary_open_corpus
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+    )
+    target_link_libraries(
+        fastdb_payload_test_binary_open_corpus
+        PRIVATE fastdb_payload_core
+    )
+    target_compile_definitions(
+        fastdb_payload_test_binary_open_corpus
+        PRIVATE ${FASTDB_PAYLOAD_FUZZ_SPEC_DEFINITIONS}
+    )
+    target_compile_features(
+        fastdb_payload_test_binary_open_corpus PRIVATE cxx_std_17
+    )
+    fastdb_apply_sanitizers(fastdb_payload_test_binary_open_corpus)
+    add_test(
+        NAME payload.binary_open_corpus
+        COMMAND
+            fastdb_payload_test_binary_open_corpus
+            ${FASTDB_PAYLOAD_REVIEWED_BINARY_SEEDS}
+    )
+    set_tests_properties(payload.binary_open_corpus PROPERTIES TIMEOUT 120)
+endif()
+
 if(FASTDB_BUILD_FUZZERS)
     set(FASTDB_FUZZ_COMPILE_OPTIONS
         -fsanitize=fuzzer-no-link
@@ -98,6 +156,42 @@ if(FASTDB_BUILD_FUZZERS)
     )
     set_target_properties(
         fuzz_payload_spec_compile
+        PROPERTIES
+            CXX_EXTENSIONS OFF
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON
+            LINKER_LANGUAGE CXX
+    )
+
+    add_executable(
+        fuzz_payload_open
+        ../fuzz/payload/fuzz_payload_open.cpp
+    )
+    target_include_directories(
+        fuzz_payload_open
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+    )
+    target_link_libraries(
+        fuzz_payload_open
+        PRIVATE fastdb_payload_core
+    )
+    target_compile_definitions(
+        fuzz_payload_open
+        PRIVATE ${FASTDB_PAYLOAD_FUZZ_SPEC_DEFINITIONS}
+    )
+    target_compile_features(fuzz_payload_open PRIVATE cxx_std_17)
+    target_compile_options(
+        fuzz_payload_open
+        PRIVATE ${FASTDB_FUZZ_COMPILE_OPTIONS}
+    )
+    fastdb_apply_sanitizers(fuzz_payload_open)
+    target_link_options(
+        fuzz_payload_open
+        PRIVATE -fsanitize=fuzzer
+    )
+    set_target_properties(
+        fuzz_payload_open
         PROPERTIES
             CXX_EXTENSIONS OFF
             CXX_STANDARD 17
@@ -211,7 +305,7 @@ set_tests_properties(payload.compiled_spec PROPERTIES TIMEOUT 60)
 add_fastdb_payload_test(
     c_header_smoke
     SOURCES payload/test_c_header_smoke.c
-    EXTRA_LIBRARIES fastdb_payload_core
+    EXTRA_LIBRARIES fastdb
 )
 target_include_directories(
     fastdb_payload_test_c_header_smoke
@@ -274,24 +368,13 @@ add_fastdb_payload_test(
     runtime_cpp_facade
     SOURCES payload/test_runtime_cpp_facade.cpp
     EXTRA_LIBRARIES
-        fastdb_payload_core
-        Threads::Threads
+        fastdb
 )
 target_include_directories(
     fastdb_payload_test_runtime_cpp_facade
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
 )
-if(EMSCRIPTEN)
-    target_compile_options(
-        fastdb_payload_test_runtime_cpp_facade
-        PRIVATE -fexceptions
-    )
-    target_link_options(
-        fastdb_payload_test_runtime_cpp_facade
-        PRIVATE -fexceptions
-    )
-endif()
 set_tests_properties(payload.runtime_cpp_facade PROPERTIES TIMEOUT 120)
 
 add_fastdb_payload_test(
@@ -442,6 +525,35 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/wasm-tests"
             SUFFIX ".js"
     )
+
+    add_executable(
+        fastdb_payload_wasm_runtime_abi_single_thread
+        payload/test_runtime_abi.cpp
+    )
+    target_include_directories(
+        fastdb_payload_wasm_runtime_abi_single_thread
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/payload
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+    )
+    target_link_libraries(
+        fastdb_payload_wasm_runtime_abi_single_thread
+        PRIVATE fastdb
+    )
+    target_link_options(
+        fastdb_payload_wasm_runtime_abi_single_thread
+        PRIVATE
+            "-sENVIRONMENT=node"
+            "-sEXIT_RUNTIME=1"
+    )
+    set_target_properties(
+        fastdb_payload_wasm_runtime_abi_single_thread
+        PROPERTIES
+            OUTPUT_NAME payload_runtime_abi_single_thread
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/wasm-tests"
+            SUFFIX ".js"
+    )
 endif()
 
 add_executable(
@@ -495,4 +607,23 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
             ${CMAKE_BINARY_DIR}
     )
     set_tests_properties(payload.abi_symbols PROPERTIES TIMEOUT 30)
+
+    add_test(
+        NAME payload.binary_fuzz_corpus
+        COMMAND
+            ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/check_payload_binary_corpus.py
+            --check
+    )
+    set_tests_properties(payload.binary_fuzz_corpus PROPERTIES TIMEOUT 30)
+
+    find_program(FASTDB_RUBY_EXECUTABLE ruby REQUIRED)
+    add_test(
+        NAME payload.p2_task11_quality
+        COMMAND
+            ${FASTDB_RUBY_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../ci/check_p2_task11_quality.rb
+            --check-repository
+    )
+    set_tests_properties(payload.p2_task11_quality PROPERTIES TIMEOUT 30)
 endif()
