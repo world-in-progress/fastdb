@@ -347,6 +347,8 @@ int test_manifest_indexes_facts_and_capabilities() {
     require(compiled.capabilities().operation_flags ==
             (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
              FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
+             FDB_PAYLOAD_OPERATION_VIEW |
+             FDB_PAYLOAD_OPERATION_MATERIALIZE |
              FDB_PAYLOAD_OPERATION_INVALIDATE));
     require(compiled.capabilities().codegen_target_flags == UINT64_C(0));
     require(compiled.capabilities().direct_build_status ==
@@ -412,7 +414,7 @@ int test_manifest_indexes_facts_and_capabilities() {
     require(rejects_replacement(R"("layout_model":"record_aos")",
                                 R"("layout_model":"object_pool_aos")"));
     require(rejects_replacement(
-        R"("operations":["compile","query","build","open","invalidate"])",
+        R"("operations":["compile","query","build","open","view","materialize","invalidate"])",
         R"("operations":["compile","query"])"));
     require(rejects_replacement(R"("profile":"record.v1")",
                                 R"("profile":"object_graph.v1")"));
@@ -632,8 +634,9 @@ int test_schema_artifacts_and_manifest_schema_contract() {
         capability_properties(record_branch);
     const JsonCursor record_operations = required_member(
         required_member(record_capabilities, "operations"), "const");
-    constexpr std::array<std::string_view, 5> record_operation_names{{
-        "compile", "query", "build", "open", "invalidate"}};
+    constexpr std::array<std::string_view, 7> record_operation_names{{
+        "compile", "query", "build", "open", "view", "materialize",
+        "invalidate"}};
     for (std::uint64_t index = UINT64_C(0);
          index < record_operation_names.size(); ++index) {
         require(array_at(record_operations, index).string() ==

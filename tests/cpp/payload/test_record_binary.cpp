@@ -22,6 +22,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <new>
 #include <string>
 #include <string_view>
@@ -40,6 +41,13 @@ struct AllocationHeader final {
     std::size_t requested;
 };
 
+constexpr std::size_t kDefaultNewAlignment =
+    static_cast<std::size_t>(__STDCPP_DEFAULT_NEW_ALIGNMENT__);
+static_assert(kDefaultNewAlignment != 0U);
+static_assert((kDefaultNewAlignment & (kDefaultNewAlignment - 1U)) == 0U);
+static_assert((alignof(AllocationHeader) &
+               (alignof(AllocationHeader) - 1U)) == 0U);
+
 void update_peak(std::atomic<std::size_t>& peak, std::size_t candidate) {
     std::size_t observed = peak.load(std::memory_order_relaxed);
     while (observed < candidate &&
@@ -49,7 +57,7 @@ void update_peak(std::atomic<std::size_t>& peak, std::size_t candidate) {
 }
 
 void* allocate(std::size_t size,
-               std::size_t alignment = alignof(std::max_align_t)) {
+               std::size_t alignment = kDefaultNewAlignment) {
     update_peak(largest_allocation, size);
     const std::int64_t remaining =
         fail_after.load(std::memory_order_relaxed);
@@ -59,30 +67,44 @@ void* allocate(std::size_t size,
             throw std::bad_alloc();
         }
     }
-    alignment = std::max(alignment, alignof(AllocationHeader));
-    const std::size_t payload_size = size == 0U ? 1U : size;
-    if (payload_size >
-        std::numeric_limits<std::size_t>::max() - sizeof(AllocationHeader) -
-            (alignment - 1U)) {
+    if (alignment == 0U || (alignment & (alignment - 1U)) != 0U) {
         throw std::bad_alloc();
     }
-    void* const raw = std::malloc(payload_size + sizeof(AllocationHeader) +
-                                  alignment - 1U);
+    alignment = std::max(
+        {alignment, alignof(AllocationHeader), kDefaultNewAlignment});
+    const std::size_t payload_size = size == 0U ? 1U : size;
+    const std::size_t padding = alignment - 1U;
+    constexpr std::size_t maximum =
+        std::numeric_limits<std::size_t>::max();
+    if (padding > maximum - sizeof(AllocationHeader)) {
+        throw std::bad_alloc();
+    }
+    const std::size_t overhead = sizeof(AllocationHeader) + padding;
+    if (payload_size > maximum - overhead) {
+        throw std::bad_alloc();
+    }
+    const std::size_t allocation_size = payload_size + overhead;
+    void* const raw = std::malloc(allocation_size);
     if (raw == nullptr) {
         throw std::bad_alloc();
     }
-    const std::uintptr_t begin =
-        reinterpret_cast<std::uintptr_t>(raw) + sizeof(AllocationHeader);
-    const std::uintptr_t aligned =
-        (begin + alignment - 1U) & ~(alignment - 1U);
+    void* candidate = static_cast<void*>(
+        static_cast<std::uint8_t*>(raw) + sizeof(AllocationHeader));
+    std::size_t space = allocation_size - sizeof(AllocationHeader);
+    void* const aligned =
+        std::align(alignment, payload_size, candidate, space);
+    if (aligned == nullptr) {
+        std::free(raw);
+        throw std::bad_alloc();
+    }
     auto* const header =
-        reinterpret_cast<AllocationHeader*>(aligned) - 1;
+        static_cast<AllocationHeader*>(aligned) - 1;
     header->raw = raw;
     header->requested = size;
     const std::size_t live =
         current_live_bytes.fetch_add(size, std::memory_order_relaxed) + size;
     update_peak(peak_live_bytes, live);
-    return reinterpret_cast<void*>(aligned);
+    return aligned;
 }
 
 void deallocate(void* value) noexcept {

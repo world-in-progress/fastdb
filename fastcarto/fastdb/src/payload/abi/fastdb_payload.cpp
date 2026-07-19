@@ -29,6 +29,39 @@
 namespace fastdb::payload::abi {
 namespace {
 
+static_assert(static_cast<std::uint32_t>(view::ViewKind::sequence) ==
+              FDB_PAYLOAD_VIEW_SEQUENCE);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::boolean) ==
+              FDB_PAYLOAD_VIEW_BOOL);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::u8) ==
+              FDB_PAYLOAD_VIEW_U8);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::u16) ==
+              FDB_PAYLOAD_VIEW_U16);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::u32) ==
+              FDB_PAYLOAD_VIEW_U32);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::i32) ==
+              FDB_PAYLOAD_VIEW_I32);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::u8n) ==
+              FDB_PAYLOAD_VIEW_U8N);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::u16n) ==
+              FDB_PAYLOAD_VIEW_U16N);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::f32) ==
+              FDB_PAYLOAD_VIEW_F32);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::f64) ==
+              FDB_PAYLOAD_VIEW_F64);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::str) ==
+              FDB_PAYLOAD_VIEW_STR);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::wstr) ==
+              FDB_PAYLOAD_VIEW_WSTR);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::bytes) ==
+              FDB_PAYLOAD_VIEW_BYTES);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::component) ==
+              FDB_PAYLOAD_VIEW_COMPONENT);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::list) ==
+              FDB_PAYLOAD_VIEW_LIST);
+static_assert(static_cast<std::uint32_t>(view::ViewKind::ref) ==
+              FDB_PAYLOAD_VIEW_REF);
+
 detail::ByteView byte_view(std::string_view value) noexcept {
     return {reinterpret_cast<const std::uint8_t*>(value.data()),
             static_cast<std::uint64_t>(value.size())};
@@ -637,6 +670,81 @@ error::Error opened_payload_report_error() {
         json::JsonValue::object({json::JsonValue::Member{
             "reason", json::JsonValue{
                           "opened_payload_has_no_execution_report"}}}));
+}
+
+template <typename Value, typename Operation>
+error::Result<void> read_view_value(
+    const fdb_payload_v1_view_t* view,
+    Value* out_value,
+    const char* output_name,
+    Operation&& operation) {
+    if (out_value != nullptr) {
+        *out_value = Value{};
+    }
+    if (out_value == nullptr) {
+        return failure(invalid_argument(output_name, "null_output"));
+    }
+    if (view == nullptr) {
+        return failure(invalid_argument("view", "null_handle"));
+    }
+    auto result = std::forward<Operation>(operation)(view->value);
+    if (!result.has_value()) {
+        return error::Result<void>::failure(std::move(result).error());
+    }
+    *out_value = result.value();
+    return error::Result<void>::success();
+}
+
+template <typename Operation>
+error::Result<void> publish_view(
+    const fdb_payload_v1_view_t* view,
+    fdb_payload_v1_view_t** out_view,
+    const char* output_name,
+    Operation&& operation) {
+    if (out_view != nullptr) {
+        *out_view = nullptr;
+    }
+    if (out_view == nullptr) {
+        return failure(invalid_argument(output_name, "null_output"));
+    }
+    if (view == nullptr) {
+        return failure(invalid_argument("view", "null_handle"));
+    }
+    auto result = std::forward<Operation>(operation)(view->value);
+    if (!result.has_value()) {
+        return error::Result<void>::failure(std::move(result).error());
+    }
+    *out_view = new fdb_payload_v1_view_t(std::move(result).value());
+    return error::Result<void>::success();
+}
+
+template <typename Span, typename Pointer, typename Operation>
+error::Result<void> read_access_span(
+    const fdb_payload_v1_access_t* access,
+    Pointer* out_data,
+    std::uint64_t* out_size,
+    Operation&& operation) {
+    if (out_data != nullptr) {
+        *out_data = nullptr;
+    }
+    if (out_size != nullptr) {
+        *out_size = UINT64_C(0);
+    }
+    if (access == nullptr) {
+        return failure(invalid_argument("access", "null_handle"));
+    }
+    auto result = std::forward<Operation>(operation)(access->value);
+    if (!result.has_value()) {
+        return error::Result<void>::failure(std::move(result).error());
+    }
+    const Span span = result.value();
+    if (out_data != nullptr) {
+        *out_data = span.data;
+    }
+    if (out_size != nullptr) {
+        *out_size = span.size;
+    }
+    return error::Result<void>::success();
 }
 
 }  // namespace
@@ -1581,6 +1689,429 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_payload_binary_blob(
         }
         *out_blob = fastdb::payload::abi::make_blob(std::move(copied));
         return fastdb::payload::error::Result<void>::success();
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_payload_acquire(
+    const fdb_payload_v1_payload_t* payload,
+    fdb_payload_v1_access_t** out_access,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        if (out_access != nullptr) {
+            *out_access = nullptr;
+        }
+        if (out_access == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "out_access", "null_output"));
+        }
+        if (payload == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "payload", "null_handle"));
+        }
+        auto access = payload->value.acquire();
+        if (!access.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(access).error());
+        }
+        *out_access = new fdb_payload_v1_access_t(
+            std::move(access).value());
+        return fastdb::payload::error::Result<void>::success();
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_payload_entry_view(
+    const fdb_payload_v1_payload_t* payload,
+    uint32_t entry_index,
+    fdb_payload_v1_view_t** out_view,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        if (out_view != nullptr) {
+            *out_view = nullptr;
+        }
+        if (out_view == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "out_view", "null_output"));
+        }
+        if (payload == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "payload", "null_handle"));
+        }
+        auto view = payload->value.entry_view(entry_index);
+        if (!view.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(view).error());
+        }
+        *out_view = new fdb_payload_v1_view_t(std::move(view).value());
+        return fastdb::payload::error::Result<void>::success();
+    });
+}
+
+extern "C" void fdb_payload_v1_view_retain(
+    fdb_payload_v1_view_t* view) {
+    fastdb::payload::abi::guard_void([view]() {
+        fastdb::payload::abi::detail::retain_reference(view);
+    });
+}
+
+extern "C" void fdb_payload_v1_view_release(
+    fdb_payload_v1_view_t* view) {
+    fastdb::payload::abi::guard_void([view]() {
+        fastdb::payload::abi::detail::release_reference(
+            view, [](fdb_payload_v1_view_t* value) { delete value; });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_kind(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_kind,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        if (out_kind != nullptr) {
+            *out_kind = UINT32_C(0);
+        }
+        if (out_kind == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "out_kind", "null_output"));
+        }
+        if (view == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "view", "null_handle"));
+        }
+        auto result = view->value.kind();
+        if (!result.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(result).error());
+        }
+        *out_kind = static_cast<std::uint32_t>(result.value());
+        return fastdb::payload::error::Result<void>::success();
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_is_null(
+    const fdb_payload_v1_view_t* view,
+    uint8_t* out_is_null,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        if (out_is_null != nullptr) {
+            *out_is_null = UINT8_C(0);
+        }
+        if (out_is_null == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "out_is_null", "null_output"));
+        }
+        if (view == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "view", "null_handle"));
+        }
+        auto result = view->value.is_null();
+        if (!result.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(result).error());
+        }
+        *out_is_null = result.value() ? UINT8_C(1) : UINT8_C(0);
+        return fastdb::payload::error::Result<void>::success();
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_length(
+    const fdb_payload_v1_view_t* view,
+    uint64_t* out_length,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_length, "out_length",
+            [](const fastdb::payload::view::View& value) {
+                return value.length();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_at(
+    const fdb_payload_v1_view_t* view,
+    uint64_t index,
+    fdb_payload_v1_view_t** out_child,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::publish_view(
+            view, out_child, "out_child",
+            [index](const fastdb::payload::view::View& value) {
+                return value.at(index);
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t
+fdb_payload_v1_view_component_index(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_component_index,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_component_index, "out_component_index",
+            [](const fastdb::payload::view::View& value) {
+                return value.component_index();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_field_count(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_field_count,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_field_count, "out_field_count",
+            [](const fastdb::payload::view::View& value) {
+                return value.field_count();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_field(
+    const fdb_payload_v1_view_t* view,
+    uint32_t field_index,
+    fdb_payload_v1_view_t** out_field,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::publish_view(
+            view, out_field, "out_field",
+            [field_index](const fastdb::payload::view::View& value) {
+                return value.field(field_index);
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_get_bool(
+    const fdb_payload_v1_view_t* view,
+    uint8_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_bool();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_get_u8(
+    const fdb_payload_v1_view_t* view,
+    uint8_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_u8();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_get_u16(
+    const fdb_payload_v1_view_t* view,
+    uint16_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_u16();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_get_u32(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_u32();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_get_i32(
+    const fdb_payload_v1_view_t* view,
+    int32_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_i32();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t
+fdb_payload_v1_view_get_u8n_f64_bits(
+    const fdb_payload_v1_view_t* view,
+    uint64_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_u8n_f64_bits();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t
+fdb_payload_v1_view_get_u16n_f64_bits(
+    const fdb_payload_v1_view_t* view,
+    uint64_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_u16n_f64_bits();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_get_f32_bits(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_f32_bits();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_get_f64_bits(
+    const fdb_payload_v1_view_t* view,
+    uint64_t* out_value,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_view_value(
+            view, out_value, "out_value",
+            [](const fastdb::payload::view::View& value) {
+                return value.get_f64_bits();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_acquire(
+    const fdb_payload_v1_view_t* view,
+    fdb_payload_v1_access_t** out_access,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        if (out_access != nullptr) {
+            *out_access = nullptr;
+        }
+        if (out_access == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "out_access", "null_output"));
+        }
+        if (view == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "view", "null_handle"));
+        }
+        auto access = view->value.acquire();
+        if (!access.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(access).error());
+        }
+        *out_access = new fdb_payload_v1_access_t(
+            std::move(access).value());
+        return fastdb::payload::error::Result<void>::success();
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_materialize(
+    const fdb_payload_v1_view_t* view,
+    fdb_payload_v1_view_t** out_materialized,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::publish_view(
+            view, out_materialized, "out_materialized",
+            [](const fastdb::payload::view::View& value) {
+                return value.materialize();
+            });
+    });
+}
+
+extern "C" void fdb_payload_v1_access_release(
+    fdb_payload_v1_access_t* access) {
+    fastdb::payload::abi::guard_void([access]() { delete access; });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_access_payload_bytes(
+    const fdb_payload_v1_access_t* access,
+    const uint8_t** out_data,
+    uint64_t* out_size,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_access_span<
+            fastdb::payload::view::ByteSpan>(
+            access, out_data, out_size,
+            [](const fastdb::payload::view::Access& value) {
+                return value.payload_bytes();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_access_str(
+    const fdb_payload_v1_access_t* access,
+    const uint8_t** out_data,
+    uint64_t* out_size,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_access_span<
+            fastdb::payload::view::ByteSpan>(
+            access, out_data, out_size,
+            [](const fastdb::payload::view::Access& value) {
+                return value.str();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_access_wstr(
+    const fdb_payload_v1_access_t* access,
+    const uint16_t** out_data,
+    uint64_t* out_size,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_access_span<
+            fastdb::payload::view::WideSpan>(
+            access, out_data, out_size,
+            [](const fastdb::payload::view::Access& value) {
+                return value.wstr();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_access_bytes(
+    const fdb_payload_v1_access_t* access,
+    const uint8_t** out_data,
+    uint64_t* out_size,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::read_access_span<
+            fastdb::payload::view::ByteSpan>(
+            access, out_data, out_size,
+            [](const fastdb::payload::view::Access& value) {
+                return value.bytes();
+            });
     });
 }
 

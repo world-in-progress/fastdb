@@ -49,6 +49,8 @@
 #define FDB_PAYLOAD_OPERATION_QUERY (UINT64_C(1) << 1)
 #define FDB_PAYLOAD_OPERATION_BUILD (UINT64_C(1) << 2)
 #define FDB_PAYLOAD_OPERATION_OPEN (UINT64_C(1) << 3)
+#define FDB_PAYLOAD_OPERATION_VIEW (UINT64_C(1) << 4)
+#define FDB_PAYLOAD_OPERATION_MATERIALIZE (UINT64_C(1) << 5)
 #define FDB_PAYLOAD_OPERATION_INVALIDATE (UINT64_C(1) << 6)
 
 #define FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED UINT32_C(0)
@@ -68,6 +70,23 @@
 #define FDB_PAYLOAD_FALLBACK_BACKING_DECLINED_DIRECT UINT32_C(2)
 
 #define FDB_PAYLOAD_OPEN_VALIDATE_TEXT_EAGER (UINT32_C(1) << 0)
+
+#define FDB_PAYLOAD_VIEW_SEQUENCE UINT32_C(1)
+#define FDB_PAYLOAD_VIEW_BOOL UINT32_C(2)
+#define FDB_PAYLOAD_VIEW_U8 UINT32_C(3)
+#define FDB_PAYLOAD_VIEW_U16 UINT32_C(4)
+#define FDB_PAYLOAD_VIEW_U32 UINT32_C(5)
+#define FDB_PAYLOAD_VIEW_I32 UINT32_C(6)
+#define FDB_PAYLOAD_VIEW_U8N UINT32_C(7)
+#define FDB_PAYLOAD_VIEW_U16N UINT32_C(8)
+#define FDB_PAYLOAD_VIEW_F32 UINT32_C(9)
+#define FDB_PAYLOAD_VIEW_F64 UINT32_C(10)
+#define FDB_PAYLOAD_VIEW_STR UINT32_C(11)
+#define FDB_PAYLOAD_VIEW_WSTR UINT32_C(12)
+#define FDB_PAYLOAD_VIEW_BYTES UINT32_C(13)
+#define FDB_PAYLOAD_VIEW_COMPONENT UINT32_C(14)
+#define FDB_PAYLOAD_VIEW_LIST UINT32_C(15)
+#define FDB_PAYLOAD_VIEW_REF UINT32_C(16)
 
 #define FDB_PAYLOAD_E_INVALID_JSON UINT32_C(1001)
 #define FDB_PAYLOAD_E_DUPLICATE_KEY UINT32_C(1002)
@@ -134,6 +153,8 @@ typedef struct fdb_payload_v1_error fdb_payload_v1_error_t;
 typedef struct fdb_payload_v1_builder fdb_payload_v1_builder_t;
 typedef struct fdb_payload_v1_plan fdb_payload_v1_plan_t;
 typedef struct fdb_payload_v1_payload fdb_payload_v1_payload_t;
+typedef struct fdb_payload_v1_view fdb_payload_v1_view_t;
+typedef struct fdb_payload_v1_access fdb_payload_v1_access_t;
 
 typedef struct fdb_payload_v1_compile_options {
     uint32_t struct_size;
@@ -517,6 +538,157 @@ fdb_payload_v1_payload_execution_report(
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_payload_binary_blob(
     const fdb_payload_v1_payload_t* payload,
     fdb_payload_v1_blob_t** out_blob,
+    fdb_payload_v1_error_t** out_error);
+
+/*
+ * payload_acquire publishes one unique scoped access pin over the complete
+ * committed payload image. payload_entry_view publishes an immutable,
+ * atomically retained sequence view for one stable entry index. Both reject
+ * an invalidating/invalidated payload. A view captures its payload generation;
+ * every backed navigation/query takes a short checked pin, so no view function
+ * returns a backing pointer.
+ */
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_payload_acquire(
+    const fdb_payload_v1_payload_t* payload,
+    fdb_payload_v1_access_t** out_access,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_payload_entry_view(
+    const fdb_payload_v1_payload_t* payload,
+    uint32_t entry_index,
+    fdb_payload_v1_view_t** out_view,
+    fdb_payload_v1_error_t** out_error);
+
+/*
+ * View handles are immutable and atomically retained. Concurrent retain,
+ * release, and read-only queries are safe only while each caller owns an
+ * independent live reference for the complete operation; release of the final
+ * reference must not race any retain, release, or query on that handle. kind
+ * is one FDB_PAYLOAD_VIEW_* value.
+ * length/at apply only to sequence/list views; component_index/field_count/
+ * field apply only to non-null component views. Scalar getters require the
+ * exact logical kind and a non-null value; floating and normalized results are
+ * returned as exact IEEE bits. Every handle/value output is cleared before an
+ * ordinary failure, while a null out_error sink leaves all outputs untouched.
+ */
+FDB_PAYLOAD_API void fdb_payload_v1_view_retain(
+    fdb_payload_v1_view_t* view);
+FDB_PAYLOAD_API void fdb_payload_v1_view_release(
+    fdb_payload_v1_view_t* view);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_kind(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_kind,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_is_null(
+    const fdb_payload_v1_view_t* view,
+    uint8_t* out_is_null,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_length(
+    const fdb_payload_v1_view_t* view,
+    uint64_t* out_length,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_at(
+    const fdb_payload_v1_view_t* view,
+    uint64_t index,
+    fdb_payload_v1_view_t** out_child,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_component_index(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_component_index,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_field_count(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_field_count,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_field(
+    const fdb_payload_v1_view_t* view,
+    uint32_t field_index,
+    fdb_payload_v1_view_t** out_field,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_get_bool(
+    const fdb_payload_v1_view_t* view,
+    uint8_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_get_u8(
+    const fdb_payload_v1_view_t* view,
+    uint8_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_get_u16(
+    const fdb_payload_v1_view_t* view,
+    uint16_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_get_u32(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_get_i32(
+    const fdb_payload_v1_view_t* view,
+    int32_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_view_get_u8n_f64_bits(
+    const fdb_payload_v1_view_t* view,
+    uint64_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_view_get_u16n_f64_bits(
+    const fdb_payload_v1_view_t* view,
+    uint64_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_get_f32_bits(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_get_f64_bits(
+    const fdb_payload_v1_view_t* view,
+    uint64_t* out_value,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_acquire(
+    const fdb_payload_v1_view_t* view,
+    fdb_payload_v1_access_t** out_access,
+    fdb_payload_v1_error_t** out_error);
+/*
+ * materialize publishes a detached immutable Core view with no dependency on
+ * the source payload/backing. It may itself be materialized again and remains
+ * queryable after source invalidation or release.
+ */
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_materialize(
+    const fdb_payload_v1_view_t* view,
+    fdb_payload_v1_view_t** out_materialized,
+    fdb_payload_v1_error_t** out_error);
+
+/*
+ * Access handles are unique scoped pins: they have release only, may be moved
+ * between threads, and must not be queried concurrently with release. Returned
+ * pointers are borrowed until that access is released. payload_bytes accepts
+ * only payload access; str/wstr/bytes require the exact corresponding value
+ * access. For payload_bytes, str, and bytes, out_size is a byte count. For
+ * wstr, out_size is a count of uint16_t code units, not a byte count.
+ * Payload/str/bytes may alias committed backing. wstr is an aligned Core-owned
+ * uint16_t projection produced by explicit little-endian loads and never
+ * aliases wire bytes as native objects. Present pointer/length outputs are
+ * cleared before ordinary failure; either output location may be null.
+ */
+FDB_PAYLOAD_API void fdb_payload_v1_access_release(
+    fdb_payload_v1_access_t* access);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_access_payload_bytes(
+    const fdb_payload_v1_access_t* access,
+    const uint8_t** out_data,
+    uint64_t* out_size,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_access_str(
+    const fdb_payload_v1_access_t* access,
+    const uint8_t** out_data,
+    uint64_t* out_size,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_access_wstr(
+    const fdb_payload_v1_access_t* access,
+    const uint16_t** out_data,
+    uint64_t* out_size,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_access_bytes(
+    const fdb_payload_v1_access_t* access,
+    const uint8_t** out_data,
+    uint64_t* out_size,
     fdb_payload_v1_error_t** out_error);
 /*
  * Invalidation is idempotent: it prevents new backing access, drains active

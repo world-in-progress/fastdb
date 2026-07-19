@@ -13,19 +13,26 @@
 
 The accepted 0.2.0 design defines a complete portable-payload foundation. The
 current repository implements the P1 compiler/query boundary, the complete P2
-non-reference record Core, and the Task 9 public C builder/plan/open/owner
-tranche, while it still ships
-the 0.1.x call-db/`ColumnEngine` implementation. P1 Task 9 has completed local
+non-reference record Core, the Task 9 public C builder/plan/open/owner tranche,
+and the local Task 10 checked view/access/materialization C ABI and C++ runtime
+facade, while it still ships the 0.1.x call-db/`ColumnEngine` implementation.
+P1 Task 9 has completed local
 independent implementation review; its first hosted CI execution remains
-pending. P2 Tasks 7 and 8 pass their local Debug, Release, sanitizer, Core-wasm,
+pending. P2 Tasks 7 and 8 pass their local Debug, Release, Core-wasm,
 language/package, and ABI-33 gates; their independent completion reviews each
-report zero Critical, Important, or Minor findings. P2 Task 9 now also passes
-its local Debug, Release, sanitizer, Core-wasm, language/package, cross-target
-C-header, and exact ABI-72 gates, and its final independent review reports zero
-Critical, Important, or Minor findings. P2 Task 10 checked
-view/access/materialization C ABI and C++ runtime facade, plus P3-P5 graph,
-language-parity, codegen, clean-cut, and release work, remain open. This issue
-records that temporary gap through the 0.2.0 clean cut.
+report zero Critical, Important, or Minor findings. P2 Task 9 also passes its
+local Debug, Release, Core-wasm, language/package, cross-target C-header, and
+exact ABI-72 gates, and its final independent review reports zero Critical,
+Important, or Minor findings. A Task 10 retained-log audit found that the
+historical Task 7-9 sanitizer CTest exit-passes contained recoverable
+test-harness alignment diagnostics; the corrected cumulative Task 10
+halt-on-error sanitizer proof supersedes those earlier cleanliness claims as
+recorded below. P2 Task 10 local implementation and gates are complete with the
+exact 99-symbol ABI, and its final independent review reports zero Critical,
+Important, or Minor findings. Task 11 final
+hardening, CI/package proof, and P2 review evidence,
+plus P3-P5 graph, language-parity, codegen, clean-cut, and release work, remain
+open. This issue records that temporary gap through the 0.2.0 clean cut.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -66,17 +73,22 @@ Current repository state:
 - Task 7 `PayloadOwner::open_copy` preflights null/addressability/total-byte limits before allocation or read, copies into committed Core heap backing, and validates that owned image through the shared reader. `open_external` requires the repeated span to match the retained base/size exactly before reading, then runs the same reader; any validation/publication failure releases the retained reference once. Both paths contain `bad_alloc` and `length_error` as stable `ALLOCATION_FAILED` results;
 - the new cheaply copyable, logically immutable `PayloadOwner` shares one `State` containing exactly one committed/retained backing reference, one `CompiledSpec`, one completely validated `PayloadIndex`, and one real optional `ExecutionReport`. Byte-open owners report `std::nullopt`; plan-created owners retain the exact direct/staged report. Owner copies share State without another backing retain, and digest/profile remain independent of caller spec, source bytes, builder, or plan lifetime;
 - `BuildPlan::execute` now uses a `.cpp`-local move-only committed-image handoff for direct/staged composition and validates only the final committed image through `open_record` before shared-State publication. Publication options take the maximum of safe defaults and immutable plan/spec facts, including stable entry/component counts. Non-allocation reader failures become `BACKING_CONTRACT` with original reader facts; reader or State allocation failures remain `ALLOCATION_FAILED`; every post-commit failure releases once and never rolls back. A commit-returned readable base may legally differ from the writable base: exact non-null/size/capacity shape is checked, and the shared reader validates the returned image;
-- Task 7 focused Debug evidence passes `payload.record_binary`, `payload.payload_backing`, and `payload.payload_open`, including exact physical `/binary/...` diagnostics, retained-span ownership, final-image reader validation, post-commit allocation cleanup, retry/live-byte balance, and legal relocated commit spans. Full Debug and Release each pass 24/24 tests; ASan+UBSan passes 24/24; the available focused TSan backing/concurrency target passes; the Core wasm32/Node harness passes; the existing ABI remains exactly 33 symbols; Python passes 413 tests, compileall, sdist, and wheel build; TypeScript/WASM passes 76 tests after a clean binding rebuild. Controller pre-commit review passes, and the independent completion review reports zero Critical, Important, or Minor findings after independently rerunning full Debug, the three focused targets, ABI-33, strict JSON/corpus inventory, and diff checks;
+- Task 7 focused Debug evidence passes `payload.record_binary`, `payload.payload_backing`, and `payload.payload_open`, including exact physical `/binary/...` diagnostics, retained-span ownership, final-image reader validation, post-commit allocation cleanup, retry/live-byte balance, and legal relocated commit spans. Full Debug and Release each pass 24/24 tests; the ASan+UBSan CTest run exits 24/24, with its historical cleanliness inference superseded by the Task 10 retained-log audit below; the available focused TSan backing/concurrency target passes; the Core wasm32/Node harness passes; the existing ABI remains exactly 33 symbols; Python passes 413 tests, compileall, sdist, and wheel build; TypeScript/WASM passes 76 tests after a clean binding rebuild. Controller pre-commit review passes, and the independent completion review reports zero Critical, Important, or Minor findings after independently rerunning full Debug, the three focused targets, ABI-33, strict JSON/corpus inventory, and diff checks;
 - P2 Task 8 extends the one hardened-open `PayloadIndex` rather than adding a second reader: it shares one immutable `RuntimeSchema`, retains only open-validated list-slot facts, and provides one offset-only cursor vocabulary for entry, component, list, scalar, and variable-span derivation. Backed views cache no byte pointer, and existing Task 3 scalar observation seams are thin wrappers over that same cursor arithmetic;
 - Task 8 adds one owner-state access barrier with one mutex/condition variable, non-wrapping generation, RAII short/long pins, deterministic invalidated/stale results, and idempotent drain-before-release invalidation. The backing is moved out under the barrier, released outside its mutex, and concurrent invalidators wait through that release before returning;
 - Task 8 also adds copyable immutable `View`, move-only typed `Access`, explicit little-endian owned wide-text decoding, selected-span lazy text validation/limits, and iterative one-source-pin materialization into a fresh detached `ValueArena`. Materialization copies exact scalar bits, variable bytes, null/empty distinctions, and child links transactionally before publishing source-independent detached state;
 - the focused `payload.checked_view` matrix passes navigation and every non-reference value kind, canonical component identity, text/opaque/wide access, lazy retry/concurrency and exact selected-span work limits, owner/view lifetime, transactional allocation-failure materialization, 100,000 short readers, decisive drain/release/reuse races, two deterministically observed invalidators, distinct-context callback reentry, stale generation, and generation exhaustion. Deep backed materialization and detached rematerialization also prove linear path-state storage through the Core-private metrics seam;
-- Task 8 is independently reviewed and complete at its private Core boundary. Full Debug and Release each pass 25/25; a no-competing-load ASan+UBSan run passes 25/25 with the two slow pressure tests completing in 91.63 and 101.11 seconds; focused TSan repeats pass without a race; Core-only wasm32/Node passes; the public ABI remains exactly 33 symbols; Python passes 413/413 plus compileall, sdist, and wheel; TypeScript/WASM passes 76/76 after a clean rebuild; and the final independent review reports zero Critical, Important, or Minor findings. The successful wheel build emits only the exact seven legacy diagnostics governed by [Issue 0003](0003-legacy-swig-diagnostics.md);
+- Task 8 is independently reviewed and complete at its private Core boundary. Full Debug and Release each pass 25/25; a no-competing-load ASan+UBSan CTest run exits 25/25 with the two slow pressure tests completing in 91.63 and 101.11 seconds, with its historical cleanliness inference superseded below; focused TSan repeats pass without a race; Core-only wasm32/Node passes; the public ABI remains exactly 33 symbols; Python passes 413/413 plus compileall, sdist, and wheel; TypeScript/WASM passes 76/76 after a clean rebuild; and the final independent review reports zero Critical, Important, or Minor findings. The successful wheel build emits only the exact seven legacy diagnostics governed by [Issue 0003](0003-legacy-swig-diagnostics.md);
 - P2 Task 9 projects the reviewed builder, immutable plan, backing callbacks, build execution, copy/external open, payload metadata/binary-copy, and invalidation through exactly 39 additive C exports. The public allowlist is now exactly 72 symbols. Pointer-free builder/open/plan/report prefixes are fixed at 88/112/104/72 bytes; fixed-run and backing prefixes remain target-sized and explicitly initialize every pointer member to null;
-- Task 9 record capabilities now truthfully report only `compile,query,build,open,invalidate` with direct build `eligible/record_layout_exact`. Object-graph remains `compile,query` and `not_evaluated/runtime_slice_not_implemented`. The required manifest `runtime` facts are derived iteratively from the resolved source graph with fixed pool order and cycle-safe component reachability; canonical payload bytes and payload digests remain unchanged;
-- a fresh arm64 macOS ASan+UBSan suite under AppleClang `21.0.0.21000101` exposed a CTest scheduling limit rather than a sanitizer finding: `payload_builder` completed in 117.33 seconds, only 2.67 seconds below its former fixed 120-second timeout, while `record_binary` was killed by that timeout at 121.85 seconds. The same sanitizer-instrumented `record_binary` executable completed directly with `real 159.15`, `user 88.11`, and `sys 12.23` seconds and emitted no sanitizer report. These two known heavy tests now use 240-second CTest timeouts to provide scheduler/load margin; their assertions, sanitizer instrumentation, and correctness criteria are unchanged. After reconfiguration, the formal CTest ASan+UBSan suite passes 26/26 in 244.99 seconds: `payload_builder` completes in 106.62 seconds, `record_binary` completes in 119.35 seconds, and the suite reports zero sanitizer findings;
+- At the Task 9 boundary, record capabilities truthfully reported only `compile,query,build,open,invalidate` with direct build `eligible/record_layout_exact`. Object-graph remains `compile,query` and `not_evaluated/runtime_slice_not_implemented`. The required manifest `runtime` facts are derived iteratively from the resolved source graph with fixed pool order and cycle-safe component reachability; canonical payload bytes and payload digests remain unchanged;
+- a fresh arm64 macOS ASan+UBSan suite under AppleClang `21.0.0.21000101` exposed a CTest scheduling limit: `payload_builder` completed in 117.33 seconds, only 2.67 seconds below its former fixed 120-second timeout, while `record_binary` was killed by that timeout at 121.85 seconds. The same sanitizer-instrumented `record_binary` executable completed directly with `real 159.15`, `user 88.11`, and `sys 12.23` seconds and emitted no diagnostic. These two known heavy tests now use 240-second CTest timeouts to provide scheduler/load margin; their assertions, sanitizer instrumentation, and correctness criteria are unchanged. After reconfiguration, the formal CTest ASan+UBSan suite exits 26/26 in 244.99 seconds: `payload_builder` completes in 106.62 seconds and `record_binary` completes in 119.35 seconds. Its then-recorded suite-wide zero-finding conclusion is superseded by the retained-log audit below;
 - Task 9 is independently reviewed and locally complete at its public builder/plan/open/owner boundary. Debug and Release each pass 26/26; focused ThreadSanitizer passes the runtime ABI, backing, and checked-view targets 3/3; Core-only wasm32/Node passes; Python passes 413/413 plus compileall, sdist, and wheel; TypeScript/WASM passes 76/76; the arm64, x86_64, and wasm32 C11 header checks pass; the symbol gate proves exactly 72 exports; and the final independent review reports zero Critical, Important, or Minor findings;
-- checked views, scoped accesses, detached materialization, and the C++ runtime facade remain Core-private or absent from the public runtime surface until Task 10. Rust, Python, TypeScript/WASM, and P3+ remain open;
+- A Task 10 audit of the retained sanitizer logs corrects the historical interpretation without changing the recorded CTest exit counts: Task 7, Task 8, and Task 9 logs contain respectively 4, 12, and 16 recoverable UBSan `SUMMARY` diagnostics for misaligned construction. The source is the test-only allocation-failure harness: it inserted an allocation header but aligned ordinary `operator new` results only to this platform's 8-byte `alignof(max_align_t)`, below C++'s 16-byte `__STDCPP_DEFAULT_NEW_ALIGNMENT__`. This is not a FastDB Core production allocator defect, but it invalidates the earlier claim that those full sanitizer runs were diagnostically clean. Task 10 cleanly fixes all five affected harnesses (`record_binary`, `payload_backing`, `payload_open`, `checked_view`, and `runtime_abi`) by validating requested power-of-two alignment, preserving at least default-new/header alignment, checking size arithmetic in stages, and using `std::align`. A cumulative ASan+UBSan run with `UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1` and `ASAN_OPTIONS=halt_on_error=1` now passes 27/27 in 85.03 seconds; an explicit retained-log scan finds zero runtime errors, UBSan/ASan summaries, ASan errors, or LeakSanitizer diagnostics. This current halt-on-error result is the superseding sanitizer proof through Task 10;
+- P2 Task 10 locally projects the reviewed Core view/access/materialization model through exactly 27 additive C exports, freezing the sorted public ABI at exactly 99 symbols. View handles retain atomically, access handles own one unique live pin, no view call exposes a backing pointer, payload/UTF-8/opaque spans may alias only while an `Access` lives, and wide text is copied into aligned host-endian units from explicit UTF-16LE loads. The header-only C++17 facade remains a thin C-ABI projection and checks every public `uint64_t` to `size_t` conversion before exposing a span;
+- Task 10 record manifests now report `compile,query,build,open,view,materialize,invalidate`; object-graph capabilities remain unchanged, and canonical specification bytes and payload digests remain unchanged. The new C ABI and C++ facade exercise navigation, every non-reference kind, owner/view/access lifetime, stale generations, drain-before-release invalidation, detached materialization, allocation-failure retry, and output clearing;
+- Task 10 is independently reviewed and locally complete: Debug and Release each pass 27/27; the cumulative halt-on-error ASan+UBSan run above passes 27/27 with a zero-diagnostic retained-log scan; focused ThreadSanitizer passes runtime ABI/C++ facade/backing/checked-view 4/4; the Core numeric/binary wasm32 harness, pure-C wasm link smoke, and selected C++ facade wasm paths pass; Python passes 413/413 plus compileall/sdist/wheel; TypeScript/WASM passes 76/76; the arm64/x86_64/wasm32 C11 header checks pass; and the exact symbol gate proves 99 unique exports. The package inventories contain the normative binary document, both schemas and the digest pin, vendored provenance, public headers, and native library without build/cache/corpus/generated-image debris. A full wasm runtime-ABI claim is explicitly excluded below. The final independent review reports zero Critical, Important, or Minor findings, and Task 11 remains open;
+- the exception-based C++ facade requires Emscripten exception catching in both compilation and linking; the verified local consumer used `-fexceptions` for both. The repository does not yet provide a propagating public facade interface target or public build instructions, so default `emcc` configuration is not claimed to work. Task 11 must close that consumer-facing integration/documentation prerequisite;
+- Rust, Python, TypeScript/WASM portable-payload projections and P3+ remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query slice is implemented, independently reviewed, and frozen
@@ -88,12 +100,15 @@ implemented.
 
 Users and downstream repositories can compile/query a specification and can
 now author, build, open, copy, inspect metadata for, and invalidate a complete
-non-reference `record.v1` payload through the public C ABI. Checked value views,
-scoped borrowed access, detached materialization, and the C++ runtime facade
-are not public until Task 10, and no Rust, Python, or TypeScript/WASM portable
-projection exists. C-Two may not replace Task 10 or depend on FastDB private
-headers; recreating FastDB semantics remains forbidden. Toodle consequently
-cannot yet treat the full structured-payload substrate as implemented.
+non-reference `record.v1` payload through the public C ABI, navigate checked
+views, hold scoped borrowed access, materialize detached values, and use the
+thin C++ runtime facade. No Rust, Python, or TypeScript/WASM portable projection
+exists. P2 is not closed because Task 11 final robustness, hosted CI/package
+integration, public build guidance, proof mapping, and final independent review
+remain open. C-Two may consume only
+reviewed public FastDB contracts and must not depend on private headers or
+recreate FastDB semantics. Toodle consequently cannot yet treat the full
+structured-payload substrate as implemented.
 
 Raw-file/object bytes remain correctly outside FastDB in file/object storage. This implementation gap does not change that owner boundary and is not a reason to route raw files through the existing call-db path.
 
@@ -143,12 +158,37 @@ owner and index. Its focused, full-suite, sanitizer, wasm, language/package,
 ABI-33, and zero-finding independent-review gates are closed.
 
 Task 9 now provides the public builder, plan, backing, build/open/owner C ABI,
-payload metadata, independent binary copy, and invalidation. Task 10 still has
-to expose checked view/access/materialization and the C++ runtime projection.
-Rust, Python, TypeScript/WASM, P3 object graphs, and later slices remain absent. Task 6/7
+payload metadata, independent binary copy, and invalidation. Task 10 now
+locally exposes checked view/access/materialization and the thin C++ runtime
+projection through the complete exact 99-symbol C ABI. Its local native,
+sanitizer, Core numeric/binary wasm, pure-C wasm smoke, selected C++ facade
+wasm, language/package, cross-target C11, and symbol gates pass, and its
+independent review is accepted with zero findings. Task 11
+final hardening, hosted CI/package proof, public consumer guidance, proof
+mapping, and final independent review remain open. Rust, Python,
+TypeScript/WASM portable-payload projections, P3 object graphs, and later
+slices remain absent. Task 6/7
 callbacks may perform distinct-context nested execution because Core holds no
 unrelated lock, but a callback must not synchronously re-enter execution
 through the same backing context/token.
+
+The exception-based C++ runtime facade has also exposed one concrete wasm32
+consumer prerequisite: Emscripten must enable exception catching in both the
+facade consumer's compile and link steps. The local proof used `-fexceptions`
+in both places. There is not yet a public propagating facade interface target,
+so default `emcc` settings are not evidence of support; Task 11 must make this
+requirement consumable and document it.
+
+The current wasm proof is deliberately narrower than the native runtime ABI
+suite. The Core numeric/binary harness, pure-C header/link smoke, and selected
+C++ runtime-facade paths execute under Node. An exploratory build of the full
+`payload.runtime_abi` test is not a pass: the current Emscripten configuration
+has neither a public Core/final-consumer exception-handling propagation
+contract nor pthread support for that test's worker phases, and Node terminates
+with an unhandled C++ exception. Enabling `-fexceptions` only on the test
+consumer does not fix the deeper Core/thread boundary. Task 10 therefore makes
+no claim that wasm32 has passed injected allocation-failure containment or the
+full concurrent runtime-ABI matrix.
 
 **Reason:** Checked access and invalidation reuse the single Task 7 owner and
 offset-only index. The public ABI must project that reviewed lifetime model
@@ -157,21 +197,37 @@ execution is synchronous within one execution, while an external adapter may
 serialize or mutate one owner context/token; Core cannot safely infer a
 same-context/token reentrant ownership contract. Relocated commit spans are an
 accepted backing capability, so pointer identity cannot replace reader
-validation.
+validation. Emscripten disables C++ exception catching by default, while the
+Core uses exception containment internally to project stable C statuses; that
+compile/link requirement and the separation of single-thread failure proof
+from optional pthread concurrency require an explicit public build contract,
+not an ad hoc test-only flag.
 
-**Impact:** A supported C caller can author and own portable record bytes, but
-cannot yet navigate typed values or hold scoped borrowed spans through public
-handles. No binding may bypass the absent Task 10 access surface.
+**Impact:** Supported C and C++ callers can author and own portable record
+bytes, navigate typed values, hold scoped borrowed spans, and materialize a
+detached value through public handles. This local surface cannot yet be called
+the completed P2 contract because Task 11 remains open. No binding may bypass
+the public access/lifetime rules or replace them
+with private Core access.
 Same-context/token callback reentry remains an adapter precondition;
 distinct-context execution and nested execution are supported. Existing 0.1.x
-database/call-db bytes are not a substitute.
+database/call-db bytes are not a substitute. On wasm32, consumers may rely only
+on the named passing proofs above; full C-ABI allocation-failure containment
+and concurrency remain unproven until Task 11.
 
-**Next owner slice:** FastDB P2 Task 10.
+**Next owner slice:** FastDB P2 Task 11.
 
 **Closure criteria:** Task 9 exposes builder/plan/backing/build/open/owner
-through the public C ABI. Task 10 must expose the already reviewed checked
+through the public C ABI. Task 10 locally exposes the already reviewed checked
 view/access/materialization behavior and C++ runtime facade without changing
-the Task 9 contracts. A future same-context/token
+the Task 9 contracts; its final independent review reports zero unresolved
+findings. Task 11 must now close binary robustness, exact CI/package gates,
+consumer build guidance, the complete proof map, and final independent P2
+review before P2 is called complete. Its wasm closure must compile Core catch
+sites with the chosen Emscripten exception model, propagate the required final
+link/consumer options, run a single-thread runtime-ABI mode that proves injected
+allocation failures become stable C statuses, and test pthread concurrency
+separately only when that environment is enabled. A future same-context/token
 reentrant callback contract requires explicit adapter ownership/serialization
 semantics and hostile nested-callback tests; until then only distinct contexts
 may re-enter. Pass deterministic, malformed-input, backing-failure, lifetime,
@@ -205,19 +261,20 @@ Issue 0001 D1 may remain outside direct dynamic construction.
 
 ### P4 language projections and payload code generation
 
-**Current limit:** The P1 compile/query C ABI and query-only C++ facade exist,
-and Task 9 publicly exposes C build/open/owner operations. There is still no
-C++ runtime facade or Rust, Python, or TypeScript/WASM portable-payload
-projection, and the Core does not generate C++, Rust, Python, or TypeScript
-payload artifacts. Existing hand-written 0.1.x call-db layers are migration
-inputs, not projections of P1.
+**Current limit:** The P1 compile/query C ABI and C++ facade exist, Task 9
+publicly exposes C build/open/owner operations, and Task 10 locally adds the
+C++ runtime facade over the same C ABI. There is still no Rust, Python, or
+TypeScript/WASM portable-payload projection, and the Core does not generate
+C++, Rust, Python, or TypeScript payload artifacts. Existing hand-written 0.1.x
+call-db layers are migration inputs, not portable-payload projections.
 
 **Reason:** Safe binding lifetimes, value parity, and generated APIs depend on
 the frozen P2/P3 runtime ABI and binary meaning.
 
-**Impact:** Portable compile/query is available only through C and C++; no
-supported language binding can yet build/open/view/materialize the shared
-golden corpus or consume a Core-owned generated artifact set.
+**Impact:** Portable compile/query/build/open/view/materialize is available to
+C and C++ callers at the locally implemented Task 10 boundary. No Rust, Python,
+or TypeScript/WASM binding can yet exercise the shared golden corpus, and no
+language can consume a Core-owned generated artifact set.
 
 **Next owner slice:** FastDB P4 after P2 and P3 close.
 
@@ -381,7 +438,7 @@ result.
 | Slice | Status | Required closure evidence |
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
-| P2. Record binary/runtime/lifetime | In progress: logical builder, exact wire document, complete private non-reference encoder/reader, repeatable plan/backing execution, hardened copy/external open, retained backing, shared owning payload, checked views, barrier, materialization, and invalidation are implemented and independently reviewed through Task 8. The Task 9 public C ABI for builder/plan/backing/build/open/owner is locally complete and independently reviewed with its exact 72-symbol boundary frozen | Task 10 exposes checked view/access/materialization and the C++ RAII runtime facade; Task 11 then closes final hardening, CI/package proof, and P2 review evidence |
+| P2. Record binary/runtime/lifetime | In progress: Core behavior is independently reviewed through Task 8; the Task 9 builder/plan/build/open/owner C ABI is independently reviewed at exactly 72 symbols; and Task 10 checked view/access/materialization plus the C++ RAII runtime facade are independently reviewed with all local gates green at exactly 99 symbols. Task 11 is open | Close Task 11 final robustness, hosted CI/package integration, public consumer guidance, proof mapping, and final independent P2 review evidence |
 | P3. Object-graph runtime | Blocked on P2 | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
 | P4. Language projections and payload codegen | Blocked on P2/P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P1-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |

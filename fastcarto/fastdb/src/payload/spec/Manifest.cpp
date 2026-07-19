@@ -558,6 +558,8 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
     if (record) {
         operations.push_back(JsonValue{"build"});
         operations.push_back(JsonValue{"open"});
+        operations.push_back(JsonValue{"view"});
+        operations.push_back(JsonValue{"materialize"});
         operations.push_back(JsonValue{"invalidate"});
     }
     return JsonValue::object({
@@ -818,7 +820,7 @@ bool manifest_value_conforms(const JsonValue& manifest) {
         *array_value(*member(capability_object, "operations"));
     const JsonValue::Array& targets =
         *array_value(*member(capability_object, "codegen_targets"));
-    const std::size_t expected_operations = record ? 5U : 2U;
+    const std::size_t expected_operations = record ? 7U : 2U;
     if (operations.size() != expected_operations || targets.size() != 0U ||
         string_value(operations[0]) == nullptr ||
         *string_value(operations[0]) != "compile" ||
@@ -832,7 +834,11 @@ bool manifest_value_conforms(const JsonValue& manifest) {
          string_value(operations[3]) == nullptr ||
          *string_value(operations[3]) != "open" ||
          string_value(operations[4]) == nullptr ||
-         *string_value(operations[4]) != "invalidate")) {
+         *string_value(operations[4]) != "view" ||
+         string_value(operations[5]) == nullptr ||
+         *string_value(operations[5]) != "materialize" ||
+         string_value(operations[6]) == nullptr ||
+         *string_value(operations[6]) != "invalidate")) {
         return false;
     }
     const JsonValue& direct = *member(capability_object, "direct_build");
@@ -869,6 +875,8 @@ Result<ManifestArtifact> build_manifest(
         FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
             (record ? FDB_PAYLOAD_OPERATION_BUILD |
                           FDB_PAYLOAD_OPERATION_OPEN |
+                          FDB_PAYLOAD_OPERATION_VIEW |
+                          FDB_PAYLOAD_OPERATION_MATERIALIZE |
                           FDB_PAYLOAD_OPERATION_INVALIDATE
                     : UINT64_C(0)),
         UINT64_C(0),

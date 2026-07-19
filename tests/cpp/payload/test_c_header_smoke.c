@@ -65,6 +65,15 @@ int main(void) {
     fdb_payload_v1_payload_t* payload = (fdb_payload_v1_payload_t*)0;
     fdb_payload_v1_payload_t* opened = (fdb_payload_v1_payload_t*)0;
     fdb_payload_v1_blob_t* binary = (fdb_payload_v1_blob_t*)0;
+    fdb_payload_v1_view_t* sequence = (fdb_payload_v1_view_t*)0;
+    fdb_payload_v1_view_t* value_view = (fdb_payload_v1_view_t*)0;
+    fdb_payload_v1_view_t* detached = (fdb_payload_v1_view_t*)0;
+    fdb_payload_v1_access_t* access = (fdb_payload_v1_access_t*)0;
+    const uint8_t* access_data = (const uint8_t*)0;
+    uint64_t access_size = UINT64_C(0);
+    uint64_t view_length = UINT64_C(0);
+    uint32_t view_kind = UINT32_C(0);
+    uint8_t view_u8 = UINT8_C(0);
 
     fdb_payload_v1_compile_options_init(&options);
     fdb_payload_v1_capabilities_init(&capabilities);
@@ -152,6 +161,9 @@ int main(void) {
     fdb_payload_v1_blob_release((fdb_payload_v1_blob_t*)0);
     fdb_payload_v1_error_retain((fdb_payload_v1_error_t*)0);
     fdb_payload_v1_error_release((fdb_payload_v1_error_t*)0);
+    fdb_payload_v1_view_retain((fdb_payload_v1_view_t*)0);
+    fdb_payload_v1_view_release((fdb_payload_v1_view_t*)0);
+    fdb_payload_v1_access_release((fdb_payload_v1_access_t*)0);
 
     status = fdb_payload_v1_spec_compile_json(
         (const uint8_t*)valid_source,
@@ -196,6 +208,8 @@ int main(void) {
         capabilities.operation_flags !=
             (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
              FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
+             FDB_PAYLOAD_OPERATION_VIEW |
+             FDB_PAYLOAD_OPERATION_MATERIALIZE |
              FDB_PAYLOAD_OPERATION_INVALIDATE) ||
         capabilities.codegen_target_flags != UINT64_C(0) ||
         capabilities.direct_build_status !=
@@ -308,6 +322,61 @@ int main(void) {
         error != (fdb_payload_v1_error_t*)0) {
         return 28;
     }
+    status = fdb_payload_v1_payload_acquire(opened, &access, &error);
+    if (status != UINT32_C(0) || access == (fdb_payload_v1_access_t*)0 ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 30;
+    }
+    status = fdb_payload_v1_access_payload_bytes(
+        access, &access_data, &access_size, &error);
+    if (status != UINT32_C(0) || access_data == (const uint8_t*)0 ||
+        access_size != fdb_payload_v1_blob_size(binary) ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 31;
+    }
+    fdb_payload_v1_access_release(access);
+    status = fdb_payload_v1_payload_entry_view(
+        opened, UINT32_C(0), &sequence, &error);
+    if (status != UINT32_C(0) || sequence == (fdb_payload_v1_view_t*)0 ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 32;
+    }
+    status = fdb_payload_v1_view_kind(sequence, &view_kind, &error);
+    if (status != UINT32_C(0) ||
+        view_kind != FDB_PAYLOAD_VIEW_SEQUENCE ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 33;
+    }
+    status = fdb_payload_v1_view_length(sequence, &view_length, &error);
+    if (status != UINT32_C(0) || view_length != UINT64_C(1) ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 34;
+    }
+    status = fdb_payload_v1_view_at(
+        sequence, UINT64_C(0), &value_view, &error);
+    if (status != UINT32_C(0) || value_view == (fdb_payload_v1_view_t*)0 ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 35;
+    }
+    status = fdb_payload_v1_view_get_u8(value_view, &view_u8, &error);
+    if (status != UINT32_C(0) || view_u8 != UINT8_C(7) ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 36;
+    }
+    status = fdb_payload_v1_view_materialize(value_view, &detached, &error);
+    if (status != UINT32_C(0) || detached == (fdb_payload_v1_view_t*)0 ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 37;
+    }
+    view_u8 = UINT8_C(0);
+    status = fdb_payload_v1_view_get_u8(detached, &view_u8, &error);
+    if (status != UINT32_C(0) || view_u8 != UINT8_C(7) ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 38;
+    }
+    fdb_payload_v1_view_release(detached);
+    fdb_payload_v1_view_release(value_view);
+    fdb_payload_v1_view_release(sequence);
     fdb_payload_v1_payload_retain(opened);
     fdb_payload_v1_payload_release(opened);
     status = fdb_payload_v1_payload_invalidate(opened, &error);

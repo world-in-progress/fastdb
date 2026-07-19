@@ -8,6 +8,7 @@
 #include "payload/build/PayloadBuilder.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 #include "payload/view/PayloadOwner.hpp"
+#include "payload/view/View.hpp"
 
 #include <atomic>
 #include <cstdint>
@@ -109,6 +110,23 @@ struct fdb_payload_v1_payload final {
 
     std::atomic<std::uint64_t> references{UINT64_C(1)};
     const fastdb::payload::view::PayloadOwner value;
+};
+
+struct fdb_payload_v1_view final {
+    explicit fdb_payload_v1_view(
+        fastdb::payload::view::View initial_value) noexcept
+        : value(std::move(initial_value)) {}
+
+    std::atomic<std::uint64_t> references{UINT64_C(1)};
+    const fastdb::payload::view::View value;
+};
+
+struct fdb_payload_v1_access final {
+    explicit fdb_payload_v1_access(
+        fastdb::payload::view::Access initial_value) noexcept
+        : value(std::move(initial_value)) {}
+
+    fastdb::payload::view::Access value;
 };
 
 struct fdb_payload_v1_error {

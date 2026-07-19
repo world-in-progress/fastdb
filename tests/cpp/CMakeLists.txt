@@ -271,6 +271,30 @@ target_include_directories(
 )
 
 add_fastdb_payload_test(
+    runtime_cpp_facade
+    SOURCES payload/test_runtime_cpp_facade.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_runtime_cpp_facade
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+)
+if(EMSCRIPTEN)
+    target_compile_options(
+        fastdb_payload_test_runtime_cpp_facade
+        PRIVATE -fexceptions
+    )
+    target_link_options(
+        fastdb_payload_test_runtime_cpp_facade
+        PRIVATE -fexceptions
+    )
+endif()
+set_tests_properties(payload.runtime_cpp_facade PROPERTIES TIMEOUT 120)
+
+add_fastdb_payload_test(
     error
     SOURCES payload/test_error.cpp
     EXTRA_LIBRARIES

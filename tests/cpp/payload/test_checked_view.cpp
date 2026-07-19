@@ -48,31 +48,52 @@ struct AllocationHeader final {
     void* raw;
 };
 
+constexpr std::size_t kDefaultNewAlignment =
+    static_cast<std::size_t>(__STDCPP_DEFAULT_NEW_ALIGNMENT__);
+static_assert(kDefaultNewAlignment != 0U);
+static_assert((kDefaultNewAlignment & (kDefaultNewAlignment - 1U)) == 0U);
+static_assert((alignof(AllocationHeader) &
+               (alignof(AllocationHeader) - 1U)) == 0U);
+
 void* allocate(std::size_t size,
-               std::size_t alignment = alignof(std::max_align_t)) {
+               std::size_t alignment = kDefaultNewAlignment) {
     const std::int64_t remaining = fail_after.load(std::memory_order_relaxed);
     if (remaining >= INT64_C(0) &&
         fail_after.fetch_sub(INT64_C(1), std::memory_order_relaxed) ==
             INT64_C(0)) {
         throw std::bad_alloc();
     }
-    alignment = std::max(alignment, alignof(AllocationHeader));
-    const std::size_t payload = size == 0U ? 1U : size;
-    if (payload > std::numeric_limits<std::size_t>::max() -
-                      sizeof(AllocationHeader) - (alignment - 1U)) {
+    if (alignment == 0U || (alignment & (alignment - 1U)) != 0U) {
         throw std::bad_alloc();
     }
-    void* const raw =
-        std::malloc(payload + sizeof(AllocationHeader) + alignment - 1U);
+    alignment = std::max(
+        {alignment, alignof(AllocationHeader), kDefaultNewAlignment});
+    const std::size_t payload = size == 0U ? 1U : size;
+    const std::size_t padding = alignment - 1U;
+    constexpr std::size_t maximum =
+        std::numeric_limits<std::size_t>::max();
+    if (padding > maximum - sizeof(AllocationHeader)) {
+        throw std::bad_alloc();
+    }
+    const std::size_t overhead = sizeof(AllocationHeader) + padding;
+    if (payload > maximum - overhead) {
+        throw std::bad_alloc();
+    }
+    const std::size_t allocation_size = payload + overhead;
+    void* const raw = std::malloc(allocation_size);
     if (raw == nullptr) {
         throw std::bad_alloc();
     }
-    const std::uintptr_t begin =
-        reinterpret_cast<std::uintptr_t>(raw) + sizeof(AllocationHeader);
-    const std::uintptr_t aligned =
-        (begin + alignment - 1U) & ~(alignment - 1U);
-    (reinterpret_cast<AllocationHeader*>(aligned) - 1)->raw = raw;
-    return reinterpret_cast<void*>(aligned);
+    void* candidate = static_cast<void*>(
+        static_cast<std::uint8_t*>(raw) + sizeof(AllocationHeader));
+    std::size_t space = allocation_size - sizeof(AllocationHeader);
+    void* const aligned = std::align(alignment, payload, candidate, space);
+    if (aligned == nullptr) {
+        std::free(raw);
+        throw std::bad_alloc();
+    }
+    (static_cast<AllocationHeader*>(aligned) - 1)->raw = raw;
+    return aligned;
 }
 
 void deallocate(void* value) noexcept {
@@ -260,6 +281,36 @@ std::uint64_t PayloadOwnerTestAccess::validation_work(
 #endif
 
 namespace {
+
+int verify_allocation_harness_invariants() {
+    void* const allocation = ::operator new(1U);
+    const bool aligned =
+        reinterpret_cast<std::uintptr_t>(allocation) %
+            allocation_failure::kDefaultNewAlignment ==
+        std::uintptr_t{0};
+    ::operator delete(allocation);
+    require(aligned);
+
+    bool invalid_alignment_rejected = false;
+    try {
+        void* const invalid = allocation_failure::allocate(1U, 3U);
+        allocation_failure::deallocate(invalid);
+    } catch (const std::bad_alloc&) {
+        invalid_alignment_rejected = true;
+    }
+    require(invalid_alignment_rejected);
+
+    bool overflow_rejected = false;
+    try {
+        void* const overflow = allocation_failure::allocate(
+            std::numeric_limits<std::size_t>::max());
+        allocation_failure::deallocate(overflow);
+    } catch (const std::bad_alloc&) {
+        overflow_rejected = true;
+    }
+    require(overflow_rejected);
+    return EXIT_SUCCESS;
+}
 
 enum class MatrixArea : std::uint8_t {
     navigation,
@@ -1724,6 +1775,9 @@ int run_checked_view_behavior_suite() {
 }  // namespace
 
 int main() {
+    if (verify_allocation_harness_invariants() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
     if (verify_matrix_inventory() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }

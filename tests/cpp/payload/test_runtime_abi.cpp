@@ -2,18 +2,243 @@
 
 #include <fastdb_payload.h>
 
+#include "payload/abi/Handles.hpp"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <memory>
+#include <mutex>
+#include <new>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
+namespace allocation_failure {
+
+std::atomic<std::int64_t> fail_after{INT64_C(-1)};
+
+struct AllocationHeader final {
+    void* raw;
+};
+
+constexpr std::size_t kDefaultNewAlignment =
+    static_cast<std::size_t>(__STDCPP_DEFAULT_NEW_ALIGNMENT__);
+static_assert(kDefaultNewAlignment != 0U);
+static_assert((kDefaultNewAlignment & (kDefaultNewAlignment - 1U)) == 0U);
+static_assert((alignof(AllocationHeader) &
+               (alignof(AllocationHeader) - 1U)) == 0U);
+
+void* allocate(std::size_t size,
+               std::size_t alignment = kDefaultNewAlignment) {
+    const std::int64_t remaining = fail_after.load(std::memory_order_relaxed);
+    if (remaining >= INT64_C(0) &&
+        fail_after.fetch_sub(INT64_C(1), std::memory_order_relaxed) ==
+            INT64_C(0)) {
+        throw std::bad_alloc();
+    }
+    if (alignment == 0U || (alignment & (alignment - 1U)) != 0U) {
+        throw std::bad_alloc();
+    }
+    alignment = std::max(
+        {alignment, alignof(AllocationHeader), kDefaultNewAlignment});
+    const std::size_t payload = size == 0U ? 1U : size;
+    const std::size_t padding = alignment - 1U;
+    constexpr std::size_t maximum =
+        std::numeric_limits<std::size_t>::max();
+    if (padding > maximum - sizeof(AllocationHeader)) {
+        throw std::bad_alloc();
+    }
+    const std::size_t overhead = sizeof(AllocationHeader) + padding;
+    if (payload > maximum - overhead) {
+        throw std::bad_alloc();
+    }
+    const std::size_t allocation_size = payload + overhead;
+    void* const raw = std::malloc(allocation_size);
+    if (raw == nullptr) {
+        throw std::bad_alloc();
+    }
+    void* candidate = static_cast<void*>(
+        static_cast<std::uint8_t*>(raw) + sizeof(AllocationHeader));
+    std::size_t space = allocation_size - sizeof(AllocationHeader);
+    void* const aligned = std::align(alignment, payload, candidate, space);
+    if (aligned == nullptr) {
+        std::free(raw);
+        throw std::bad_alloc();
+    }
+    (static_cast<AllocationHeader*>(aligned) - 1)->raw = raw;
+    return aligned;
+}
+
+void deallocate(void* value) noexcept {
+    if (value != nullptr) {
+        std::free((reinterpret_cast<AllocationHeader*>(value) - 1)->raw);
+    }
+}
+
+struct Reset final {
+    ~Reset() { fail_after.store(INT64_C(-1), std::memory_order_relaxed); }
+};
+
+}  // namespace allocation_failure
+
+void* operator new(std::size_t size) {
+    return allocation_failure::allocate(size);
+}
+void* operator new[](std::size_t size) {
+    return allocation_failure::allocate(size);
+}
+void* operator new(std::size_t size, std::align_val_t alignment) {
+    return allocation_failure::allocate(size,
+        static_cast<std::size_t>(alignment));
+}
+void* operator new[](std::size_t size, std::align_val_t alignment) {
+    return allocation_failure::allocate(size,
+        static_cast<std::size_t>(alignment));
+}
+void operator delete(void* value) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete[](void* value) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete(void* value, std::size_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete[](void* value, std::size_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete(void* value, std::align_val_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete[](void* value, std::align_val_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete(void* value, std::size_t, std::align_val_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+void operator delete[](void* value, std::size_t,
+                       std::align_val_t) noexcept {
+    allocation_failure::deallocate(value);
+}
+
+namespace fastdb::payload::view {
+
+/* Test-only projection of the Task 8 generation seam through a C handle. */
+struct PayloadOwnerTestAccess final {
+    static void wait_until_invalidating(const PayloadOwner& owner) {
+        std::unique_lock<std::mutex> lock(owner.state_->barrier.mutex);
+        owner.state_->barrier.drained.wait(lock, [&owner] {
+            return owner.state_->barrier.invalidating;
+        });
+    }
+
+    static void set_generation(PayloadOwner& owner,
+                               std::uint64_t generation) {
+        std::lock_guard<std::mutex> lock(owner.state_->barrier.mutex);
+        owner.state_->barrier.generation = generation;
+    }
+};
+
+}  // namespace fastdb::payload::view
+
 namespace {
+
+int verify_allocation_harness_invariants() {
+    void* const allocation = ::operator new(1U);
+    const bool aligned =
+        reinterpret_cast<std::uintptr_t>(allocation) %
+            allocation_failure::kDefaultNewAlignment ==
+        std::uintptr_t{0};
+    ::operator delete(allocation);
+    require(aligned);
+
+    bool invalid_alignment_rejected = false;
+    try {
+        void* const invalid = allocation_failure::allocate(1U, 3U);
+        allocation_failure::deallocate(invalid);
+    } catch (const std::bad_alloc&) {
+        invalid_alignment_rejected = true;
+    }
+    require(invalid_alignment_rejected);
+
+    bool overflow_rejected = false;
+    try {
+        void* const overflow = allocation_failure::allocate(
+            std::numeric_limits<std::size_t>::max());
+        allocation_failure::deallocate(overflow);
+    } catch (const std::bad_alloc&) {
+        overflow_rejected = true;
+    }
+    require(overflow_rejected);
+    return EXIT_SUCCESS;
+}
+
+bool byte_span_contains_address(const std::uint8_t* span,
+                                std::size_t span_size,
+                                const std::uint8_t* address) noexcept {
+    if (span == nullptr || address == nullptr) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < span_size; ++index) {
+        if (span + index == address) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool byte_spans_share_address(const std::uint8_t* left,
+                              std::size_t left_size,
+                              const std::uint8_t* right,
+                              std::size_t right_size) noexcept {
+    if (left == nullptr || right == nullptr) {
+        return false;
+    }
+    for (std::size_t left_index = 0U; left_index < left_size; ++left_index) {
+        for (std::size_t right_index = 0U; right_index < right_size;
+             ++right_index) {
+            if (left + left_index == right + right_index) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+class AccessThreadCleanup final {
+public:
+    AccessThreadCleanup(fdb_payload_v1_access_t*& access,
+                        std::thread& thread) noexcept
+        : access_(access), thread_(thread) {}
+
+    AccessThreadCleanup(const AccessThreadCleanup&) = delete;
+    AccessThreadCleanup& operator=(const AccessThreadCleanup&) = delete;
+
+    ~AccessThreadCleanup() {
+        release_and_join();
+    }
+
+    void release_and_join() {
+        fdb_payload_v1_access_release(access_);
+        access_ = nullptr;
+        if (thread_.joinable()) {
+            thread_.join();
+        }
+    }
+
+private:
+    fdb_payload_v1_access_t*& access_;
+    std::thread& thread_;
+};
 
 constexpr std::string_view kRecordSpec = R"({
   "schema":"fastdb.payload.v1",
@@ -112,6 +337,38 @@ bool owned_error(fdb_payload_v1_status_t status,
            fdb_payload_v1_error_code(error) == status;
 }
 
+template <typename Handle, typename Operation, typename Release>
+int sweep_handle_allocation_boundary(ErrorRef& error,
+                                     Operation&& operation,
+                                     Release&& release) {
+    allocation_failure::Reset reset;
+    bool saw_allocation_failure = false;
+    for (std::int64_t allocation = INT64_C(0); allocation < INT64_C(4096);
+         ++allocation) {
+        Handle* candidate =
+            reinterpret_cast<Handle*>(std::uintptr_t{1});
+        allocation_failure::fail_after.store(allocation,
+                                             std::memory_order_relaxed);
+        const auto status = std::forward<Operation>(operation)(
+            &candidate, &error.value);
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                             std::memory_order_relaxed);
+        if (status == UINT32_C(0)) {
+            require(candidate != nullptr && error.value == nullptr);
+            std::forward<Release>(release)(candidate);
+            require(saw_allocation_failure);
+            return EXIT_SUCCESS;
+        }
+        require(status == FDB_PAYLOAD_E_ALLOCATION_FAILED);
+        require(candidate == nullptr);
+        require(owned_error(status, error.value));
+        saw_allocation_failure = true;
+        error.clear();
+    }
+    require(false, "allocation sweep did not reach a successful retry");
+    return EXIT_FAILURE;
+}
+
 std::string_view error_details(fdb_payload_v1_error_t* error) {
     const std::uint8_t* data = nullptr;
     std::uint64_t size = UINT64_C(0);
@@ -167,6 +424,8 @@ int test_initializers_and_constants() {
 
     require(FDB_PAYLOAD_OPERATION_BUILD == (UINT64_C(1) << 2));
     require(FDB_PAYLOAD_OPERATION_OPEN == (UINT64_C(1) << 3));
+    require(FDB_PAYLOAD_OPERATION_VIEW == (UINT64_C(1) << 4));
+    require(FDB_PAYLOAD_OPERATION_MATERIALIZE == (UINT64_C(1) << 5));
     require(FDB_PAYLOAD_OPERATION_INVALIDATE == (UINT64_C(1) << 6));
     require(FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE == UINT32_C(1));
     require(FDB_PAYLOAD_BUILD_ALLOW_STAGING == UINT32_C(1));
@@ -174,6 +433,22 @@ int test_initializers_and_constants() {
     require(FDB_PAYLOAD_EXECUTION_DIRECT == UINT32_C(1));
     require(FDB_PAYLOAD_EXECUTION_STAGED == UINT32_C(2));
     require(FDB_PAYLOAD_FALLBACK_NONE == UINT32_C(0));
+    require(FDB_PAYLOAD_VIEW_SEQUENCE == UINT32_C(1));
+    require(FDB_PAYLOAD_VIEW_BOOL == UINT32_C(2));
+    require(FDB_PAYLOAD_VIEW_U8 == UINT32_C(3));
+    require(FDB_PAYLOAD_VIEW_U16 == UINT32_C(4));
+    require(FDB_PAYLOAD_VIEW_U32 == UINT32_C(5));
+    require(FDB_PAYLOAD_VIEW_I32 == UINT32_C(6));
+    require(FDB_PAYLOAD_VIEW_U8N == UINT32_C(7));
+    require(FDB_PAYLOAD_VIEW_U16N == UINT32_C(8));
+    require(FDB_PAYLOAD_VIEW_F32 == UINT32_C(9));
+    require(FDB_PAYLOAD_VIEW_F64 == UINT32_C(10));
+    require(FDB_PAYLOAD_VIEW_STR == UINT32_C(11));
+    require(FDB_PAYLOAD_VIEW_WSTR == UINT32_C(12));
+    require(FDB_PAYLOAD_VIEW_BYTES == UINT32_C(13));
+    require(FDB_PAYLOAD_VIEW_COMPONENT == UINT32_C(14));
+    require(FDB_PAYLOAD_VIEW_LIST == UINT32_C(15));
+    require(FDB_PAYLOAD_VIEW_REF == UINT32_C(16));
 
     fdb_payload_v1_builder_options_init(nullptr);
     fdb_payload_v1_fixed_run_init(nullptr);
@@ -186,6 +461,9 @@ int test_initializers_and_constants() {
     fdb_payload_v1_plan_release(nullptr);
     fdb_payload_v1_payload_retain(nullptr);
     fdb_payload_v1_payload_release(nullptr);
+    fdb_payload_v1_view_retain(nullptr);
+    fdb_payload_v1_view_release(nullptr);
+    fdb_payload_v1_access_release(nullptr);
     return EXIT_SUCCESS;
 }
 
@@ -514,6 +792,207 @@ fdb_payload_v1_backing_v1_t backing_for(BackingContext& context) {
     backing.retain = retain_backing;
     backing.release = release_backing;
     return backing;
+}
+
+struct RuntimeFixture final {
+    RuntimeFixture() = default;
+
+    int initialize() {
+        spec = compile_spec(kRecordSpec);
+        require(spec != nullptr);
+        ErrorRef error;
+        require(fdb_payload_v1_builder_create(
+                    spec, nullptr, &builder, &error.value) == UINT32_C(0));
+        require(author_record(builder) == EXIT_SUCCESS);
+        require(fdb_payload_v1_builder_freeze(
+                    builder, &plan, &error.value) == UINT32_C(0));
+        fdb_payload_v1_execution_report_t report{};
+        fdb_payload_v1_execution_report_init(&report);
+        require(fdb_payload_v1_plan_execute(
+                    plan, FDB_PAYLOAD_BUILD_ALLOW_STAGING, nullptr, &payload,
+                    &report, &error.value) == UINT32_C(0));
+        require(payload != nullptr && error.value == nullptr);
+        return EXIT_SUCCESS;
+    }
+
+    RuntimeFixture(const RuntimeFixture&) = delete;
+    RuntimeFixture& operator=(const RuntimeFixture&) = delete;
+
+    ~RuntimeFixture() {
+        fdb_payload_v1_payload_release(payload);
+        fdb_payload_v1_plan_release(plan);
+        fdb_payload_v1_builder_release(builder);
+        fdb_payload_v1_spec_release(spec);
+    }
+
+    fdb_payload_v1_spec_t* spec{nullptr};
+    fdb_payload_v1_builder_t* builder{nullptr};
+    fdb_payload_v1_plan_t* plan{nullptr};
+    fdb_payload_v1_payload_t* payload{nullptr};
+};
+
+int test_handle_allocation_boundaries_and_owner_projection() {
+    RuntimeFixture fixture;
+    require(fixture.initialize() == EXIT_SUCCESS);
+    ErrorRef error;
+
+    require(sweep_handle_allocation_boundary<fdb_payload_v1_access_t>(
+                error,
+                [&fixture](fdb_payload_v1_access_t** out,
+                           fdb_payload_v1_error_t** out_error) {
+                    return fdb_payload_v1_payload_acquire(
+                        fixture.payload, out, out_error);
+                },
+                fdb_payload_v1_access_release) == EXIT_SUCCESS);
+    require(sweep_handle_allocation_boundary<fdb_payload_v1_view_t>(
+                error,
+                [&fixture](fdb_payload_v1_view_t** out,
+                           fdb_payload_v1_error_t** out_error) {
+                    return fdb_payload_v1_payload_entry_view(
+                        fixture.payload, UINT32_C(0), out, out_error);
+                },
+                fdb_payload_v1_view_release) == EXIT_SUCCESS);
+
+    fdb_payload_v1_view_t* bool_sequence = nullptr;
+    require(fdb_payload_v1_payload_entry_view(
+                fixture.payload, UINT32_C(0), &bool_sequence,
+                &error.value) == UINT32_C(0));
+    require(sweep_handle_allocation_boundary<fdb_payload_v1_view_t>(
+                error,
+                [bool_sequence](fdb_payload_v1_view_t** out,
+                                fdb_payload_v1_error_t** out_error) {
+                    return fdb_payload_v1_view_at(
+                        bool_sequence, UINT64_C(0), out, out_error);
+                },
+                fdb_payload_v1_view_release) == EXIT_SUCCESS);
+
+    fdb_payload_v1_view_t* component_sequence = nullptr;
+    fdb_payload_v1_view_t* component = nullptr;
+    require(fdb_payload_v1_payload_entry_view(
+                fixture.payload, UINT32_C(12), &component_sequence,
+                &error.value) == UINT32_C(0));
+    require(fdb_payload_v1_view_at(
+                component_sequence, UINT64_C(0), &component,
+                &error.value) == UINT32_C(0));
+    require(sweep_handle_allocation_boundary<fdb_payload_v1_view_t>(
+                error,
+                [component](fdb_payload_v1_view_t** out,
+                            fdb_payload_v1_error_t** out_error) {
+                    return fdb_payload_v1_view_field(
+                        component, UINT32_C(0), out, out_error);
+                },
+                fdb_payload_v1_view_release) == EXIT_SUCCESS);
+
+    fdb_payload_v1_view_t* text_sequence = nullptr;
+    fdb_payload_v1_view_t* text = nullptr;
+    require(fdb_payload_v1_payload_entry_view(
+                fixture.payload, UINT32_C(9), &text_sequence,
+                &error.value) == UINT32_C(0));
+    require(fdb_payload_v1_view_at(
+                text_sequence, UINT64_C(0), &text,
+                &error.value) == UINT32_C(0));
+    require(sweep_handle_allocation_boundary<fdb_payload_v1_access_t>(
+                error,
+                [text](fdb_payload_v1_access_t** out,
+                       fdb_payload_v1_error_t** out_error) {
+                    return fdb_payload_v1_view_acquire(
+                        text, out, out_error);
+                },
+                fdb_payload_v1_access_release) == EXIT_SUCCESS);
+    require(sweep_handle_allocation_boundary<fdb_payload_v1_view_t>(
+                error,
+                [component](fdb_payload_v1_view_t** out,
+                            fdb_payload_v1_error_t** out_error) {
+                    return fdb_payload_v1_view_materialize(
+                        component, out, out_error);
+                },
+                fdb_payload_v1_view_release) == EXIT_SUCCESS);
+
+    fdb_payload_v1_view_release(text);
+    fdb_payload_v1_view_release(text_sequence);
+    fdb_payload_v1_view_release(component);
+    fdb_payload_v1_view_release(component_sequence);
+    fdb_payload_v1_view_release(bool_sequence);
+
+    /* Failed Access construction must unwind both Core and ABI owner pins. */
+    require(fdb_payload_v1_payload_invalidate(
+                fixture.payload, &error.value) == UINT32_C(0));
+    require(error.value == nullptr);
+    return EXIT_SUCCESS;
+}
+
+int test_stale_generation_c_projection() {
+    RuntimeFixture fixture;
+    require(fixture.initialize() == EXIT_SUCCESS);
+    ErrorRef error;
+    fdb_payload_v1_view_t* sequence = nullptr;
+    fdb_payload_v1_view_t* scalar = nullptr;
+    require(fdb_payload_v1_payload_entry_view(
+                fixture.payload, UINT32_C(3), &sequence,
+                &error.value) == UINT32_C(0));
+    require(fdb_payload_v1_view_at(
+                sequence, UINT64_C(0), &scalar,
+                &error.value) == UINT32_C(0));
+
+    auto& owner = const_cast<fastdb::payload::view::PayloadOwner&>(
+        fixture.payload->value);
+    fastdb::payload::view::PayloadOwnerTestAccess::set_generation(
+        owner, UINT64_C(2));
+    std::uint32_t value = UINT32_MAX;
+    const auto status = fdb_payload_v1_view_get_u32(
+        scalar, &value, &error.value);
+    require(status == FDB_PAYLOAD_E_STALE_GENERATION);
+    require(value == UINT32_C(0));
+    require(owned_error(status, error.value));
+
+    fdb_payload_v1_view_release(scalar);
+    fdb_payload_v1_view_release(sequence);
+    return EXIT_SUCCESS;
+}
+
+int test_view_and_access_keep_owner_alive() {
+    RuntimeFixture fixture;
+    require(fixture.initialize() == EXIT_SUCCESS);
+    ErrorRef error;
+    fdb_payload_v1_view_t* independent_view = nullptr;
+    fdb_payload_v1_view_t* text_sequence = nullptr;
+    fdb_payload_v1_view_t* text = nullptr;
+    fdb_payload_v1_access_t* access = nullptr;
+    require(fdb_payload_v1_payload_entry_view(
+                fixture.payload, UINT32_C(0), &independent_view,
+                &error.value) == UINT32_C(0));
+    require(fdb_payload_v1_payload_entry_view(
+                fixture.payload, UINT32_C(9), &text_sequence,
+                &error.value) == UINT32_C(0));
+    require(fdb_payload_v1_view_at(
+                text_sequence, UINT64_C(0), &text,
+                &error.value) == UINT32_C(0));
+    require(fdb_payload_v1_view_acquire(
+                text, &access, &error.value) == UINT32_C(0));
+
+    fdb_payload_v1_view_release(text);
+    fdb_payload_v1_view_release(text_sequence);
+    fdb_payload_v1_payload_release(fixture.payload);
+    fixture.payload = nullptr;
+
+    std::uint32_t kind = UINT32_C(0);
+    std::uint64_t length = UINT64_C(0);
+    require(fdb_payload_v1_view_kind(
+                independent_view, &kind, &error.value) == UINT32_C(0));
+    require(kind == FDB_PAYLOAD_VIEW_SEQUENCE);
+    require(fdb_payload_v1_view_length(
+                independent_view, &length, &error.value) == UINT32_C(0));
+    require(length == UINT64_C(1));
+    fdb_payload_v1_view_release(independent_view);
+
+    const std::uint8_t* data = nullptr;
+    std::uint64_t size = UINT64_C(0);
+    require(fdb_payload_v1_access_str(
+                access, &data, &size, &error.value) == UINT32_C(0));
+    require(size == UINT64_C(3));
+    require(std::memcmp(data, "abc", 3U) == 0);
+    fdb_payload_v1_access_release(access);
+    return EXIT_SUCCESS;
 }
 
 int test_complete_record_runtime() {
@@ -1370,6 +1849,480 @@ int test_complete_record_runtime() {
     return EXIT_SUCCESS;
 }
 
+int test_checked_view_access_materialize_and_barrier_abi() {
+    RuntimeFixture fixture;
+    require(fixture.initialize() == EXIT_SUCCESS);
+    ErrorRef error;
+
+    fdb_payload_v1_access_t* cleared_access =
+        reinterpret_cast<fdb_payload_v1_access_t*>(std::uintptr_t{1});
+    auto clearing_status = fdb_payload_v1_payload_acquire(
+        nullptr, &cleared_access, &error.value);
+    require(clearing_status == FDB_PAYLOAD_E_INVALID_ARGUMENT);
+    require(cleared_access == nullptr && owned_error(clearing_status,
+                                                     error.value));
+    error.clear();
+    fdb_payload_v1_view_t* cleared_view =
+        reinterpret_cast<fdb_payload_v1_view_t*>(std::uintptr_t{1});
+    clearing_status = fdb_payload_v1_payload_entry_view(
+        nullptr, UINT32_C(0), &cleared_view, &error.value);
+    require(clearing_status == FDB_PAYLOAD_E_INVALID_ARGUMENT);
+    require(cleared_view == nullptr);
+    error.clear();
+    std::uint32_t cleared_u32 = UINT32_MAX;
+    clearing_status =
+        fdb_payload_v1_view_kind(nullptr, &cleared_u32, &error.value);
+    require(clearing_status == FDB_PAYLOAD_E_INVALID_ARGUMENT);
+    require(cleared_u32 == UINT32_C(0));
+    error.clear();
+    const std::uint8_t* cleared_bytes =
+        reinterpret_cast<const std::uint8_t*>(std::uintptr_t{1});
+    std::uint64_t cleared_size = UINT64_MAX;
+    clearing_status = fdb_payload_v1_access_payload_bytes(
+        nullptr, &cleared_bytes, &cleared_size, &error.value);
+    require(clearing_status == FDB_PAYLOAD_E_INVALID_ARGUMENT);
+    require(cleared_bytes == nullptr && cleared_size == UINT64_C(0));
+    error.clear();
+
+    fdb_payload_v1_capabilities_t capabilities{};
+    fdb_payload_v1_capabilities_init(&capabilities);
+    require(fdb_payload_v1_spec_capabilities(
+                fixture.spec, &capabilities, &error.value) == UINT32_C(0));
+    require(capabilities.operation_flags ==
+            (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
+             FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
+             FDB_PAYLOAD_OPERATION_VIEW |
+             FDB_PAYLOAD_OPERATION_MATERIALIZE |
+             FDB_PAYLOAD_OPERATION_INVALIDATE));
+
+    fdb_payload_v1_access_t* payload_access = nullptr;
+    require(fdb_payload_v1_payload_acquire(
+                fixture.payload, &payload_access, &error.value) ==
+            UINT32_C(0));
+    require(payload_access != nullptr && error.value == nullptr);
+    const std::uint8_t* payload_bytes = nullptr;
+    std::uint64_t payload_size = UINT64_C(0);
+    require(fdb_payload_v1_access_payload_bytes(
+                payload_access, &payload_bytes, &payload_size,
+                &error.value) == UINT32_C(0));
+    require(payload_bytes != nullptr && payload_size > UINT64_C(0));
+    if constexpr (sizeof(std::size_t) < sizeof(std::uint64_t)) {
+        require(payload_size <= static_cast<std::uint64_t>(
+                                    std::numeric_limits<std::size_t>::max()));
+    }
+    const std::size_t payload_native_size =
+        static_cast<std::size_t>(payload_size);
+    const std::uint8_t* wrong_bytes =
+        reinterpret_cast<const std::uint8_t*>(std::uintptr_t{1});
+    std::uint64_t wrong_size = UINT64_MAX;
+    const auto wrong_payload_access = fdb_payload_v1_access_str(
+        payload_access, &wrong_bytes, &wrong_size, &error.value);
+    require(wrong_payload_access == FDB_PAYLOAD_E_TYPE_MISMATCH);
+    require(wrong_bytes == nullptr && wrong_size == UINT64_C(0));
+    require(owned_error(wrong_payload_access, error.value));
+    error.clear();
+
+    const auto entry = [&error](const fdb_payload_v1_payload_t* payload,
+                                std::uint32_t index)
+        -> fdb_payload_v1_view_t* {
+        fdb_payload_v1_view_t* result = nullptr;
+        if (fdb_payload_v1_payload_entry_view(
+                payload, index, &result, &error.value) != UINT32_C(0) ||
+            result == nullptr || error.value != nullptr) {
+            return nullptr;
+        }
+        return result;
+    };
+    const auto at = [&error](const fdb_payload_v1_view_t* view,
+                             std::uint64_t index)
+        -> fdb_payload_v1_view_t* {
+        fdb_payload_v1_view_t* result = nullptr;
+        if (fdb_payload_v1_view_at(
+                view, index, &result, &error.value) != UINT32_C(0) ||
+            result == nullptr || error.value != nullptr) {
+            return nullptr;
+        }
+        return result;
+    };
+    const auto entry_at = [&entry, &at](const fdb_payload_v1_payload_t* payload,
+                                        std::uint32_t entry_index,
+                                        std::uint64_t value_index) {
+        fdb_payload_v1_view_t* sequence = entry(payload, entry_index);
+        fdb_payload_v1_view_t* result = at(sequence, value_index);
+        fdb_payload_v1_view_release(sequence);
+        return result;
+    };
+
+    fdb_payload_v1_view_t* bool_sequence = entry(fixture.payload, UINT32_C(0));
+    std::uint32_t kind = UINT32_C(0);
+    std::uint8_t is_null = UINT8_C(1);
+    std::uint64_t length = UINT64_C(0);
+    require(fdb_payload_v1_view_kind(
+                bool_sequence, &kind, &error.value) == UINT32_C(0));
+    require(kind == FDB_PAYLOAD_VIEW_SEQUENCE);
+    require(fdb_payload_v1_view_is_null(
+                bool_sequence, &is_null, &error.value) == UINT32_C(0));
+    require(is_null == UINT8_C(0));
+    require(fdb_payload_v1_view_length(
+                bool_sequence, &length, &error.value) == UINT32_C(0));
+    require(length == UINT64_C(1));
+    fdb_payload_v1_view_t* scalar = at(bool_sequence, UINT64_C(0));
+    require(fdb_payload_v1_view_kind(
+                scalar, &kind, &error.value) == UINT32_C(0));
+    require(kind == FDB_PAYLOAD_VIEW_BOOL);
+    std::uint8_t bool_value = UINT8_C(0);
+    require(fdb_payload_v1_view_get_bool(
+                scalar, &bool_value, &error.value) == UINT32_C(0));
+    require(bool_value == UINT8_C(1));
+    std::uint8_t u8_value = UINT8_MAX;
+    auto status = fdb_payload_v1_view_get_u8(
+        scalar, &u8_value, &error.value);
+    require(status == FDB_PAYLOAD_E_TYPE_MISMATCH);
+    require(u8_value == UINT8_C(0));
+    require(owned_error(status, error.value));
+    error.clear();
+    fdb_payload_v1_view_release(scalar);
+    fdb_payload_v1_view_release(bool_sequence);
+
+    scalar = entry_at(fixture.payload, UINT32_C(1), UINT64_C(0));
+    require(fdb_payload_v1_view_get_u8(
+                scalar, &u8_value, &error.value) == UINT32_C(0));
+    require(u8_value == UINT8_C(8));
+    fdb_payload_v1_view_release(scalar);
+
+    scalar = entry_at(fixture.payload, UINT32_C(2), UINT64_C(0));
+    std::uint16_t u16_value = UINT16_C(0);
+    require(fdb_payload_v1_view_get_u16(
+                scalar, &u16_value, &error.value) == UINT32_C(0));
+    require(u16_value == UINT16_C(16));
+    fdb_payload_v1_view_release(scalar);
+
+    scalar = entry_at(fixture.payload, UINT32_C(3), UINT64_C(0));
+    std::uint32_t u32_value = UINT32_C(0);
+    require(fdb_payload_v1_view_get_u32(
+                scalar, &u32_value, &error.value) == UINT32_C(0));
+    require(u32_value == UINT32_C(32));
+    fdb_payload_v1_view_release(scalar);
+
+    scalar = entry_at(fixture.payload, UINT32_C(4), UINT64_C(0));
+    std::int32_t i32_value = INT32_C(0);
+    require(fdb_payload_v1_view_get_i32(
+                scalar, &i32_value, &error.value) == UINT32_C(0));
+    require(i32_value == INT32_C(-32));
+    fdb_payload_v1_view_release(scalar);
+
+    scalar = entry_at(fixture.payload, UINT32_C(5), UINT64_C(0));
+    std::uint64_t f64_bits = UINT64_MAX;
+    require(fdb_payload_v1_view_get_u8n_f64_bits(
+                scalar, &f64_bits, &error.value) == UINT32_C(0));
+    require(f64_bits != UINT64_MAX);
+    fdb_payload_v1_view_release(scalar);
+
+    scalar = entry_at(fixture.payload, UINT32_C(6), UINT64_C(0));
+    f64_bits = UINT64_MAX;
+    require(fdb_payload_v1_view_get_u16n_f64_bits(
+                scalar, &f64_bits, &error.value) == UINT32_C(0));
+    require(f64_bits != UINT64_MAX);
+    fdb_payload_v1_view_release(scalar);
+
+    scalar = entry_at(fixture.payload, UINT32_C(7), UINT64_C(0));
+    std::uint32_t f32_bits = UINT32_C(0);
+    require(fdb_payload_v1_view_get_f32_bits(
+                scalar, &f32_bits, &error.value) == UINT32_C(0));
+    require(f32_bits == UINT32_C(0x3fc00000));
+    fdb_payload_v1_view_release(scalar);
+
+    scalar = entry_at(fixture.payload, UINT32_C(8), UINT64_C(0));
+    f64_bits = UINT64_C(0);
+    require(fdb_payload_v1_view_get_f64_bits(
+                scalar, &f64_bits, &error.value) == UINT32_C(0));
+    require(f64_bits == UINT64_C(0x4004000000000000));
+    fdb_payload_v1_view_release(scalar);
+
+    fdb_payload_v1_view_t* text =
+        entry_at(fixture.payload, UINT32_C(9), UINT64_C(0));
+    fdb_payload_v1_access_t* text_access = nullptr;
+    require(fdb_payload_v1_view_acquire(
+                text, &text_access, &error.value) == UINT32_C(0));
+    const std::uint8_t* text_data = nullptr;
+    std::uint64_t text_size = UINT64_C(0);
+    require(fdb_payload_v1_access_str(
+                text_access, &text_data, &text_size, &error.value) ==
+            UINT32_C(0));
+    require(text_size == UINT64_C(3));
+    require(std::memcmp(text_data, "abc", 3U) == 0);
+    require(byte_span_contains_address(
+        payload_bytes, payload_native_size, text_data));
+    wrong_bytes = reinterpret_cast<const std::uint8_t*>(std::uintptr_t{1});
+    wrong_size = UINT64_MAX;
+    status = fdb_payload_v1_access_bytes(
+        text_access, &wrong_bytes, &wrong_size, &error.value);
+    require(status == FDB_PAYLOAD_E_TYPE_MISMATCH);
+    require(wrong_bytes == nullptr && wrong_size == UINT64_C(0));
+    error.clear();
+
+    fdb_payload_v1_view_t* wide =
+        entry_at(fixture.payload, UINT32_C(10), UINT64_C(0));
+    fdb_payload_v1_access_t* wide_access = nullptr;
+    require(fdb_payload_v1_view_acquire(
+                wide, &wide_access, &error.value) == UINT32_C(0));
+    const std::uint16_t* wide_data = nullptr;
+    std::uint64_t wide_size = UINT64_C(0);
+    require(fdb_payload_v1_access_wstr(
+                wide_access, &wide_data, &wide_size, &error.value) ==
+            UINT32_C(0));
+    require(wide_size == UINT64_C(2));
+    require(wide_data[0] == UINT16_C(0x0041));
+    require(wide_data[1] == UINT16_C(0x03a9));
+    require(reinterpret_cast<std::uintptr_t>(wide_data) %
+                alignof(std::uint16_t) == std::uintptr_t{0});
+    const auto* wide_as_bytes =
+        reinterpret_cast<const std::uint8_t*>(wide_data);
+    require(!byte_spans_share_address(
+        wide_as_bytes, static_cast<std::size_t>(wide_size) *
+                           sizeof(std::uint16_t),
+        payload_bytes, payload_native_size));
+
+    fdb_payload_v1_view_t* opaque =
+        entry_at(fixture.payload, UINT32_C(11), UINT64_C(0));
+    fdb_payload_v1_access_t* opaque_access = nullptr;
+    require(fdb_payload_v1_view_acquire(
+                opaque, &opaque_access, &error.value) == UINT32_C(0));
+    const std::uint8_t* opaque_data = nullptr;
+    std::uint64_t opaque_size = UINT64_C(0);
+    require(fdb_payload_v1_access_bytes(
+                opaque_access, &opaque_data, &opaque_size, &error.value) ==
+            UINT32_C(0));
+    require(opaque_size == UINT64_C(3));
+    require(opaque_data[0] == UINT8_C(0) &&
+            opaque_data[1] == UINT8_C(1) &&
+            opaque_data[2] == UINT8_C(255));
+    require(byte_span_contains_address(
+        payload_bytes, payload_native_size, opaque_data));
+
+    fdb_payload_v1_view_t* component =
+        entry_at(fixture.payload, UINT32_C(12), UINT64_C(0));
+    require(fdb_payload_v1_view_kind(
+                component, &kind, &error.value) == UINT32_C(0));
+    require(kind == FDB_PAYLOAD_VIEW_COMPONENT);
+    std::uint32_t component_index = UINT32_MAX;
+    std::uint32_t field_count = UINT32_C(0);
+    require(fdb_payload_v1_view_component_index(
+                component, &component_index, &error.value) == UINT32_C(0));
+    require(component_index == UINT32_C(0));
+    require(fdb_payload_v1_view_field_count(
+                component, &field_count, &error.value) == UINT32_C(0));
+    require(field_count == UINT32_C(2));
+    fdb_payload_v1_view_t* field = nullptr;
+    require(fdb_payload_v1_view_field(
+                component, UINT32_C(1), &field, &error.value) == UINT32_C(0));
+    require(fdb_payload_v1_view_get_u8(
+                field, &u8_value, &error.value) == UINT32_C(0));
+    require(u8_value == UINT8_C(2));
+    fdb_payload_v1_view_release(field);
+
+    fdb_payload_v1_view_t* list =
+        entry_at(fixture.payload, UINT32_C(13), UINT64_C(0));
+    require(fdb_payload_v1_view_kind(
+                list, &kind, &error.value) == UINT32_C(0));
+    require(kind == FDB_PAYLOAD_VIEW_LIST);
+    require(fdb_payload_v1_view_length(
+                list, &length, &error.value) == UINT32_C(0));
+    require(length == UINT64_C(2));
+    scalar = at(list, UINT64_C(1));
+    require(fdb_payload_v1_view_get_u8(
+                scalar, &u8_value, &error.value) == UINT32_C(0));
+    require(u8_value == UINT8_C(4));
+    fdb_payload_v1_view_release(scalar);
+
+    fdb_payload_v1_view_t* nullable_sequence =
+        entry(fixture.payload, UINT32_C(14));
+    fdb_payload_v1_view_t* null_value = at(nullable_sequence, UINT64_C(1));
+    require(fdb_payload_v1_view_is_null(
+                null_value, &is_null, &error.value) == UINT32_C(0));
+    require(is_null == UINT8_C(1));
+    u16_value = UINT16_MAX;
+    status = fdb_payload_v1_view_get_u16(
+        null_value, &u16_value, &error.value);
+    require(status == FDB_PAYLOAD_E_UNEXPECTED_NULL);
+    require(u16_value == UINT16_C(0));
+    require(owned_error(status, error.value));
+    error.clear();
+
+    fdb_payload_v1_view_t* no_child =
+        reinterpret_cast<fdb_payload_v1_view_t*>(std::uintptr_t{1});
+    status = fdb_payload_v1_view_at(
+        nullable_sequence, UINT64_C(3), &no_child, &error.value);
+    require(status == FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE);
+    require(no_child == nullptr && owned_error(status, error.value));
+    error.clear();
+    no_child = reinterpret_cast<fdb_payload_v1_view_t*>(std::uintptr_t{1});
+    status = fdb_payload_v1_view_field(
+        component, UINT32_C(2), &no_child, &error.value);
+    require(status == FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE);
+    require(no_child == nullptr && owned_error(status, error.value));
+    error.clear();
+    length = UINT64_MAX;
+    status = fdb_payload_v1_view_length(
+        component, &length, &error.value);
+    require(status == FDB_PAYLOAD_E_TYPE_MISMATCH);
+    require(length == UINT64_C(0));
+    error.clear();
+
+    fdb_payload_v1_view_t* detached = nullptr;
+    require(fdb_payload_v1_view_materialize(
+                component, &detached, &error.value) == UINT32_C(0));
+    require(detached != nullptr && error.value == nullptr);
+    fdb_payload_v1_view_t* detached_again = nullptr;
+    require(fdb_payload_v1_view_materialize(
+                detached, &detached_again, &error.value) == UINT32_C(0));
+    require(detached_again != nullptr);
+
+    std::atomic<bool> thread_queries_ok{true};
+    std::vector<std::thread> workers;
+    workers.reserve(32U);
+    for (std::uint32_t worker = UINT32_C(0); worker < UINT32_C(32); ++worker) {
+        workers.emplace_back([&fixture, component, &thread_queries_ok]() {
+            for (std::uint32_t iteration = UINT32_C(0);
+                 iteration < UINT32_C(100); ++iteration) {
+                fdb_payload_v1_payload_retain(fixture.payload);
+                fdb_payload_v1_view_retain(component);
+                fdb_payload_v1_error_t* local_error = nullptr;
+                std::uint32_t local_kind = UINT32_C(0);
+                std::uint32_t local_fields = UINT32_C(0);
+                if (fdb_payload_v1_view_kind(
+                        component, &local_kind, &local_error) != UINT32_C(0) ||
+                    local_error != nullptr ||
+                    local_kind != FDB_PAYLOAD_VIEW_COMPONENT ||
+                    fdb_payload_v1_view_field_count(
+                        component, &local_fields, &local_error) !=
+                        UINT32_C(0) ||
+                    local_error != nullptr || local_fields != UINT32_C(2)) {
+                    thread_queries_ok.store(false, std::memory_order_relaxed);
+                }
+                fdb_payload_v1_error_release(local_error);
+                fdb_payload_v1_view_release(component);
+                fdb_payload_v1_payload_release(fixture.payload);
+            }
+        });
+    }
+    for (auto& worker : workers) {
+        worker.join();
+    }
+    require(thread_queries_ok.load(std::memory_order_relaxed));
+
+    fdb_payload_v1_access_release(text_access);
+    text_access = nullptr;
+    fdb_payload_v1_access_release(wide_access);
+    wide_access = nullptr;
+    fdb_payload_v1_access_release(opaque_access);
+    opaque_access = nullptr;
+    fdb_payload_v1_access_release(payload_access);
+    payload_access = nullptr;
+
+    BackingContext barrier_context;
+    fdb_payload_v1_blob_t* binary = nullptr;
+    require(fdb_payload_v1_payload_binary_blob(
+                fixture.payload, &binary, &error.value) == UINT32_C(0));
+    barrier_context.bytes.assign(fdb_payload_v1_blob_data(binary),
+                                 fdb_payload_v1_blob_data(binary) +
+                                     fdb_payload_v1_blob_size(binary));
+    auto barrier_backing = backing_for(barrier_context);
+    fdb_payload_v1_payload_t* barrier_payload = nullptr;
+    require(fdb_payload_v1_payload_open_external(
+                fixture.spec, barrier_context.bytes.data(),
+                barrier_context.bytes.size(), &barrier_backing,
+                &barrier_context, nullptr, &barrier_payload,
+                &error.value) == UINT32_C(0));
+    require(barrier_context.retains == UINT32_C(1));
+    fdb_payload_v1_access_t* barrier_access = nullptr;
+    require(fdb_payload_v1_payload_acquire(
+                barrier_payload, &barrier_access, &error.value) ==
+            UINT32_C(0));
+    const std::uint8_t* external_data = nullptr;
+    std::uint64_t external_size = UINT64_C(0);
+    require(fdb_payload_v1_access_payload_bytes(
+                barrier_access, &external_data, &external_size,
+                &error.value) == UINT32_C(0));
+    require(external_data == barrier_context.bytes.data());
+    require(external_size == barrier_context.bytes.size());
+
+    std::atomic<bool> invalidation_finished{false};
+    std::uint32_t invalidation_status = UINT32_MAX;
+    std::thread invalidator([&]() {
+        fdb_payload_v1_error_t* local_error = nullptr;
+        invalidation_status = fdb_payload_v1_payload_invalidate(
+            barrier_payload, &local_error);
+        if (local_error != nullptr) {
+            thread_queries_ok.store(false, std::memory_order_relaxed);
+        }
+        fdb_payload_v1_error_release(local_error);
+        invalidation_finished.store(true, std::memory_order_release);
+    });
+    AccessThreadCleanup invalidation_cleanup{barrier_access, invalidator};
+
+    fastdb::payload::view::PayloadOwnerTestAccess::wait_until_invalidating(
+        barrier_payload->value);
+    fdb_payload_v1_view_t* rejected = nullptr;
+    fdb_payload_v1_error_t* rejected_error = nullptr;
+    const std::uint32_t rejected_status =
+        fdb_payload_v1_payload_entry_view(
+            barrier_payload, UINT32_C(0), &rejected, &rejected_error);
+    const bool rejected_output_was_null = rejected == nullptr;
+    const bool invalidation_was_blocked =
+        !invalidation_finished.load(std::memory_order_acquire);
+    const std::uint32_t releases_while_blocked = barrier_context.releases;
+    fdb_payload_v1_view_release(rejected);
+    fdb_payload_v1_error_release(rejected_error);
+    invalidation_cleanup.release_and_join();
+
+    require(rejected_status == FDB_PAYLOAD_E_VIEW_INVALIDATED);
+    require(rejected_output_was_null);
+    require(invalidation_was_blocked);
+    require(releases_while_blocked == UINT32_C(0));
+    require(invalidation_status == UINT32_C(0));
+    require(invalidation_finished.load(std::memory_order_acquire));
+    require(barrier_context.releases == UINT32_C(1));
+
+    kind = UINT32_MAX;
+    status = fdb_payload_v1_view_kind(component, &kind, &error.value);
+    require(status == UINT32_C(0));
+    require(kind == FDB_PAYLOAD_VIEW_COMPONENT);
+    require(fdb_payload_v1_payload_invalidate(
+                fixture.payload, &error.value) == UINT32_C(0));
+    kind = UINT32_MAX;
+    status = fdb_payload_v1_view_kind(component, &kind, &error.value);
+    require(status == FDB_PAYLOAD_E_VIEW_INVALIDATED);
+    require(kind == UINT32_C(0));
+    require(owned_error(status, error.value));
+    error.clear();
+    require(fdb_payload_v1_view_kind(
+                detached, &kind, &error.value) == UINT32_C(0));
+    require(kind == FDB_PAYLOAD_VIEW_COMPONENT);
+    require(fdb_payload_v1_view_field(
+                detached, UINT32_C(1), &field, &error.value) == UINT32_C(0));
+    require(fdb_payload_v1_view_get_u8(
+                field, &u8_value, &error.value) == UINT32_C(0));
+    require(u8_value == UINT8_C(2));
+    fdb_payload_v1_view_release(field);
+
+    fdb_payload_v1_blob_release(binary);
+    fdb_payload_v1_payload_release(barrier_payload);
+    fdb_payload_v1_view_release(detached_again);
+    fdb_payload_v1_view_release(detached);
+    fdb_payload_v1_view_release(null_value);
+    fdb_payload_v1_view_release(nullable_sequence);
+    fdb_payload_v1_view_release(list);
+    fdb_payload_v1_view_release(component);
+    fdb_payload_v1_access_release(opaque_access);
+    fdb_payload_v1_view_release(opaque);
+    fdb_payload_v1_access_release(wide_access);
+    fdb_payload_v1_view_release(wide);
+    fdb_payload_v1_access_release(text_access);
+    fdb_payload_v1_view_release(text);
+    return EXIT_SUCCESS;
+}
+
 int test_null_error_sink_rule() {
     fdb_payload_v1_spec_t* spec = compile_spec(kRecordSpec);
     require(spec != nullptr);
@@ -1470,6 +2423,79 @@ int test_null_error_sink_rule() {
         fdb_payload_v1_payload_binary_blob(nullptr, &blob, nullptr));
     require(blob ==
             reinterpret_cast<fdb_payload_v1_blob_t*>(std::uintptr_t{1}));
+    fdb_payload_v1_access_t* access =
+        reinterpret_cast<fdb_payload_v1_access_t*>(std::uintptr_t{1});
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_payload_acquire(nullptr, &access, nullptr));
+    require(access ==
+            reinterpret_cast<fdb_payload_v1_access_t*>(std::uintptr_t{1}));
+    fdb_payload_v1_view_t* view =
+        reinterpret_cast<fdb_payload_v1_view_t*>(std::uintptr_t{1});
+    REQUIRE_NULL_SINK_REJECTED(fdb_payload_v1_payload_entry_view(
+        nullptr, UINT32_C(0), &view, nullptr));
+    require(view ==
+            reinterpret_cast<fdb_payload_v1_view_t*>(std::uintptr_t{1}));
+    std::uint32_t view_u32 = UINT32_MAX;
+    std::uint64_t view_u64 = UINT64_MAX;
+    std::uint16_t view_u16 = UINT16_MAX;
+    std::int32_t view_i32 = INT32_MAX;
+    std::uint8_t view_u8 = UINT8_MAX;
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_kind(nullptr, &view_u32, nullptr));
+    require(view_u32 == UINT32_MAX);
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_is_null(nullptr, &view_u8, nullptr));
+    require(view_u8 == UINT8_MAX);
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_length(nullptr, &view_u64, nullptr));
+    require(view_u64 == UINT64_MAX);
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_at(nullptr, UINT64_C(0), &view, nullptr));
+    require(view ==
+            reinterpret_cast<fdb_payload_v1_view_t*>(std::uintptr_t{1}));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_component_index(nullptr, &view_u32, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_field_count(nullptr, &view_u32, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(fdb_payload_v1_view_field(
+        nullptr, UINT32_C(0), &view, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_get_bool(nullptr, &view_u8, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_get_u8(nullptr, &view_u8, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_get_u16(nullptr, &view_u16, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_get_u32(nullptr, &view_u32, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_get_i32(nullptr, &view_i32, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(fdb_payload_v1_view_get_u8n_f64_bits(
+        nullptr, &view_u64, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(fdb_payload_v1_view_get_u16n_f64_bits(
+        nullptr, &view_u64, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_get_f32_bits(nullptr, &view_u32, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_get_f64_bits(nullptr, &view_u64, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_acquire(nullptr, &access, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_view_materialize(nullptr, &view, nullptr));
+    const std::uint8_t* byte_span =
+        reinterpret_cast<const std::uint8_t*>(std::uintptr_t{1});
+    const std::uint16_t* wide_span =
+        reinterpret_cast<const std::uint16_t*>(std::uintptr_t{1});
+    REQUIRE_NULL_SINK_REJECTED(fdb_payload_v1_access_payload_bytes(
+        nullptr, &byte_span, &view_u64, nullptr));
+    require(byte_span ==
+            reinterpret_cast<const std::uint8_t*>(std::uintptr_t{1}));
+    require(view_u64 == UINT64_MAX);
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_access_str(nullptr, &byte_span, &view_u64, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_access_wstr(nullptr, &wide_span, &view_u64, nullptr));
+    REQUIRE_NULL_SINK_REJECTED(
+        fdb_payload_v1_access_bytes(nullptr, &byte_span, &view_u64, nullptr));
     REQUIRE_NULL_SINK_REJECTED(
         fdb_payload_v1_payload_invalidate(nullptr, nullptr));
 
@@ -1700,8 +2726,15 @@ int test_errors_prefixes_callbacks_and_graph_unavailable() {
 }  // namespace
 
 int main() {
+    require(verify_allocation_harness_invariants() == EXIT_SUCCESS);
     require(test_initializers_and_constants() == EXIT_SUCCESS);
     require(test_complete_record_runtime() == EXIT_SUCCESS);
+    require(test_handle_allocation_boundaries_and_owner_projection() ==
+            EXIT_SUCCESS);
+    require(test_stale_generation_c_projection() == EXIT_SUCCESS);
+    require(test_view_and_access_keep_owner_alive() == EXIT_SUCCESS);
+    require(test_checked_view_access_materialize_and_barrier_abi() ==
+            EXIT_SUCCESS);
     require(test_null_error_sink_rule() == EXIT_SUCCESS);
     require(test_errors_prefixes_callbacks_and_graph_unavailable() ==
             EXIT_SUCCESS);

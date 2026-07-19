@@ -50,7 +50,7 @@
           "capabilities": {
             "properties": {
               "operations": {
-                "const": ["compile", "query", "build", "open", "invalidate"]
+                "const": ["compile", "query", "build", "open", "view", "materialize", "invalidate"]
               },
               "direct_build": {
                 "properties": {
@@ -228,11 +228,13 @@
                 {"const": "query"},
                 {"const": "build"},
                 {"const": "open"},
+                {"const": "view"},
+                {"const": "materialize"},
                 {"const": "invalidate"}
               ],
               "items": false,
-              "minItems": 5,
-              "maxItems": 5
+              "minItems": 7,
+              "maxItems": 7
             }
           ]
         },
