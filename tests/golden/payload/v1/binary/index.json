@@ -74,6 +74,36 @@
       }
     },
     {
+      "name": "graph-empty",
+      "success": {
+        "source": "spec/graph-empty.source.json",
+        "scenario": "graph_empty",
+        "binary_hex": "valid/graph-empty.bin.hex",
+        "sha256": "valid/graph-empty.sha256",
+        "layout": "valid/graph-empty.layout.md"
+      }
+    },
+    {
+      "name": "graph-single-root",
+      "success": {
+        "source": "spec/graph-single-root.source.json",
+        "scenario": "graph_single_root",
+        "binary_hex": "valid/graph-single-root.bin.hex",
+        "sha256": "valid/graph-single-root.sha256",
+        "layout": "valid/graph-single-root.layout.md"
+      }
+    },
+    {
+      "name": "graph-shared-cycle",
+      "success": {
+        "source": "spec/graph-shared-cycle.source.json",
+        "scenario": "graph_shared_cycle",
+        "binary_hex": "valid/graph-shared-cycle.bin.hex",
+        "sha256": "valid/graph-shared-cycle.sha256",
+        "layout": "valid/graph-shared-cycle.layout.md"
+      }
+    },
+    {
       "name": "invalid-header-magic",
       "invalid": {
         "source": "spec/empty.source.json",

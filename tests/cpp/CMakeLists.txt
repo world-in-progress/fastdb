@@ -444,6 +444,26 @@ target_include_directories(
 set_tests_properties(payload.graph_builder PROPERTIES TIMEOUT 180)
 
 add_fastdb_payload_test(
+    graph_binary
+    SOURCES
+        payload/GoldenCorpus.cpp
+        payload/test_graph_binary.cpp
+    EXTRA_LIBRARIES fastdb_payload_core
+)
+target_include_directories(
+    fastdb_payload_test_graph_binary
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_compile_definitions(
+    fastdb_payload_test_graph_binary
+    PRIVATE
+        "FASTDB_PAYLOAD_BINARY_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary\""
+)
+set_tests_properties(payload.graph_binary PROPERTIES TIMEOUT 180)
+
+add_fastdb_payload_test(
     record_binary
     SOURCES
         payload/GoldenCorpus.cpp

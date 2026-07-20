@@ -1,0 +1,36 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "object_graph.v1",
+  "entries": [
+    {
+      "id": "a_first",
+      "cardinality": "one",
+      "type": {"kind": "component", "id": "Node"}
+    },
+    {
+      "id": "b_second",
+      "cardinality": "one",
+      "type": {"kind": "component", "id": "Node"}
+    }
+  ],
+  "components": [
+    {
+      "id": "Node",
+      "kind": "record",
+      "fields": [
+        {"id": "a_value", "type": {"kind": "u32"}},
+        {"id": "b_self", "type": {"kind": "ref", "target": "Node"}},
+        {"id": "c_shared", "type": {"kind": "ref", "target": "Node"}},
+        {"id": "d_pair", "type": {"kind": "component", "id": "Pair"}}
+      ]
+    },
+    {
+      "id": "Pair",
+      "kind": "record",
+      "fields": [
+        {"id": "a_flag", "type": {"kind": "bool"}},
+        {"id": "b_code", "type": {"kind": "u16"}}
+      ]
+    }
+  ]
+}

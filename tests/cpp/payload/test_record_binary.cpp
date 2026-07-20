@@ -941,8 +941,34 @@ const BinaryGoldenCase* find_case(const std::vector<BinaryGoldenCase>& cases,
 int test_binary_goldens_determinism_hash_and_headers() {
     const auto corpus = fastdb::test::payload::load_binary_golden_corpus(
         FASTDB_PAYLOAD_BINARY_FIXTURE_DIR);
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 8>
+        frozen_record_hashes{{
+            {"empty",
+             "0ac923d7ec53314116dada8ad54f44590cc403738f7710d23b1cc0b3313202df"},
+            {"fixed-scalars",
+             "879da9218873979daabdc0cb45448b293500ac6d28a9fb16b86bd68ef00d62db"},
+            {"numeric-edges",
+             "2f619756b720759b948562f7666cb8aaaffa860eddc33105a6f5f3d3f7bb0394"},
+            {"nested-components",
+             "0a8c2e03b4c095470300353921cd30b6a736ec9394aa2bc8ed0bcafb90cbc1a6"},
+            {"text-bytes",
+             "9033c95633c07e9737246afac8fcf4c0da407b0965a6a9612d0b3c926e75a7e6"},
+            {"nested-lists",
+             "c2e14c00bb4fbdd570d8430ec09645cd4778a18ef87ce5529fa3d9466c8a1833"},
+            {"component-list-composition",
+             "e77d4f3d221a74db0e6d13dd695c4c89a0855ecd2be4ab8c01725e9f897f5993"},
+            {"component-list-empty",
+             "04c62573387235786bb63ff63eb2abd2e6c729d3e1b2f053a857237ae1ed55d6"},
+        }};
     require(corpus.size() == 8U);
     for (const BinaryGoldenCase& item : corpus) {
+        const auto frozen = std::find_if(
+            frozen_record_hashes.begin(), frozen_record_hashes.end(),
+            [&item](const auto& expected) {
+                return expected.first == item.name;
+            });
+        require(frozen != frozen_record_hashes.end(), item.name);
+        require(item.success.sha256 == frozen->second, item.name);
         auto first = encode_case(item);
         auto second = encode_case(item);
         require(first.has_value(),

@@ -3,6 +3,7 @@
 #include "payload/json/Jcs.hpp"
 #include "payload/json/JsonDocument.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <fstream>
@@ -178,12 +179,19 @@ GoldenCase load_case(const std::string& root, JsonCursor value) {
 
 BinaryGoldenSuccess load_binary_success(const std::string& root,
                                         JsonCursor success) {
-    if (!success.is_object() || success.size() != UINT64_C(4)) {
-        malformed("binary success must have four exact members");
+    if (!success.is_object() ||
+        (success.size() != UINT64_C(4) && success.size() != UINT64_C(5))) {
+        malformed("binary success must have four or five exact members");
     }
     const std::string source_path = required_string(success, "source");
     const std::string binary_path = required_string(success, "binary_hex");
     const std::string sha256_path = required_string(success, "sha256");
+    std::string layout_path;
+    std::string layout_receipt;
+    if (success.size() == UINT64_C(5)) {
+        layout_path = required_string(success, "layout");
+        layout_receipt = load_binary_file(root + "/" + layout_path);
+    }
     return BinaryGoldenSuccess{
         source_path,
         load_binary_file(root + "/" + source_path),
@@ -192,6 +200,8 @@ BinaryGoldenSuccess load_binary_success(const std::string& root,
         one_hex_line(root + "/" + binary_path),
         sha256_path,
         one_hex_line(root + "/" + sha256_path, 64U),
+        std::move(layout_path),
+        std::move(layout_receipt),
     };
 }
 
@@ -358,20 +368,42 @@ std::vector<GoldenCase> load_spec_golden_corpus(const std::string& root) {
     return cases;
 }
 
+namespace {
+
+std::vector<BinaryOpenGoldenCase> load_all_binary_open_golden_corpus(
+    const std::string& root);
+
+}  // namespace
+
 std::vector<BinaryGoldenCase> load_binary_golden_corpus(
     const std::string& root) {
-    const auto all = load_binary_open_golden_corpus(root);
+    const auto all = load_all_binary_open_golden_corpus(root);
     std::vector<BinaryGoldenCase> successes;
     for (const BinaryOpenGoldenCase& item : all) {
         const auto* success = std::get_if<BinaryGoldenSuccess>(&item.expected);
-        if (success != nullptr) {
+        if (success != nullptr && success->layout_relative_path.empty()) {
             successes.push_back(BinaryGoldenCase{item.name, *success});
         }
     }
     return successes;
 }
 
-std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
+std::vector<BinaryGoldenCase> load_graph_binary_golden_corpus(
+    const std::string& root) {
+    const auto all = load_all_binary_open_golden_corpus(root);
+    std::vector<BinaryGoldenCase> successes;
+    for (const BinaryOpenGoldenCase& item : all) {
+        const auto* success = std::get_if<BinaryGoldenSuccess>(&item.expected);
+        if (success != nullptr && !success->layout_relative_path.empty()) {
+            successes.push_back(BinaryGoldenCase{item.name, *success});
+        }
+    }
+    return successes;
+}
+
+namespace {
+
+std::vector<BinaryOpenGoldenCase> load_all_binary_open_golden_corpus(
     const std::string& root) {
     const std::string index_source = load_binary_file(root + "/index.json");
     auto parsed = JsonDocument::parse(
@@ -397,6 +429,7 @@ std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
     std::set<std::string> scenarios;
     std::set<std::string> binary_paths;
     std::set<std::string> sha256_paths;
+    std::set<std::string> layout_paths;
     std::set<std::string> expectation_paths;
     auto elements = cases_value.elements();
     JsonCursor element;
@@ -410,7 +443,10 @@ std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
             if (success->source.empty() || success->scenario.empty() ||
                 !scenarios.insert(success->scenario).second ||
                 !binary_paths.insert(success->binary_relative_path).second ||
-                !sha256_paths.insert(success->sha256_relative_path).second) {
+                !sha256_paths.insert(success->sha256_relative_path).second ||
+                (!success->layout_relative_path.empty() &&
+                 (!layout_paths.insert(success->layout_relative_path).second ||
+                  success->layout_receipt.empty()))) {
                 malformed("binary success fields are listed more than once");
             }
         } else {
@@ -425,6 +461,23 @@ std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
         cases.push_back(std::move(item));
     }
     return cases;
+}
+
+}  // namespace
+
+std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
+    const std::string& root) {
+    auto all = load_all_binary_open_golden_corpus(root);
+    all.erase(
+        std::remove_if(
+            all.begin(), all.end(), [](const BinaryOpenGoldenCase& item) {
+                const auto* success =
+                    std::get_if<BinaryGoldenSuccess>(&item.expected);
+                return success != nullptr &&
+                       !success->layout_relative_path.empty();
+            }),
+        all.end());
+    return all;
 }
 
 }  // namespace fastdb::test::payload

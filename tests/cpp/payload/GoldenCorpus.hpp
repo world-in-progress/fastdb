@@ -37,6 +37,8 @@ struct BinaryGoldenSuccess final {
     std::string binary_hex;
     std::string sha256_relative_path;
     std::string sha256;
+    std::string layout_relative_path;
+    std::string layout_receipt;
 };
 
 struct BinaryGoldenCase final {
@@ -75,6 +77,9 @@ struct BinaryOpenGoldenCase final {
 std::vector<GoldenCase> load_spec_golden_corpus(const std::string& root);
 
 std::vector<BinaryGoldenCase> load_binary_golden_corpus(
+    const std::string& root);
+
+std::vector<BinaryGoldenCase> load_graph_binary_golden_corpus(
     const std::string& root);
 
 std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(

@@ -6,16 +6,18 @@ but they do not replace the C++ Core's strict parser, normalization, profile
 validation, resolution, canonicalization, or digest authority.
 
 [`fastdb.payload.bin.v1.md`](fastdb.payload.bin.v1.md) is the normative binary
-record-layout contract. It freezes byte offsets, directories, slot/component
-layout, canonical padding and partition rules, numeric representation,
-hardened-open accounting, and resource limits. Its first explicit ordered
-images are in the
+contract for both `record.v1` profile 1 and `object_graph.v1` profile 2. It
+freezes byte offsets, profile-dispatched region inventories, slots, inline and
+object-pool AoS layout, canonical padding and partition rules, numeric
+representation, hardened-open accounting, and resource limits. Its explicit
+ordered record and first annotated graph images are in the
 [binary golden index](../tests/golden/payload/v1/binary/index.json).
-The current mapping from accepted P2 requirements to Core symbols, named
-tests, and ordered goldens is the [P2 requirement-to-test
+The frozen record mapping from accepted requirements to Core symbols, named
+tests, and ordered goldens remains the [P2 requirement-to-test
 traceability](../docs/issues/0002-portable-payload-foundation-implementation-status.md#p2-requirement-to-test-traceability)
-table. That table records local evidence only and keeps hosted results and
-later runtime/binding stages explicitly open.
+table; the same issue now also records the staged P3 evidence and limitations.
+It records local evidence only and keeps hosted results and later
+runtime/binding stages explicitly open.
 The reviewed binary-open seed inventory and exact byte recipes live in
 [`tests/fuzz/payload/binary-corpus.json`](../tests/fuzz/payload/binary-corpus.json);
 the deterministic runner and coverage-guided target both consume those bytes

@@ -1,8 +1,10 @@
 # `fastdb.payload.bin.v1`
 
-This is the normative byte contract for the Core-owned portable record format.
+This is the normative byte contract for the Core-owned portable record and
+object-graph formats.
 It follows the accepted [portable payload design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
-and [ADR-0001](../docs/decisions/0001-portable-payload-core-authority.md).
+and [object-graph runtime design](../docs/superpowers/specs/2026-07-20-portable-payload-object-graph-runtime-design.md),
+plus [ADR-0001](../docs/decisions/0001-portable-payload-core-authority.md).
 The first independently reviewable images are in the
 [ordered binary golden index](../tests/golden/payload/v1/binary/index.json).
 [Issue 0002](../docs/issues/0002-portable-payload-foundation-implementation-status.md)
@@ -28,14 +30,17 @@ permanently reserved as a wire sentinel.
 3. Visit all components by stable component index, reachable or not. Visit
    fields by stable field index and assign each root and nested list chain with
    the same preorder.
-4. Compute record reachability in a separate iterative pass from every entry
-   root, following `list.items` and by-value component field edges. It selects
-   component layouts, list regions, and pools but never renumbers source nodes.
-   Component layouts are compiled and cached only for this reachable subgraph;
-   unreachable source component nodes retain IDs but have no runtime slot or
-   component-layout inventory entry.
-5. A reached `ref` is an internal record invariant failure. Reject
-   `object_graph.v1` with `RUNTIME_UNAVAILABLE` before record runtime creation.
+4. Compute profile-aware reachability in a separate iterative pass from every
+   entry root. Both profiles follow `list.items` and by-value component fields;
+   `object_graph.v1` also follows each `ref` target component. This selects
+   component layouts, identity-bearing components, list regions, and pools but
+   never renumbers source nodes. Component layouts are compiled and cached only
+   for the reachable subgraph; unreachable source component nodes retain IDs
+   but have no runtime slot or component-layout inventory entry.
+5. `record.v1` treats a reached `ref` as an invariant failure.
+   `object_graph.v1` classifies entry-side identity components as object-root
+   ID slots, `ref` as reference-ID slots, and component fields as inline AoS
+   values. These storage roles are derived facts and do not alter runtime IDs.
 
 More than `UINT32_MAX` source nodes fails with `BUILDER_RESOURCE_LIMIT` at
 `/runtime/types`. IDs are binary-local facts and do not change canonical JSON,
@@ -49,7 +54,7 @@ the spec digest, or P1 stable indexes.
 | 8 | 2 | major | `1` |
 | 10 | 2 | minor | `0` |
 | 12 | 4 | header size | `128` |
-| 16 | 4 | profile | `FDB_PAYLOAD_PROFILE_RECORD_V1` (`1`) |
+| 16 | 4 | profile | `1` for `record.v1`; `2` for `object_graph.v1` |
 | 20 | 4 | flags | `0` |
 | 24 | 8 | total length | exact supplied/committed length including final padding |
 | 32 | 32 | spec SHA-256 | exact `CompiledSpec::digest()` bytes |
@@ -62,6 +67,10 @@ the spec digest, or P1 stable indexes.
 | 96 | 8 | root value count | checked sum of entry value counts |
 | 104 | 24 | reserved | all zero |
 
+The header profile must exactly match the provided `CompiledSpec`: profile 1
+is `FDB_PAYLOAD_PROFILE_RECORD_V1`, and profile 2 is
+`FDB_PAYLOAD_PROFILE_OBJECT_GRAPH_V1`. Header offset 96 is the checked sum of
+entry value counts in both profiles; it is not the number of graph objects.
 V1 rejects any other magic, version, fixed size, profile, flags, or non-zero
 reserved byte. Forward extension requires a new version or an accepted
 flag/record-size contract; old readers fail closed instead of guessing tails.
@@ -91,6 +100,7 @@ Kinds are fixed-width integer macros, not C enums:
 5 UTF8_POOL
 6 UTF16_POOL
 7 BYTES_POOL
+8 OBJECT_VALUES
 ```
 
 Every field combination is normative.
@@ -104,6 +114,7 @@ Every field combination is normative.
 | `UTF8_POOL` | reachable `str` | `UINT32_MAX` | `UINT32_MAX` | UTF-8 pool bytes | bytes | `0` | `1` |
 | `UTF16_POOL` | reachable `wstr` | `UINT32_MAX` | `UINT32_MAX` | UTF-16LE bytes | code units (`byte_length/2`) | `0` | `2` |
 | `BYTES_POOL` | reachable `bytes` | `UINT32_MAX` | `UINT32_MAX` | opaque bytes | bytes | `0` | `1` |
+| `OBJECT_VALUES` | profile 2 identity-bearing component | stable component index | `UINT32_MAX` | `object_count * component_stride` | objects | component stride | component align |
 
 All products, bitmap ceilings, and `uint32_t` stride conversions are checked.
 A stride above `UINT32_MAX` is `RESOURCE_LIMIT` at its logical type path.
@@ -124,12 +135,25 @@ Validity logical count is represented values/items, not bitmap bytes.
 
 ## Canonical inventory and offsets
 
-The directory contains exactly:
+For profile 1, the directory contains exactly:
 
 1. each entry by index: nullable validity first, then values;
 2. each reachable list node by ascending runtime type ID: nullable-item
    validity first, then items;
 3. UTF-8, UTF-16, and bytes pools in that order when reachable, even if empty.
+
+For profile 2, the directory contains exactly:
+
+1. each entry by index: nullable validity first, then values;
+2. each reachable identity-bearing component by stable component index: one
+   `OBJECT_VALUES` region, including when its object count is zero;
+3. each reachable list node by ascending runtime type ID: nullable-item
+   validity first, then items;
+4. UTF-8, UTF-16, and bytes pools in that order when reachable, even if empty.
+
+Unknown, duplicate, missing, reordered, aliased, or extra regions are
+non-canonical. In particular, profile 2 has no separate physical roots or
+references region.
 
 The entry directory immediately follows the region directory. Data begins at
 `align_up(entry_directory_end, 8)`. Each region starts at the smallest offset
@@ -143,6 +167,38 @@ boundary. Adjacent empty regions may share it. Empty values/list regions keep
 their non-zero stride/alignment; validity/pools keep zero stride. Open
 recomputes the complete inventory from `RuntimeSchema`.
 
+## Object pools, roots, and references
+
+Every profile-2 identity-bearing component owns exactly one dense object pool.
+Its `OBJECT_VALUES` descriptor has `kind = 8`, `flags = 0`, stable component
+index as owner, `UINT32_MAX` runtime-type sentinel, checked
+`object_count * component_stride` byte length, object count as logical count,
+component stride/alignment, and zero reserved bytes. Object ID `i` identifies
+the component record at:
+
+```text
+object_region.data_offset + i * component_stride
+```
+
+Declaration order within each component pool determines dense IDs; fill order
+does not. IDs are component-local rather than global. An object record exists
+by declaration and therefore has no object-level validity bitmap. Its bytes
+use the same immediate-field validity, stable field order, inline nested
+component, alignment, null-zero, unused-bit, and padding-zero rules as an
+inline component.
+
+Every identity-component occurrence in entry-value context and every `ref`
+is one 8-byte, 8-aligned, little-endian `uint64_t` object-ID slot. The compiled
+occurrence fixes the target component, so no component tag is repeated in the
+slot. A present ID must be in `[0, target_object_count)`. Object ID zero is a
+valid present value. Nullability uses the containing entry/list/component
+validity bit, and all eight bytes of a null slot are zero; consequently a null
+and a present ID zero have equal slot bytes but different validity bits.
+
+Roots and refs are explicit typed ID slots, not pointer values and not
+secondary tables. Manifest storage classes named `roots` and `references` are
+logical capabilities, not additional region kinds.
+
 ## Slots and inline components
 
 | Type | Slot bytes | Align | Wire rule |
@@ -154,7 +210,8 @@ recomputes the complete inventory from `RuntimeSchema`.
 | `f64` | 8 | 8 | IEEE bits |
 | `str`, `wstr`, `bytes` | 16 | 8 | pool-relative byte offset and byte length |
 | `list` | 16 | 8 | list-region-relative item index and count |
-| `component` | component stride | component align | inline AoS record |
+| inline `component` | component stride | component align | inline AoS record |
+| object root, `ref` | 8 | 8 | schema-typed little-endian object ID |
 
 A component starts with `ceil(nullable_immediate_field_count/8)` validity
 bytes, low bit first in nullable-field order. Fields follow by stable index at
@@ -162,7 +219,7 @@ their smallest aligned offsets; tail padding reaches maximum field alignment.
 An empty component is one zero byte with stride/alignment one. A containing
 field's nullable bit controls its whole nested component. Layouts are cached by
 stable component index and reused across the finite DAG; internal by-value
-cycles/refs fail instead of recursing.
+cycles fail, while reference edges remain ID slots and are never inlined.
 
 Sequence validity is also low-bit first: one present, zero null. Unused high
 bits are zero. Non-nullable sequences have no validity region. Every null slot,
@@ -182,10 +239,8 @@ values/bounds into sign, integer significand, and power-of-two exponent.
 Core-owned bounded arbitrary-width arithmetic compares the exact rational and
 rounds nearest ties-to-even without host floating arithmetic or caller rounding
 mode. Dequantization rounds the exact result to binary64. Linux x86-64, macOS
-arm64, and wasm32 must match independent endpoint/tie goldens. The initial Task
-2 executable tranche returns `RUNTIME_UNAVAILABLE` with
-`normalized_wire_quantization_unavailable`; Issue 0002 retains the exact
-arithmetic/wasm proof as a later P2 gate. The types remain part of V1.
+arm64, and wasm32 must match independent endpoint/tie goldens. The same Core
+arithmetic and canonical code rules apply in both profiles.
 
 ## Pools, lists, and exact partitions
 
@@ -206,10 +261,30 @@ arithmetic/wasm proof as a later P2 gate. The types remain part of V1.
   reordering, and unconsumed tails fail.
 - Nested list descriptors address the separately aggregated child-list region.
 
-Traversal is entry index, entry value index, component field/list item index,
-depth first with an explicit stack. Encoding, aggregation, validation, views,
-and materialization share it. Variable pools/lists are normative but remain
-outside this initial encoder/open tranche, as tracked in Issue 0002.
+Profile-1 traversal is entry index, entry value index, then component
+field/list item index, depth first with an explicit stack. Profile-2 physical
+occurrence traversal is entries by stable index and value index, followed by
+identity-bearing components by stable component index and their objects by
+dense object ID; fields and list items within each entry value or object record
+remain depth first in stable order. An object-root/ref slot is emitted but its
+target is never followed during aggregation. Every object record is traversed
+exactly once in object-region order, so cycles and sharing cannot change list
+or variable-pool order. Layout, encoding, structural open, views, and complete
+materialization share the applicable profile order.
+
+All profile-2 object counts, sums, products, offsets, marker allocations, and
+queue growth are checked before use. After structural validation, open walks
+entry roots and references iteratively, charges work before reading or growing
+state, and requires every object to be reachable. A present out-of-range ID is
+`INVALID_REFERENCE`; the first unreachable object in component/ID order is
+`NON_CANONICAL_BINARY` with reason `unreachable_object`.
+
+Variable pools/lists and graph reachability are normative. Issue 0002 states
+precisely which profile-2 portions are executable in the current tranche.
+Unknown region kinds or flags fail closed. A future graph format that changes
+ID width, introduces separate root/ref tables, segments object pools, or
+changes component layout requires a new accepted profile or binary version;
+V1 readers never infer such extensions from reserved or spare bytes.
 
 ## Errors and checked arithmetic
 
@@ -221,12 +296,13 @@ outside this initial encoder/open tranche, as tracked in Issue 0002.
 | range outside bytes | `OUT_OF_BOUNDS` (`3004`) |
 | descriptor offset misaligned | `MISALIGNED` (`3005`) |
 | spec digest mismatch | `DIGEST_MISMATCH` (`3006`) |
+| present root/ref ID outside its typed pool | `INVALID_REFERENCE` (`3007`) |
 | caller open/layout limit | `RESOURCE_LIMIT` (`3008`) |
 | wrong inventory/fields/order, non-zero reserved/padding/null/tail, non-canonical NaN/partition | `NON_CANONICAL_BINARY` (`3009`) |
 | bounded logical value invalid for type | `INVALID_BINARY_VALUE` (`3010`) |
 | malformed UTF-8/UTF-16LE | `INVALID_TEXT_ENCODING` (`2010`) |
 
-Builder input failures `2011`–`2013` remain builder failures. They do not
+Builder input failures `2011`–`2015` remain builder failures. They do not
 replace binary/layout/open `3003`, `3004`, or `3008`; malformed caller bytes
 are not collapsed to `INVALID_ARGUMENT` or `INTERNAL`. Every add, multiply,
 narrow, align-up, range end, bitmap ceiling, offset, count, work unit, and
@@ -240,18 +316,25 @@ Open publishes an immutable `PayloadIndex` only after complete validation:
 2. supplied length before the fixed header;
 3. magic/version/profile/flags/total/digest/header reserved;
 4. checked directory ranges and exact spec/runtime counts;
-5. canonical descriptor inventory/order/fields/offsets/padding/non-overlap;
-6. validity lengths/tails, nullable rules, component maps, null-zero, Boolean;
-7. numeric canonicality, descriptor arithmetic, partitions, UTF-8/UTF-16LE;
-8. exact list/pool consumption and final total.
+5. canonical profile-specific entry/object/list/pool inventory and order;
+6. descriptor fields, offsets, alignment, padding, validity, component slots,
+   numeric values, and null-zero rules;
+7. for profile 2, every present root/ref ID against its compiled target pool;
+8. exact list/pool partitions, eager text validation when selected, and final
+   total;
+9. for profile 2, iterative graph reachability and the final all-objects-
+   reached check.
 
 Validation is iterative. Work charges one unit for the fixed header, each
 region descriptor, each entry descriptor, each inspected validity byte, each
 inspected alignment/final-padding byte, and each logical slot. A null scalar,
 list, or descriptor is one slot. A null component is one slot plus each inline
-byte scanned to prove descendant/padding zero. Eager text adds one per UTF-8
-byte and UTF-16 code unit. Present fixed bytes and opaque contents have no
-extra per-byte charge. Add and limit comparison precede the read.
+byte scanned to prove descendant/padding zero. Each profile-2 object record is
+one logical slot before its fields/by-value descendants. Graph reachability
+adds one unit for every revisited logical slot and every marker inspected by
+the final completeness scan. Eager text adds one per UTF-8 byte and UTF-16 code
+unit. Present fixed bytes and opaque contents have no extra per-byte charge.
+Every add and limit comparison precedes the corresponding read or growth.
 
 `FDB_PAYLOAD_OPEN_VALIDATE_TEXT_EAGER` is bit zero and enabled by the V1
 initializer. If cleared, structural validation still completes; later checked
@@ -266,7 +349,7 @@ work/string limits independently.
 | components | 65,536 |
 | nesting depth | 1,024 |
 | list elements | 10,000,000 |
-| graph objects | 10,000,000 (accepted, unused by record V1) |
+| graph objects | 10,000,000 (profile 2; accepted but unused by profile 1) |
 | string bytes | 1 GiB |
 | validation work | 100,000,000 |
 

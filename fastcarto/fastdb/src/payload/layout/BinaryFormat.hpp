@@ -74,6 +74,7 @@ enum class RegionKind : std::uint32_t {
     utf8_pool = FDB_PAYLOAD_REGION_UTF8_POOL,
     utf16_pool = FDB_PAYLOAD_REGION_UTF16_POOL,
     bytes_pool = FDB_PAYLOAD_REGION_BYTES_POOL,
+    object_values = FDB_PAYLOAD_REGION_OBJECT_VALUES,
 };
 
 enum class RegionCountUnit : std::uint8_t {
@@ -81,11 +82,13 @@ enum class RegionCountUnit : std::uint8_t {
     items,
     bytes,
     utf16_code_units,
+    objects,
 };
 
 enum class RegionOwnerRule : std::uint8_t {
     entry_index,
     list_runtime_type_id,
+    component_index,
     sentinel,
 };
 
@@ -97,11 +100,13 @@ enum class RegionTypeRule : std::uint8_t {
 
 enum class RegionStrideRule : std::uint8_t {
     slot_stride,
+    component_stride,
     zero,
 };
 
 enum class RegionAlignmentRule : std::uint8_t {
     slot_alignment,
+    component_alignment,
     one,
     two,
 };
@@ -182,6 +187,15 @@ constexpr RegionRule region_rule(RegionKind kind) noexcept {
                 RegionAlignmentRule::one,
                 false,
                 true};
+    case RegionKind::object_values:
+        return {UINT32_C(8),
+                RegionCountUnit::objects,
+                RegionOwnerRule::component_index,
+                RegionTypeRule::sentinel,
+                RegionStrideRule::component_stride,
+                RegionAlignmentRule::component_alignment,
+                false,
+                false};
     }
     return {UINT32_C(0),
             RegionCountUnit::bytes,

@@ -1,0 +1,29 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "object_graph.v1",
+  "entries": [
+    {
+      "id": "a_root",
+      "cardinality": "one",
+      "type": {"kind": "component", "id": "Node", "nullable": true}
+    },
+    {
+      "id": "b_optional",
+      "cardinality": "one",
+      "type": {"kind": "ref", "target": "Node", "nullable": true}
+    }
+  ],
+  "components": [
+    {
+      "id": "Node",
+      "kind": "record",
+      "fields": [
+        {"id": "a_value", "type": {"kind": "u16"}},
+        {
+          "id": "b_next",
+          "type": {"kind": "ref", "target": "Node", "nullable": true}
+        }
+      ]
+    }
+  ]
+}
