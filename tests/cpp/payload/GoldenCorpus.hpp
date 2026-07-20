@@ -85,6 +85,9 @@ std::vector<BinaryGoldenCase> load_graph_binary_golden_corpus(
 std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
     const std::string& root);
 
+std::vector<BinaryOpenGoldenCase> load_graph_binary_open_golden_corpus(
+    const std::string& root);
+
 std::string load_binary_file(const std::string& path);
 
 }  // namespace fastdb::test::payload

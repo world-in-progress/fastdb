@@ -155,8 +155,8 @@ struct View::State final {
     std::shared_ptr<PayloadOwnerState> owner;
     std::uint64_t generation{UINT64_C(0)};
     EntrySequenceCursor sequence{UINT32_C(0)};
-    ValueCursor cursor{UINT32_C(0), spec::TypeKind::boolean,
-                       UINT64_C(0), false};
+    ValueCursor cursor{InlineValueCursor{
+        UINT32_C(0), spec::TypeKind::boolean, UINT64_C(0), false}};
     std::shared_ptr<const DetachedViewState> detached;
     build::NodeIndex node{build::invalid_node_index};
     json::JsonPointer diagnostic_path;

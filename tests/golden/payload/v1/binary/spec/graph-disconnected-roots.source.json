@@ -1,0 +1,17 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "object_graph.v1",
+  "entries": [
+    {"id": "roots", "cardinality": "many", "type": {"kind": "component", "id": "Node"}}
+  ],
+  "components": [
+    {
+      "id": "Node",
+      "kind": "record",
+      "fields": [
+        {"id": "value", "type": {"kind": "u32"}},
+        {"id": "next", "type": {"kind": "ref", "target": "Node", "nullable": true}}
+      ]
+    }
+  ]
+}

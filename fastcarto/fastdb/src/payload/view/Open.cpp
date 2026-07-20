@@ -733,23 +733,126 @@ std::optional<ListSlotMetadata> PayloadIndex::list_slot(
     return list_slots_[owner_runtime_type_id];
 }
 
+std::optional<ObjectPoolMetadata> PayloadIndex::object_pool_metadata(
+    std::uint32_t component_index) const noexcept {
+    if (component_index >= object_pools_.size()) {
+        return std::nullopt;
+    }
+    return object_pools_[component_index];
+}
+
+Result<IdentityObjectCursor> PayloadIndex::ref_target(
+    RefCursor cursor) const {
+    const JsonPointer path =
+        JsonPointer{}
+            .append("references")
+            .append(cursor.target_component_index)
+            .append(cursor.object_id);
+    if (!cursor.present) {
+        return Result<IdentityObjectCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_UNEXPECTED_NULL, path,
+            "Portable payload view is null", "unexpected_null"));
+    }
+    if (runtime_schema_ == nullptr) {
+        return Result<IdentityObjectCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, path,
+            "Portable payload runtime metadata is missing",
+            "runtime_schema_missing"));
+    }
+    const layout::RuntimeType* const type =
+        runtime_schema_->find_type(cursor.runtime_type_id);
+    const auto pool = object_pool_metadata(cursor.target_component_index);
+    if (type == nullptr || type->source == nullptr ||
+        type->storage_role != spec::StorageRole::reference_id ||
+        type->source->resolved_component_index !=
+            cursor.target_component_index ||
+        !pool.has_value() || cursor.object_id >= pool->object_count) {
+        return Result<IdentityObjectCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, path,
+            "Portable payload reference cursor metadata is inconsistent",
+            "reference_cursor_metadata_mismatch"));
+    }
+    return Result<IdentityObjectCursor>::success(IdentityObjectCursor{
+        cursor.target_component_index, cursor.object_id, true});
+}
+
+Result<GraphIdentity> PayloadIndex::graph_identity(
+    ValueCursor cursor) const {
+    if (const auto* object =
+            std::get_if<IdentityObjectCursor>(&cursor)) {
+        if (!object->present) {
+            return Result<GraphIdentity>::failure(simple_error(
+                FDB_PAYLOAD_E_UNEXPECTED_NULL,
+                JsonPointer{}.append("objects"),
+                "Portable payload view is null", "unexpected_null"));
+        }
+        const auto pool = object_pool_metadata(object->component_index);
+        if (!pool.has_value() || object->object_id >= pool->object_count) {
+            return Result<GraphIdentity>::failure(simple_error(
+                FDB_PAYLOAD_E_INTERNAL,
+                JsonPointer{}.append("objects"),
+                "Portable payload object cursor metadata is inconsistent",
+                "object_cursor_metadata_mismatch"));
+        }
+        return Result<GraphIdentity>::success(GraphIdentity{
+            object->component_index, object->object_id});
+    }
+    if (const auto* reference = std::get_if<RefCursor>(&cursor)) {
+        if (!reference->present) {
+            return Result<GraphIdentity>::failure(simple_error(
+                FDB_PAYLOAD_E_UNEXPECTED_NULL,
+                JsonPointer{}.append("references"),
+                "Portable payload view is null", "unexpected_null"));
+        }
+        auto target = ref_target(*reference);
+        if (!target.has_value()) {
+            return Result<GraphIdentity>::failure(
+                std::move(target).error());
+        }
+        return Result<GraphIdentity>::success(GraphIdentity{
+            target.value().component_index, target.value().object_id});
+    }
+    return Result<GraphIdentity>::failure(simple_error(
+        FDB_PAYLOAD_E_TYPE_MISMATCH, JsonPointer{}.append("values"),
+        "Portable payload value has no graph identity",
+        "view_kind_mismatch"));
+}
+
 namespace {
 
 JsonPointer cursor_path(const ValueCursor& cursor) {
-    return JsonPointer{}.append("values").append(cursor.slot_offset);
+    if (const auto* inline_cursor = inline_value_cursor(cursor)) {
+        return JsonPointer{}
+            .append("values")
+            .append(inline_cursor->slot_offset);
+    }
+    if (const auto* object =
+            std::get_if<IdentityObjectCursor>(&cursor)) {
+        return JsonPointer{}
+            .append("objects")
+            .append(object->component_index)
+            .append(object->object_id);
+    }
+    const RefCursor& reference = std::get<RefCursor>(cursor);
+    return JsonPointer{}
+        .append("references")
+        .append(reference.target_component_index)
+        .append(reference.object_id);
 }
 
 Result<const layout::RuntimeType*> checked_cursor_type(
     const PayloadIndex& index,
     const ValueCursor& cursor,
     TypeKind expected) {
-    if (cursor.kind != expected) {
+    const InlineValueCursor* const inline_cursor =
+        inline_value_cursor(cursor);
+    if (inline_cursor == nullptr || inline_cursor->kind != expected) {
         return Result<const layout::RuntimeType*>::failure(simple_error(
             FDB_PAYLOAD_E_TYPE_MISMATCH, cursor_path(cursor),
             "Portable payload view kind does not match the operation",
             "view_kind_mismatch"));
     }
-    if (!cursor.present) {
+    if (!inline_cursor->present) {
         return Result<const layout::RuntimeType*>::failure(simple_error(
             FDB_PAYLOAD_E_UNEXPECTED_NULL, cursor_path(cursor),
             "Portable payload view is null", "unexpected_null"));
@@ -761,15 +864,54 @@ Result<const layout::RuntimeType*> checked_cursor_type(
             "runtime_schema_missing"));
     }
     const layout::RuntimeType* const type =
-        index.runtime_schema()->find_type(cursor.runtime_type_id);
+        index.runtime_schema()->find_type(inline_cursor->runtime_type_id);
     if (type == nullptr || type->source == nullptr ||
-        type->source->kind != cursor.kind) {
+        type->source->kind != inline_cursor->kind) {
         return Result<const layout::RuntimeType*>::failure(simple_error(
             FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
             "Portable payload cursor type metadata is inconsistent",
             "cursor_runtime_type_mismatch"));
     }
     return Result<const layout::RuntimeType*>::success(type);
+}
+
+Result<ValueCursor> make_value_cursor(
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    const layout::RuntimeType& type,
+    std::uint64_t slot_offset,
+    bool present,
+    const JsonPointer& path) {
+    if (type.source == nullptr) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, path,
+            "Portable payload cursor type metadata is missing",
+            "cursor_runtime_type_missing"));
+    }
+    if (type.storage_role == spec::StorageRole::object_root_id ||
+        type.storage_role == spec::StorageRole::reference_id) {
+        std::uint64_t object_id = UINT64_C(0);
+        if (present) {
+            auto loaded = layout::load_u64_le(
+                bytes, byte_count, slot_offset, path);
+            if (!loaded.has_value()) {
+                return Result<ValueCursor>::failure(
+                    std::move(loaded).error());
+            }
+            object_id = loaded.value();
+        }
+        if (type.storage_role == spec::StorageRole::object_root_id) {
+            return Result<ValueCursor>::success(ValueCursor{
+                IdentityObjectCursor{
+                    type.source->resolved_component_index, object_id,
+                    present}});
+        }
+        return Result<ValueCursor>::success(ValueCursor{RefCursor{
+            type.runtime_type_id, type.source->resolved_component_index,
+            object_id, present}});
+    }
+    return Result<ValueCursor>::success(ValueCursor{InlineValueCursor{
+        type.runtime_type_id, type.source->kind, slot_offset, present}});
 }
 
 struct CheckedListDescriptor final {
@@ -788,7 +930,15 @@ Result<CheckedListDescriptor> checked_list_descriptor(
         return Result<CheckedListDescriptor>::failure(
             std::move(type).error());
     }
-    const auto metadata = index.list_slot(cursor.runtime_type_id);
+    const InlineValueCursor* const inline_cursor =
+        inline_value_cursor(cursor);
+    if (inline_cursor == nullptr) {
+        return Result<CheckedListDescriptor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+            "Portable payload list cursor is not inline",
+            "list_cursor_not_inline"));
+    }
+    const auto metadata = index.list_slot(inline_cursor->runtime_type_id);
     if (!metadata.has_value() || type.value()->source->items == nullptr ||
         metadata->item_runtime_type_id !=
             index.runtime_schema()->runtime_id(*type.value()->source->items)) {
@@ -797,10 +947,11 @@ Result<CheckedListDescriptor> checked_list_descriptor(
             "Portable payload list cursor metadata is missing",
             "list_cursor_metadata_missing"));
     }
-    auto first = layout::load_u64_le(bytes, byte_count, cursor.slot_offset,
+    auto first = layout::load_u64_le(bytes, byte_count,
+                                     inline_cursor->slot_offset,
                                      cursor_path(cursor));
     auto count_offset = layout::checked_add_u64(
-        cursor.slot_offset, UINT64_C(8), cursor_path(cursor));
+        inline_cursor->slot_offset, UINT64_C(8), cursor_path(cursor));
     if (!first.has_value()) {
         return Result<CheckedListDescriptor>::failure(
             std::move(first).error());
@@ -934,8 +1085,22 @@ Result<ValueCursor> PayloadIndex::entry_value(
     if (!bounded.has_value()) {
         return Result<ValueCursor>::failure(std::move(bounded).error());
     }
-    return Result<ValueCursor>::success(ValueCursor{
-        entry.runtime_type_id, entry.kind, offset.value(), present});
+    if (runtime_schema_ == nullptr) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, path,
+            "Portable payload runtime metadata is missing",
+            "runtime_schema_missing"));
+    }
+    const layout::RuntimeType* const type =
+        runtime_schema_->find_type(entry.runtime_type_id);
+    if (type == nullptr) {
+        return Result<ValueCursor>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, path,
+            "Portable payload entry type metadata is missing",
+            "entry_runtime_type_missing"));
+    }
+    return make_value_cursor(bytes, byte_count, *type, offset.value(), present,
+                             path);
 }
 
 Result<std::uint32_t> PayloadIndex::component_index(
@@ -945,6 +1110,24 @@ Result<std::uint32_t> PayloadIndex::component_index(
     auto span = require_access_span(bytes, byte_count, total_length_);
     if (!span.has_value()) {
         return Result<std::uint32_t>::failure(std::move(span).error());
+    }
+    if (const auto* object =
+            std::get_if<IdentityObjectCursor>(&cursor)) {
+        if (!object->present) {
+            return Result<std::uint32_t>::failure(simple_error(
+                FDB_PAYLOAD_E_UNEXPECTED_NULL, cursor_path(cursor),
+                "Portable payload view is null", "unexpected_null"));
+        }
+        if (object->component_index >= object_pools_.size() ||
+            !object_pools_[object->component_index].has_value() ||
+            object->object_id >=
+                object_pools_[object->component_index]->object_count) {
+            return Result<std::uint32_t>::failure(simple_error(
+                FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
+                "Portable payload object cursor metadata is inconsistent",
+                "object_cursor_metadata_mismatch"));
+        }
+        return Result<std::uint32_t>::success(object->component_index);
     }
     auto type = checked_cursor_type(*this, cursor, TypeKind::component);
     if (!type.has_value()) {
@@ -1011,10 +1194,44 @@ Result<ValueCursor> PayloadIndex::component_field(
     }
     const JsonPointer path =
         cursor_path(cursor).append("fields").append(field_index);
+    std::uint64_t component_offset = UINT64_C(0);
+    if (const auto* object =
+            std::get_if<IdentityObjectCursor>(&cursor)) {
+        const auto metadata = object_pool_metadata(object->component_index);
+        if (!metadata.has_value()) {
+            return Result<ValueCursor>::failure(simple_error(
+                FDB_PAYLOAD_E_INTERNAL, path,
+                "Portable payload object pool metadata is missing",
+                "object_pool_metadata_missing"));
+        }
+        auto relative = layout::checked_multiply_u64(
+            object->object_id, metadata->stride, path);
+        if (!relative.has_value()) {
+            return Result<ValueCursor>::failure(
+                std::move(relative).error());
+        }
+        auto absolute = layout::checked_add_u64(
+            metadata->data_offset, relative.value(), path);
+        if (!absolute.has_value()) {
+            return Result<ValueCursor>::failure(
+                std::move(absolute).error());
+        }
+        component_offset = absolute.value();
+    } else {
+        const InlineValueCursor* const inline_cursor =
+            inline_value_cursor(cursor);
+        if (inline_cursor == nullptr) {
+            return Result<ValueCursor>::failure(simple_error(
+                FDB_PAYLOAD_E_TYPE_MISMATCH, path,
+                "Portable payload field access requires a component",
+                "view_kind_mismatch"));
+        }
+        component_offset = inline_cursor->slot_offset;
+    }
     bool present = true;
     if (field.validity_bit != UINT32_MAX) {
         auto validity_offset = layout::checked_add_u64(
-            cursor.slot_offset, field.validity_bit / UINT32_C(8), path);
+            component_offset, field.validity_bit / UINT32_C(8), path);
         if (!validity_offset.has_value()) {
             return Result<ValueCursor>::failure(
                 std::move(validity_offset).error());
@@ -1029,7 +1246,7 @@ Result<ValueCursor> PayloadIndex::component_field(
                     (field.validity_bit % UINT32_C(8))) &
                    UINT8_C(1)) != UINT8_C(0);
     }
-    auto offset = layout::checked_add_u64(cursor.slot_offset, field.offset,
+    auto offset = layout::checked_add_u64(component_offset, field.offset,
                                           path);
     if (!offset.has_value()) {
         return Result<ValueCursor>::failure(std::move(offset).error());
@@ -1039,9 +1256,8 @@ Result<ValueCursor> PayloadIndex::component_field(
     if (!bounded.has_value()) {
         return Result<ValueCursor>::failure(std::move(bounded).error());
     }
-    return Result<ValueCursor>::success(ValueCursor{
-        field.runtime_type_id, field_type->source->kind, offset.value(),
-        present});
+    return make_value_cursor(bytes, byte_count, *field_type, offset.value(),
+                             present, path);
 }
 
 Result<std::uint64_t> PayloadIndex::list_length(
@@ -1132,9 +1348,8 @@ Result<ValueCursor> PayloadIndex::list_item(
             "Portable payload list item type is missing",
             "list_item_runtime_type_missing"));
     }
-    return Result<ValueCursor>::success(ValueCursor{
-        descriptor.value().metadata.item_runtime_type_id,
-        item_type->source->kind, offset.value(), present});
+    return make_value_cursor(bytes, byte_count, *item_type, offset.value(),
+                             present, path);
 }
 
 Result<ObservedScalar> PayloadIndex::scalar_observation(
@@ -1151,17 +1366,25 @@ Result<ObservedScalar> PayloadIndex::scalar_observation(
             "Portable payload runtime metadata is missing",
             "runtime_schema_missing"));
     }
+    const InlineValueCursor* const inline_cursor =
+        inline_value_cursor(cursor);
+    if (inline_cursor == nullptr) {
+        return Result<ObservedScalar>::failure(simple_error(
+            FDB_PAYLOAD_E_TYPE_MISMATCH, cursor_path(cursor),
+            "Portable payload scalar observation requires an inline value",
+            "view_kind_mismatch"));
+    }
     const layout::RuntimeType* const type =
-        runtime_schema_->find_type(cursor.runtime_type_id);
+        runtime_schema_->find_type(inline_cursor->runtime_type_id);
     if (type == nullptr || type->source == nullptr ||
-        type->source->kind != cursor.kind) {
+        type->source->kind != inline_cursor->kind) {
         return Result<ObservedScalar>::failure(simple_error(
             FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
             "Portable payload scalar cursor metadata is inconsistent",
             "cursor_runtime_type_mismatch"));
     }
     return observe_scalar(bytes, byte_count, *type->source,
-                          cursor.slot_offset, cursor.present,
+                          inline_cursor->slot_offset, inline_cursor->present,
                           cursor_path(cursor));
 }
 
@@ -1173,13 +1396,15 @@ Result<VariableSpanMetadata> PayloadIndex::variable_span(
     if (!span.has_value()) {
         return Result<VariableSpanMetadata>::failure(std::move(span).error());
     }
-    if (!variable_kind(cursor.kind)) {
+    const InlineValueCursor* const inline_cursor =
+        inline_value_cursor(cursor);
+    if (inline_cursor == nullptr || !variable_kind(inline_cursor->kind)) {
         return Result<VariableSpanMetadata>::failure(simple_error(
             FDB_PAYLOAD_E_TYPE_MISMATCH, cursor_path(cursor),
             "Portable payload span acquisition requires text or bytes",
             "view_kind_mismatch"));
     }
-    if (!cursor.present) {
+    if (!inline_cursor->present) {
         return Result<VariableSpanMetadata>::failure(simple_error(
             FDB_PAYLOAD_E_UNEXPECTED_NULL, cursor_path(cursor),
             "Portable payload view is null", "unexpected_null"));
@@ -1191,19 +1416,19 @@ Result<VariableSpanMetadata> PayloadIndex::variable_span(
             "runtime_schema_missing"));
     }
     const layout::RuntimeType* const type =
-        runtime_schema_->find_type(cursor.runtime_type_id);
+        runtime_schema_->find_type(inline_cursor->runtime_type_id);
     if (type == nullptr || type->source == nullptr ||
-        type->source->kind != cursor.kind) {
+        type->source->kind != inline_cursor->kind) {
         return Result<VariableSpanMetadata>::failure(simple_error(
             FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
             "Portable payload span cursor metadata is inconsistent",
             "cursor_runtime_type_mismatch"));
     }
     auto relative = layout::load_u64_le(bytes, byte_count,
-                                        cursor.slot_offset,
+                                        inline_cursor->slot_offset,
                                         cursor_path(cursor));
     auto length_offset = layout::checked_add_u64(
-        cursor.slot_offset, UINT64_C(8), cursor_path(cursor));
+        inline_cursor->slot_offset, UINT64_C(8), cursor_path(cursor));
     if (!relative.has_value()) {
         return Result<VariableSpanMetadata>::failure(
             std::move(relative).error());
@@ -1219,14 +1444,14 @@ Result<VariableSpanMetadata> PayloadIndex::variable_span(
         return Result<VariableSpanMetadata>::failure(
             std::move(length).error());
     }
-    if (cursor.kind == TypeKind::wstr &&
+    if (inline_cursor->kind == TypeKind::wstr &&
         ((relative.value() | length.value()) & UINT64_C(1)) != UINT64_C(0)) {
         return Result<VariableSpanMetadata>::failure(simple_error(
             FDB_PAYLOAD_E_MISALIGNED, cursor_path(cursor),
             "Portable payload UTF-16LE descriptor is misaligned",
             "utf16_descriptor_misaligned"));
     }
-    const PoolMetadata* const pool = find_pool(pools_, cursor.kind);
+    const PoolMetadata* const pool = find_pool(pools_, inline_cursor->kind);
     if (pool == nullptr) {
         return Result<VariableSpanMetadata>::failure(simple_error(
             FDB_PAYLOAD_E_INTERNAL, cursor_path(cursor),
@@ -1253,7 +1478,7 @@ Result<VariableSpanMetadata> PayloadIndex::variable_span(
             std::move(bounded).error());
     }
     return Result<VariableSpanMetadata>::success(VariableSpanMetadata{
-        cursor.kind, absolute.value(), length.value()});
+        inline_cursor->kind, absolute.value(), length.value()});
 }
 
 Result<VariableSpanMetadata> PayloadIndex::text_span(
@@ -1261,7 +1486,11 @@ Result<VariableSpanMetadata> PayloadIndex::text_span(
     std::uint64_t byte_count,
     ValueCursor cursor,
     const JsonPointer& diagnostic_path) const {
-    if (cursor.kind != TypeKind::str && cursor.kind != TypeKind::wstr) {
+    const InlineValueCursor* const inline_cursor =
+        inline_value_cursor(cursor);
+    if (inline_cursor == nullptr ||
+        (inline_cursor->kind != TypeKind::str &&
+         inline_cursor->kind != TypeKind::wstr)) {
         return Result<VariableSpanMetadata>::failure(simple_error(
             FDB_PAYLOAD_E_TYPE_MISMATCH, diagnostic_path,
             "Portable payload text acquisition requires a text value",
@@ -1278,7 +1507,7 @@ Result<VariableSpanMetadata> PayloadIndex::text_span(
     }
     if (!text_validated_eagerly_) {
         const std::uint64_t units =
-            cursor.kind == TypeKind::str
+            inline_cursor->kind == TypeKind::str
                 ? span.value().byte_length
                 : span.value().byte_length / UINT64_C(2);
         auto total_work = layout::checked_add_u64(
@@ -1293,7 +1522,7 @@ Result<VariableSpanMetadata> PayloadIndex::text_span(
                 diagnostic_path, "validation_work", total_work.value(),
                 retained_max_validation_work_));
         }
-        Result<void> valid = cursor.kind == TypeKind::str
+        Result<void> valid = inline_cursor->kind == TypeKind::str
             ? layout::validate_utf8(
                   std::string_view{
                       span.value().byte_length == UINT64_C(0)
@@ -1448,7 +1677,7 @@ Result<ObservedScalar> PayloadIndex::field_scalar(
         return Result<ObservedScalar>::failure(std::move(current).error());
     }
     for (std::uint64_t depth = UINT64_C(0); depth < field_depth; ++depth) {
-        if (!current.value().present) {
+        if (!value_cursor_present(current.value())) {
             return Result<ObservedScalar>::success(ObservedScalar{
                 false, target.value().kind, UINT64_C(0)});
         }
@@ -2715,6 +2944,9 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             std::move(runtime).value());
         output.total_length_ = byte_count;
         output.validation_work_ = work.value();
+        output.root_value_count_ = root_value_count.value();
+        output.graph_object_count_ = UINT64_C(0);
+        output.region_count_ = region_count.value();
         output.retained_max_string_bytes_ = limits.max_string_bytes;
         output.retained_max_validation_work_ = limits.max_validation_work;
         output.text_validated_eagerly_ = limits.validate_text_eager;

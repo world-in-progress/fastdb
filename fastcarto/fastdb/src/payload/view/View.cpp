@@ -285,11 +285,12 @@ struct ViewInternals final {
                 return Result<std::uint64_t>::failure(
                     std::move(image).error());
             }
-            if (state.is_sequence || state.cursor.kind != expected) {
+            if (state.is_sequence ||
+                value_cursor_kind(state.cursor) != expected) {
                 return Result<std::uint64_t>::failure(
                     type_mismatch(state.diagnostic_path));
             }
-            if (!state.cursor.present) {
+            if (!value_cursor_present(state.cursor)) {
                 return Result<std::uint64_t>::failure(
                     unexpected_null(state.diagnostic_path));
             }
@@ -341,15 +342,16 @@ struct ViewInternals final {
         if (!image.has_value()) {
             return Result<Access>::failure(std::move(image).error());
         }
-        if (state.is_sequence || !variable_kind(state.cursor.kind)) {
+        if (state.is_sequence ||
+            !variable_kind(value_cursor_kind(state.cursor))) {
             return Result<Access>::failure(
                 type_mismatch(state.diagnostic_path));
         }
-        if (!state.cursor.present) {
+        if (!value_cursor_present(state.cursor)) {
             return Result<Access>::failure(
                 unexpected_null(state.diagnostic_path));
         }
-        auto span = state.cursor.kind == TypeKind::bytes
+        auto span = value_cursor_kind(state.cursor) == TypeKind::bytes
             ? image.value().owner->index.variable_span(
                   image.value().bytes, image.value().byte_count,
                   state.cursor)
@@ -541,7 +543,7 @@ Result<ViewKind> View::kind() const try {
     }
     return Result<ViewKind>::success(
         state_->is_sequence ? ViewKind::sequence
-                            : view_kind(state_->cursor.kind));
+                            : view_kind(value_cursor_kind(state_->cursor)));
 } catch (const std::bad_alloc&) {
     return Result<ViewKind>::failure(allocation_error());
 } catch (const std::length_error&) {
@@ -559,7 +561,7 @@ Result<bool> View::is_null() const try {
             return Result<bool>::failure(std::move(image).error());
         }
         return Result<bool>::success(
-            !state_->is_sequence && !state_->cursor.present);
+            !state_->is_sequence && !value_cursor_present(state_->cursor));
     }
     auto node = ViewInternals::detached_node(*state_);
     if (!node.has_value()) {
@@ -589,11 +591,11 @@ Result<std::uint64_t> View::length() const try {
                 image.value().bytes, image.value().byte_count,
                 state_->sequence);
         }
-        if (state_->cursor.kind != TypeKind::list) {
+        if (value_cursor_kind(state_->cursor) != TypeKind::list) {
             return Result<std::uint64_t>::failure(
                 type_mismatch(state_->diagnostic_path));
         }
-        if (!state_->cursor.present) {
+        if (!value_cursor_present(state_->cursor)) {
             return Result<std::uint64_t>::failure(
                 unexpected_null(state_->diagnostic_path));
         }
@@ -659,11 +661,11 @@ Result<View> View::at(std::uint64_t index) const try {
                 *state_, child.value(),
                 state_->diagnostic_path.append(index));
         }
-        if (state_->cursor.kind != TypeKind::list) {
+        if (value_cursor_kind(state_->cursor) != TypeKind::list) {
             return Result<View>::failure(
                 type_mismatch(state_->diagnostic_path));
         }
-        if (!state_->cursor.present) {
+        if (!value_cursor_present(state_->cursor)) {
             return Result<View>::failure(
                 unexpected_null(state_->diagnostic_path));
         }
@@ -728,11 +730,11 @@ Result<std::uint32_t> View::component_index() const try {
                 std::move(image).error());
         }
         if (state_->is_sequence ||
-            state_->cursor.kind != TypeKind::component) {
+            value_cursor_kind(state_->cursor) != TypeKind::component) {
             return Result<std::uint32_t>::failure(
                 type_mismatch(state_->diagnostic_path));
         }
-        if (!state_->cursor.present) {
+        if (!value_cursor_present(state_->cursor)) {
             return Result<std::uint32_t>::failure(
                 unexpected_null(state_->diagnostic_path));
         }
@@ -784,11 +786,11 @@ Result<std::uint32_t> View::field_count() const try {
                 std::move(image).error());
         }
         if (state_->is_sequence ||
-            state_->cursor.kind != TypeKind::component) {
+            value_cursor_kind(state_->cursor) != TypeKind::component) {
             return Result<std::uint32_t>::failure(
                 type_mismatch(state_->diagnostic_path));
         }
-        if (!state_->cursor.present) {
+        if (!value_cursor_present(state_->cursor)) {
             return Result<std::uint32_t>::failure(
                 unexpected_null(state_->diagnostic_path));
         }
@@ -825,10 +827,10 @@ Result<View> View::field(std::uint32_t index) const try {
             return Result<View>::failure(std::move(image).error());
         }
         if (state_->is_sequence ||
-            state_->cursor.kind != TypeKind::component) {
+            value_cursor_kind(state_->cursor) != TypeKind::component) {
             return Result<View>::failure(type_mismatch(state_->diagnostic_path));
         }
-        if (!state_->cursor.present) {
+        if (!value_cursor_present(state_->cursor)) {
             return Result<View>::failure(
                 unexpected_null(state_->diagnostic_path));
         }

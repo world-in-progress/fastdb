@@ -1,0 +1,7 @@
+{
+  "status": 3009,
+  "symbol": "NON_CANONICAL_BINARY",
+  "path": "/binary/entries/0/1",
+  "message": "Portable payload binary is not canonical",
+  "details_json": "{\"reason\":\"nonzero_null_slot\"}"
+}

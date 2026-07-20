@@ -1,0 +1,28 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "object_graph.v1",
+  "entries": [
+    {"id": "roots", "cardinality": "many", "type": {"kind": "component", "id": "Node", "nullable": true}}
+  ],
+  "components": [
+    {
+      "id": "Node",
+      "kind": "record",
+      "fields": [
+        {"id": "text", "type": {"kind": "str", "nullable": true}},
+        {"id": "wide", "type": {"kind": "wstr", "nullable": true}},
+        {"id": "opaque", "type": {"kind": "bytes", "nullable": true}},
+        {"id": "items", "type": {"kind": "list", "nullable": true, "items": {"kind": "u8", "nullable": true}}},
+        {"id": "meta", "type": {"kind": "component", "id": "Meta", "nullable": true}},
+        {"id": "next", "type": {"kind": "ref", "target": "Node", "nullable": true}}
+      ]
+    },
+    {
+      "id": "Meta",
+      "kind": "record",
+      "fields": [
+        {"id": "label", "type": {"kind": "str", "nullable": true}}
+      ]
+    }
+  ]
+}

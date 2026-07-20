@@ -1510,6 +1510,20 @@ int test_task4_malformed_pools_and_descriptors_have_exact_errors() {
                                                   bytes.data(), bytes.size());
     };
 
+    auto graph_only_kind = encoded.value().bytes;
+    require(fastdb::payload::layout::store_u32_le(
+                graph_only_kind.data(), graph_only_kind.size(),
+                region_field(UINT32_C(0),
+                             fastdb::payload::layout::region_kind_offset),
+                FDB_PAYLOAD_REGION_OBJECT_VALUES, JsonPointer{})
+                .has_value());
+    require(require_exact_error(
+                open(graph_only_kind), FDB_PAYLOAD_E_NON_CANONICAL_BINARY,
+                "/binary/regions/0/kind",
+                FDB_PAYLOAD_REGION_OBJECT_VALUES,
+                static_cast<std::uint32_t>(regions[0].kind), "region_kind") ==
+            EXIT_SUCCESS);
+
     auto wrong_kind = encoded.value().bytes;
     require(fastdb::payload::layout::store_u32_le(
                 wrong_kind.data(), wrong_kind.size(),

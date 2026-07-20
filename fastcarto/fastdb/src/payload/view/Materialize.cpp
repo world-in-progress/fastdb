@@ -135,7 +135,8 @@ struct Source final {
 struct Cursor final {
     bool sequence{false};
     EntrySequenceCursor entry{UINT32_C(0)};
-    ValueCursor value{UINT32_C(0), TypeKind::boolean, UINT64_C(0), false};
+    ValueCursor value{InlineValueCursor{
+        UINT32_C(0), TypeKind::boolean, UINT64_C(0), false}};
     NodeIndex detached_node{build::invalid_node_index};
 };
 
@@ -281,20 +282,26 @@ Result<AppendedNode> append_backed_node(const Source& source,
         node.tag = ValueTag::sequence;
         expected_children = length.value();
     } else {
-        node.runtime_type_id = cursor.value.runtime_type_id;
-        if (!cursor.value.present) {
+        const InlineValueCursor* const inline_cursor =
+            inline_value_cursor(cursor.value);
+        if (inline_cursor == nullptr) {
+            return Result<AppendedNode>::failure(internal_error(
+                path.snapshot(), "graph_materialization_not_available"));
+        }
+        node.runtime_type_id = inline_cursor->runtime_type_id;
+        if (!inline_cursor->present) {
             node.tag = ValueTag::null_value;
-        } else if (scalar_kind(cursor.value.kind)) {
+        } else if (scalar_kind(inline_cursor->kind)) {
             auto observed = source.index->scalar_observation(
                 source.bytes, source.byte_count, cursor.value);
             if (!observed.has_value()) {
                 return Result<AppendedNode>::failure(
                     std::move(observed).error());
             }
-            node.tag = tag_for(cursor.value.kind);
+            node.tag = tag_for(inline_cursor->kind);
             node.scalar_bits_or_offset = observed.value().bits;
-        } else if (variable_kind(cursor.value.kind)) {
-            auto span = cursor.value.kind == TypeKind::bytes
+        } else if (variable_kind(inline_cursor->kind)) {
+            auto span = inline_cursor->kind == TypeKind::bytes
                             ? source.index->variable_span(
                                   source.bytes, source.byte_count,
                                   cursor.value)
@@ -310,11 +317,11 @@ Result<AppendedNode> append_backed_node(const Source& source,
                     ? nullptr
                     : source.bytes + static_cast<std::ptrdiff_t>(
                                          span.value().data_offset);
-            node.tag = tag_for(cursor.value.kind);
+            node.tag = tag_for(inline_cursor->kind);
             node.scalar_bits_or_offset =
                 append_bytes(arena, data, span.value().byte_length);
             node.byte_length = span.value().byte_length;
-        } else if (cursor.value.kind == TypeKind::component) {
+        } else if (inline_cursor->kind == TypeKind::component) {
             auto count = source.index->component_field_count(
                 source.bytes, source.byte_count, cursor.value);
             if (!count.has_value()) {
@@ -323,7 +330,7 @@ Result<AppendedNode> append_backed_node(const Source& source,
             }
             node.tag = ValueTag::component;
             expected_children = count.value();
-        } else if (cursor.value.kind == TypeKind::list) {
+        } else if (inline_cursor->kind == TypeKind::list) {
             auto count = source.index->list_length(
                 source.bytes, source.byte_count, cursor.value);
             if (!count.has_value()) {
@@ -433,7 +440,7 @@ Result<Cursor> source_child(const Source& source,
     Cursor child;
     bool component =
         source.backed && !parent.sequence &&
-        parent.value.kind == TypeKind::component;
+        value_cursor_kind(parent.value) == TypeKind::component;
     const ValueNode* detached_parent = nullptr;
     if (!source.backed) {
         auto parent_node = detached_node(source, parent, path);
@@ -491,7 +498,7 @@ Result<Cursor> source_child(const Source& source,
         path.append(index);
         return Result<Cursor>::success(std::move(child));
     }
-    if (parent.value.kind == TypeKind::component) {
+    if (value_cursor_kind(parent.value) == TypeKind::component) {
         if (index > UINT32_MAX) {
             return Result<Cursor>::failure(internal_error(
                 path.snapshot(), "component_child_index_overflow"));
@@ -507,7 +514,7 @@ Result<Cursor> source_child(const Source& source,
         path.append(index);
         return Result<Cursor>::success(std::move(child));
     }
-    if (parent.value.kind == TypeKind::list) {
+    if (value_cursor_kind(parent.value) == TypeKind::list) {
         auto value = source.index->list_item(
             source.bytes, source.byte_count, parent.value, index);
         if (!value.has_value()) {

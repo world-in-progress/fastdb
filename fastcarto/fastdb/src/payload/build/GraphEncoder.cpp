@@ -15,6 +15,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -29,6 +30,7 @@ using layout::ComponentFieldLayout;
 using layout::ComponentLayout;
 using layout::EntryDescriptor;
 using layout::GraphLayout;
+using layout::ListAggregate;
 using layout::ObjectAggregate;
 using layout::RegionDescriptor;
 using layout::RegionKind;
@@ -153,6 +155,20 @@ Result<void> encode_scalar_or_identity(const GraphLayout& graph_layout,
     }
     std::array<std::uint8_t, 16> bytes{};
     if (node.tag == ValueTag::null_value) {
+        const TypeKind kind = runtime->source->kind;
+        if (kind == TypeKind::str || kind == TypeKind::wstr ||
+            kind == TypeKind::bytes || kind == TypeKind::list) {
+            const layout::DescriptorFact* const fact =
+                graph_layout.descriptor_fact(node_index);
+            if (fact == nullptr ||
+                fact->runtime_type_id != node.runtime_type_id ||
+                fact->first != UINT64_C(0) ||
+                fact->count != UINT64_C(0)) {
+                return Result<void>::failure(encode_error(
+                    JsonPointer{}.append("values"),
+                    "null_descriptor_fact_mismatch"));
+            }
+        }
         return writer.write(bytes.data(), runtime->slot.stride);
     }
     if (runtime->storage_role == StorageRole::object_root_id ||
@@ -267,12 +283,51 @@ Result<void> encode_scalar_or_identity(const GraphLayout& graph_layout,
     case TypeKind::str:
     case TypeKind::wstr:
     case TypeKind::bytes:
-    case TypeKind::list:
+    case TypeKind::list: {
+        const TypeKind kind = runtime->source->kind;
+        const bool list = kind == TypeKind::list;
+        const ValueTag expected =
+            kind == TypeKind::str    ? ValueTag::str
+            : kind == TypeKind::wstr ? ValueTag::wstr
+            : kind == TypeKind::bytes ? ValueTag::bytes
+                                      : ValueTag::list;
+        if (node.tag != expected ||
+            (!list && kind == TypeKind::wstr &&
+             node.byte_length % UINT64_C(2) != UINT64_C(0))) {
+            return Result<void>::failure(encode_error(
+                JsonPointer{}.append("values"),
+                "variable_value_mismatch"));
+        }
+        if (!list) {
+            auto storage_end = layout::checked_range_end(
+                node.scalar_bits_or_offset, node.byte_length,
+                values.byte_storage().size(),
+                JsonPointer{}.append("values"));
+            if (!storage_end.has_value()) {
+                return Result<void>::failure(
+                    std::move(storage_end).error());
+            }
+        }
+        const layout::DescriptorFact* const fact =
+            graph_layout.descriptor_fact(node_index);
+        const std::uint64_t expected_count =
+            list ? node.child_count : node.byte_length;
+        if (fact == nullptr ||
+            fact->runtime_type_id != node.runtime_type_id ||
+            fact->count != expected_count ||
+            !put_u64(bytes, UINT64_C(0), fact->first).has_value() ||
+            !put_u64(bytes, UINT64_C(8), fact->count).has_value()) {
+            return Result<void>::failure(encode_error(
+                JsonPointer{}.append("values"),
+                "descriptor_fact_mismatch"));
+        }
+        break;
+    }
     case TypeKind::component:
     case TypeKind::ref:
         return Result<void>::failure(encode_error(
             JsonPointer{}.append("values"),
-            "initial_graph_binary_slice_unavailable"));
+            "graph_value_storage_role_mismatch"));
     }
     return writer.write(bytes.data(), runtime->slot.stride);
 }
@@ -420,6 +475,15 @@ Result<void> encode_component(const GraphLayout& graph_layout,
             return Result<void>::failure(encode_error(
                 JsonPointer{}.append("values"),
                 "component_child_type_mismatch"));
+        }
+        if (child.tag == ValueTag::null_value &&
+            child_runtime->storage_role != StorageRole::inline_component) {
+            auto encoded = encode_scalar_or_identity(
+                graph_layout, values, child_index, writer);
+            if (!encoded.has_value()) {
+                return encoded;
+            }
+            continue;
         }
         if (child.tag == ValueTag::null_value) {
             auto field_end = layout::checked_add_u64(
@@ -722,9 +786,125 @@ Result<void> encode_graph(const GraphLayout& graph_layout,
             }
             continue;
         }
+        if (region.kind == RegionKind::list_validity ||
+            region.kind == RegionKind::list_items) {
+            const ListAggregate* const aggregate =
+                graph_layout.list_aggregate(region.owner_index);
+            if (aggregate == nullptr ||
+                aggregate->item_runtime_type_id != region.runtime_type_id ||
+                aggregate->item_nodes.size() != region.element_count) {
+                return Result<void>::failure(encode_error(
+                    JsonPointer{}.append("lists"),
+                    "list_region_aggregate_mismatch"));
+            }
+            if (region.kind == RegionKind::list_validity) {
+                if (aggregate->validity_region_index != region_index) {
+                    return Result<void>::failure(encode_error(
+                        JsonPointer{}.append("lists"),
+                        "list_validity_region_index_mismatch"));
+                }
+                std::uint8_t byte = UINT8_C(0);
+                for (std::uint64_t index = UINT64_C(0);
+                     index < region.element_count; ++index) {
+                    const NodeIndex node_index = aggregate->item_nodes[
+                        static_cast<std::size_t>(index)];
+                    if (node_index >= values.nodes().size()) {
+                        return Result<void>::failure(encode_error(
+                            JsonPointer{}.append("lists"),
+                            "list_item_node_out_of_range"));
+                    }
+                    if (values.nodes()[static_cast<std::size_t>(node_index)]
+                            .tag != ValueTag::null_value) {
+                        byte = static_cast<std::uint8_t>(
+                            byte |
+                            (UINT8_C(1) << (index % UINT64_C(8))));
+                    }
+                    if (index % UINT64_C(8) == UINT64_C(7) ||
+                        index + UINT64_C(1) == region.element_count) {
+                        written = writer.write(&byte, UINT64_C(1));
+                        if (!written.has_value()) {
+                            return written;
+                        }
+                        byte = UINT8_C(0);
+                    }
+                }
+            } else {
+                if (aggregate->items_region_index != region_index) {
+                    return Result<void>::failure(encode_error(
+                        JsonPointer{}.append("lists"),
+                        "list_items_region_index_mismatch"));
+                }
+                for (const NodeIndex node : aggregate->item_nodes) {
+                    written = encode_value(
+                        graph_layout, values, node, writer);
+                    if (!written.has_value()) {
+                        return written;
+                    }
+                }
+            }
+            continue;
+        }
+        if (region.kind == RegionKind::utf8_pool ||
+            region.kind == RegionKind::utf16_pool ||
+            region.kind == RegionKind::bytes_pool) {
+            const TypeKind wanted =
+                region.kind == RegionKind::utf8_pool    ? TypeKind::str
+                : region.kind == RegionKind::utf16_pool ? TypeKind::wstr
+                                                        : TypeKind::bytes;
+            const std::string_view storage = values.byte_storage();
+            for (const NodeIndex node_index :
+                 graph_layout.variable_values()) {
+                if (node_index >= values.nodes().size()) {
+                    return Result<void>::failure(encode_error(
+                        JsonPointer{}.append("pools"),
+                        "pool_node_out_of_range"));
+                }
+                const ValueNode& node =
+                    values.nodes()[static_cast<std::size_t>(node_index)];
+                const RuntimeType* const runtime =
+                    graph_layout.runtime_schema().find_type(
+                        node.runtime_type_id);
+                if (runtime == nullptr ||
+                    runtime->source->kind != wanted ||
+                    node.tag == ValueTag::null_value) {
+                    continue;
+                }
+                auto storage_end = layout::checked_range_end(
+                    node.scalar_bits_or_offset, node.byte_length,
+                    storage.size(), JsonPointer{}.append("pools"));
+                if (!storage_end.has_value()) {
+                    return Result<void>::failure(
+                        std::move(storage_end).error());
+                }
+                if (node.byte_length != UINT64_C(0)) {
+                    written = writer.write(
+                        reinterpret_cast<const std::uint8_t*>(
+                            storage.data()) +
+                            static_cast<std::ptrdiff_t>(
+                                node.scalar_bits_or_offset),
+                        node.byte_length);
+                    if (!written.has_value()) {
+                        return written;
+                    }
+                }
+            }
+            auto pool_end = layout::checked_add_u64(
+                region.data_offset, region.byte_length,
+                JsonPointer{}.append("pools"));
+            if (!pool_end.has_value()) {
+                return Result<void>::failure(
+                    std::move(pool_end).error());
+            }
+            if (writer.offset() != pool_end.value()) {
+                return Result<void>::failure(encode_error(
+                    JsonPointer{}.append("pools"),
+                    "pool_write_length_mismatch"));
+            }
+            continue;
+        }
         return Result<void>::failure(encode_error(
             JsonPointer{}.append("regions"),
-            "initial_graph_binary_slice_unavailable"));
+            "unsupported_graph_region"));
     }
     if (object_aggregate_index !=
         graph_layout.object_aggregates().size()) {

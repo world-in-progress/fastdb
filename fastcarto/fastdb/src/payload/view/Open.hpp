@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <variant>
 #include <vector>
 
 namespace fastdb::payload::view {
@@ -79,15 +80,64 @@ struct ListSlotMetadata final {
     std::uint64_t validity_byte_length;
 };
 
+struct ObjectPoolMetadata final {
+    std::uint32_t component_index;
+    std::uint32_t region_index;
+    std::uint64_t data_offset;
+    std::uint64_t object_count;
+    std::uint32_t stride;
+    std::uint32_t alignment;
+};
+
 struct EntrySequenceCursor final {
     std::uint32_t entry_index;
 };
 
-struct ValueCursor final {
+struct InlineValueCursor final {
     std::uint32_t runtime_type_id;
     spec::TypeKind kind;
     std::uint64_t slot_offset;
     bool present;
+};
+
+struct IdentityObjectCursor final {
+    std::uint32_t component_index;
+    std::uint64_t object_id;
+    bool present;
+};
+
+struct RefCursor final {
+    std::uint32_t runtime_type_id;
+    std::uint32_t target_component_index;
+    std::uint64_t object_id;
+    bool present;
+};
+
+using ValueCursor = std::variant<InlineValueCursor,
+                                 IdentityObjectCursor,
+                                 RefCursor>;
+
+inline const InlineValueCursor* inline_value_cursor(
+    const ValueCursor& cursor) noexcept {
+    return std::get_if<InlineValueCursor>(&cursor);
+}
+
+inline spec::TypeKind value_cursor_kind(const ValueCursor& cursor) noexcept {
+    if (const auto* inline_cursor = inline_value_cursor(cursor)) {
+        return inline_cursor->kind;
+    }
+    return std::holds_alternative<IdentityObjectCursor>(cursor)
+               ? spec::TypeKind::component
+               : spec::TypeKind::ref;
+}
+
+inline bool value_cursor_present(const ValueCursor& cursor) noexcept {
+    return std::visit([](const auto& value) { return value.present; }, cursor);
+}
+
+struct GraphIdentity final {
+    std::uint32_t component_index;
+    std::uint64_t object_id;
 };
 
 struct VariableSpanMetadata final {
@@ -105,6 +155,13 @@ public:
     std::uint64_t validation_work() const noexcept {
         return validation_work_;
     }
+    std::uint64_t root_value_count() const noexcept {
+        return root_value_count_;
+    }
+    std::uint64_t graph_object_count() const noexcept {
+        return graph_object_count_;
+    }
+    std::uint32_t region_count() const noexcept { return region_count_; }
     const std::vector<VariableSlotMetadata>& variable_slots() const noexcept {
         return variable_slots_;
     }
@@ -125,6 +182,10 @@ public:
     }
     std::optional<ListSlotMetadata> list_slot(
         std::uint32_t owner_runtime_type_id) const noexcept;
+    std::optional<ObjectPoolMetadata> object_pool_metadata(
+        std::uint32_t component_index) const noexcept;
+    error::Result<IdentityObjectCursor> ref_target(RefCursor cursor) const;
+    error::Result<GraphIdentity> graph_identity(ValueCursor cursor) const;
 
     error::Result<EntrySequenceCursor> entry_sequence(
         const std::uint8_t* bytes,
@@ -204,16 +265,25 @@ private:
         const std::uint8_t*,
         std::uint64_t,
         OpenOptions);
+    friend error::Result<PayloadIndex> open_graph(
+        const spec::CompiledSpec&,
+        const std::uint8_t*,
+        std::uint64_t,
+        OpenOptions);
 
     std::vector<EntrySlotMetadata> entries_;
     std::vector<PoolMetadata> pools_;
     std::vector<VariableSlotMetadata> variable_slots_;
     std::vector<std::optional<ListSlotMetadata>> list_slots_;
+    std::vector<std::optional<ObjectPoolMetadata>> object_pools_;
     std::shared_ptr<const layout::RuntimeSchema> runtime_schema_;
     std::uint64_t total_length_{UINT64_C(0)};
     std::uint64_t validation_work_{UINT64_C(0)};
+    std::uint64_t root_value_count_{UINT64_C(0)};
+    std::uint64_t graph_object_count_{UINT64_C(0)};
     std::uint64_t retained_max_string_bytes_{UINT64_C(0)};
     std::uint64_t retained_max_validation_work_{UINT64_C(0)};
+    std::uint32_t region_count_{UINT32_C(0)};
     bool text_validated_eagerly_{false};
 };
 

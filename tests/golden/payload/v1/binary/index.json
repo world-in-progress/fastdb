@@ -74,6 +74,46 @@
       }
     },
     {
+      "name": "graph-all-values",
+      "success": {
+        "source": "spec/graph-all-values.source.json",
+        "scenario": "graph_all_values",
+        "binary_hex": "valid/graph-all-values.bin.hex",
+        "sha256": "valid/graph-all-values.sha256",
+        "layout": "valid/graph-all-values.layout.md"
+      }
+    },
+    {
+      "name": "graph-nested-lists",
+      "success": {
+        "source": "spec/graph-nested-lists.source.json",
+        "scenario": "graph_nested_lists",
+        "binary_hex": "valid/graph-nested-lists.bin.hex",
+        "sha256": "valid/graph-nested-lists.sha256",
+        "layout": "valid/graph-nested-lists.layout.md"
+      }
+    },
+    {
+      "name": "graph-disconnected-roots",
+      "success": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "scenario": "graph_disconnected_roots",
+        "binary_hex": "valid/graph-disconnected-roots.bin.hex",
+        "sha256": "valid/graph-disconnected-roots.sha256",
+        "layout": "valid/graph-disconnected-roots.layout.md"
+      }
+    },
+    {
+      "name": "graph-null-empty",
+      "success": {
+        "source": "spec/graph-null-empty.source.json",
+        "scenario": "graph_null_empty",
+        "binary_hex": "valid/graph-null-empty.bin.hex",
+        "sha256": "valid/graph-null-empty.sha256",
+        "layout": "valid/graph-null-empty.layout.md"
+      }
+    },
+    {
       "name": "graph-empty",
       "success": {
         "source": "spec/graph-empty.source.json",
@@ -101,6 +141,69 @@
         "binary_hex": "valid/graph-shared-cycle.bin.hex",
         "sha256": "valid/graph-shared-cycle.sha256",
         "layout": "valid/graph-shared-cycle.layout.md"
+      }
+    },
+    {
+      "name": "invalid-graph-object-owner",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-object-owner.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-object-owner.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-object-stride",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-object-stride.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-object-stride.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-root-id",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-root-id.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-root-id.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-ref-id",
+      "invalid": {
+        "source": "spec/graph-shared-cycle.source.json",
+        "binary_hex": "invalid/graph-ref-id.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-ref-id.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-unreachable",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-unreachable.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-unreachable.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-null-slot",
+      "invalid": {
+        "source": "spec/graph-null-empty.source.json",
+        "binary_hex": "invalid/graph-null-slot.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-null-slot.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-region-order",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-region-order.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-region-order.error.json"}
       }
     },
     {

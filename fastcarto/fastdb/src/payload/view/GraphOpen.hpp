@@ -8,16 +8,7 @@
 
 namespace fastdb::payload::view {
 
-struct GraphOpenFacts final {
-    std::uint64_t total_length;
-    std::uint64_t root_value_count;
-    std::uint64_t graph_object_count;
-    std::uint64_t validation_work;
-    std::uint32_t region_count;
-    std::uint32_t entry_count;
-};
-
-error::Result<GraphOpenFacts> open_graph(
+error::Result<PayloadIndex> open_graph(
     const spec::CompiledSpec& spec,
     const std::uint8_t* bytes,
     std::uint64_t byte_count,

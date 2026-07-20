@@ -473,8 +473,27 @@ std::vector<BinaryOpenGoldenCase> load_binary_open_golden_corpus(
             all.begin(), all.end(), [](const BinaryOpenGoldenCase& item) {
                 const auto* success =
                     std::get_if<BinaryGoldenSuccess>(&item.expected);
-                return success != nullptr &&
-                       !success->layout_relative_path.empty();
+                return (success != nullptr &&
+                        !success->layout_relative_path.empty()) ||
+                       item.name.rfind("invalid-graph-", 0U) == 0U;
+            }),
+        all.end());
+    return all;
+}
+
+std::vector<BinaryOpenGoldenCase> load_graph_binary_open_golden_corpus(
+    const std::string& root) {
+    auto all = load_all_binary_open_golden_corpus(root);
+    all.erase(
+        std::remove_if(
+            all.begin(), all.end(), [](const BinaryOpenGoldenCase& item) {
+                if (item.name.rfind("invalid-graph-", 0U) == 0U) {
+                    return false;
+                }
+                const auto* success =
+                    std::get_if<BinaryGoldenSuccess>(&item.expected);
+                return success == nullptr ||
+                       success->layout_relative_path.empty();
             }),
         all.end());
     return all;
