@@ -106,7 +106,7 @@ private:
         spec::StorageRole required_role,
         ValueTag tag,
         std::string_view operation);
-    error::Result<LogicalPayload> freeze_impl();
+    error::Result<LogicalPayload> freeze_impl(bool preserve_graph_state);
 
     State* state_pointer() noexcept;
     const State* state_pointer() const noexcept;

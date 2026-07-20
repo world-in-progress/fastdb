@@ -7,6 +7,7 @@
 #include "payload/layout/InputSpan.hpp"
 #include "payload/layout/NormalizedInteger.hpp"
 #include "payload/layout/RuntimeSchema.hpp"
+#include "payload/view/GraphOpen.hpp"
 #include "payload/view/OpenCommon.hpp"
 
 #include "payload/layout/TextEncoding.hpp"
@@ -2956,6 +2957,16 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
     } catch (const std::length_error&) {
         return Result<PayloadIndex>::failure(allocation_error());
     }
+}
+
+Result<PayloadIndex> open_payload(
+    const spec::CompiledSpec& spec,
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    OpenOptions limits) {
+    return spec.profile() == spec::Profile::record_v1
+               ? open_record(spec, bytes, byte_count, limits)
+               : open_graph(spec, bytes, byte_count, limits);
 }
 
 }  // namespace fastdb::payload::view

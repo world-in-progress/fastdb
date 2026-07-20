@@ -1291,8 +1291,8 @@ int test_complete_record_runtime() {
     require(owned_error(graph_open_status, error.value));
     require(error_details(error.value) ==
             R"({"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"})");
-    require(graph_external_context.retains == UINT32_C(1));
-    require(graph_external_context.releases == UINT32_C(1));
+    require(graph_external_context.retains == UINT32_C(0));
+    require(graph_external_context.releases == UINT32_C(0));
     error.clear();
     fdb_payload_v1_spec_release(graph_spec);
 

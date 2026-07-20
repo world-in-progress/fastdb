@@ -293,4 +293,10 @@ error::Result<PayloadIndex> open_record(
     std::uint64_t byte_count,
     OpenOptions limits = default_open_options());
 
+error::Result<PayloadIndex> open_payload(
+    const spec::CompiledSpec& spec,
+    const std::uint8_t* bytes,
+    std::uint64_t byte_count,
+    OpenOptions limits = default_open_options());
+
 }  // namespace fastdb::payload::view

@@ -16,6 +16,11 @@ namespace {
 
 constexpr std::uint32_t success_status = UINT32_C(0);
 
+#if defined(FASTDB_PAYLOAD_BUILD_TESTING)
+std::atomic<std::uint64_t> direct_reserve_count{UINT64_C(0)};
+std::atomic<std::uint64_t> staged_reserve_count{UINT64_C(0)};
+#endif
+
 struct HeapReservation final {
     HeapReservation(std::size_t storage_size,
                     std::uint64_t minimum_capacity,
@@ -61,13 +66,24 @@ bool checked_storage_size(std::uint64_t minimum_capacity,
 }
 
 std::uint32_t reserve(void*,
-                      std::uint32_t,
+                      std::uint32_t mode,
                       std::uint64_t minimum_capacity,
                       std::uint32_t alignment,
                       void** out_owner_token,
                       std::uint8_t** out_writable_data,
                       std::uint64_t* out_capacity) noexcept {
     try {
+#if defined(FASTDB_PAYLOAD_BUILD_TESTING)
+        if (mode == FDB_PAYLOAD_RESERVE_DIRECT) {
+            direct_reserve_count.fetch_add(UINT64_C(1),
+                                           std::memory_order_relaxed);
+        } else if (mode == FDB_PAYLOAD_RESERVE_STAGED) {
+            staged_reserve_count.fetch_add(UINT64_C(1),
+                                           std::memory_order_relaxed);
+        }
+#else
+        static_cast<void>(mode);
+#endif
         std::size_t storage_size = 0U;
         if (!checked_storage_size(minimum_capacity, alignment,
                                   storage_size)) {
@@ -146,5 +162,19 @@ const Callbacks callbacks{
 const Callbacks& heap_callbacks() noexcept {
     return callbacks;
 }
+
+#if defined(FASTDB_PAYLOAD_BUILD_TESTING)
+void reset_heap_reserve_observation() noexcept {
+    direct_reserve_count.store(UINT64_C(0), std::memory_order_relaxed);
+    staged_reserve_count.store(UINT64_C(0), std::memory_order_relaxed);
+}
+
+HeapReserveObservation heap_reserve_observation() noexcept {
+    return HeapReserveObservation{
+        direct_reserve_count.load(std::memory_order_relaxed),
+        staged_reserve_count.load(std::memory_order_relaxed),
+    };
+}
+#endif
 
 }  // namespace fastdb::payload::backing

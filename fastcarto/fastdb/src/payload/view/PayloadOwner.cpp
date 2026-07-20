@@ -128,14 +128,9 @@ Result<PayloadOwner> PayloadOwner::open_copy(
     const std::uint8_t* bytes,
     std::uint64_t byte_count,
     OpenOptions options) try {
-    auto available = layout::RuntimeSchema::require_record_runtime(spec);
-    if (!available.has_value()) {
-        return Result<PayloadOwner>::failure(
-            std::move(available).error());
-    }
     if (byte_count > options.max_total_bytes || bytes == nullptr ||
         !layout::input_span_is_addressable(byte_count)) {
-        auto rejected = open_record(spec, bytes, byte_count, options);
+        auto rejected = open_payload(spec, bytes, byte_count, options);
         if (!rejected.has_value()) {
             return Result<PayloadOwner>::failure(
                 std::move(rejected).error());
@@ -149,8 +144,8 @@ Result<PayloadOwner> PayloadOwner::open_copy(
         return Result<PayloadOwner>::failure(std::move(copied).error());
     }
     backing::CommittedBacking owned = std::move(copied).value();
-    auto opened = open_record(spec, owned.readable_data(),
-                              owned.readable_size(), options);
+    auto opened = open_payload(spec, owned.readable_data(),
+                               owned.readable_size(), options);
     if (!opened.has_value()) {
         return Result<PayloadOwner>::failure(std::move(opened).error());
     }
@@ -168,18 +163,13 @@ Result<PayloadOwner> PayloadOwner::open_external(
     std::uint64_t byte_count,
     backing::RetainedBacking retained,
     OpenOptions options) try {
-    auto available = layout::RuntimeSchema::require_record_runtime(spec);
-    if (!available.has_value()) {
-        return Result<PayloadOwner>::failure(
-            std::move(available).error());
-    }
     if (bytes != retained.readable_data() ||
         byte_count != retained.readable_size()) {
         return Result<PayloadOwner>::failure(
             backing_error(FDB_PAYLOAD_E_INVALID_ARGUMENT,
                           "retained_span_mismatch"));
     }
-    auto opened = open_record(spec, bytes, byte_count, options);
+    auto opened = open_payload(spec, bytes, byte_count, options);
     if (!opened.has_value()) {
         return Result<PayloadOwner>::failure(std::move(opened).error());
     }
@@ -215,6 +205,11 @@ Result<Access> PayloadOwner::acquire() const try {
 }
 
 Result<View> PayloadOwner::entry_view(std::uint32_t entry_index) const try {
+    auto available =
+        layout::RuntimeSchema::require_record_runtime(state_->spec);
+    if (!available.has_value()) {
+        return Result<View>::failure(std::move(available).error());
+    }
     std::uint64_t generation = UINT64_C(0);
     auto pin = AccessPin::acquire_current(state_->barrier, generation);
     if (!pin.has_value()) {

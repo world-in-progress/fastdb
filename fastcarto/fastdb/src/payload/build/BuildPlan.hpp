@@ -4,10 +4,12 @@
 #include "payload/build/ExecutionReport.hpp"
 #include "payload/build/ValueArena.hpp"
 #include "payload/error/Result.hpp"
+#include "payload/layout/GraphLayout.hpp"
 #include "payload/layout/RecordLayout.hpp"
 #include "payload/view/PayloadOwner.hpp"
 
 #include <cstdint>
+#include <variant>
 
 namespace fastdb::payload::build {
 
@@ -21,7 +23,11 @@ struct PlanInfo final {
     std::uint64_t validation_work;
     std::uint32_t max_alignment;
     std::uint32_t direct_build_status;
+    std::uint64_t graph_object_count;
 };
+
+using ProfileLayout = std::variant<layout::RecordLayout,
+                                   layout::GraphLayout>;
 
 struct BuildPlanTestAccess;
 
@@ -42,10 +48,10 @@ public:
 
 private:
     BuildPlan(LogicalPayload values,
-              layout::RecordLayout record_layout,
+              ProfileLayout profile_layout,
               PlanInfo info) noexcept
         : values_(std::move(values)),
-          record_layout_(std::move(record_layout)),
+          profile_layout_(std::move(profile_layout)),
           info_(info) {}
 
     view::OpenOptions publication_options(const PlanInfo& info) const noexcept;
@@ -53,7 +59,7 @@ private:
     friend struct BuildPlanTestAccess;
 
     LogicalPayload values_;
-    layout::RecordLayout record_layout_;
+    ProfileLayout profile_layout_;
     PlanInfo info_;
 };
 

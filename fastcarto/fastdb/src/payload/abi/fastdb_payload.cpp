@@ -1460,6 +1460,13 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_payload_open_copy(
             return fastdb::payload::error::Result<void>::failure(
                 std::move(converted).error());
         }
+        auto available =
+            fastdb::payload::layout::RuntimeSchema::require_record_runtime(
+                spec->compiled);
+        if (!available.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(available).error());
+        }
         auto opened = fastdb::payload::view::PayloadOwner::open_copy(
             spec->compiled, bytes, byte_count, converted.value());
         if (!opened.has_value()) {
@@ -1499,6 +1506,13 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_payload_open_external(
         if (!converted_options.has_value()) {
             return fastdb::payload::error::Result<void>::failure(
                 std::move(converted_options).error());
+        }
+        auto available =
+            fastdb::payload::layout::RuntimeSchema::require_record_runtime(
+                spec->compiled);
+        if (!available.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(available).error());
         }
         auto converted_backing =
             fastdb::payload::abi::backing_callbacks(backing, true);

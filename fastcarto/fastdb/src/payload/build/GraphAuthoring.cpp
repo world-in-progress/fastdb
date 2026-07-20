@@ -385,12 +385,21 @@ Result<void> GraphAuthoring::validate_reachable(
 
 std::vector<std::vector<NodeIndex>>
 GraphAuthoring::take_object_pools() noexcept {
+    return std::move(object_pools_);
+}
+
+void GraphAuthoring::restore_object_pools(
+    std::vector<std::vector<NodeIndex>> object_pools) noexcept {
+    object_pools_ = std::move(object_pools);
+}
+
+void GraphAuthoring::commit_frozen_state() noexcept {
     handles_.clear();
     filled_.clear();
     graph_object_count_ = UINT64_C(0);
     test_next_handle_ = invalid_object_handle;
     use_test_handle_sequence_ = false;
-    return std::move(object_pools_);
+    object_pools_.clear();
 }
 
 bool GraphAuthoring::use_test_sequence(ObjectHandle next) noexcept {

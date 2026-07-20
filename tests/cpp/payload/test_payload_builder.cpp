@@ -1601,12 +1601,23 @@ int test_deep_iterative_builder_and_graph_runtime_boundary() {
     auto graph_spec = compile(
         R"({"schema":"fastdb.payload.v1","profile":"object_graph.v1","entries":[],"components":[]})");
     require(graph_spec.has_value());
-    auto graph = PayloadBuilder::create(std::move(graph_spec).value());
+    auto graph = PayloadBuilder::create(graph_spec.value());
     require(graph.has_value());
-    require(exact_error(
-        graph.value().freeze_plan(), FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE, "",
-        R"({"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"})"));
-    auto logical_graph = graph.value().freeze();
+    auto graph_plan = graph.value().freeze_plan();
+    require(graph_plan.has_value());
+    require(graph_plan.value().info().total_bytes == UINT64_C(128));
+    require(graph_plan.value().info().region_count == UINT64_C(0));
+    require(graph_plan.value().info().logical_value_count == UINT64_C(0));
+    require(graph_plan.value().info().graph_object_count == UINT64_C(0));
+    auto graph_owner = graph_plan.value().execute(UINT32_C(2), nullptr);
+    require(graph_owner.has_value());
+    require(graph_owner.value().profile() ==
+            fastdb::payload::spec::Profile::object_graph_v1);
+
+    auto logical_builder =
+        PayloadBuilder::create(std::move(graph_spec).value());
+    require(logical_builder.has_value());
+    auto logical_graph = logical_builder.value().freeze();
     require(logical_graph.has_value());
     require(logical_graph.value().graph_object_count() == UINT64_C(0));
     return EXIT_SUCCESS;

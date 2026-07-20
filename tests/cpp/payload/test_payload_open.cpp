@@ -10,6 +10,7 @@
 #include "payload/spec/CompiledSpec.hpp"
 #include "payload/view/Open.hpp"
 #include "payload/view/PayloadOwner.hpp"
+#include "payload/view/View.hpp"
 #define FASTDB_TASK7_HAS_PAYLOAD_OWNER 1
 #else
 #define FASTDB_TASK7_HAS_PAYLOAD_OWNER 0
@@ -211,7 +212,7 @@ struct MatrixCase final {
     std::string_view name;
 };
 
-constexpr std::array<MatrixCase, 34> task7_matrix{{
+constexpr std::array<MatrixCase, 37> task7_matrix{{
     {MatrixArea::api_cut, "OpenOptions is the only private open-options name"},
     {MatrixArea::api_cut, "BuildPlan execute returns PayloadOwner"},
     {MatrixArea::api_cut, "PendingPayload callable seam is removed"},
@@ -246,6 +247,12 @@ constexpr std::array<MatrixCase, 34> task7_matrix{{
     {MatrixArea::resource_limits, "validation work exact boundary succeeds"},
     {MatrixArea::allocation_cleanup, "reader bad alloc and length error are contained"},
     {MatrixArea::allocation_cleanup, "first State allocation releases after commit"},
+    {MatrixArea::copy_open,
+     "Core-private graph copy open uses profile dispatch"},
+    {MatrixArea::external_open,
+     "Core-private graph external open retains once"},
+    {MatrixArea::api_cut,
+     "graph owner does not expose checked entry views yet"},
 }};
 
 int verify_matrix_inventory() {
@@ -605,6 +612,54 @@ int test_copy_open_and_physical_diagnostics() {
     return EXIT_SUCCESS;
 }
 
+int test_core_private_graph_open_and_view_gate() {
+    auto graph_spec =
+        compile_fixture("spec/graph-all-values.source.json");
+    require(graph_spec.has_value());
+    std::vector<std::uint8_t> bytes =
+        load_hex("valid/graph-all-values.bin.hex");
+    const std::vector<std::uint8_t> expected = bytes;
+    auto copied = PayloadOwner::open_copy(
+        graph_spec.value(), bytes.data(), bytes.size());
+    require(copied.has_value(),
+            copied.has_value() ? std::string_view{}
+                               : copied.error().details_json());
+    require(copied.value().profile() ==
+            fastdb::payload::spec::Profile::object_graph_v1);
+    require(!copied.value().execution_report().has_value());
+    std::fill(bytes.begin(), bytes.end(), UINT8_C(0xff));
+    require(fastdb::payload::view::PayloadOwnerTestAccess::copy_bytes(
+                copied.value()) == expected);
+    auto gated_view = copied.value().entry_view(UINT32_C(0));
+    require(!gated_view.has_value());
+    require(gated_view.error().code() == FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE);
+    require(
+        gated_view.error().details_json() ==
+        "{\"profile\":\"object_graph.v1\","
+        "\"reason\":\"runtime_slice_not_implemented\"}");
+
+    FakeBacking external(expected.size());
+    std::copy(expected.begin(), expected.end(), external.storage.begin());
+    auto callbacks = external.callbacks();
+    auto retained = RetainedBacking::acquire(
+        callbacks, &external.token, external.storage.data(), expected.size());
+    require(retained.has_value());
+    require(external.retain_count == UINT32_C(1));
+    {
+        auto opened = PayloadOwner::open_external(
+            graph_spec.value(), external.storage.data(), expected.size(),
+            std::move(retained).value());
+        require(opened.has_value(),
+                opened.has_value() ? std::string_view{}
+                                   : opened.error().details_json());
+        require(opened.value().profile() ==
+                fastdb::payload::spec::Profile::object_graph_v1);
+        require(external.release_count == UINT32_C(0));
+    }
+    require(external.release_count == UINT32_C(1));
+    return EXIT_SUCCESS;
+}
+
 void apply_options(
     OpenOptions& target,
     const fastdb::test::payload::BinaryOpenOptions& source) {
@@ -896,6 +951,8 @@ int test_plan_publication_options_exceed_safe_defaults() {
     synthetic.text_bytes = defaults.max_string_bytes + UINT64_C(1);
     synthetic.validation_work =
         defaults.max_validation_work + UINT64_C(1);
+    synthetic.graph_object_count =
+        defaults.max_graph_objects + UINT64_C(1);
     const OpenOptions derived =
         fastdb::payload::build::BuildPlanTestAccess::publication_options(
             planned.value(), synthetic);
@@ -908,7 +965,7 @@ int test_plan_publication_options_exceed_safe_defaults() {
     require(derived.max_validation_work == synthetic.validation_work);
     require(derived.max_entries >= defaults.max_entries);
     require(derived.max_components >= defaults.max_components);
-    require(derived.max_graph_objects == defaults.max_graph_objects);
+    require(derived.max_graph_objects == synthetic.graph_object_count);
     return EXIT_SUCCESS;
 }
 
@@ -1025,6 +1082,9 @@ int run_task7_matrix() {
         return EXIT_FAILURE;
     }
     if (test_copy_open_and_physical_diagnostics() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_core_private_graph_open_and_view_gate() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     if (test_invalid_golden_corpus() != EXIT_SUCCESS) {

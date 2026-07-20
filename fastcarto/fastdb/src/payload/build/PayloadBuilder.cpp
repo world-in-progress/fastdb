@@ -1758,7 +1758,7 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
 
 Result<LogicalPayload> PayloadBuilder::freeze() {
     try {
-        return freeze_impl();
+        return freeze_impl(false);
     } catch (const std::bad_alloc&) {
         return Result<LogicalPayload>::failure(allocation_error());
     }
@@ -1766,12 +1766,7 @@ Result<LogicalPayload> PayloadBuilder::freeze() {
 
 Result<BuildPlan> PayloadBuilder::freeze_plan() {
     try {
-        auto available =
-            layout::RuntimeSchema::require_record_runtime(state_->spec);
-        if (!available.has_value()) {
-            return Result<BuildPlan>::failure(std::move(available).error());
-        }
-        auto values = freeze();
+        auto values = freeze_impl(true);
         if (!values.has_value()) {
             return Result<BuildPlan>::failure(std::move(values).error());
         }
@@ -1781,7 +1776,11 @@ Result<BuildPlan> PayloadBuilder::freeze_plan() {
             State& state = *state_;
             state.arena = std::move(logical.arena_);
             state.entry_roots = std::move(logical.entry_roots_);
+            state.graph.restore_object_pools(
+                std::move(logical.object_pools_));
             state.sealed = false;
+        } else {
+            state_->graph.commit_frozen_state();
         }
         return plan;
     } catch (const std::bad_alloc&) {
@@ -1789,7 +1788,8 @@ Result<BuildPlan> PayloadBuilder::freeze_plan() {
     }
 }
 
-Result<LogicalPayload> PayloadBuilder::freeze_impl() {
+Result<LogicalPayload> PayloadBuilder::freeze_impl(
+    bool preserve_graph_state) {
     State& state = *state_;
     auto valid_state = state.check_state();
     if (!valid_state.has_value()) {
@@ -1843,6 +1843,9 @@ Result<LogicalPayload> PayloadBuilder::freeze_impl() {
     LogicalPayload payload(state.spec, std::move(state.arena),
                            std::move(state.entry_roots),
                            std::move(object_pools), graph_object_count);
+    if (!preserve_graph_state) {
+        state.graph.commit_frozen_state();
+    }
     state.sealed = true;
     return Result<LogicalPayload>::success(std::move(payload));
 }

@@ -350,8 +350,8 @@ int test_complete_graph_authoring_and_coordinates() {
     PayloadBuilder& builder = created.value();
     auto unavailable = builder.freeze_plan();
     require(exact_error(
-        unavailable, FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE, "",
-        R"({"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"})"));
+        unavailable, FDB_PAYLOAD_E_MISSING_ENTRY, "/entries/a_root",
+        R"({"reason":"entry_not_authored"})"));
 
     auto a0 = builder.declare_object(a_index);
     auto b0 = builder.declare_object(b_index);
@@ -810,9 +810,8 @@ int test_allocation_failures_preserve_retryable_state() {
     require(gated_allocation_failure.error().code() ==
             FDB_PAYLOAD_E_ALLOCATION_FAILED);
     require(exact_error(
-        gated_plan.value().freeze_plan(), FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE,
-        "",
-        R"({"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"})"));
+        gated_plan.value().freeze_plan(), FDB_PAYLOAD_E_MISSING_ENTRY,
+        "/entries/root", R"({"reason":"entry_not_authored"})"));
 
     std::uint32_t declaration_failures = UINT32_C(0);
     for (std::int64_t allocation = INT64_C(0); allocation < INT64_C(64);

@@ -69,6 +69,12 @@ target_compile_definitions(
     PRIVATE
         FASTDB_PAYLOAD_BUILDING=1
 )
+if(BUILD_TESTING)
+    target_compile_definitions(
+        fastdb_payload_core
+        PRIVATE FASTDB_PAYLOAD_BUILD_TESTING=1
+    )
+endif()
 if(MSVC)
     target_compile_options(fastdb_payload_core PRIVATE /W4 /WX)
 else()

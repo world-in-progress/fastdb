@@ -499,6 +499,25 @@ target_include_directories(
 set_tests_properties(payload.payload_backing PROPERTIES TIMEOUT 120)
 
 add_fastdb_payload_test(
+    graph_backing
+    SOURCES payload/test_graph_backing.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_graph_backing
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_compile_definitions(
+    fastdb_payload_test_graph_backing
+    PRIVATE FASTDB_PAYLOAD_BUILD_TESTING=1
+)
+set_tests_properties(payload.graph_backing PROPERTIES TIMEOUT 180)
+
+add_fastdb_payload_test(
     payload_open
     SOURCES
         payload/GoldenCorpus.cpp

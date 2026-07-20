@@ -1,6 +1,7 @@
 #include "payload/build/BuildPlan.hpp"
 
 #include "payload/backing/HeapBacking.hpp"
+#include "payload/build/GraphEncoder.hpp"
 #include "payload/build/RecordEncoder.hpp"
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
@@ -15,7 +16,9 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace fastdb::payload::build {
 namespace {
@@ -24,6 +27,7 @@ using error::Error;
 using error::Result;
 using json::JsonPointer;
 using json::JsonValue;
+using layout::GraphLayout;
 using layout::RecordLayout;
 using layout::RegionKind;
 using layout::RuntimeSchema;
@@ -239,6 +243,22 @@ private:
     std::uint64_t next_offset_{UINT64_C(0)};
 };
 
+Result<void> encode_profile(const ProfileLayout& profile_layout,
+                            const LogicalPayload& values,
+                            ByteSink& sink) {
+    return std::visit(
+        [&](const auto& selected_layout) -> Result<void> {
+            using Layout = std::decay_t<decltype(selected_layout)>;
+            if constexpr (std::is_same_v<Layout, RecordLayout>) {
+                return encode_record(selected_layout, values, sink);
+            } else {
+                static_assert(std::is_same_v<Layout, GraphLayout>);
+                return encode_graph(selected_layout, values, sink);
+            }
+        },
+        profile_layout);
+}
+
 }  // namespace
 
 Result<BuildPlan> BuildPlan::create(LogicalPayload&& values) try {
@@ -246,66 +266,90 @@ Result<BuildPlan> BuildPlan::create(LogicalPayload&& values) try {
     if (!runtime.has_value()) {
         return Result<BuildPlan>::failure(std::move(runtime).error());
     }
-    auto record_layout = RecordLayout::plan(runtime.value(), values);
-    if (!record_layout.has_value()) {
-        return Result<BuildPlan>::failure(
-            std::move(record_layout).error());
-    }
 
-    const RecordLayout& layout = record_layout.value();
-    std::uint64_t list_elements = UINT64_C(0);
-    for (const layout::ListAggregate& aggregate :
-         layout.list_aggregates()) {
-        auto added = layout::checked_add_u64(
+    const auto finalize = [&values](auto selected_layout)
+        -> Result<BuildPlan> {
+        using Layout = std::decay_t<decltype(selected_layout)>;
+        std::uint64_t list_elements = UINT64_C(0);
+        for (const layout::ListAggregate& aggregate :
+             selected_layout.list_aggregates()) {
+            auto added = layout::checked_add_u64(
+                list_elements,
+                static_cast<std::uint64_t>(aggregate.item_nodes.size()),
+                JsonPointer{}.append("plan").append(
+                    "list_element_count"));
+            if (!added.has_value()) {
+                return Result<BuildPlan>::failure(
+                    std::move(added).error());
+            }
+            list_elements = added.value();
+        }
+
+        std::uint64_t text_bytes = UINT64_C(0);
+        std::uint64_t opaque_bytes = UINT64_C(0);
+        std::uint32_t max_alignment = UINT32_C(1);
+        for (const layout::RegionDescriptor& region :
+             selected_layout.regions()) {
+            max_alignment = std::max(max_alignment, region.alignment);
+            if (region.kind == RegionKind::utf8_pool ||
+                region.kind == RegionKind::utf16_pool) {
+                auto added = layout::checked_add_u64(
+                    text_bytes, region.byte_length,
+                    JsonPointer{}.append("plan").append("text_bytes"));
+                if (!added.has_value()) {
+                    return Result<BuildPlan>::failure(
+                        std::move(added).error());
+                }
+                text_bytes = added.value();
+            } else if (region.kind == RegionKind::bytes_pool) {
+                auto added = layout::checked_add_u64(
+                    opaque_bytes, region.byte_length,
+                    JsonPointer{}.append("plan").append("opaque_bytes"));
+                if (!added.has_value()) {
+                    return Result<BuildPlan>::failure(
+                        std::move(added).error());
+                }
+                opaque_bytes = added.value();
+            }
+        }
+
+        const std::uint64_t graph_object_count = [&] {
+            if constexpr (std::is_same_v<Layout, GraphLayout>) {
+                return selected_layout.graph_object_count();
+            }
+            return UINT64_C(0);
+        }();
+        PlanInfo info{
+            selected_layout.total_length(),
+            static_cast<std::uint64_t>(selected_layout.region_count()),
+            static_cast<std::uint64_t>(values.nodes().size()),
             list_elements,
-            static_cast<std::uint64_t>(aggregate.item_nodes.size()),
-            JsonPointer{}.append("plan").append("list_element_count"));
-        if (!added.has_value()) {
-            return Result<BuildPlan>::failure(std::move(added).error());
-        }
-        list_elements = added.value();
-    }
-
-    std::uint64_t text_bytes = UINT64_C(0);
-    std::uint64_t opaque_bytes = UINT64_C(0);
-    std::uint32_t max_alignment = UINT32_C(1);
-    for (const layout::RegionDescriptor& region : layout.regions()) {
-        max_alignment = std::max(max_alignment, region.alignment);
-        if (region.kind == RegionKind::utf8_pool ||
-            region.kind == RegionKind::utf16_pool) {
-            auto added = layout::checked_add_u64(
-                text_bytes, region.byte_length,
-                JsonPointer{}.append("plan").append("text_bytes"));
-            if (!added.has_value()) {
-                return Result<BuildPlan>::failure(
-                    std::move(added).error());
-            }
-            text_bytes = added.value();
-        } else if (region.kind == RegionKind::bytes_pool) {
-            auto added = layout::checked_add_u64(
-                opaque_bytes, region.byte_length,
-                JsonPointer{}.append("plan").append("opaque_bytes"));
-            if (!added.has_value()) {
-                return Result<BuildPlan>::failure(
-                    std::move(added).error());
-            }
-            opaque_bytes = added.value();
-        }
-    }
-
-    PlanInfo info{
-        layout.total_length(),
-        static_cast<std::uint64_t>(layout.region_count()),
-        static_cast<std::uint64_t>(values.nodes().size()),
-        list_elements,
-        text_bytes,
-        opaque_bytes,
-        layout.validation_work(),
-        max_alignment,
-        UINT32_C(1),
+            text_bytes,
+            opaque_bytes,
+            selected_layout.validation_work(),
+            max_alignment,
+            FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE,
+            graph_object_count,
+        };
+        return Result<BuildPlan>::success(BuildPlan(
+            std::move(values),
+            ProfileLayout{std::move(selected_layout)}, info));
     };
-    return Result<BuildPlan>::success(BuildPlan(
-        std::move(values), std::move(record_layout).value(), info));
+
+    if (values.spec().profile() == spec::Profile::record_v1) {
+        auto record_layout = RecordLayout::plan(runtime.value(), values);
+        if (!record_layout.has_value()) {
+            return Result<BuildPlan>::failure(
+                std::move(record_layout).error());
+        }
+        return finalize(std::move(record_layout).value());
+    }
+    auto graph_layout = GraphLayout::plan(runtime.value(), values);
+    if (!graph_layout.has_value()) {
+        return Result<BuildPlan>::failure(
+            std::move(graph_layout).error());
+    }
+    return finalize(std::move(graph_layout).value());
 } catch (const std::bad_alloc&) {
     return Result<BuildPlan>::failure(allocation_error());
 } catch (const std::length_error&) {
@@ -330,6 +374,8 @@ view::OpenOptions BuildPlan::publication_options(
         std::max(options.max_nesting_depth, info.logical_value_count);
     options.max_list_elements =
         std::max(options.max_list_elements, info.list_element_count);
+    options.max_graph_objects =
+        std::max(options.max_graph_objects, info.graph_object_count);
     options.max_string_bytes =
         std::max(options.max_string_bytes, info.text_bytes);
     options.max_validation_work =
@@ -393,14 +439,14 @@ Result<view::PayloadOwner> BuildPlan::execute(
             StableSpanSink sink(reservation.writable_data(),
                                 reservation.capacity());
             written = staged_image == nullptr
-                          ? encode_record(record_layout_, values_, sink)
+                          ? encode_profile(profile_layout_, values_, sink)
                           : sink.write(UINT64_C(0), staged_image,
                                        info_.total_bytes);
             bytes_written = sink.bytes_written();
         } else {
             RangeCallbackSink sink(reservation, reservation.capacity());
             written = staged_image == nullptr
-                          ? encode_record(record_layout_, values_, sink)
+                          ? encode_profile(profile_layout_, values_, sink)
                           : sink.write(UINT64_C(0), staged_image,
                                        info_.total_bytes);
             bytes_written = sink.bytes_written();
@@ -464,7 +510,7 @@ Result<view::PayloadOwner> BuildPlan::execute(
 
     auto publish_image = [this](CommittedImage image)
         -> Result<view::PayloadOwner> {
-        auto opened = view::open_record(
+        auto opened = view::open_payload(
             values_.spec(), image.backing.readable_data(),
             image.backing.readable_size(), publication_options(info_));
         if (!opened.has_value()) {

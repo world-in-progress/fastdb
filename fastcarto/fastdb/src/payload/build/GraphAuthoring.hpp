@@ -46,6 +46,9 @@ public:
         const std::vector<NodeIndex>& entry_roots) const;
 
     std::vector<std::vector<NodeIndex>> take_object_pools() noexcept;
+    void restore_object_pools(
+        std::vector<std::vector<NodeIndex>> object_pools) noexcept;
+    void commit_frozen_state() noexcept;
 
 private:
     error::Result<ObjectHandle> allocate_handle(
