@@ -205,11 +205,6 @@ Result<Access> PayloadOwner::acquire() const try {
 }
 
 Result<View> PayloadOwner::entry_view(std::uint32_t entry_index) const try {
-    auto available =
-        layout::RuntimeSchema::require_record_runtime(state_->spec);
-    if (!available.has_value()) {
-        return Result<View>::failure(std::move(available).error());
-    }
     std::uint64_t generation = UINT64_C(0);
     auto pin = AccessPin::acquire_current(state_->barrier, generation);
     if (!pin.has_value()) {

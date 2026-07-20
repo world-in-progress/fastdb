@@ -16,6 +16,7 @@ namespace fastdb::payload::view {
 
 struct PayloadOwnerState;
 struct MaterializeMetrics;
+struct GraphViewInternals;
 struct ViewInternals;
 struct ViewTestAccess;
 class View;
@@ -112,6 +113,8 @@ public:
     error::Result<std::uint32_t> component_index() const;
     error::Result<std::uint32_t> field_count() const;
     error::Result<View> field(std::uint32_t index) const;
+    error::Result<View> ref_target() const;
+    error::Result<GraphIdentity> graph_identity() const;
     error::Result<std::uint8_t> get_bool() const;
     error::Result<std::uint8_t> get_u8() const;
     error::Result<std::uint16_t> get_u16() const;
@@ -129,6 +132,7 @@ private:
     explicit View(std::shared_ptr<const State> state) noexcept;
 
     friend class PayloadOwner;
+    friend struct GraphViewInternals;
     friend struct ViewInternals;
     friend struct ViewTestAccess;
     friend error::Result<View> materialize(const View& view);

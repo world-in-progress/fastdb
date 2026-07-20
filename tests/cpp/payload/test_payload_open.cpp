@@ -312,6 +312,7 @@ using fastdb::payload::error::Result;
 using fastdb::payload::spec::CompiledSpec;
 using fastdb::payload::view::OpenOptions;
 using fastdb::payload::view::PayloadOwner;
+using fastdb::payload::view::ViewKind;
 
 constexpr std::uint32_t allow_staging = UINT32_C(1);
 constexpr std::uint32_t require_direct = UINT32_C(2);
@@ -612,7 +613,7 @@ int test_copy_open_and_physical_diagnostics() {
     return EXIT_SUCCESS;
 }
 
-int test_core_private_graph_open_and_view_gate() {
+int test_core_private_graph_open_and_checked_view() {
     auto graph_spec =
         compile_fixture("spec/graph-all-values.source.json");
     require(graph_spec.has_value());
@@ -630,13 +631,17 @@ int test_core_private_graph_open_and_view_gate() {
     std::fill(bytes.begin(), bytes.end(), UINT8_C(0xff));
     require(fastdb::payload::view::PayloadOwnerTestAccess::copy_bytes(
                 copied.value()) == expected);
-    auto gated_view = copied.value().entry_view(UINT32_C(0));
-    require(!gated_view.has_value());
-    require(gated_view.error().code() == FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE);
-    require(
-        gated_view.error().details_json() ==
-        "{\"profile\":\"object_graph.v1\","
-        "\"reason\":\"runtime_slice_not_implemented\"}");
+    auto root_sequence = copied.value().entry_view(UINT32_C(0));
+    require(root_sequence.has_value());
+    require(root_sequence.value().kind().value() == ViewKind::sequence);
+    require(root_sequence.value().length().value() == UINT64_C(1));
+    auto root = root_sequence.value().at(UINT64_C(0));
+    require(root.has_value());
+    require(root.value().kind().value() == ViewKind::component);
+    require(root.value().graph_identity().value().object_id == UINT64_C(0));
+    require(root.value().field_count().value() == UINT32_C(16));
+    require(root.value().field(UINT32_C(0)).value().get_bool().value() ==
+            UINT8_C(1));
 
     FakeBacking external(expected.size());
     std::copy(expected.begin(), expected.end(), external.storage.begin());
@@ -1084,7 +1089,7 @@ int run_task7_matrix() {
     if (test_copy_open_and_physical_diagnostics() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
-    if (test_core_private_graph_open_and_view_gate() != EXIT_SUCCESS) {
+    if (test_core_private_graph_open_and_checked_view() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     if (test_invalid_golden_corpus() != EXIT_SUCCESS) {

@@ -100,13 +100,15 @@ Current repository state:
 - Task 11 also defines separate Emscripten and Python package jobs, native and wasm exact ABI-99 checks, exact sdist/wheel inventory validation, the exact seven-diagnostic SWIG baseline owned by Issue 0003, and one executable path-aware aggregate whose 16 scope combinations and every incorrect job result are tested. The package job now has exact Python 3.10/3.12 matrix legs. Its standard-library-only checker derives and cross-checks distribution identity from sdist/wheel filenames and their `PKG-INFO`/`METADATA`, so it does not import a Python-3.11-only TOML module. These are hosted job definitions only until an authorized run exists;
 - Task 11 adds `fuzz_payload_open` over borrowed input with bounded options, one fixed comprehensive matching spec and one deliberate digest-mismatch spec. All 10 reviewed seeds now embed the comprehensive spec digest: the Core-generated `component-list-empty` golden proves the empty form; reviewed scalar/text mutations provide distinct valid fixed/text forms; the full composition is the list form; and every malformed seed derives from one of those matching valid images. The deterministic runner asserts each seed's expected success or exact status/path before invoking the shared fuzz harness, so malformed offset/validity/text/list coverage cannot silently collapse to `DIGEST_MISMATCH`. Successful opens traverse every value kind through the public C ABI, exercise scoped spans, materialize before invalidation, and traverse the detached result afterward; fuzz failures are opened twice and compared across status, code, symbol, path, message, and canonical details. A machine-checked 14-class map names the hostile binary, backing, allocation, generation, and access-drain proofs;
 - Task 11's complete fresh post-review-fix local gate is green: Debug passes 30/30 in 22.46 seconds and Release passes 30/30 in 8.70 seconds, each with exact native ABI-99; the hard-fail ASan+UBSan suite passes 30/30 in 95.78 seconds with a zero-diagnostic retained-log scan; focused ThreadSanitizer passes 4/4; the Core, pure-C, C++ facade, and single-thread injected-failure Emscripten paths pass with exact wasm ABI-99 and structural flag inspection; the unchanged arm64/x86-64/wasm32 C11 checks remain green; Python passes 413/413 plus compileall; a fresh Python 3.10 sdist/wheel build passes the exact inventory checker under both Python 3.10 and the current interpreter; and a clean paired TypeScript/WASM rebuild passes 76/76. The local libFuzzer and LeakSanitizer toolchain limits remain explicitly bounded below. The first review's two Important findings are corrected, and the same reviewer confirms both closed with zero Critical, Important, or Minor findings;
-- P3 Tasks 1-5 now provide the Core-private graph topology, logical authoring,
+- P3 Tasks 1-6 now provide the Core-private graph topology, logical authoring,
   complete normative profile-2 layout/encoding, hardened byte open, iterative
   reachability, typed index-cursor facts, immutable graph BuildPlan,
   direct/staged backing execution, strict final-image validation, and one
-  shared owner publication path described below. Checked graph views,
-  graph materialization/lifetime closure, public graph operations, language
-  projections, and the rest of P3-P5 remain open;
+  shared owner publication path. Checked backed graph navigation, explicit ref
+  dereference, payload-scoped identity, and invalidation reuse that same owner,
+  generation, access barrier, and Access type as P2. Reachable-closure
+  materialization, public graph operations, language projections, and the rest
+  of P3-P5 remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query and P2 record-runtime slices are implemented,
@@ -196,7 +198,7 @@ so this P2 proof index is locally frozen.
 | Goal P2: open, traverse, scoped borrow, materialize, invalidate, and release through C/C++ | 99-symbol C ABI and `fastdb_payload.hpp` | `payload.runtime_abi`, `payload.runtime_cpp_facade`, `payload.checked_view` |
 | Goal P2: source-build WebAssembly contains Core failures as stable C statuses | `fastdb_payload_emscripten_exception_model`, public `fastdb` target, ABI catch sites | `fastdb_payload_wasm_runtime_abi_single_thread --single-thread-injected-failure`, `tools/check_emscripten_exception_flags.py` |
 | Goal P2: package surfaces contain the normative contract, Python extension, and native libraries without build debris or unreviewed SWIG diagnostics | `MANIFEST.in`, Python build configuration, Issue 0003 baseline | `tests/ci/test_check_python_package_inventory.py` and `tools/check_python_package_inventory.py` over the retained build log, one sdist, and one wheel |
-| P3 Section 9: graph specifications have one Core topology/logical authoring authority, complete Core-private profile-2 layout/encoding/hardened-open semantics, and the shared plan/backing/owner lifecycle for every V1 value | `RuntimeTopology`, `RuntimeSchema`, `GraphAuthoring`, `GraphLayout`, `GraphEncoder`, `ProfileLayout`, `BuildPlan`, `open_payload`/`open_graph`, `PayloadOwner`, and explicit inline/object/ref cursor variants; stable public `RUNTIME_UNAVAILABLE` projection | `payload.graph_runtime_schema`, `payload.graph_builder`, `payload.graph_binary`, `payload.graph_backing`, `payload.payload_open`, seven annotated graph goldens, seven exact invalid receipts, allocation sweeps, the no-full-image direct proof, a 50,000-object cycle, and record backing/open/view regressions; exact public ABI remains 99 symbols |
+| P3 Section 9: graph specifications have one Core topology/logical authoring authority, complete Core-private profile-2 layout/encoding/hardened-open semantics, the shared plan/backing/owner lifecycle, and checked backed navigation for every V1 value | `RuntimeTopology`, `RuntimeSchema`, `GraphAuthoring`, `GraphLayout`, `GraphEncoder`, `ProfileLayout`, `BuildPlan`, `open_payload`/`open_graph`, `PayloadOwner`, explicit inline/object/ref cursor variants, and `GraphView`; stable public `RUNTIME_UNAVAILABLE` projection | `payload.graph_runtime_schema`, `payload.graph_builder`, `payload.graph_binary`, `payload.graph_backing`, `payload.payload_open`, `payload.graph_view`, seven annotated graph goldens, seven exact invalid receipts, allocation sweeps, the no-full-image direct proof, a 50,000-object cycle, 32-thread immutable traversal, generation/drain/release proofs, and record backing/open/view regressions; exact public ABI remains 99 symbols |
 
 ### Emscripten exception choice and current closure
 
@@ -494,6 +496,43 @@ warnings, manual style review, and the diff check remain the available local
 format/compile evidence. No hosted result, push, tag, version change, release,
 or publication is implied.
 
+P3 Task 6 removes only the Core-private record-profile gate from
+`PayloadOwner::entry_view`; all public graph build/open guards remain exact.
+The existing explicit `IdentityObjectCursor` and `RefCursor` variants now flow
+through the ordinary checked `View` navigation path. Identity objects expose
+component fields without a synthetic runtime type ID, inline components have
+no graph identity, `field` never dereferences a ref, and `ref_target` is the
+only dereference operation. `graph_identity` returns the exact
+payload-scoped `(component_index, object_id)` coordinate for a present
+identity object or ref, including object ID zero. Null applicable values fail
+with `UNEXPECTED_NULL`; inapplicable identity or dereference operations fail
+with `TYPE_MISMATCH`.
+
+Every backed graph operation acquires a short pin at the view's captured
+generation before it observes kind, presence, coordinates, fields, or bytes.
+Published children retain the same owner and generation but no pin or cached
+backing pointer. Scalar, normalized, canonical-NaN, string, wide-string,
+bytes, nested-list, inline-component, root, ref, shared-target, and cycle
+navigation all reuse the P2 reader, owner, access barrier, and `Access` types;
+there is no graph lock, object-node owner, cache, or unpinned span. A
+32-thread immutable traversal succeeds, an active Access blocks invalidation,
+new graph operations are rejected while invalidation drains, the generation
+advances from 1 to 2, and external backing releases exactly once. A child view
+also keeps external backing alive after the original owner handle is gone.
+Injected child-view and Access allocation failures remain retryable.
+
+The final Task 6 local gate passes Debug `35/35` in 50.94 seconds, Release `35/35`
+in 41.27 seconds, and hard-fail ASan+UBSan `35/35` in 200.83 seconds. The
+retained sanitizer log contains no ASan or UBSan diagnostic; local Apple ASan
+uses `detect_leaks=0`, so this is not LeakSanitizer evidence. Available
+ThreadSanitizer passes graph-backing, checked-view, and graph-view `3/3` in
+23.32 seconds. Native Debug, native Release, and a fresh Core Emscripten build
+each retain exactly 99 public ABI symbols; both Core WASM runtime harnesses
+pass. Python remains `413/413` plus compileall, and a clean TypeScript/WASM
+rebuild remains `76/76`. Graph materialization still fails with the explicit
+Core-private reason `graph_materialization_not_available`, and no public graph
+function, manifest transition, release, push, or publication is claimed.
+
 These are internal schema/logical-value/binary seams, not a public graph
 runtime. For otherwise valid ABI calls, `builder_create`, `open_copy`, and
 `open_external`
@@ -507,20 +546,19 @@ Graph manifests remain `not_evaluated`, expose only `compile,query`, retain an
 empty codegen target list, and report direct reason
 `runtime_slice_not_implemented`.
 
-Still absent from executable profile 2 are checked graph/ref views on the
-access barrier; reachable-closure materialization; graph invalidation/lifetime
-closure; the six additive public ABI functions and their public
-handle/type/struct surfaces; the final graph manifest/capability transition;
-language projections; and code generation. Public callers therefore still
-cannot build, open, navigate, materialize, invalidate, or exchange a graph
-payload even though Core-private plan/backing/owner execution exists. All eight
-Task 5 Core-private D1 facts are executable, but D1 remains open until the
-public ABI, checked views/materialization/lifetime, hostile-input robustness,
-and independent final evidence close in Tasks 6-10. No new public function or
-struct layout has been introduced, and the exact public ABI remains 99
-symbols.
+Still absent from executable profile 2 are source-independent reachable-
+closure materialization and detached graph semantics; the six additive public
+ABI functions and their public handle/type/struct surfaces; the final graph
+manifest/capability transition; language projections; and code generation.
+Public callers therefore still cannot build, open, navigate, materialize,
+invalidate, or exchange a graph payload even though Core-private
+plan/backing/owner/view execution exists. All eight Task 5 Core-private D1
+facts and Task 6 checked-view/lifetime facts are executable, but D1 remains
+open until materialization, the public ABI, hostile-input robustness, and
+independent final evidence close in Tasks 7-10. No new public function or
+struct layout has been introduced, and the exact public ABI remains 99 symbols.
 Object-graph runtime remains P3 until the complete binary and public-runtime
-closure criteria below pass; Tasks 1-5 are internal foundations within that
+closure criteria below pass; Tasks 1-6 are internal foundations within that
 phase.
 
 **Reason:** The shared topology/storage-role seam had to land before graph
@@ -529,31 +567,33 @@ language projections cannot acquire competing reachability or identity rules.
 Logical authoring had to establish deterministic identity, handle lifetime,
 fill ordering, limits, and reachable-closure rules before those values were
 committed to a wire format. The complete private byte/open layer now proves the
-profile, object-pool, ID, value, list/pool, and reachability contract. Remaining
-view, materialization, lifetime, and publication work must continue reusing
-P2's owner, access-barrier, and invalidation contracts rather than create a
-second runtime or expose a partially usable public profile.
+profile, object-pool, ID, value, list/pool, and reachability contract. Checked
+graph navigation now proves that those cursor facts compose with the frozen P2
+owner, access-barrier, generation, and invalidation contracts. Remaining
+materialization and publication work must continue reusing that one runtime
+rather than create a second owner or expose a partially usable public profile.
 
 **Impact:** Core-private later P3 slices can consume one generic graph meaning,
 one complete logical graph, one complete hardened profile-2 byte reader, one
-shared plan/backing/owner path, and one explicit cursor vocabulary without
-renumbering record types or inventing a second object identity model. Users
-and language SDKs still can only identify and query graph-shaped contracts; no
-graph payload can yet be built, opened, navigated, materialized, or exchanged
-through the public ABI.
+shared plan/backing/owner path, one explicit cursor vocabulary, and one checked
+graph view/lifetime path without renumbering record types or inventing a second
+object identity model. Users and language SDKs still can only identify and
+query graph-shaped contracts; no graph payload can yet be built, opened,
+navigated, materialized, or exchanged through the public ABI.
 
 **Owner and dependencies:** FastDB owns every remaining graph semantic in the
-C++ Core and projects it only through the stable C ABI. P3 Tasks 6-10 depend on
+C++ Core and projects it only through the stable C ABI. P3 Tasks 7-10 depend on
 the Task 1 topology, Task 2 logical authoring seam, Tasks 3-4 normative/private
-binary runtime, Task 5 plan/backing/owner integration, and frozen P2 lifetime
-contracts. P4 owns
+binary runtime, Task 5 plan/backing/owner integration, Task 6 checked graph
+views, and frozen P2 lifetime contracts. P4 owns
 language projections/codegen only after P3 closes; C-Two remains a downstream
 composer and does not own FastDB graph meaning.
 
-**Closure criteria:** Complete P3 Tasks 6-10: add checked
-view/materialize/invalidate semantics for every V1 value, object pool, root,
-list, shared ref, and cycle; enable truthful graph manifest/capability facts in
-the same slice as the public ABI; freeze exact ABI-105; and pass direct/staged,
+**Closure criteria:** Complete P3 Tasks 7-10: add source-independent reachable-
+closure materialization for every V1 value, object pool, root, list, shared
+ref, and cycle; project the complete graph build/open/view/materialize/
+invalidate model; enable truthful graph manifest/capability facts in the same
+slice as the public ABI; freeze exact ABI-105; and pass direct/staged,
 lifetime, corpus/fuzz, sanitizer, wasm, package, and independent review gates.
 No currently accepted ordinary P3 semantic is deferred merely to shorten
 implementation.
@@ -767,7 +807,7 @@ result.
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
-| P3. Object-graph runtime | Tasks 1-5 shared topology, Core-private logical graph authoring, complete normative profile-2 bytes for all V1 values, hardened private open, iterative reachability, explicit index cursors, and shared direct/staged plan/backing/owner publication are implemented locally; public graph runtime remains unavailable | Complete Tasks 6-10: checked graph view/materialize/invalidate, truthful capabilities, ABI-105, robustness, and full review/gates |
+| P3. Object-graph runtime | Tasks 1-6 shared topology, Core-private logical graph authoring, complete normative profile-2 bytes for all V1 values, hardened private open, iterative reachability, explicit index cursors, shared direct/staged plan/backing/owner publication, and checked graph view/lifetime behavior are implemented locally; public graph runtime remains unavailable | Complete Tasks 7-10: reachable-closure materialization, truthful public capabilities, ABI-105, robustness, and full review/gates |
 | P4. Language projections and payload codegen | Blocked on P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P3-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |
 
