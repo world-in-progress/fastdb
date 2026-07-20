@@ -298,6 +298,8 @@ static_assert(sizeof(fdb_payload_v1_plan_info_t) ==
               FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE);
 static_assert(sizeof(fdb_payload_v1_execution_report_t) ==
               FDB_PAYLOAD_V1_EXECUTION_REPORT_V1_SIZE);
+static_assert(FDB_PAYLOAD_E_INVALID_OBJECT_HANDLE == UINT32_C(2014));
+static_assert(FDB_PAYLOAD_E_UNREACHABLE_OBJECT == UINT32_C(2015));
 static_assert(offsetof(fdb_payload_v1_fixed_run_v1_t, data) <
               offsetof(fdb_payload_v1_fixed_run_v1_t, validity));
 static_assert(offsetof(fdb_payload_v1_fixed_run_v1_t, validity) <

@@ -3,6 +3,7 @@
 #include "payload/build/BuildPlan.hpp"
 #include "payload/build/ValueArena.hpp"
 #include "payload/error/Result.hpp"
+#include "payload/spec/RuntimeTopology.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -17,6 +18,7 @@ struct BuilderLimits final {
     std::uint64_t max_opaque_bytes;
     std::uint64_t max_nesting_depth;
     std::uint64_t max_total_builder_bytes;
+    std::uint64_t max_graph_objects{UINT64_C(10000000)};
 };
 
 BuilderLimits default_builder_limits() noexcept;
@@ -63,6 +65,11 @@ public:
     error::Result<void> push_fixed_run(const FixedRun& run);
     error::Result<void> begin_component();
     error::Result<void> begin_list(std::uint64_t item_count);
+    error::Result<ObjectHandle> declare_object(
+        std::uint32_t component_index);
+    error::Result<void> begin_object_fill(ObjectHandle object);
+    error::Result<void> push_object(ObjectHandle object);
+    error::Result<void> push_ref(ObjectHandle object);
     error::Result<LogicalPayload> freeze();
     error::Result<BuildPlan> freeze_plan();
 
@@ -91,12 +98,27 @@ private:
     error::Result<void> push_fixed_run_impl(const FixedRun& run);
     error::Result<void> begin_component_impl();
     error::Result<void> begin_list_impl(std::uint64_t item_count);
+    error::Result<ObjectHandle> declare_object_impl(
+        std::uint32_t component_index);
+    error::Result<void> begin_object_fill_impl(ObjectHandle object);
+    error::Result<void> push_graph_coordinate_impl(
+        ObjectHandle object,
+        spec::StorageRole required_role,
+        ValueTag tag,
+        std::string_view operation);
     error::Result<LogicalPayload> freeze_impl();
 
     State* state_pointer() noexcept;
     const State* state_pointer() const noexcept;
 
     std::unique_ptr<State> state_;
+
+    friend struct PayloadBuilderTestAccess;
+};
+
+struct PayloadBuilderTestAccess final {
+    static bool use_object_handle_sequence(PayloadBuilder& builder,
+                                           ObjectHandle next) noexcept;
 };
 
 }  // namespace fastdb::payload::build

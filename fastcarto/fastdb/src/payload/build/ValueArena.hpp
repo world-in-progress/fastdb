@@ -12,6 +12,13 @@ namespace fastdb::payload::build {
 using NodeIndex = std::uint64_t;
 inline constexpr NodeIndex invalid_node_index =
     std::numeric_limits<NodeIndex>::max();
+using ObjectHandle = std::uint64_t;
+inline constexpr ObjectHandle invalid_object_handle = UINT64_C(0);
+
+struct ObjectCoordinate final {
+    std::uint32_t component_index;
+    std::uint64_t object_id;
+};
 
 enum class ValueTag : std::uint8_t {
     null_value,
@@ -30,6 +37,9 @@ enum class ValueTag : std::uint8_t {
     component,
     list,
     sequence,
+    object_record,
+    object_root,
+    reference,
 };
 
 struct ValueNode final {
@@ -41,6 +51,9 @@ struct ValueNode final {
     NodeIndex first_child;
     NodeIndex next_sibling;
     std::uint64_t child_count;
+    std::uint32_t object_component_index{UINT32_MAX};
+    std::uint32_t reserved32{UINT32_C(0)};
+    std::uint64_t object_id{UINT64_MAX};
 };
 
 class ValueArena final {
@@ -70,6 +83,12 @@ public:
     const std::vector<NodeIndex>& entry_roots() const noexcept {
         return entry_roots_;
     }
+    const std::vector<std::vector<NodeIndex>>& object_pools() const noexcept {
+        return object_pools_;
+    }
+    std::uint64_t graph_object_count() const noexcept {
+        return graph_object_count_;
+    }
     std::string_view byte_storage() const noexcept {
         if (arena_.byte_storage_.empty()) {
             return {};
@@ -84,14 +103,20 @@ private:
 
     LogicalPayload(spec::CompiledSpec spec,
                    ValueArena arena,
-                   std::vector<NodeIndex> entry_roots) noexcept
+                   std::vector<NodeIndex> entry_roots,
+                   std::vector<std::vector<NodeIndex>> object_pools,
+                   std::uint64_t graph_object_count) noexcept
         : spec_(std::move(spec)),
           arena_(std::move(arena)),
-          entry_roots_(std::move(entry_roots)) {}
+          entry_roots_(std::move(entry_roots)),
+          object_pools_(std::move(object_pools)),
+          graph_object_count_(graph_object_count) {}
 
     spec::CompiledSpec spec_;
     ValueArena arena_;
     std::vector<NodeIndex> entry_roots_;
+    std::vector<std::vector<NodeIndex>> object_pools_;
+    std::uint64_t graph_object_count_{UINT64_C(0)};
 };
 
 }  // namespace fastdb::payload::build

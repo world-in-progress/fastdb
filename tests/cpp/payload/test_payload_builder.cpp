@@ -131,6 +131,7 @@ int test_empty_and_default_limits() {
     require(defaults.max_opaque_bytes == (UINT64_C(1) << 30));
     require(defaults.max_nesting_depth == UINT64_C(1024));
     require(defaults.max_total_builder_bytes == (UINT64_C(1) << 30));
+    require(defaults.max_graph_objects == UINT64_C(10000000));
 
     auto empty_spec = compile(
         R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]})");
@@ -1576,7 +1577,7 @@ int test_null_empty_distinctions_and_high_fanout_teardown() {
     return EXIT_SUCCESS;
 }
 
-int test_deep_iterative_builder_and_runtime_unavailable() {
+int test_deep_iterative_builder_and_graph_runtime_boundary() {
     constexpr std::uint32_t depth = UINT32_C(20000);
     std::string source = deep_list_spec(depth);
     auto compiled = compile(source, depth + UINT32_C(16));
@@ -1601,9 +1602,13 @@ int test_deep_iterative_builder_and_runtime_unavailable() {
         R"({"schema":"fastdb.payload.v1","profile":"object_graph.v1","entries":[],"components":[]})");
     require(graph_spec.has_value());
     auto graph = PayloadBuilder::create(std::move(graph_spec).value());
+    require(graph.has_value());
     require(exact_error(
-        graph, FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE, "",
+        graph.value().freeze_plan(), FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE, "",
         R"({"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"})"));
+    auto logical_graph = graph.value().freeze();
+    require(logical_graph.has_value());
+    require(logical_graph.value().graph_object_count() == UINT64_C(0));
     return EXIT_SUCCESS;
 }
 
@@ -1626,7 +1631,7 @@ int main() {
         test_exact_uint64_error_details,
         test_missing_partial_and_logical_accounting,
         test_null_empty_distinctions_and_high_fanout_teardown,
-        test_deep_iterative_builder_and_runtime_unavailable,
+        test_deep_iterative_builder_and_graph_runtime_boundary,
     }};
     for (const auto test : tests) {
         const int status = test();

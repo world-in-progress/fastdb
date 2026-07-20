@@ -1,5 +1,7 @@
 #include "payload/build/PayloadBuilder.hpp"
 
+#include "payload/build/GraphAuthoring.hpp"
+
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
 #include "payload/layout/InputSpan.hpp"
@@ -33,6 +35,8 @@ using json::JsonValue;
 using spec::Cardinality;
 using spec::Component;
 using spec::Entry;
+using spec::Profile;
+using spec::StorageRole;
 using spec::TypeKind;
 using spec::TypeNode;
 
@@ -140,7 +144,12 @@ JsonPointer make_path(const std::vector<PathToken>& tokens) {
     return builder.snapshot();
 }
 
-enum class FrameKind : std::uint8_t { sequence, component, list };
+enum class FrameKind : std::uint8_t {
+    sequence,
+    component,
+    list,
+    object_record,
+};
 
 struct ExpectationFrame final {
     FrameKind kind;
@@ -156,7 +165,8 @@ struct ExpectationFrame final {
 };
 
 const TypeNode* expected_type(const ExpectationFrame& frame) noexcept {
-    if (frame.kind == FrameKind::component) {
+    if (frame.kind == FrameKind::component ||
+        frame.kind == FrameKind::object_record) {
         return &frame.component->fields[static_cast<std::size_t>(
             frame.next_index)]
                     .type;
@@ -171,7 +181,8 @@ void rebuild_path(std::vector<PathToken>& path,
         if (frame.sequence_many) {
             path.push_back(PathToken::position(frame.next_index));
         }
-    } else if (frame.kind == FrameKind::component) {
+    } else if (frame.kind == FrameKind::component ||
+               frame.kind == FrameKind::object_record) {
         path.push_back(PathToken::name(
             frame.component
                 ->fields[static_cast<std::size_t>(frame.next_index)]
@@ -182,8 +193,18 @@ void rebuild_path(std::vector<PathToken>& path,
 }
 
 void close_completed(std::vector<ExpectationFrame>& frames,
-                     std::vector<PathToken>& path) {
+                     std::vector<PathToken>& path,
+                     ValueArena* arena = nullptr,
+                     GraphAuthoring* graph = nullptr) {
     while (!frames.empty() && frames.back().remaining == UINT64_C(0)) {
+        if (frames.back().kind == FrameKind::object_record &&
+            arena != nullptr && graph != nullptr &&
+            frames.back().parent < arena->nodes_.size()) {
+            const ValueNode& object =
+                arena->nodes_[static_cast<std::size_t>(frames.back().parent)];
+            graph->mark_filled(ObjectCoordinate{
+                object.object_component_index, object.object_id});
+        }
         frames.pop_back();
     }
     if (!frames.empty()) {
@@ -232,7 +253,8 @@ std::uint64_t structural_depth(
     const std::vector<ExpectationFrame>& frames) noexcept {
     std::uint64_t depth = UINT64_C(0);
     for (const ExpectationFrame& frame : frames) {
-        if (frame.kind != FrameKind::sequence) {
+        if (frame.kind != FrameKind::sequence &&
+            frame.kind != FrameKind::object_record) {
             ++depth;
         }
     }
@@ -314,6 +336,7 @@ struct PayloadBuilder::State final {
     spec::CompiledSpec spec;
     layout::RuntimeSchema runtime_schema;
     BuilderLimits limits;
+    GraphAuthoring graph;
     ValueArena arena;
     std::vector<NodeIndex> entry_roots;
     std::vector<std::uint8_t> authored_entries;
@@ -342,6 +365,14 @@ struct PayloadBuilder::State final {
         entry_roots.assign(spec.resolved().entries().size(),
                            invalid_node_index);
         authored_entries.assign(spec.resolved().entries().size(), UINT8_C(0));
+
+        if (spec.profile() == Profile::object_graph_v1) {
+            auto initialized = graph.initialize(
+                spec.resolved().components().size());
+            if (!initialized.has_value()) {
+                return initialized;
+            }
+        }
 
         return Result<void>::success();
     }
@@ -399,6 +430,51 @@ struct PayloadBuilder::State final {
                                   JsonValue{std::string(operation)}},
                 JsonValue::Member{"expected_kind",
                                   JsonValue{type_name(expected->kind)}},
+            }));
+    }
+
+    Result<void> require_graph_profile() const {
+        if (spec.profile() == Profile::object_graph_v1) {
+            return Result<void>::success();
+        }
+        return Result<void>::failure(simple_error(
+            FDB_PAYLOAD_E_PROFILE_VIOLATION, JsonPointer{},
+            "Graph authoring requires object_graph.v1",
+            "graph_operation_requires_object_graph"));
+    }
+
+    Error active_scope_error() const {
+        return simple_error(FDB_PAYLOAD_E_BUILDER_STATE, current_path(),
+                            "Another payload authoring scope is active",
+                            "active_authoring_scope");
+    }
+
+    JsonPointer object_path(ObjectCoordinate object) const {
+        return JsonPointer{}
+            .append("objects")
+            .append(spec.resolved().components()[object.component_index].id)
+            .append(object.object_id);
+    }
+
+    Error object_component_mismatch(ObjectCoordinate actual,
+                                    std::uint32_t expected,
+                                    std::string_view operation) const {
+        return Error::from_details(
+            FDB_PAYLOAD_E_TYPE_MISMATCH, current_path(),
+            "Temporary object handle targets the wrong component",
+            details({
+                JsonValue::Member{
+                    "actual_component",
+                    JsonValue{spec.resolved()
+                                  .components()[actual.component_index]
+                                  .id}},
+                JsonValue::Member{"actual_operation",
+                                  JsonValue{std::string(operation)}},
+                JsonValue::Member{
+                    "expected_component",
+                    JsonValue{spec.resolved().components()[expected].id}},
+                JsonValue::Member{
+                    "reason", JsonValue{"object_component_mismatch"}},
             }));
     }
 
@@ -534,7 +610,7 @@ struct PayloadBuilder::State final {
         --frame.remaining;
         ++frame.next_index;
         refresh_type_id(frame, runtime_schema);
-        close_completed(frames, path);
+        close_completed(frames, path, &arena, &graph);
     }
 
     Result<void> add_leaf(ValueTag tag,
@@ -564,7 +640,8 @@ struct PayloadBuilder::State final {
 BuilderLimits default_builder_limits() noexcept {
     return BuilderLimits{UINT64_C(10000000), UINT64_C(10000000),
                          UINT64_C(1) << 30, UINT64_C(1) << 30,
-                         UINT64_C(1024), UINT64_C(1) << 30};
+                         UINT64_C(1024), UINT64_C(1) << 30,
+                         UINT64_C(10000000)};
 }
 
 PayloadBuilder::PayloadBuilder(std::unique_ptr<State> state) noexcept
@@ -585,11 +662,6 @@ const PayloadBuilder::State* PayloadBuilder::state_pointer() const noexcept {
 Result<PayloadBuilder> PayloadBuilder::create(spec::CompiledSpec spec,
                                                BuilderLimits limits) {
     try {
-        auto available = layout::RuntimeSchema::require_record_runtime(spec);
-        if (!available.has_value()) {
-            return Result<PayloadBuilder>::failure(
-                std::move(available).error());
-        }
         auto runtime_schema = layout::RuntimeSchema::compile(spec);
         if (!runtime_schema.has_value()) {
             return Result<PayloadBuilder>::failure(
@@ -626,6 +698,14 @@ Result<void> PayloadBuilder::begin_entry_impl(std::uint32_t entry_index,
         return valid_state;
     }
     if (!state.frames.empty()) {
+        const bool object_fill_active = std::any_of(
+            state.frames.begin(), state.frames.end(),
+            [](const ExpectationFrame& frame) {
+                return frame.kind == FrameKind::object_record;
+            });
+        if (object_fill_active) {
+            return Result<void>::failure(state.active_scope_error());
+        }
         return Result<void>::failure(simple_error(
             FDB_PAYLOAD_E_BUILDER_STATE, state.current_path(),
             "Current payload entry is incomplete", "entry_incomplete"));
@@ -1051,7 +1131,10 @@ Result<void> PayloadBuilder::begin_component_impl() {
         return expected;
     }
     const TypeNode& type = *expected_type(state.frames.back());
-    if (type.kind != TypeKind::component) {
+    const auto role =
+        state.runtime_schema.storage_role(state.frames.back().type_id);
+    if (type.kind != TypeKind::component || !role.has_value() ||
+        *role != StorageRole::inline_component) {
         return Result<void>::failure(
             state.type_mismatch(TypeKind::component, "begin_component"));
     }
@@ -1101,7 +1184,8 @@ Result<void> PayloadBuilder::begin_component_impl() {
             base, nullptr, &component, false});
         state.path.push_back(PathToken::name(component.fields.front().id));
     } else {
-        close_completed(state.frames, state.path);
+        close_completed(state.frames, state.path, &state.arena,
+                        &state.graph);
     }
     return Result<void>::success();
 }
@@ -1178,10 +1262,254 @@ Result<void> PayloadBuilder::begin_list_impl(std::uint64_t item_count) {
             type.items.get(), nullptr, false});
         state.path.push_back(PathToken::position(UINT64_C(0)));
     } else {
-        close_completed(state.frames, state.path);
+        close_completed(state.frames, state.path, &state.arena,
+                        &state.graph);
     }
     state.list_elements = post_elements;
     return Result<void>::success();
+}
+
+Result<ObjectHandle> PayloadBuilder::declare_object(
+    std::uint32_t component_index) {
+    try {
+        return declare_object_impl(component_index);
+    } catch (const std::bad_alloc&) {
+        return Result<ObjectHandle>::failure(allocation_error());
+    }
+}
+
+Result<ObjectHandle> PayloadBuilder::declare_object_impl(
+    std::uint32_t component_index) {
+    State& state = *state_;
+    auto valid_state = state.check_state();
+    if (!valid_state.has_value()) {
+        return Result<ObjectHandle>::failure(
+            std::move(valid_state).error());
+    }
+    auto graph_profile = state.require_graph_profile();
+    if (!graph_profile.has_value()) {
+        return Result<ObjectHandle>::failure(
+            std::move(graph_profile).error());
+    }
+    if (!state.frames.empty()) {
+        return Result<ObjectHandle>::failure(state.active_scope_error());
+    }
+    if (component_index >= state.spec.resolved().components().size()) {
+        return Result<ObjectHandle>::failure(simple_error(
+            FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE,
+            JsonPointer{}.append("components").append(component_index),
+            "Payload component index is out of range", "component_index"));
+    }
+    const Component& component =
+        state.spec.resolved().components()[component_index];
+    if (!state.runtime_schema.component_identity_bearing(component_index)) {
+        return Result<ObjectHandle>::failure(simple_error(
+            FDB_PAYLOAD_E_TYPE_MISMATCH,
+            JsonPointer{}.append("components").append(component.id),
+            "Payload component does not have graph identity",
+            "component_not_identity_bearing"));
+    }
+
+    const std::uint64_t object_id =
+        state.graph.component_object_count(component_index);
+    const JsonPointer path = JsonPointer{}
+                                 .append("objects")
+                                 .append(component.id)
+                                 .append(object_id);
+    std::uint64_t post_objects = UINT64_MAX;
+    if (!checked_add(state.graph.object_count(), UINT64_C(1),
+                     post_objects) ||
+        post_objects > state.limits.max_graph_objects) {
+        return Result<ObjectHandle>::failure(state.resource_error(
+            path, "graph_objects", post_objects,
+            state.limits.max_graph_objects));
+    }
+    auto growth = state.check_growth(
+        UINT64_C(1), UINT64_C(0),
+        static_cast<std::uint64_t>(state.frames.size()), path);
+    if (!growth.has_value()) {
+        return Result<ObjectHandle>::failure(std::move(growth).error());
+    }
+    auto arena_capacity = state.reserve(UINT64_C(1), UINT64_C(0),
+                                        UINT64_C(0), UINT64_C(0), path);
+    if (!arena_capacity.has_value()) {
+        return Result<ObjectHandle>::failure(
+            std::move(arena_capacity).error());
+    }
+    auto graph_capacity =
+        state.graph.prepare_declaration(component_index, path);
+    if (!graph_capacity.has_value()) {
+        return Result<ObjectHandle>::failure(
+            std::move(graph_capacity).error());
+    }
+
+    const NodeIndex node = static_cast<NodeIndex>(state.arena.nodes_.size());
+    auto handle = state.graph.commit_declaration(component_index, node, path);
+    if (!handle.has_value()) {
+        return handle;
+    }
+    const NodeIndex appended = state.append_node(ValueNode{
+        UINT32_MAX, ValueTag::object_record, {0U, 0U, 0U}, UINT64_C(0),
+        UINT64_C(0), invalid_node_index, invalid_node_index, UINT64_C(0),
+        component_index, UINT32_C(0), object_id});
+    if (appended != node) {
+        return Result<ObjectHandle>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, path,
+            "Payload object node publication is inconsistent",
+            "object_node_index_mismatch"));
+    }
+    return handle;
+}
+
+Result<void> PayloadBuilder::begin_object_fill(ObjectHandle object) {
+    try {
+        return begin_object_fill_impl(object);
+    } catch (const std::bad_alloc&) {
+        return Result<void>::failure(allocation_error());
+    }
+}
+
+Result<void> PayloadBuilder::begin_object_fill_impl(ObjectHandle object) {
+    State& state = *state_;
+    auto valid_state = state.check_state();
+    if (!valid_state.has_value()) {
+        return valid_state;
+    }
+    auto graph_profile = state.require_graph_profile();
+    if (!graph_profile.has_value()) {
+        return graph_profile;
+    }
+    if (!state.frames.empty()) {
+        return Result<void>::failure(state.active_scope_error());
+    }
+    const JsonPointer lookup_path = JsonPointer{}.append("objects");
+    auto resolved = state.graph.resolve(object, lookup_path);
+    if (!resolved.has_value()) {
+        return Result<void>::failure(std::move(resolved).error());
+    }
+    const ObjectCoordinate coordinate = resolved.value();
+    const JsonPointer path = state.object_path(coordinate);
+    if (state.graph.filled(coordinate)) {
+        return Result<void>::failure(simple_error(
+            FDB_PAYLOAD_E_BUILDER_STATE, path,
+            "Payload object was already filled", "object_already_filled"));
+    }
+    const NodeIndex object_node = state.graph.object_node(coordinate);
+    if (object_node == invalid_node_index ||
+        object_node >= state.arena.nodes_.size()) {
+        return Result<void>::failure(simple_error(
+            FDB_PAYLOAD_E_INTERNAL, path,
+            "Payload object node is missing", "object_node_missing"));
+    }
+    const Component& component =
+        state.spec.resolved().components()[coordinate.component_index];
+    const bool has_fields = !component.fields.empty();
+    const std::uint64_t post_frames = has_fields ? UINT64_C(1) : UINT64_C(0);
+    auto growth = state.check_growth(UINT64_C(0), UINT64_C(0), post_frames,
+                                     path);
+    if (!growth.has_value()) {
+        return growth;
+    }
+
+    std::vector<PathToken> new_path;
+    new_path.reserve(has_fields ? 4U : 3U);
+    new_path.push_back(PathToken::name("objects"));
+    new_path.push_back(PathToken::name(component.id));
+    new_path.push_back(PathToken::position(coordinate.object_id));
+    if (has_fields) {
+        new_path.push_back(PathToken::name(component.fields.front().id));
+    }
+    auto capacity = state.reserve(
+        UINT64_C(0), UINT64_C(0),
+        has_fields ? UINT64_C(1) : UINT64_C(0), UINT64_C(0), path);
+    if (!capacity.has_value()) {
+        return capacity;
+    }
+    state.path = std::move(new_path);
+    if (!has_fields) {
+        state.graph.mark_filled(coordinate);
+        return Result<void>::success();
+    }
+    state.frames.push_back(ExpectationFrame{
+        FrameKind::object_record,
+        state.runtime_id(component.fields.front().type), object_node,
+        invalid_node_index,
+        static_cast<std::uint64_t>(component.fields.size()), UINT64_C(0),
+        3U, nullptr, &component, false});
+    return Result<void>::success();
+}
+
+Result<void> PayloadBuilder::push_graph_coordinate_impl(
+    ObjectHandle object,
+    StorageRole required_role,
+    ValueTag tag,
+    std::string_view operation) {
+    State& state = *state_;
+    auto valid_state = state.check_state();
+    if (!valid_state.has_value()) {
+        return valid_state;
+    }
+    auto graph_profile = state.require_graph_profile();
+    if (!graph_profile.has_value()) {
+        return graph_profile;
+    }
+    auto expected = state.require_expectation();
+    if (!expected.has_value()) {
+        return expected;
+    }
+    const TypeNode& type = *expected_type(state.frames.back());
+    const auto role =
+        state.runtime_schema.storage_role(state.frames.back().type_id);
+    if (!role.has_value() || *role != required_role) {
+        return Result<void>::failure(state.type_mismatch(type.kind, operation));
+    }
+    auto resolved = state.graph.resolve(object, state.current_path());
+    if (!resolved.has_value()) {
+        return Result<void>::failure(std::move(resolved).error());
+    }
+    const ObjectCoordinate coordinate = resolved.value();
+    if (coordinate.component_index != type.resolved_component_index) {
+        return Result<void>::failure(state.object_component_mismatch(
+            coordinate, type.resolved_component_index, operation));
+    }
+    auto growth = state.check_growth(
+        UINT64_C(1), UINT64_C(0),
+        post_frame_count_after_values(state.frames, UINT64_C(1)),
+        state.current_path());
+    if (!growth.has_value()) {
+        return growth;
+    }
+    auto capacity = state.reserve(UINT64_C(1), UINT64_C(0), UINT64_C(0),
+                                  UINT64_C(0), state.current_path());
+    if (!capacity.has_value()) {
+        return capacity;
+    }
+    const std::uint32_t type_id = state.frames.back().type_id;
+    state.commit_leaf(ValueNode{
+        type_id, tag, {0U, 0U, 0U}, UINT64_C(0), UINT64_C(0),
+        invalid_node_index, invalid_node_index, UINT64_C(0),
+        coordinate.component_index, UINT32_C(0), coordinate.object_id});
+    return Result<void>::success();
+}
+
+Result<void> PayloadBuilder::push_object(ObjectHandle object) {
+    try {
+        return push_graph_coordinate_impl(
+            object, StorageRole::object_root_id, ValueTag::object_root,
+            "push_object");
+    } catch (const std::bad_alloc&) {
+        return Result<void>::failure(allocation_error());
+    }
+}
+
+Result<void> PayloadBuilder::push_ref(ObjectHandle object) {
+    try {
+        return push_graph_coordinate_impl(
+            object, StorageRole::reference_id, ValueTag::reference,
+            "push_ref");
+    } catch (const std::bad_alloc&) {
+        return Result<void>::failure(allocation_error());
+    }
 }
 
 Result<void> PayloadBuilder::push_fixed_run(const FixedRun& run) {
@@ -1437,19 +1765,28 @@ Result<LogicalPayload> PayloadBuilder::freeze() {
 }
 
 Result<BuildPlan> PayloadBuilder::freeze_plan() {
-    auto values = freeze();
-    if (!values.has_value()) {
-        return Result<BuildPlan>::failure(std::move(values).error());
+    try {
+        auto available =
+            layout::RuntimeSchema::require_record_runtime(state_->spec);
+        if (!available.has_value()) {
+            return Result<BuildPlan>::failure(std::move(available).error());
+        }
+        auto values = freeze();
+        if (!values.has_value()) {
+            return Result<BuildPlan>::failure(std::move(values).error());
+        }
+        LogicalPayload logical = std::move(values).value();
+        auto plan = BuildPlan::create(std::move(logical));
+        if (!plan.has_value()) {
+            State& state = *state_;
+            state.arena = std::move(logical.arena_);
+            state.entry_roots = std::move(logical.entry_roots_);
+            state.sealed = false;
+        }
+        return plan;
+    } catch (const std::bad_alloc&) {
+        return Result<BuildPlan>::failure(allocation_error());
     }
-    LogicalPayload logical = std::move(values).value();
-    auto plan = BuildPlan::create(std::move(logical));
-    if (!plan.has_value()) {
-        State& state = *state_;
-        state.arena = std::move(logical.arena_);
-        state.entry_roots = std::move(logical.entry_roots_);
-        state.sealed = false;
-    }
-    return plan;
 }
 
 Result<LogicalPayload> PayloadBuilder::freeze_impl() {
@@ -1464,7 +1801,8 @@ Result<LogicalPayload> PayloadBuilder::freeze_impl() {
         std::uint32_t code = FDB_PAYLOAD_E_BUILDER_STATE;
         const char* reason = "incomplete_list";
         const char* message = "Payload list is incomplete";
-        if (frame.kind == FrameKind::component) {
+        if (frame.kind == FrameKind::component ||
+            frame.kind == FrameKind::object_record) {
             code = FDB_PAYLOAD_E_MISSING_FIELD;
             reason = "field_not_authored";
             message = "Payload component field is missing";
@@ -1486,10 +1824,36 @@ Result<LogicalPayload> PayloadBuilder::freeze_impl() {
         }
     }
 
+    if (state.spec.profile() == Profile::object_graph_v1) {
+        auto filled = state.graph.validate_filled(state.spec.resolved());
+        if (!filled.has_value()) {
+            return Result<LogicalPayload>::failure(
+                std::move(filled).error());
+        }
+        auto reachable = state.graph.validate_reachable(
+            state.spec.resolved(), state.arena, state.entry_roots);
+        if (!reachable.has_value()) {
+            return Result<LogicalPayload>::failure(
+                std::move(reachable).error());
+        }
+    }
+
+    const std::uint64_t graph_object_count = state.graph.object_count();
+    auto object_pools = state.graph.take_object_pools();
     LogicalPayload payload(state.spec, std::move(state.arena),
-                           std::move(state.entry_roots));
+                           std::move(state.entry_roots),
+                           std::move(object_pools), graph_object_count);
     state.sealed = true;
     return Result<LogicalPayload>::success(std::move(payload));
+}
+
+bool PayloadBuilderTestAccess::use_object_handle_sequence(
+    PayloadBuilder& builder,
+    ObjectHandle next) noexcept {
+    auto* const state = builder.state_pointer();
+    return state != nullptr &&
+           GraphAuthoringTestAccess::use_object_handle_sequence(
+               state->graph, next);
 }
 
 }  // namespace fastdb::payload::build

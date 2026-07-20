@@ -56,6 +56,10 @@ std::string_view symbol_for_code(std::uint32_t code) noexcept {
         return "BUILDER_OUT_OF_BOUNDS";
     case FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT:
         return "BUILDER_RESOURCE_LIMIT";
+    case FDB_PAYLOAD_E_INVALID_OBJECT_HANDLE:
+        return "INVALID_OBJECT_HANDLE";
+    case FDB_PAYLOAD_E_UNREACHABLE_OBJECT:
+        return "UNREACHABLE_OBJECT";
     case FDB_PAYLOAD_E_INVALID_MAGIC:
         return "INVALID_MAGIC";
     case FDB_PAYLOAD_E_UNSUPPORTED_BINARY_VERSION:

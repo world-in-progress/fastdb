@@ -2,7 +2,7 @@
 
 namespace fastdb::payload::build {
 
-static_assert(sizeof(ValueNode) <= 64U,
-              "logical accounting reserves 64 bytes per value node");
+static_assert(sizeof(ValueNode) == 64U,
+              "portable logical value nodes have an exact 64-byte charge");
 
 }  // namespace fastdb::payload::build
