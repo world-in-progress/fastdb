@@ -325,29 +325,59 @@ cross-platform gates before calling P2 public.
 
 ### P3 object-graph runtime
 
-**Current limit:** P1 validates `object_graph.v1` specifications at compile
-time. For otherwise valid ABI calls, Task 9 `builder_create`, `open_copy`, and
-`open_external` return stable `RUNTIME_UNAVAILABLE` (`2009`) with canonical
-details
+**Current limit:** P3 Task 1 now adds one Core-owned, iterative source/runtime
+topology derivation and makes both manifest facts and `RuntimeSchema` consume
+it. The derivation preserves the frozen all-source runtime-ID order, records
+entry-value versus component-field context, assigns ordinary/list/root/inline
+component/reference storage roles, identifies reachable and identity-bearing
+components, and terminates over shared, self, mutual, and 20,000-component
+reference cycles. Graph roots and refs now have internal eight-byte aligned ID
+slots while by-value component fields retain their existing inline AoS layout;
+record runtime IDs, component layouts, list inventory, manifest bytes, and
+binary behavior remain frozen.
+
+This is an internal schema seam, not a public graph runtime. For otherwise
+valid ABI calls, `builder_create`, `open_copy`, and `open_external` still
+return stable `RUNTIME_UNAVAILABLE` (`2009`) with canonical details
 `{"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"}`.
 Following the frozen acquisition order, `open_external` retains before Core
 runtime validation and releases that successful retain exactly once (`1/1`).
-There are no runtime object pools, roots, object IDs, shared references,
-cycles, graph build/open, graph views, or graph materialization.
+Graph manifests remain `not_evaluated`, expose only `compile,query`, retain an
+empty codegen target list, and report direct reason
+`runtime_slice_not_implemented`.
 
-**Reason:** Graph storage and reference validation must reuse P2's normative
+Still absent are graph object declaration/fill authoring, builder-local
+handles and dense wire IDs, object/root/ref logical values, graph layout and
+binary encoding, exact direct/staged plans, hardened graph copy/external open,
+checked graph/ref views, reachable-closure materialization, the six additive
+public ABI functions, language projections, and code generation.
+
+**Reason:** The shared topology/storage-role seam had to land before graph
+authoring and binary work so manifest, layout, open, and later language
+projections cannot acquire competing reachability or identity rules. The
+remaining graph storage and reference validation must reuse P2's normative
 binary, backing, owner, and invalidation contracts rather than create a second
-runtime.
+runtime or expose a partially usable public profile.
 
-**Impact:** Graph-shaped contracts can be identified and queried but no graph
-payload can be executed or exchanged.
+**Impact:** Core-private later P3 slices can now plan one generic graph meaning
+without renumbering record types. Users and language SDKs still can only
+identify and query graph-shaped contracts; no graph payload can yet be built,
+opened, navigated, materialized, or exchanged through the public ABI.
 
-**Next owner slice:** FastDB P3; P2 is locally frozen and no longer blocks it.
+**Owner and dependencies:** FastDB owns every remaining graph semantic in the
+C++ Core and projects it only through the stable C ABI. P3 Tasks 2-10 depend on
+this Task 1 seam and the frozen P2 binary/backing/lifetime contracts. P4 owns
+language projections/codegen only after P3 closes; C-Two remains a downstream
+composer and does not own FastDB graph meaning.
 
-**Closure criteria:** Implement ordinary graph build/open/view/materialize and
-invalidation for pools, roots, lists, shared refs, and cycles; reject malformed
-IDs/references deterministically; pass graph goldens and sanitizer gates. Only
-Issue 0001 D1 may remain outside direct dynamic construction.
+**Closure criteria:** Complete P3 Tasks 2-10: implement ordinary graph
+build/open/view/materialize and invalidation for every V1 value, object pools,
+roots, lists, shared refs, and cycles; reject malformed IDs/references
+deterministically; enable truthful graph manifest/capability facts in the same
+slice as the public ABI; freeze exact ABI-105; and pass graph goldens,
+direct/staged, lifetime, corpus/fuzz, sanitizer, wasm, package, and independent
+review gates. No currently accepted ordinary P3 semantic is deferred merely to
+shorten implementation.
 
 ### P4 language projections and payload code generation
 
@@ -558,7 +588,7 @@ result.
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
-| P3. Object-graph runtime | Ready; P2 binary/backing/lifetime contracts are locally frozen | Object pools, roots, shared refs, cycles, hardened open, checked view/materialize/invalidate; only Issue 0001 D1 remains outside direct construction |
+| P3. Object-graph runtime | Task 1 shared topology/storage roles implemented locally; public graph runtime remains unavailable | Complete Tasks 2-10: object pools, roots, shared refs, cycles, exact direct/staged plan, hardened open, checked view/materialize/invalidate, ABI-105, and full review/gates |
 | P4. Language projections and payload codegen | Blocked on P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P3-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |
 

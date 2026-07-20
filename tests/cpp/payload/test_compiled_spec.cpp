@@ -6,6 +6,7 @@
 #include "payload/json/JsonDocument.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 #include "payload/spec/Manifest.hpp"
+#include "payload/spec/RuntimeTopology.hpp"
 #include "payload/spec/SchemaRepository.hpp"
 
 #include <fastdb_payload.h>
@@ -91,6 +92,7 @@ using fastdb::payload::spec::CompileLimits;
 using fastdb::payload::spec::CompiledSpec;
 using fastdb::payload::spec::Profile;
 using fastdb::payload::spec::SchemaRepository;
+using fastdb::payload::spec::derive_runtime_topology;
 using fastdb::payload::spec::manifest_value_conforms;
 using fastdb::test::payload::GoldenCase;
 using fastdb::test::payload::GoldenError;
@@ -458,6 +460,8 @@ int test_manifest_indexes_facts_and_capabilities() {
     auto graph_result = compile(graph_item->source);
     require(graph_result.has_value());
     const CompiledSpec& graph = graph_result.value();
+    auto graph_topology = derive_runtime_topology(graph.resolved());
+    require(graph_topology.has_value());
     require(graph.capabilities().operation_flags ==
             (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY));
     require(graph.capabilities().direct_build_status ==
@@ -482,11 +486,22 @@ int test_manifest_indexes_facts_and_capabilities() {
                 expected_pools[static_cast<std::size_t>(index)]);
     }
     require(required_member(graph_runtime, "reachable_type_count").number() ==
-            9.0);
+            static_cast<double>(
+                graph_topology.value().reachable_type_count));
     require(required_member(graph_runtime,
-                            "reachable_component_count").number() == 1.0);
+                            "reachable_component_count").number() ==
+            static_cast<double>(
+                graph_topology.value().reachable_component_count));
     require(required_member(graph_runtime,
-                            "reachable_list_type_count").number() == 3.0);
+                            "reachable_list_type_count").number() ==
+            static_cast<double>(
+                graph_topology.value().reachable_list_type_count));
+    require(graph_topology.value().reachable_type_count == UINT32_C(9));
+    require(graph_topology.value().reachable_component_count == UINT32_C(1));
+    require(graph_topology.value().reachable_list_type_count == UINT32_C(3));
+    require(graph_topology.value().has_objects);
+    require(graph_topology.value().has_references);
+    require(graph_topology.value().has_roots);
     return EXIT_SUCCESS;
 }
 

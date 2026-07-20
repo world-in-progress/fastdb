@@ -484,6 +484,7 @@ Graph reachability is iterative. Freeze starts from entry-side object roots and 
 - Modify: `fastcarto/fastdb/src/payload/spec/Manifest.cpp`
 - Modify: `fastcarto/fastdb/src/payload/layout/RuntimeSchema.hpp`
 - Modify: `fastcarto/fastdb/src/payload/layout/RuntimeSchema.cpp`
+- Modify: `fastcarto/fastdb/src/payload/build/PayloadBuilder.cpp`
 - Modify: `fastcarto/fastdb/src/payload/abi/fastdb_payload.cpp`
 - Create: `tests/cpp/payload/test_graph_runtime_schema.cpp`
 - Modify: `tests/cpp/payload/test_record_layout.cpp`
@@ -525,7 +526,7 @@ Graph reachability is iterative. Freeze starts from entry-side object roots and 
 
 - [ ] Implement `derive_runtime_topology` with one stable all-source occurrence pass and a separate iterative reachability pass. Use explicit work items carrying `ValueContext`; do not recursively expand component definitions during ID assignment and do not let an unordered container define output order.
 - [ ] Make `RuntimeSchema::compile` consume `RuntimeTopology::types` directly. Add `storage_role(runtime_type_id)`, `component_identity_bearing(component_index)`, and identity-component iteration. Keep existing record `require_record_runtime` behavior available to record-only callers.
-- [ ] Because Core-private schema compilation is now graph-aware before the public runtime is complete, add an explicit temporary `object_graph.v1` rejection in `fdb_payload_v1_builder_create` using the existing stable graph-unavailable result. Pin `builder_create`, `payload_open_copy`, and `payload_open_external` as unavailable in `test_runtime_abi.cpp`; Tasks 2-7 may not weaken these public assertions.
+- [ ] Because Core-private schema compilation is now graph-aware before graph authoring exists, retain the existing temporary `object_graph.v1` rejection in `PayloadBuilder::create` for Task 1; Task 2 removes only this private gate when it adds complete object declaration/fill semantics. Also add an explicit temporary rejection in `fdb_payload_v1_builder_create` so Tasks 2-7 cannot accidentally expose their Core-private slices. Pin `builder_create`, `payload_open_copy`, and `payload_open_external` as unavailable in `test_runtime_abi.cpp`; Tasks 2-7 may not weaken these public assertions.
 - [ ] Replace `Manifest.cpp`'s independent reachable-component/object/root/ref derivation with `RuntimeTopology`. Keep object-graph runtime status `not_evaluated`, operations `compile,query`, direct reason `runtime_slice_not_implemented`, and codegen targets empty; only already-reported topology/pool facts may become more accurate.
 - [ ] Run `payload.graph_runtime_schema`, `payload.record_layout`, `payload.compiled_spec`, every manifest golden, the complete native suite (the 30 frozen baseline cases plus the new graph target), and ASan+UBSan. Require exact record manifest/binary behavior and no recursive teardown failure; record the actual total instead of hard-coding future cumulative task counts.
 - [ ] Update Issue 0002 with the shared topology/storage-role seam and state that graph authoring, binary, plan, open, views, materialization, ABI, and public capability remain absent.
@@ -535,13 +536,15 @@ Graph reachability is iterative. Freeze starts from entry-side object roots and 
   git add fastcarto/fastdb/src/payload/spec/RuntimeTopology.* \
     fastcarto/fastdb/src/payload/spec/Manifest.cpp \
     fastcarto/fastdb/src/payload/layout/RuntimeSchema.* \
+    fastcarto/fastdb/src/payload/build/PayloadBuilder.cpp \
     fastcarto/fastdb/src/payload/abi/fastdb_payload.cpp \
     tests/cpp/payload/test_graph_runtime_schema.cpp \
     tests/cpp/payload/test_record_layout.cpp \
     tests/cpp/payload/test_compiled_spec.cpp \
     tests/cpp/payload/test_runtime_abi.cpp tests/cpp/CMakeLists.txt \
     tests/golden/payload/v1/spec/valid/object-graph.manifest.hex \
-    docs/issues/0002-portable-payload-foundation-implementation-status.md
+    docs/issues/0002-portable-payload-foundation-implementation-status.md \
+    docs/superpowers/plans/2026-07-20-portable-payload-object-graph-runtime.md
   git commit -m "feat(core): derive portable graph runtime topology"
   ```
 

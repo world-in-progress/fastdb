@@ -585,6 +585,11 @@ const PayloadBuilder::State* PayloadBuilder::state_pointer() const noexcept {
 Result<PayloadBuilder> PayloadBuilder::create(spec::CompiledSpec spec,
                                                BuilderLimits limits) {
     try {
+        auto available = layout::RuntimeSchema::require_record_runtime(spec);
+        if (!available.has_value()) {
+            return Result<PayloadBuilder>::failure(
+                std::move(available).error());
+        }
         auto runtime_schema = layout::RuntimeSchema::compile(spec);
         if (!runtime_schema.has_value()) {
             return Result<PayloadBuilder>::failure(

@@ -2,8 +2,10 @@
 
 #include "payload/error/Result.hpp"
 #include "payload/spec/CompiledSpec.hpp"
+#include "payload/spec/RuntimeTopology.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -21,6 +23,7 @@ struct RuntimeType final {
     std::uint32_t runtime_type_id;
     const spec::TypeNode* source;
     SlotLayout slot;
+    spec::StorageRole storage_role;
     bool reachable;
 };
 
@@ -64,6 +67,14 @@ public:
                                                : nullptr;
     }
     std::uint32_t runtime_id(const spec::TypeNode& type) const noexcept;
+    std::optional<spec::StorageRole> storage_role(
+        std::uint32_t runtime_type_id) const noexcept {
+        const RuntimeType* const type = find_type(runtime_type_id);
+        if (type == nullptr) {
+            return std::nullopt;
+        }
+        return type->storage_role;
+    }
     bool component_reachable(std::uint32_t component_index) const noexcept {
         return component_index < reachable_components_.size() &&
                reachable_components_[component_index] != UINT8_C(0);
@@ -81,6 +92,14 @@ public:
     const std::vector<ComponentLayout>& components() const noexcept {
         return components_;
     }
+    bool component_identity_bearing(
+        std::uint32_t component_index) const noexcept {
+        return component_index < identity_component_flags_.size() &&
+               identity_component_flags_[component_index] != UINT8_C(0);
+    }
+    const std::vector<std::uint32_t>& identity_components() const noexcept {
+        return identity_components_;
+    }
     const std::vector<ListNodeLayout>& list_nodes() const noexcept {
         return list_nodes_;
     }
@@ -96,8 +115,7 @@ private:
     explicit RuntimeSchema(spec::CompiledSpec spec)
         : spec_(std::move(spec)) {}
 
-    error::Result<void> assign_all_types();
-    error::Result<void> analyze_reachability();
+    error::Result<void> assign_topology(spec::RuntimeTopology topology);
     error::Result<void> compile_component_layouts();
     error::Result<void> finalize_reachable_inventory();
     error::Result<void> validate_list_metadata() const;
@@ -108,6 +126,8 @@ private:
     std::vector<ComponentLayout> components_;
     std::vector<std::uint32_t> component_layout_indexes_;
     std::vector<std::uint8_t> reachable_components_;
+    std::vector<std::uint8_t> identity_component_flags_;
+    std::vector<std::uint32_t> identity_components_;
     std::vector<ListNodeLayout> list_nodes_;
     bool has_utf8_pool_{false};
     bool has_utf16_pool_{false};

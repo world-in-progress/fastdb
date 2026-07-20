@@ -418,6 +418,19 @@ target_include_directories(
 set_tests_properties(payload.record_layout PROPERTIES TIMEOUT 120)
 
 add_fastdb_payload_test(
+    graph_runtime_schema
+    SOURCES payload/test_graph_runtime_schema.cpp
+    EXTRA_LIBRARIES fastdb_payload_core
+)
+target_include_directories(
+    fastdb_payload_test_graph_runtime_schema
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+set_tests_properties(payload.graph_runtime_schema PROPERTIES TIMEOUT 120)
+
+add_fastdb_payload_test(
     record_binary
     SOURCES
         payload/GoldenCorpus.cpp

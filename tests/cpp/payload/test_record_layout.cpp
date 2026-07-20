@@ -25,6 +25,7 @@ using fastdb::payload::error::Result;
 using fastdb::payload::json::JsonPointer;
 using fastdb::payload::layout::RuntimeSchema;
 using fastdb::payload::spec::CompiledSpec;
+using fastdb::payload::spec::StorageRole;
 
 Result<CompiledSpec> compile(std::string_view source) {
     return CompiledSpec::compile(source);
@@ -87,6 +88,27 @@ int test_runtime_ids_reachability_and_component_layout() {
     require(schema.runtime_id(*components[3].fields[2].type.items) ==
             UINT32_C(11));
     require(schema.runtime_id(components[3].fields[3].type) == UINT32_C(12));
+
+    require(schema.storage_role(UINT32_C(0)) ==
+            StorageRole::inline_component);
+    require(schema.storage_role(UINT32_C(1)) ==
+            StorageRole::list_descriptor);
+    require(schema.storage_role(UINT32_C(2)) ==
+            StorageRole::list_descriptor);
+    require(schema.storage_role(UINT32_C(3)) ==
+            StorageRole::inline_component);
+    require(schema.storage_role(UINT32_C(4)) ==
+            StorageRole::list_descriptor);
+    require(schema.storage_role(UINT32_C(5)) ==
+            StorageRole::ordinary_value);
+    require(schema.storage_role(UINT32_C(8)) ==
+            StorageRole::inline_component);
+    require(schema.storage_role(UINT32_C(10)) ==
+            StorageRole::list_descriptor);
+    require(schema.storage_role(UINT32_C(11)) ==
+            StorageRole::inline_component);
+    require(!schema.storage_role(UINT32_C(13)).has_value());
+    require(schema.identity_components().empty());
 
     require(!schema.component_reachable(UINT32_C(0)));
     require(schema.component_reachable(UINT32_C(1)));

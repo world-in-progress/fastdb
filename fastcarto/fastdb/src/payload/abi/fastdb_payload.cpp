@@ -6,6 +6,7 @@
 #include "payload/error/Error.hpp"
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
+#include "payload/layout/RuntimeSchema.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 #include "payload/spec/SchemaRepository.hpp"
 #include "payload/view/PayloadOwner.hpp"
@@ -997,6 +998,13 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_builder_create(
         if (!limits.has_value()) {
             return fastdb::payload::error::Result<void>::failure(
                 std::move(limits).error());
+        }
+        auto available =
+            fastdb::payload::layout::RuntimeSchema::require_record_runtime(
+                spec->compiled);
+        if (!available.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(available).error());
         }
         auto created = fastdb::payload::build::PayloadBuilder::create(
             spec->compiled, limits.value());

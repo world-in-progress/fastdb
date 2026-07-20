@@ -1268,6 +1268,8 @@ int test_complete_record_runtime() {
             std::to_string(graph_open_status));
     require(graph_payload == nullptr);
     require(owned_error(graph_open_status, error.value));
+    require(error_details(error.value) ==
+            R"({"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"})");
     error.clear();
 
     BackingContext graph_external_context;
@@ -1285,6 +1287,8 @@ int test_complete_record_runtime() {
             std::to_string(graph_open_status));
     require(graph_payload == nullptr);
     require(owned_error(graph_open_status, error.value));
+    require(error_details(error.value) ==
+            R"({"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"})");
     require(graph_external_context.retains == UINT32_C(1));
     require(graph_external_context.releases == UINT32_C(1));
     error.clear();
@@ -2515,6 +2519,8 @@ int test_errors_prefixes_callbacks_and_graph_unavailable() {
     require(graph_status == FDB_PAYLOAD_E_RUNTIME_UNAVAILABLE);
     require(builder == nullptr);
     require(owned_error(graph_status, error.value));
+    require(error_details(error.value) ==
+            R"({"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"})");
     error.clear();
     fdb_payload_v1_spec_release(graph);
 

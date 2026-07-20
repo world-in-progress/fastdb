@@ -3,6 +3,7 @@
 #include "payload/identity/Sha256.hpp"
 #include "payload/json/Jcs.hpp"
 #include "payload/json/JsonPointer.hpp"
+#include "payload/spec/RuntimeTopology.hpp"
 
 #include <fastdb_payload.h>
 
@@ -36,21 +37,6 @@ enum class ValueClass : std::uint8_t {
 struct MemberRule final {
     std::string_view name;
     ValueClass value_class;
-};
-
-struct RuntimeFacts final {
-    bool utf8{false};
-    bool utf16le{false};
-    bool bytes{false};
-    bool list_items{false};
-    bool objects{false};
-    bool references{false};
-    bool roots{false};
-    bool fixed_width_values_only{true};
-    bool has_runtime_sized_regions{false};
-    std::uint64_t reachable_type_count{UINT64_C(0)};
-    std::uint64_t reachable_component_count{UINT64_C(0)};
-    std::uint64_t reachable_list_type_count{UINT64_C(0)};
 };
 
 bool is_class(const JsonValue& value, ValueClass expected) {
@@ -328,121 +314,40 @@ std::string_view type_name(TypeKind kind) {
     return {};
 }
 
-RuntimeFacts derive_runtime_facts(const ResolvedSpec& resolved) {
-    RuntimeFacts facts;
-    std::vector<const TypeNode*> pending;
-    pending.reserve(resolved.entries().size());
-    std::vector<bool> visited_components(resolved.components().size(), false);
-    const bool graph = resolved.profile() == Profile::object_graph_v1;
-
-    const auto enqueue_component = [&](std::uint32_t component_index) {
-        const std::size_t index = static_cast<std::size_t>(component_index);
-        if (index >= resolved.components().size() ||
-            visited_components[index]) {
-            return;
-        }
-        visited_components[index] = true;
-        ++facts.reachable_component_count;
-        if (graph) {
-            facts.objects = true;
-        }
-        const auto& fields = resolved.components()[index].fields;
-        for (auto field = fields.rbegin(); field != fields.rend(); ++field) {
-            pending.push_back(&field->type);
-        }
-    };
-
-    for (const Entry& entry : resolved.entries()) {
-        pending.push_back(&entry.type);
-        if (entry.cardinality == Cardinality::many) {
-            facts.has_runtime_sized_regions = true;
-        }
-        if (graph) {
-            const TypeNode* root = &entry.type;
-            while (root->kind == TypeKind::list && root->items != nullptr) {
-                root = root->items.get();
-            }
-            if (root->kind == TypeKind::component ||
-                root->kind == TypeKind::ref) {
-                facts.roots = true;
-            }
-        }
-    }
-
-    while (!pending.empty()) {
-        const TypeNode* const type = pending.back();
-        pending.pop_back();
-        ++facts.reachable_type_count;
-        switch (type->kind) {
-        case TypeKind::str:
-            facts.utf8 = true;
-            facts.fixed_width_values_only = false;
-            facts.has_runtime_sized_regions = true;
-            break;
-        case TypeKind::wstr:
-            facts.utf16le = true;
-            facts.fixed_width_values_only = false;
-            facts.has_runtime_sized_regions = true;
-            break;
-        case TypeKind::bytes:
-            facts.bytes = true;
-            facts.fixed_width_values_only = false;
-            facts.has_runtime_sized_regions = true;
-            break;
-        case TypeKind::list:
-            facts.list_items = true;
-            facts.fixed_width_values_only = false;
-            facts.has_runtime_sized_regions = true;
-            ++facts.reachable_list_type_count;
-            if (type->items != nullptr) {
-                pending.push_back(type->items.get());
-            }
-            break;
-        case TypeKind::component:
-            enqueue_component(type->resolved_component_index);
-            break;
-        case TypeKind::ref:
-            facts.references = true;
-            facts.fixed_width_values_only = false;
-            facts.has_runtime_sized_regions = true;
-            if (graph) {
-                enqueue_component(type->resolved_component_index);
-            }
-            break;
-        case TypeKind::boolean:
-        case TypeKind::u8:
-        case TypeKind::u16:
-        case TypeKind::u32:
-        case TypeKind::i32:
-        case TypeKind::u8n:
-        case TypeKind::u16n:
-        case TypeKind::f32:
-        case TypeKind::f64:
-            break;
-        }
-    }
-
-    if (graph && (facts.objects || facts.references || facts.roots)) {
-        facts.has_runtime_sized_regions = true;
-    }
-    return facts;
-}
-
-JsonValue runtime_value(const ResolvedSpec& resolved) {
-    const RuntimeFacts facts = derive_runtime_facts(resolved);
+JsonValue runtime_value(const ResolvedSpec& resolved,
+                        const RuntimeTopology& topology) {
     JsonValue::Array pools;
     const auto append_pool = [&pools](bool required, const char* name) {
         if (required) {
             pools.push_back(JsonValue{name});
         }
     };
-    append_pool(facts.utf8, "utf8");
-    append_pool(facts.utf16le, "utf16le");
-    append_pool(facts.bytes, "bytes");
-    append_pool(facts.list_items, "list_items");
-    append_pool(facts.objects, "objects");
-    append_pool(facts.references, "references");
-    append_pool(facts.roots, "roots");
+    append_pool(topology.has_utf8, "utf8");
+    append_pool(topology.has_utf16le, "utf16le");
+    append_pool(topology.has_bytes, "bytes");
+    append_pool(topology.has_list_items, "list_items");
+    append_pool(topology.has_objects, "objects");
+    append_pool(topology.has_references, "references");
+    append_pool(topology.has_roots, "roots");
+
+    const bool fixed_width_values_only =
+        !topology.has_utf8 && !topology.has_utf16le &&
+        !topology.has_bytes && !topology.has_list_items &&
+        !topology.has_references;
+    bool has_runtime_sized_regions =
+        topology.has_utf8 || topology.has_utf16le || topology.has_bytes ||
+        topology.has_list_items;
+    for (const Entry& entry : resolved.entries()) {
+        if (entry.cardinality == Cardinality::many) {
+            has_runtime_sized_regions = true;
+            break;
+        }
+    }
+    if (resolved.profile() == Profile::object_graph_v1 &&
+        (topology.has_objects || topology.has_references ||
+         topology.has_roots)) {
+        has_runtime_sized_regions = true;
+    }
 
     const bool record = resolved.profile() == Profile::record_v1;
     return JsonValue::object({
@@ -455,18 +360,20 @@ JsonValue runtime_value(const ResolvedSpec& resolved) {
         JsonValue::Member{"required_pools",
                           JsonValue::array(std::move(pools))},
         JsonValue::Member{"fixed_width_values_only",
-                          JsonValue{facts.fixed_width_values_only}},
+                          JsonValue{fixed_width_values_only}},
         JsonValue::Member{"has_runtime_sized_regions",
-                          JsonValue{facts.has_runtime_sized_regions}},
+                          JsonValue{has_runtime_sized_regions}},
         JsonValue::Member{
             "reachable_type_count",
-            JsonValue{static_cast<double>(facts.reachable_type_count)}},
+            JsonValue{static_cast<double>(topology.reachable_type_count)}},
         JsonValue::Member{
             "reachable_component_count",
-            JsonValue{static_cast<double>(facts.reachable_component_count)}},
+            JsonValue{
+                static_cast<double>(topology.reachable_component_count)}},
         JsonValue::Member{
             "reachable_list_type_count",
-            JsonValue{static_cast<double>(facts.reachable_list_type_count)}},
+            JsonValue{
+                static_cast<double>(topology.reachable_list_type_count)}},
     });
 }
 
@@ -512,7 +419,8 @@ JsonValue projected_type(const TypeNode& root) {
 }
 
 JsonValue manifest_value(const ResolvedSpec& resolved,
-                         const std::array<std::uint8_t, 32>& digest) {
+                         const std::array<std::uint8_t, 32>& digest,
+                         const RuntimeTopology& topology) {
     JsonValue::Array entries;
     entries.reserve(resolved.entries().size());
     for (const Entry& entry : resolved.entries()) {
@@ -579,7 +487,7 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
         JsonValue::Member{"entries", JsonValue::array(std::move(entries))},
         JsonValue::Member{"components",
                           JsonValue::array(std::move(components))},
-        JsonValue::Member{"runtime", runtime_value(resolved)},
+        JsonValue::Member{"runtime", runtime_value(resolved, topology)},
         JsonValue::Member{
             "facts",
             JsonValue::object({
@@ -858,7 +766,13 @@ bool manifest_value_conforms(const JsonValue& manifest) {
 Result<ManifestArtifact> build_manifest(
     const ResolvedSpec& resolved,
     const std::array<std::uint8_t, 32>& payload_digest) {
-    JsonValue value = manifest_value(resolved, payload_digest);
+    auto topology = derive_runtime_topology(resolved);
+    if (!topology.has_value()) {
+        return Result<ManifestArtifact>::failure(
+            std::move(topology).error());
+    }
+    JsonValue value =
+        manifest_value(resolved, payload_digest, topology.value());
     if (!manifest_value_conforms(value)) {
         return Result<ManifestArtifact>::failure(invalid_derived_manifest());
     }
