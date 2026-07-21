@@ -224,6 +224,12 @@ struct ViewTestAccess final {
             bytes.empty() ? nullptr : bytes.data(),
             static_cast<std::uint64_t>(bytes.size())};
     }
+
+    static bool detached_object_pools_empty(const View& view) noexcept {
+        return view.state_ != nullptr && !view.state_->is_backed &&
+               view.state_->detached != nullptr &&
+               view.state_->detached->object_pools.empty();
+    }
 };
 
 BarrierFacts PayloadOwnerTestAccess::barrier_facts(
@@ -875,9 +881,13 @@ int test_access_and_materialize() {
     auto detached_result = record.materialize();
     require(detached_result.has_value());
     View detached = std::move(detached_result).value();
+    require(fastdb::payload::view::ViewTestAccess::
+                detached_object_pools_empty(detached));
     auto repeated_result = detached.materialize();
     require(repeated_result.has_value());
     View repeated = std::move(repeated_result).value();
+    require(fastdb::payload::view::ViewTestAccess::
+                detached_object_pools_empty(repeated));
     require(repeated.component_index().value() == UINT32_C(1));
     require(repeated.field(UINT32_C(0)).value().field(UINT32_C(0)).value()
                 .get_u32().value() == UINT32_C(7));
@@ -1068,6 +1078,8 @@ int test_recursive_list_materialization_layout() {
     View detached_sequence = backed_sequence.materialize().value();
     require(fastdb::payload::view::ViewTestAccess::
                 all_direct_children_contiguous(detached_sequence));
+    require(fastdb::payload::view::ViewTestAccess::
+                detached_object_pools_empty(detached_sequence));
     View detached_outer = detached_sequence.at(UINT64_C(0)).value();
     View detached_inner = detached_outer.at(UINT64_C(0)).value();
     require(detached_inner.length().value() == UINT64_C(3));
@@ -1086,6 +1098,8 @@ int test_recursive_list_materialization_layout() {
     View repeated = detached_sequence.materialize().value();
     require(fastdb::payload::view::ViewTestAccess::
                 all_direct_children_contiguous(repeated));
+    require(fastdb::payload::view::ViewTestAccess::
+                detached_object_pools_empty(repeated));
     require(repeated.at(UINT64_C(0)).value()
                 .at(UINT64_C(0)).value()
                 .at(UINT64_C(2)).value().get_u8().value() == UINT8_C(2));

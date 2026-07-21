@@ -577,6 +577,28 @@ target_compile_definitions(
 )
 set_tests_properties(payload.graph_view PROPERTIES TIMEOUT 180)
 
+add_fastdb_payload_test(
+    graph_materialize
+    SOURCES
+        payload/GoldenCorpus.cpp
+        payload/test_graph_materialize.cpp
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
+)
+target_include_directories(
+    fastdb_payload_test_graph_materialize
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_compile_definitions(
+    fastdb_payload_test_graph_materialize
+    PRIVATE
+        "FASTDB_PAYLOAD_BINARY_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary\""
+)
+set_tests_properties(payload.graph_materialize PROPERTIES TIMEOUT 180)
+
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     add_executable(
         fastdb_payload_wasm_runtime_harness

@@ -6,6 +6,7 @@
 #include "payload/view/AccessBarrier.hpp"
 #include "payload/view/Open.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -16,12 +17,16 @@ namespace fastdb::payload::view {
 
 struct PayloadOwnerState;
 struct MaterializeMetrics;
+struct GraphMaterializeInternals;
 struct GraphViewInternals;
 struct ViewInternals;
 struct ViewTestAccess;
 class View;
 
 error::Result<View> materialize_with_metrics(
+    const View& view,
+    MaterializeMetrics* metrics);
+error::Result<View> materialize_graph_with_metrics(
     const View& view,
     MaterializeMetrics* metrics);
 
@@ -65,11 +70,52 @@ struct DetachedViewState final {
     DetachedViewState(build::ValueArena arena_value,
                       std::shared_ptr<const layout::RuntimeSchema> runtime,
                       build::NodeIndex root_value) noexcept
+        : DetachedViewState(std::move(arena_value), {}, std::move(runtime),
+                            root_value) {}
+
+    DetachedViewState(
+        build::ValueArena arena_value,
+        std::vector<std::vector<build::NodeIndex>> object_pools_value,
+        std::shared_ptr<const layout::RuntimeSchema> runtime,
+        build::NodeIndex root_value) noexcept
         : arena(std::move(arena_value)),
+          object_pools(std::move(object_pools_value)),
           runtime_schema(std::move(runtime)),
           root(root_value) {}
 
+    build::NodeIndex object_record_node(
+        std::uint32_t component_index,
+        std::uint64_t object_id) const noexcept {
+        if (component_index >= object_pools.size() ||
+            object_id >= object_pools[component_index].size()) {
+            return build::invalid_node_index;
+        }
+        const build::NodeIndex node =
+            object_pools[component_index][static_cast<std::size_t>(object_id)];
+        if (node >= arena.nodes().size()) {
+            return build::invalid_node_index;
+        }
+        const build::ValueNode& record =
+            arena.nodes()[static_cast<std::size_t>(node)];
+        return record.tag == build::ValueTag::object_record &&
+                       record.object_component_index == component_index &&
+                       record.object_id == object_id
+                   ? node
+                   : build::invalid_node_index;
+    }
+
+    const build::ValueNode* object_record(
+        std::uint32_t component_index,
+        std::uint64_t object_id) const noexcept {
+        const build::NodeIndex node =
+            object_record_node(component_index, object_id);
+        return node == build::invalid_node_index
+                   ? nullptr
+                   : &arena.nodes()[static_cast<std::size_t>(node)];
+    }
+
     build::ValueArena arena;
+    std::vector<std::vector<build::NodeIndex>> object_pools;
     std::shared_ptr<const layout::RuntimeSchema> runtime_schema;
     build::NodeIndex root;
 };
@@ -132,11 +178,15 @@ private:
     explicit View(std::shared_ptr<const State> state) noexcept;
 
     friend class PayloadOwner;
+    friend struct GraphMaterializeInternals;
     friend struct GraphViewInternals;
     friend struct ViewInternals;
     friend struct ViewTestAccess;
     friend error::Result<View> materialize(const View& view);
     friend error::Result<View> materialize_with_metrics(
+        const View& view,
+        MaterializeMetrics* metrics);
+    friend error::Result<View> materialize_graph_with_metrics(
         const View& view,
         MaterializeMetrics* metrics);
 

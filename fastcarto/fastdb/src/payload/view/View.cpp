@@ -197,6 +197,16 @@ struct ViewInternals final {
         if (node.value()->tag == build::ValueTag::sequence) {
             return Result<ViewKind>::success(ViewKind::sequence);
         }
+        if (node.value()->tag == build::ValueTag::object_record ||
+            node.value()->tag == build::ValueTag::object_root ||
+            (node.value()->tag == build::ValueTag::null_value &&
+             node.value()->runtime_type_id == UINT32_MAX &&
+             node.value()->object_component_index != UINT32_MAX)) {
+            return Result<ViewKind>::success(ViewKind::component);
+        }
+        if (node.value()->tag == build::ValueTag::reference) {
+            return Result<ViewKind>::success(ViewKind::ref);
+        }
         if (state.detached->runtime_schema == nullptr) {
             return Result<ViewKind>::failure(
                 internal_error(state.diagnostic_path,
@@ -211,6 +221,49 @@ struct ViewInternals final {
                                "detached_runtime_type_missing"));
         }
         return Result<ViewKind>::success(view_kind(type->source->kind));
+    }
+
+    static Result<const build::ValueNode*> detached_component_node(
+        const View::State& state) {
+        auto kind = detached_kind(state);
+        if (!kind.has_value()) {
+            return Result<const build::ValueNode*>::failure(
+                std::move(kind).error());
+        }
+        if (kind.value() != ViewKind::component) {
+            return Result<const build::ValueNode*>::failure(
+                type_mismatch(state.diagnostic_path));
+        }
+        auto node = detached_node(state);
+        if (!node.has_value()) {
+            return Result<const build::ValueNode*>::failure(
+                std::move(node).error());
+        }
+        if (node.value()->tag == build::ValueTag::null_value) {
+            return Result<const build::ValueNode*>::failure(
+                unexpected_null(state.diagnostic_path));
+        }
+        if (node.value()->tag == build::ValueTag::component) {
+            return node;
+        }
+        if (node.value()->tag != build::ValueTag::object_root &&
+            node.value()->tag != build::ValueTag::object_record) {
+            return Result<const build::ValueNode*>::failure(
+                internal_error(state.diagnostic_path,
+                               "detached_component_tag_invalid"));
+        }
+        const build::ValueNode* const record =
+            state.detached->object_record(
+                node.value()->object_component_index,
+                node.value()->object_id);
+        if (record == nullptr ||
+            (node.value()->tag == build::ValueTag::object_record &&
+             record != node.value())) {
+            return Result<const build::ValueNode*>::failure(
+                internal_error(state.diagnostic_path,
+                               "detached_object_coordinate_invalid"));
+        }
+        return Result<const build::ValueNode*>::success(record);
     }
 
     static Result<View> backed_value(const View::State& parent,
@@ -758,6 +811,22 @@ Result<std::uint32_t> View::component_index() const try {
         return Result<std::uint32_t>::failure(
             unexpected_null(state_->diagnostic_path));
     }
+    if (node.value()->tag == build::ValueTag::object_root ||
+        node.value()->tag == build::ValueTag::object_record) {
+        const build::ValueNode* const record =
+            state_->detached->object_record(
+                node.value()->object_component_index,
+                node.value()->object_id);
+        if (record == nullptr ||
+            (node.value()->tag == build::ValueTag::object_record &&
+             record != node.value())) {
+            return Result<std::uint32_t>::failure(
+                internal_error(state_->diagnostic_path,
+                               "detached_object_coordinate_invalid"));
+        }
+        return Result<std::uint32_t>::success(
+            node.value()->object_component_index);
+    }
     const layout::RuntimeType* const type =
         state_->detached->runtime_schema->find_type(
             node.value()->runtime_type_id);
@@ -866,11 +935,12 @@ Result<View> View::field(std::uint32_t index) const try {
             state_->diagnostic_path.append("fields").append(index),
             "Portable payload field index is out of range", "field_index"));
     }
-    auto node = ViewInternals::detached_node(*state_);
-    if (!node.has_value()) {
-        return Result<View>::failure(std::move(node).error());
+    auto parent = ViewInternals::detached_component_node(*state_);
+    if (!parent.has_value()) {
+        return Result<View>::failure(std::move(parent).error());
     }
-    auto child = ViewInternals::detached_child(*state_, *node.value(), index);
+    auto child =
+        ViewInternals::detached_child(*state_, *parent.value(), index);
     if (!child.has_value()) {
         return Result<View>::failure(std::move(child).error());
     }

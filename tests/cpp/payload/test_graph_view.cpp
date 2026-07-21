@@ -253,11 +253,6 @@ PayloadOwner open_copy(const BinaryGoldenCase& item) {
                 "open graph copy");
 }
 
-bool has_reason(const fastdb::payload::error::Error& error,
-                std::string_view reason) {
-    return error.details_json().find(reason) != std::string_view::npos;
-}
-
 void require_error(const fastdb::payload::error::Error& error,
                    std::uint32_t code,
                    std::string_view path,
@@ -434,11 +429,12 @@ int test_all_value_navigation(
                      .get_u16n_f64_bits(),
                  "u16n one bits") == UINT64_C(0x3ff0000000000000));
 
-    auto unavailable = root.materialize();
-    require(!unavailable.has_value());
-    require(unavailable.error().code() == FDB_PAYLOAD_E_INTERNAL);
-    require(has_reason(unavailable.error(),
-                       "graph_materialization_not_available"));
+    View detached = take(root.materialize(), "materialize graph root");
+    require(take(detached.graph_identity(), "detached root identity")
+                .object_id == UINT64_C(0));
+    require(take(take(detached.field(UINT32_C(3)), "detached u32")
+                     .get_u32(),
+                 "detached u32 value") == UINT32_C(0x789abcde));
     return EXIT_SUCCESS;
 }
 
