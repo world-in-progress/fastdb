@@ -14,6 +14,37 @@ class P3RuntimeQualityTest < Minitest::Test
     JSON.parse(File.read(File.join(__dir__, "p3_malformed_class_map.json")))
   end
 
+  def traceability_document
+    {
+      "traceability" => {
+        "p3_design_sections" =>
+          P3RuntimeQuality::P3_DESIGN_SECTIONS.map do |section|
+            {
+              "section" => section,
+              "requirement" => "reviewed requirement",
+              "implementation" => [{
+                "file" => "tests/ci/check_p3_runtime_quality.rb",
+                "symbol" => "check_traceability"
+              }],
+              "proofs" => [{
+                "file" => "tests/ci/test_check_p3_runtime_quality.rb",
+                "evidence" => "unit proof"
+              }]
+            }
+          end,
+        "active_goal_stage_b" =>
+          P3RuntimeQuality::STAGE_B_REQUIREMENT_IDS.map do |id|
+            {
+              "id" => id,
+              "requirement" => "reviewed requirement",
+              "implementation" => "reviewed implementation",
+              "proof" => "reviewed proof"
+            }
+          end
+      }
+    }
+  end
+
   def test_rejects_missing_duplicate_or_misordered_class
     baseline = proof_document
     expected_d1_status = baseline.fetch("d1").fetch("status")
@@ -37,6 +68,37 @@ class P3RuntimeQualityTest < Minitest::Test
       document.fetch("classes")[1], document.fetch("classes")[0]
     assert_quality_error do
       P3RuntimeQuality.check_class_inventory(document, expected_d1_status)
+    end
+  end
+
+  def test_rejects_incomplete_or_drifting_closure_traceability
+    baseline = traceability_document
+    P3RuntimeQuality.check_traceability(baseline)
+
+    missing_section = traceability_document
+    missing_section.fetch("traceability")
+                   .fetch("p3_design_sections")
+                   .delete_at(0)
+    assert_quality_error do
+      P3RuntimeQuality.check_traceability(missing_section)
+    end
+
+    missing_symbol = traceability_document
+    missing_symbol.fetch("traceability")
+                  .fetch("p3_design_sections")
+                  .first
+                  .fetch("implementation")
+                  .first["symbol"] = "missing_implementation_symbol"
+    assert_quality_error do
+      P3RuntimeQuality.check_traceability(missing_symbol)
+    end
+
+    reordered_goal = traceability_document
+    rows = reordered_goal.fetch("traceability")
+                         .fetch("active_goal_stage_b")
+    rows[0], rows[1] = rows[1], rows[0]
+    assert_quality_error do
+      P3RuntimeQuality.check_traceability(reordered_goal)
     end
   end
 

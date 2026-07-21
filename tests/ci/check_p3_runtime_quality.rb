@@ -88,6 +88,24 @@ module P3RuntimeQuality
     cycles-sharing-variable-values-and-failures
   ].freeze
 
+  P3_DESIGN_SECTIONS = (4..21).map(&:to_s).freeze
+  STAGE_B_REQUIREMENT_IDS = %w[
+    graph-authoring
+    all-v1-values
+    graph-topology
+    immutable-build-plan
+    backing-execution
+    hardened-open
+    malformed-id-rejection
+    checked-views
+    closure-materialization
+    lifetime-invalidation
+    binary-contract
+    manifest-truth
+    public-abi
+    quality-proof
+  ].freeze
+
   ISSUE_MARKERS = [
     "#### P3 Task 9 local hardening evidence",
     "16/16 reviewed binary-open seeds",
@@ -176,6 +194,67 @@ module P3RuntimeQuality
     end
   rescue KeyError, Errno::ENOENT => error
     raise QualityError, "invalid P3 proof entry: #{error.message}"
+  end
+
+  def check_traceability(document, reader = nil)
+    reader ||= ->(relative) { ROOT.join(relative).read }
+    traceability = document.fetch("traceability")
+    require_quality(traceability.keys ==
+                    %w[p3_design_sections active_goal_stage_b],
+                    "P3 traceability groups must be exact and ordered")
+
+    sections = traceability.fetch("p3_design_sections")
+    require_quality(sections.is_a?(Array) &&
+                    sections.map { |row| row.fetch("section") } ==
+                      P3_DESIGN_SECTIONS,
+                    "P3 design sections 4-21 must be exact and ordered")
+    sections.each do |row|
+      require_quality(row.keys ==
+                      %w[section requirement implementation proofs],
+                      "P3 design trace rows must have exact fields")
+      require_quality(non_empty_string?(row.fetch("requirement")),
+                      "P3 design trace requirement must be non-empty")
+      implementations = row.fetch("implementation")
+      require_quality(implementations.is_a?(Array) &&
+                      !implementations.empty?,
+                      "P3 design trace must name implementation authority")
+      implementations.each do |implementation|
+        require_quality(implementation.keys == %w[file symbol] &&
+                        non_empty_string?(implementation.fetch("file")) &&
+                        non_empty_string?(implementation.fetch("symbol")),
+                        "P3 design implementation trace is incomplete")
+        source = reader.call(implementation.fetch("file"))
+        require_quality(source.include?(implementation.fetch("symbol")),
+                        "P3 design implementation symbol is absent: " \
+                        "#{implementation.fetch('symbol')}")
+      end
+      proofs = row.fetch("proofs")
+      require_quality(proofs.is_a?(Array) && !proofs.empty?,
+                      "P3 design trace must name executable proof")
+      proofs.each do |proof|
+        require_quality(proof.keys == %w[file evidence] &&
+                        non_empty_string?(proof.fetch("file")) &&
+                        non_empty_string?(proof.fetch("evidence")),
+                        "P3 design proof trace is incomplete")
+        reader.call(proof.fetch("file"))
+      end
+    end
+
+    goals = traceability.fetch("active_goal_stage_b")
+    require_quality(goals.is_a?(Array) &&
+                    goals.map { |row| row.fetch("id") } ==
+                      STAGE_B_REQUIREMENT_IDS,
+                    "active Goal Stage B requirements must be exact and ordered")
+    goals.each do |row|
+      require_quality(row.keys == %w[id requirement implementation proof],
+                      "Goal Stage B trace rows must have exact fields")
+      %w[requirement implementation proof].each do |key|
+        require_quality(non_empty_string?(row.fetch(key)),
+                        "Goal Stage B #{key} must be non-empty")
+      end
+    end
+  rescue KeyError, Errno::ENOENT => error
+    raise QualityError, "invalid P3 closure traceability: #{error.message}"
   end
 
   def check_abi_symbols(actual, expected)
@@ -287,6 +366,10 @@ module P3RuntimeQuality
     end
   end
 
+  def non_empty_string?(value)
+    value.is_a?(String) && !value.empty?
+  end
+
   def check_repository
     document = JSON.parse(PROOF_MAP.read)
     issue = ISSUE.read
@@ -297,6 +380,7 @@ module P3RuntimeQuality
                          end
     check_class_inventory(document, expected_d1_status)
     check_proof_entries(document)
+    check_traceability(document) if expected_d1_status == D1_CLOSED_STATUS
 
     symbols = ABI_ALLOWLIST.read.lines(chomp: true)
     check_abi_symbols(symbols, symbols)
