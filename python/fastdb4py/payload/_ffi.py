@@ -11,6 +11,9 @@ from typing import Optional
 
 ABI_VERSION = 1
 SHA256_SIZE = 32
+BUILDER_OPTIONS_SIZE = 96
+FIXED_RUN_SIZE = 96
+PLAN_INFO_SIZE = 112
 
 Handle = ctypes.c_void_p
 HandlePointer = ctypes.POINTER(Handle)
@@ -29,6 +32,62 @@ class CapabilitiesV1(ctypes.Structure):
         ("reserved32", ctypes.c_uint32),
         ("reserved64", ctypes.c_uint64 * 4),
     ]
+
+
+class BuilderOptionsV2(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("max_value_nodes", ctypes.c_uint64),
+        ("max_list_elements", ctypes.c_uint64),
+        ("max_text_bytes", ctypes.c_uint64),
+        ("max_opaque_bytes", ctypes.c_uint64),
+        ("max_nesting_depth", ctypes.c_uint64),
+        ("max_total_builder_bytes", ctypes.c_uint64),
+        ("reserved", ctypes.c_uint64 * 4),
+        ("max_graph_objects", ctypes.c_uint64),
+    ]
+
+
+class FixedRunV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("data", ctypes.c_void_p),
+        ("data_byte_length", ctypes.c_uint64),
+        ("count", ctypes.c_uint64),
+        ("stride_bytes", ctypes.c_uint64),
+        ("validity", BytePointer),
+        ("validity_byte_length", ctypes.c_uint64),
+        ("validity_bit_offset", ctypes.c_uint64),
+        ("reserved", ctypes.c_uint64 * 4),
+    ]
+
+
+class PlanInfoV2(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("total_bytes", ctypes.c_uint64),
+        ("region_count", ctypes.c_uint64),
+        ("logical_value_count", ctypes.c_uint64),
+        ("list_element_count", ctypes.c_uint64),
+        ("text_bytes", ctypes.c_uint64),
+        ("opaque_bytes", ctypes.c_uint64),
+        ("validation_work", ctypes.c_uint64),
+        ("max_alignment", ctypes.c_uint32),
+        ("direct_build_status", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint64 * 4),
+        ("graph_object_count", ctypes.c_uint64),
+    ]
+
+
+if ctypes.sizeof(BuilderOptionsV2) != BUILDER_OPTIONS_SIZE:
+    raise ImportError("FastDB builder-options ABI layout mismatch")
+if ctypes.sizeof(FixedRunV1) != FIXED_RUN_SIZE:
+    raise ImportError("FastDB fixed-run ABI layout mismatch")
+if ctypes.sizeof(PlanInfoV2) != PLAN_INFO_SIZE:
+    raise ImportError("FastDB plan-info ABI layout mismatch")
 
 
 def _library_names() -> tuple[str, ...]:
@@ -70,6 +129,18 @@ def _declare(library: ctypes.CDLL) -> None:
         ctypes.POINTER(CapabilitiesV1)
     ]
     library.fdb_payload_v1_capabilities_init.restype = None
+    library.fdb_payload_v1_builder_options_init.argtypes = [
+        ctypes.POINTER(BuilderOptionsV2)
+    ]
+    library.fdb_payload_v1_builder_options_init.restype = None
+    library.fdb_payload_v1_fixed_run_init.argtypes = [
+        ctypes.POINTER(FixedRunV1)
+    ]
+    library.fdb_payload_v1_fixed_run_init.restype = None
+    library.fdb_payload_v1_plan_info_init.argtypes = [
+        ctypes.POINTER(PlanInfoV2)
+    ]
+    library.fdb_payload_v1_plan_info_init.restype = None
 
     library.fdb_payload_v1_spec_compile_json.argtypes = [
         BytePointer,
@@ -176,6 +247,106 @@ def _declare(library: ctypes.CDLL) -> None:
         HandlePointer,
     ]
     library.fdb_payload_v1_spec_component_field_index.restype = ctypes.c_uint32
+
+    library.fdb_payload_v1_builder_create.argtypes = [
+        Handle,
+        ctypes.POINTER(BuilderOptionsV2),
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_create.restype = ctypes.c_uint32
+    library.fdb_payload_v1_builder_release.argtypes = [Handle]
+    library.fdb_payload_v1_builder_release.restype = None
+    library.fdb_payload_v1_builder_entry_begin.argtypes = [
+        Handle,
+        ctypes.c_uint32,
+        ctypes.c_uint64,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_entry_begin.restype = ctypes.c_uint32
+    library.fdb_payload_v1_builder_object_declare.argtypes = [
+        Handle,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint64),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_object_declare.restype = ctypes.c_uint32
+    library.fdb_payload_v1_builder_object_fill_begin.argtypes = [
+        Handle,
+        ctypes.c_uint64,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_object_fill_begin.restype = ctypes.c_uint32
+
+    for name in (
+        "fdb_payload_v1_builder_value_null",
+        "fdb_payload_v1_builder_value_component_begin",
+    ):
+        function = getattr(library, name)
+        function.argtypes = [Handle, HandlePointer]
+        function.restype = ctypes.c_uint32
+
+    for name, value_type in (
+        ("fdb_payload_v1_builder_value_bool", ctypes.c_uint8),
+        ("fdb_payload_v1_builder_value_u8", ctypes.c_uint8),
+        ("fdb_payload_v1_builder_value_u16", ctypes.c_uint16),
+        ("fdb_payload_v1_builder_value_u32", ctypes.c_uint32),
+        ("fdb_payload_v1_builder_value_i32", ctypes.c_int32),
+        ("fdb_payload_v1_builder_value_u8n_f64_bits", ctypes.c_uint64),
+        ("fdb_payload_v1_builder_value_u16n_f64_bits", ctypes.c_uint64),
+        ("fdb_payload_v1_builder_value_f32_bits", ctypes.c_uint32),
+        ("fdb_payload_v1_builder_value_f64_bits", ctypes.c_uint64),
+        ("fdb_payload_v1_builder_value_list_begin", ctypes.c_uint64),
+        ("fdb_payload_v1_builder_value_object", ctypes.c_uint64),
+        ("fdb_payload_v1_builder_value_ref", ctypes.c_uint64),
+    ):
+        function = getattr(library, name)
+        function.argtypes = [Handle, value_type, HandlePointer]
+        function.restype = ctypes.c_uint32
+
+    for name in (
+        "fdb_payload_v1_builder_value_str",
+        "fdb_payload_v1_builder_value_bytes",
+    ):
+        function = getattr(library, name)
+        function.argtypes = [
+            Handle,
+            BytePointer,
+            ctypes.c_uint64,
+            HandlePointer,
+        ]
+        function.restype = ctypes.c_uint32
+
+    library.fdb_payload_v1_builder_value_wstr.argtypes = [
+        Handle,
+        ctypes.POINTER(ctypes.c_uint16),
+        ctypes.c_uint64,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_value_wstr.restype = ctypes.c_uint32
+    library.fdb_payload_v1_builder_value_fixed_run.argtypes = [
+        Handle,
+        ctypes.POINTER(FixedRunV1),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_value_fixed_run.restype = ctypes.c_uint32
+    library.fdb_payload_v1_builder_freeze.argtypes = [
+        Handle,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_freeze.restype = ctypes.c_uint32
+
+    library.fdb_payload_v1_plan_retain.argtypes = [Handle]
+    library.fdb_payload_v1_plan_retain.restype = None
+    library.fdb_payload_v1_plan_release.argtypes = [Handle]
+    library.fdb_payload_v1_plan_release.restype = None
+    library.fdb_payload_v1_plan_info.argtypes = [
+        Handle,
+        ctypes.POINTER(PlanInfoV2),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_plan_info.restype = ctypes.c_uint32
 
     library.fdb_payload_v1_blob_release.argtypes = [Handle]
     library.fdb_payload_v1_blob_release.restype = None

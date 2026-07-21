@@ -66,6 +66,10 @@ class SwigDiagnosticTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_requires_task2_builder_projection_in_sdist_and_wheel(self) -> None:
+        self.assertIn("python/fastdb4py/payload/_builder.py", MODULE.SDIST_REQUIRED)
+        self.assertIn("fastdb4py/payload/_builder.py", MODULE.WHEEL_REQUIRED)
+
     def test_requires_task1_payload_projection_in_sdist_and_wheel(self) -> None:
         sdist_required = {
             "python/fastdb4py/payload/__init__.py",

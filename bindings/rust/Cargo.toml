@@ -17,3 +17,7 @@ fastdb = { path = "fastdb" }
 [[test]]
 name = "compile_query"
 path = "../../tests/rust/payload/tests/compile_query.rs"
+
+[[test]]
+name = "builder"
+path = "../../tests/rust/payload/tests/builder.rs"

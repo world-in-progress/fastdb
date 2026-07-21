@@ -28,6 +28,7 @@ class Capabilities:
 
 
 _CompiledSpecT = TypeVar("_CompiledSpecT", bound="CompiledSpec")
+_HANDLE_TOKEN = object()
 
 
 def _copy_error_field(
@@ -96,7 +97,9 @@ def _checked_u32(value: int, name: str) -> int:
 class CompiledSpec:
     """An owned reference to an immutable, thread-safe Core compiled spec."""
 
-    def __init__(self, handle: _ffi.Handle) -> None:
+    def __init__(self, handle: _ffi.Handle, token: object = None) -> None:
+        if token is not _HANDLE_TOKEN:
+            raise TypeError("CompiledSpec handles are created only by fastdb4py.payload")
         if not handle.value:
             raise binding_error(
                 "FastDB Core returned success without a compiled spec",
@@ -104,6 +107,10 @@ class CompiledSpec:
             )
         self._lock = threading.Lock()
         self._handle: Optional[_ffi.Handle] = handle
+
+    @classmethod
+    def _from_handle(cls: Type[_CompiledSpecT], handle: _ffi.Handle) -> _CompiledSpecT:
+        return cls(handle, _HANDLE_TOKEN)
 
     @classmethod
     def compile(cls: Type[_CompiledSpecT], source: bytes) -> _CompiledSpecT:
@@ -122,7 +129,7 @@ class CompiledSpec:
         )
         del storage
         _check_status(status, error)
-        return cls(handle)
+        return cls._from_handle(handle)
 
     def close(self) -> None:
         with self._lock:
@@ -150,7 +157,7 @@ class CompiledSpec:
             handle = self._require_handle_locked()
             _ffi.library().fdb_payload_v1_spec_retain(handle)
             cloned_handle = _ffi.Handle(handle.value)
-        return type(self)(cloned_handle)
+        return type(self)._from_handle(cloned_handle)
 
     def canonical_json(self) -> bytes:
         return self._query_blob("fdb_payload_v1_spec_canonical_json")

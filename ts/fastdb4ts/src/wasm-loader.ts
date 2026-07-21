@@ -191,6 +191,9 @@ export interface FastdbModule {
     outError: number,
   ): number;
   _fdb_payload_v1_capabilities_init(capabilities: number): void;
+  _fdb_payload_v1_builder_options_init(options: number): void;
+  _fdb_payload_v1_fixed_run_init(run: number): void;
+  _fdb_payload_v1_plan_info_init(info: number): void;
   _fdb_payload_v1_spec_capabilities(
     spec: number,
     outCapabilities: number,
@@ -251,6 +254,133 @@ export interface FastdbModule {
     id: number,
     idSize: bigint,
     outFieldIndex: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_create(
+    spec: number,
+    options: number,
+    outBuilder: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_release(builder: number): void;
+  _fdb_payload_v1_builder_entry_begin(
+    builder: number,
+    entryIndex: number,
+    valueCount: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_object_declare(
+    builder: number,
+    componentIndex: number,
+    outObject: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_object_fill_begin(
+    builder: number,
+    object: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_null(
+    builder: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_bool(
+    builder: number,
+    value: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_u8(
+    builder: number,
+    value: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_u16(
+    builder: number,
+    value: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_u32(
+    builder: number,
+    value: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_i32(
+    builder: number,
+    value: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_u8n_f64_bits(
+    builder: number,
+    value: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_u16n_f64_bits(
+    builder: number,
+    value: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_f32_bits(
+    builder: number,
+    value: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_f64_bits(
+    builder: number,
+    value: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_str(
+    builder: number,
+    value: number,
+    valueSize: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_wstr(
+    builder: number,
+    value: number,
+    valueSize: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_bytes(
+    builder: number,
+    value: number,
+    valueSize: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_fixed_run(
+    builder: number,
+    run: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_component_begin(
+    builder: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_list_begin(
+    builder: number,
+    itemCount: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_object(
+    builder: number,
+    object: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_value_ref(
+    builder: number,
+    object: bigint,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_builder_freeze(
+    builder: number,
+    outPlan: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_plan_retain(plan: number): void;
+  _fdb_payload_v1_plan_release(plan: number): void;
+  _fdb_payload_v1_plan_info(
+    plan: number,
+    outInfo: number,
     outError: number,
   ): number;
   _fdb_payload_v1_blob_data(blob: number): number;

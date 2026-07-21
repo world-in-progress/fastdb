@@ -29,6 +29,8 @@ export class Capabilities {
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
+const handleConstructionToken = Symbol('fastdb.payload.specHandleConstructionToken');
+const specHandleValue = Symbol('fastdb.payload.specHandleValue');
 
 const specFinalizer = new FinalizationRegistry<number>((handle) => {
   try {
@@ -55,18 +57,21 @@ type NamedIndexQuery = (
 ) => number;
 
 export class CompiledSpec {
-  private handle: number;
-  private readonly finalizerToken = {};
+  #handle: number;
+  readonly #finalizerToken = {};
 
-  private constructor(handle: number) {
+  private constructor(handle: number, token: typeof handleConstructionToken) {
+    if (token !== handleConstructionToken) {
+      throw new TypeError('CompiledSpec handles are created only by FastDB');
+    }
     if (handle === 0) {
       throw bindingError(
         'FastDB Core returned success without a compiled spec',
         'missing_spec_handle',
       );
     }
-    this.handle = handle;
-    specFinalizer.register(this, handle, this.finalizerToken);
+    this.#handle = handle;
+    specFinalizer.register(this, handle, this.#finalizerToken);
   }
 
   static compile(source: Uint8Array): CompiledSpec {
@@ -81,7 +86,10 @@ export class CompiledSpec {
           outputs + POINTER_SIZE,
         );
         checkStatus(status, outputs + POINTER_SIZE);
-        return new CompiledSpec(readU32(module, outputs));
+        return new CompiledSpec(
+          readU32(module, outputs),
+          handleConstructionToken,
+        );
       }),
     );
   }
@@ -89,16 +97,20 @@ export class CompiledSpec {
   clone(): CompiledSpec {
     const handle = this.requireHandle();
     payloadModule()._fdb_payload_v1_spec_retain(handle);
-    return new CompiledSpec(handle);
+    return new CompiledSpec(handle, handleConstructionToken);
   }
 
   dispose(): void {
-    if (this.handle !== 0) {
-      const handle = this.handle;
-      this.handle = 0;
-      specFinalizer.unregister(this.finalizerToken);
+    if (this.#handle !== 0) {
+      const handle = this.#handle;
+      this.#handle = 0;
+      specFinalizer.unregister(this.#finalizerToken);
       payloadModule()._fdb_payload_v1_spec_release(handle);
     }
+  }
+
+  [specHandleValue](): number {
+    return this.requireHandle();
   }
 
   canonicalJson(): Uint8Array {
@@ -264,10 +276,10 @@ export class CompiledSpec {
   }
 
   private requireHandle(): number {
-    if (this.handle === 0) {
+    if (this.#handle === 0) {
       throw bindingError('CompiledSpec is disposed', 'disposed_handle');
     }
-    return this.handle;
+    return this.#handle;
   }
 
   private queryBlob(query: BlobQuery): Uint8Array {
@@ -342,6 +354,13 @@ export class CompiledSpec {
       }),
     );
   }
+}
+
+export function compiledSpecHandle(spec: CompiledSpec): number {
+  if (!(spec instanceof CompiledSpec)) {
+    throw new TypeError('spec must be CompiledSpec');
+  }
+  return CompiledSpec.prototype[specHandleValue].call(spec);
 }
 
 function checkedProfile(value: number): Profile {

@@ -47,12 +47,14 @@ SDIST_REQUIRED = {
     "schemas/fastdb.payload.v1.schema.json",
     "schemas/fastdb.payload.v1.schema.sha256",
     "python/fastdb4py/payload/__init__.py",
+    "python/fastdb4py/payload/_builder.py",
     "python/fastdb4py/payload/_error.py",
     "python/fastdb4py/payload/_ffi.py",
     "python/fastdb4py/payload/_spec.py",
 }
 WHEEL_REQUIRED = {
     "fastdb4py/payload/__init__.py",
+    "fastdb4py/payload/_builder.py",
     "fastdb4py/payload/_error.py",
     "fastdb4py/payload/_ffi.py",
     "fastdb4py/payload/_spec.py",

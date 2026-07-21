@@ -8,6 +8,7 @@ export const ABI_VERSION = 1;
 export const SHA256_SIZE = 32;
 export const CAPABILITIES_SIZE = 72;
 export const POINTER_SIZE = 4;
+export const U64_MAX = 0xffff_ffff_ffff_ffffn;
 
 export async function initPayloadModule(): Promise<FastdbModule> {
   const module = await initFastdb();
@@ -69,12 +70,45 @@ export function withInputBytes<T>(
   });
 }
 
+export function withInputU16<T>(
+  module: FastdbModule,
+  units: Uint16Array,
+  operation: (pointer: number, size: bigint) => T,
+): T {
+  if (units.length === 0) {
+    return operation(0, 0n);
+  }
+  return withAllocation(module, units.length * 2, (pointer) => {
+    const view = new DataView(module.HEAPU8.buffer);
+    for (let index = 0; index < units.length; index += 1) {
+      view.setUint16(pointer + index * 2, units[index], true);
+    }
+    return operation(pointer, BigInt(units.length));
+  });
+}
+
 export function readU32(module: FastdbModule, pointer: number): number {
   return new DataView(module.HEAPU8.buffer).getUint32(pointer, true);
 }
 
 export function readU64(module: FastdbModule, pointer: number): bigint {
   return new DataView(module.HEAPU8.buffer).getBigUint64(pointer, true);
+}
+
+export function writeU32(
+  module: FastdbModule,
+  pointer: number,
+  value: number,
+): void {
+  new DataView(module.HEAPU8.buffer).setUint32(pointer, value, true);
+}
+
+export function writeU64(
+  module: FastdbModule,
+  pointer: number,
+  value: bigint,
+): void {
+  new DataView(module.HEAPU8.buffer).setBigUint64(pointer, value, true);
 }
 
 export function copyBytes(
@@ -104,4 +138,56 @@ export function checkedU32(value: number, name: string): number {
     throw new RangeError(`${name} must be an unsigned 32-bit integer`);
   }
   return value;
+}
+
+export function checkedU16(value: number, name: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffff) {
+    throw new RangeError(`${name} must be an unsigned 16-bit integer`);
+  }
+  return value;
+}
+
+export function checkedU8(value: number, name: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > 0xff) {
+    throw new RangeError(`${name} must be an unsigned 8-bit integer`);
+  }
+  return value;
+}
+
+export function checkedI32(value: number, name: string): number {
+  if (
+    !Number.isInteger(value) ||
+    value < -0x8000_0000 ||
+    value > 0x7fff_ffff
+  ) {
+    throw new RangeError(`${name} must be a signed 32-bit integer`);
+  }
+  return value;
+}
+
+export function checkedU64(value: bigint, name: string): bigint {
+  if (typeof value !== 'bigint' || value < 0n || value > U64_MAX) {
+    throw new RangeError(`${name} must be an unsigned 64-bit bigint`);
+  }
+  return value;
+}
+
+export function f32Bits(value: number): number {
+  if (typeof value !== 'number') {
+    throw new TypeError('value must be a number');
+  }
+  const storage = new ArrayBuffer(4);
+  const view = new DataView(storage);
+  view.setFloat32(0, value, true);
+  return view.getUint32(0, true);
+}
+
+export function f64Bits(value: number): bigint {
+  if (typeof value !== 'number') {
+    throw new TypeError('value must be a number');
+  }
+  const storage = new ArrayBuffer(8);
+  const view = new DataView(storage);
+  view.setFloat64(0, value, true);
+  return view.getBigUint64(0, true);
 }

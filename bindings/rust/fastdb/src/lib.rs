@@ -1,5 +1,9 @@
 //! Safe Rust projection of the FastDB portable-payload Core.
 
+mod builder;
+
+pub use builder::{BuildPlan, Builder, BuilderOptions, FixedRun, ObjectHandle, PlanInfo};
+
 use fastdb_sys as sys;
 use std::error::Error;
 use std::fmt;
@@ -66,7 +70,7 @@ impl PayloadError {
         &self.details_json
     }
 
-    fn binding(
+    pub(crate) fn binding(
         code: u32,
         symbol: impl Into<String>,
         path: impl Into<String>,
@@ -141,7 +145,7 @@ impl PayloadError {
         }
     }
 
-    fn size_overflow(path: &'static str) -> Self {
+    pub(crate) fn size_overflow(path: &'static str) -> Self {
         Self::binding(
             sys::FDB_PAYLOAD_E_INTERNAL,
             "BINDING_SIZE_OVERFLOW",
@@ -457,6 +461,10 @@ impl CompiledSpec {
         check_status(status, error)?;
         Ok(value)
     }
+
+    pub(crate) fn as_raw(&self) -> *mut sys::fdb_payload_v1_spec_t {
+        self.raw.as_ptr()
+    }
 }
 
 impl Clone for CompiledSpec {
@@ -487,7 +495,7 @@ impl fmt::Debug for CompiledSpec {
 unsafe impl Send for CompiledSpec {}
 unsafe impl Sync for CompiledSpec {}
 
-fn check_status(
+pub(crate) fn check_status(
     status: u32,
     raw_error: *mut sys::fdb_payload_v1_error_t,
 ) -> Result<(), PayloadError> {
