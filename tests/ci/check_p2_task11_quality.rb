@@ -253,8 +253,20 @@ def check_workflow
 
   allowlist = ROOT.join("tests/abi/fastdb_payload_v1_symbols.txt")
                   .read.lines(chomp: true)
-  require_quality(allowlist.length == 99 && allowlist == allowlist.uniq.sort,
-                  "portable payload ABI allowlist must contain 99 sorted symbols")
+  p3_additions = %w[
+    fdb_payload_v1_builder_object_declare
+    fdb_payload_v1_builder_object_fill_begin
+    fdb_payload_v1_builder_value_object
+    fdb_payload_v1_builder_value_ref
+    fdb_payload_v1_view_graph_identity
+    fdb_payload_v1_view_ref_target
+  ]
+  p2_symbols = allowlist - p3_additions
+  require_quality(allowlist.length == 105 &&
+                  allowlist == allowlist.uniq.sort &&
+                  (p3_additions - allowlist).empty? &&
+                  p2_symbols.length == 99,
+                  "portable payload ABI allowlist must preserve the 99 P2 symbols and add exactly six sorted P3 symbols")
 end
 
 def check_documentation

@@ -463,9 +463,13 @@ int test_manifest_indexes_facts_and_capabilities() {
     auto graph_topology = derive_runtime_topology(graph.resolved());
     require(graph_topology.has_value());
     require(graph.capabilities().operation_flags ==
-            (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY));
+            (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
+             FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
+             FDB_PAYLOAD_OPERATION_VIEW |
+             FDB_PAYLOAD_OPERATION_MATERIALIZE |
+             FDB_PAYLOAD_OPERATION_INVALIDATE));
     require(graph.capabilities().direct_build_status ==
-            FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED);
+            FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
     auto graph_manifest = JsonDocument::parse(
         reinterpret_cast<const std::uint8_t*>(graph.manifest_bytes().data()),
         static_cast<std::uint64_t>(graph.manifest_bytes().size()));
@@ -473,7 +477,7 @@ int test_manifest_indexes_facts_and_capabilities() {
     const JsonCursor graph_runtime =
         required_member(graph_manifest.value().root(), "runtime");
     require(required_member(graph_runtime, "status").string() ==
-            "not_evaluated");
+            "available");
     require(required_member(graph_runtime, "layout_model").string() ==
             "object_pool_aos");
     const JsonCursor graph_pools =
@@ -669,7 +673,7 @@ int test_schema_artifacts_and_manifest_schema_contract() {
     const JsonCursor graph_branch = conditional_branch("else");
     require(required_member(runtime_constant(graph_branch, "status"),
                             "const")
-                .string() == "not_evaluated");
+                .string() == "available");
     require(required_member(runtime_constant(graph_branch, "layout_model"),
                             "const")
                 .string() == "object_pool_aos");
@@ -677,17 +681,20 @@ int test_schema_artifacts_and_manifest_schema_contract() {
         capability_properties(graph_branch);
     const JsonCursor graph_operations = required_member(
         required_member(graph_capabilities, "operations"), "const");
-    require(graph_operations.size() == UINT64_C(2));
-    require(array_at(graph_operations, UINT64_C(0)).string() == "compile");
-    require(array_at(graph_operations, UINT64_C(1)).string() == "query");
+    require(graph_operations.size() == UINT64_C(7));
+    for (std::uint64_t index = UINT64_C(0);
+         index < record_operation_names.size(); ++index) {
+        require(array_at(graph_operations, index).string() ==
+                record_operation_names[static_cast<std::size_t>(index)]);
+    }
     const JsonCursor graph_direct = required_member(
         required_member(graph_capabilities, "direct_build"), "properties");
     require(required_member(required_member(graph_direct, "status"),
                             "const")
-                .string() == "not_evaluated");
+                .string() == "eligible");
     require(required_member(required_member(graph_direct, "reason"),
                             "const")
-                .string() == "runtime_slice_not_implemented");
+                .string() == "graph_layout_exact_after_freeze");
     return EXIT_SUCCESS;
 }
 

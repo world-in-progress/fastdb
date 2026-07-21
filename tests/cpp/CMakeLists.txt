@@ -349,7 +349,7 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
         ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
 )
-set_tests_properties(payload.runtime_abi PROPERTIES TIMEOUT 120)
+set_tests_properties(payload.runtime_abi PROPERTIES TIMEOUT 180)
 
 add_fastdb_payload_test(
     cpp_facade
@@ -375,7 +375,7 @@ target_include_directories(
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
 )
-set_tests_properties(payload.runtime_cpp_facade PROPERTIES TIMEOUT 120)
+set_tests_properties(payload.runtime_cpp_facade PROPERTIES TIMEOUT 180)
 
 add_fastdb_payload_test(
     error

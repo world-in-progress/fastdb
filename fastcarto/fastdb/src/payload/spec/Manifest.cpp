@@ -351,9 +351,7 @@ JsonValue runtime_value(const ResolvedSpec& resolved,
 
     const bool record = resolved.profile() == Profile::record_v1;
     return JsonValue::object({
-        JsonValue::Member{"status",
-                          JsonValue{record ? "available"
-                                           : "not_evaluated"}},
+        JsonValue::Member{"status", JsonValue{"available"}},
         JsonValue::Member{"layout_model",
                           JsonValue{record ? "record_aos"
                                            : "object_pool_aos"}},
@@ -462,14 +460,12 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
     JsonValue::Array operations{
         JsonValue{"compile"},
         JsonValue{"query"},
+        JsonValue{"build"},
+        JsonValue{"open"},
+        JsonValue{"view"},
+        JsonValue{"materialize"},
+        JsonValue{"invalidate"},
     };
-    if (record) {
-        operations.push_back(JsonValue{"build"});
-        operations.push_back(JsonValue{"open"});
-        operations.push_back(JsonValue{"view"});
-        operations.push_back(JsonValue{"materialize"});
-        operations.push_back(JsonValue{"invalidate"});
-    }
     return JsonValue::object({
         JsonValue::Member{"schema",
                           JsonValue{"fastdb.payload.manifest.v1"}},
@@ -512,13 +508,12 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
                     "direct_build",
                     JsonValue::object({
                         JsonValue::Member{"status",
-                                          JsonValue{record ? "eligible"
-                                                           : "not_evaluated"}},
+                                          JsonValue{"eligible"}},
                         JsonValue::Member{
                             "reason",
                             JsonValue{record
                                           ? "record_layout_exact"
-                                          : "runtime_slice_not_implemented"}},
+                                          : "graph_layout_exact_after_freeze"}},
                     })},
             })},
     });
@@ -686,7 +681,7 @@ bool manifest_value_conforms(const JsonValue& manifest) {
     if (runtime_status == nullptr || layout_model == nullptr ||
         (record && (*runtime_status != "available" ||
                     *layout_model != "record_aos")) ||
-        (!record && (*runtime_status != "not_evaluated" ||
+        (!record && (*runtime_status != "available" ||
                      *layout_model != "object_pool_aos")) ||
         !is_index(*member(runtime_object, "reachable_type_count")) ||
         !is_index(*member(runtime_object, "reachable_component_count")) ||
@@ -728,7 +723,7 @@ bool manifest_value_conforms(const JsonValue& manifest) {
         *array_value(*member(capability_object, "operations"));
     const JsonValue::Array& targets =
         *array_value(*member(capability_object, "codegen_targets"));
-    const std::size_t expected_operations = record ? 7U : 2U;
+    constexpr std::size_t expected_operations = 7U;
     if (operations.size() != expected_operations || targets.size() != 0U ||
         string_value(operations[0]) == nullptr ||
         *string_value(operations[0]) != "compile" ||
@@ -736,17 +731,16 @@ bool manifest_value_conforms(const JsonValue& manifest) {
         *string_value(operations[1]) != "query") {
         return false;
     }
-    if (record &&
-        (string_value(operations[2]) == nullptr ||
-         *string_value(operations[2]) != "build" ||
-         string_value(operations[3]) == nullptr ||
-         *string_value(operations[3]) != "open" ||
-         string_value(operations[4]) == nullptr ||
-         *string_value(operations[4]) != "view" ||
-         string_value(operations[5]) == nullptr ||
-         *string_value(operations[5]) != "materialize" ||
-         string_value(operations[6]) == nullptr ||
-         *string_value(operations[6]) != "invalidate")) {
+    if (string_value(operations[2]) == nullptr ||
+        *string_value(operations[2]) != "build" ||
+        string_value(operations[3]) == nullptr ||
+        *string_value(operations[3]) != "open" ||
+        string_value(operations[4]) == nullptr ||
+        *string_value(operations[4]) != "view" ||
+        string_value(operations[5]) == nullptr ||
+        *string_value(operations[5]) != "materialize" ||
+        string_value(operations[6]) == nullptr ||
+        *string_value(operations[6]) != "invalidate") {
         return false;
     }
     const JsonValue& direct = *member(capability_object, "direct_build");
@@ -759,8 +753,8 @@ bool manifest_value_conforms(const JsonValue& manifest) {
     return status != nullptr && reason != nullptr &&
            ((record && *status == "eligible" &&
              *reason == "record_layout_exact") ||
-            (!record && *status == "not_evaluated" &&
-             *reason == "runtime_slice_not_implemented"));
+            (!record && *status == "eligible" &&
+             *reason == "graph_layout_exact_after_freeze"));
 }
 
 Result<ManifestArtifact> build_manifest(
@@ -787,16 +781,14 @@ Result<ManifestArtifact> build_manifest(
     const bool record = resolved.profile() == Profile::record_v1;
     ManifestCapabilities capabilities{
         FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
-            (record ? FDB_PAYLOAD_OPERATION_BUILD |
-                          FDB_PAYLOAD_OPERATION_OPEN |
-                          FDB_PAYLOAD_OPERATION_VIEW |
-                          FDB_PAYLOAD_OPERATION_MATERIALIZE |
-                          FDB_PAYLOAD_OPERATION_INVALIDATE
-                    : UINT64_C(0)),
+            FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
+            FDB_PAYLOAD_OPERATION_VIEW |
+            FDB_PAYLOAD_OPERATION_MATERIALIZE |
+            FDB_PAYLOAD_OPERATION_INVALIDATE,
         UINT64_C(0),
-        record ? FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE
-               : FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED,
-        record ? "record_layout_exact" : "runtime_slice_not_implemented"};
+        FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE,
+        record ? "record_layout_exact"
+               : "graph_layout_exact_after_freeze"};
     return Result<ManifestArtifact>::success(ManifestArtifact{
         std::get<std::string>(std::move(serialized)),
         std::move(capabilities)});

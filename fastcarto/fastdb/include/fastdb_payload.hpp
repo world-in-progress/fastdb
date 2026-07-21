@@ -65,6 +65,26 @@ class Builder;
 class Payload;
 class View;
 
+class ObjectHandle final {
+public:
+    constexpr ObjectHandle() noexcept = default;
+
+private:
+    friend class Builder;
+
+    explicit constexpr ObjectHandle(
+        fdb_payload_v1_object_handle_t value) noexcept
+        : value_(value) {}
+
+    fdb_payload_v1_object_handle_t value_{
+        FDB_PAYLOAD_V1_INVALID_OBJECT_HANDLE};
+};
+
+struct GraphIdentity final {
+    std::uint32_t component_index;
+    std::uint64_t object_id;
+};
+
 namespace detail {
 struct BlobFactory;
 struct ErrorFactory;
@@ -688,6 +708,24 @@ public:
         return View(result);
     }
 
+    View ref_target() const {
+        fdb_payload_v1_view_t* result = nullptr;
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(
+            fdb_payload_v1_view_ref_target(handle_, &result, &error), &error);
+        return View(result);
+    }
+
+    GraphIdentity graph_identity() const {
+        GraphIdentity result{UINT32_C(0), UINT64_C(0)};
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_view_graph_identity(
+                          handle_, &result.component_index, &result.object_id,
+                          &error),
+                      &error);
+        return result;
+    }
+
     bool get_bool() const {
         std::uint8_t result = UINT8_C(0);
         fdb_payload_v1_error_t* error = nullptr;
@@ -1029,6 +1067,24 @@ public:
         return *this;
     }
 
+    ObjectHandle declare_object(std::uint32_t component_index) {
+        fdb_payload_v1_object_handle_t result =
+            FDB_PAYLOAD_V1_INVALID_OBJECT_HANDLE;
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_builder_object_declare(
+                          handle_, component_index, &result, &error),
+                      &error);
+        return ObjectHandle(result);
+    }
+
+    Builder& begin_object_fill(ObjectHandle object) {
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_builder_object_fill_begin(
+                          handle_, object.value_, &error),
+                      &error);
+        return *this;
+    }
+
     Builder& value_null() {
         return call(fdb_payload_v1_builder_value_null);
     }
@@ -1156,6 +1212,22 @@ public:
         fdb_payload_v1_error_t* error = nullptr;
         detail::check(fdb_payload_v1_builder_value_list_begin(
                           handle_, item_count, &error),
+                      &error);
+        return *this;
+    }
+
+    Builder& value_object(ObjectHandle object) {
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_builder_value_object(
+                          handle_, object.value_, &error),
+                      &error);
+        return *this;
+    }
+
+    Builder& value_ref(ObjectHandle object) {
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_builder_value_ref(
+                          handle_, object.value_, &error),
                       &error);
         return *this;
     }

@@ -10,15 +10,56 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <fstream>
 #include <iostream>
 #include <iterator>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <fastdb_payload.h>
+
+static_assert(FDB_PAYLOAD_V1_BUILDER_OPTIONS_V1_SIZE == UINT32_C(88));
+static_assert(FDB_PAYLOAD_V1_BUILDER_OPTIONS_V2_SIZE == UINT32_C(96));
+static_assert(sizeof(fdb_payload_v1_builder_options_t) ==
+              FDB_PAYLOAD_V1_BUILDER_OPTIONS_V2_SIZE);
+static_assert(offsetof(fdb_payload_v1_builder_options_t, max_graph_objects) ==
+              FDB_PAYLOAD_V1_BUILDER_OPTIONS_V1_SIZE);
+static_assert(FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE == UINT32_C(104));
+static_assert(FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE == UINT32_C(112));
+static_assert(sizeof(fdb_payload_v1_plan_info_t) ==
+              FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE);
+static_assert(offsetof(fdb_payload_v1_plan_info_t, graph_object_count) ==
+              FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE);
+static_assert(std::is_same_v<fdb_payload_v1_object_handle_t, std::uint64_t>);
+using WasmObjectDeclareFn = fdb_payload_v1_status_t (*)(
+    fdb_payload_v1_builder_t*, std::uint32_t,
+    fdb_payload_v1_object_handle_t*, fdb_payload_v1_error_t**);
+using WasmObjectBuilderFn = fdb_payload_v1_status_t (*)(
+    fdb_payload_v1_builder_t*, fdb_payload_v1_object_handle_t,
+    fdb_payload_v1_error_t**);
+using WasmRefTargetFn = fdb_payload_v1_status_t (*)(
+    const fdb_payload_v1_view_t*, fdb_payload_v1_view_t**,
+    fdb_payload_v1_error_t**);
+using WasmGraphIdentityFn = fdb_payload_v1_status_t (*)(
+    const fdb_payload_v1_view_t*, std::uint32_t*, std::uint64_t*,
+    fdb_payload_v1_error_t**);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_builder_object_declare),
+                             WasmObjectDeclareFn>);
+static_assert(std::is_same_v<
+              decltype(&fdb_payload_v1_builder_object_fill_begin),
+              WasmObjectBuilderFn>);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_builder_value_object),
+                             WasmObjectBuilderFn>);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_builder_value_ref),
+                             WasmObjectBuilderFn>);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_view_ref_target),
+                             WasmRefTargetFn>);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_view_graph_identity),
+                             WasmGraphIdentityFn>);
 
 namespace {
 

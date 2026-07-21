@@ -66,17 +66,19 @@
         "properties": {
           "runtime": {
             "properties": {
-              "status": {"const": "not_evaluated"},
+              "status": {"const": "available"},
               "layout_model": {"const": "object_pool_aos"}
             }
           },
           "capabilities": {
             "properties": {
-              "operations": {"const": ["compile", "query"]},
+              "operations": {
+                "const": ["compile", "query", "build", "open", "view", "materialize", "invalidate"]
+              },
               "direct_build": {
                 "properties": {
-                  "status": {"const": "not_evaluated"},
-                  "reason": {"const": "runtime_slice_not_implemented"}
+                  "status": {"const": "eligible"},
+                  "reason": {"const": "graph_layout_exact_after_freeze"}
                 }
               }
             }
@@ -200,7 +202,7 @@
       "properties": {
         "status": {"enum": ["eligible", "not_evaluated"]},
         "reason": {
-          "enum": ["record_layout_exact", "runtime_slice_not_implemented"]
+          "enum": ["record_layout_exact", "graph_layout_exact_after_freeze"]
         }
       },
       "required": ["status", "reason"],

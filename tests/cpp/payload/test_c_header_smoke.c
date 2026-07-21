@@ -10,14 +10,32 @@ _Static_assert(sizeof(fdb_payload_v1_capabilities_t) ==
                    FDB_PAYLOAD_V1_CAPABILITIES_V1_SIZE,
                "capabilities ABI size");
 _Static_assert(sizeof(fdb_payload_v1_builder_options_t) ==
-                   FDB_PAYLOAD_V1_BUILDER_OPTIONS_V1_SIZE,
+                   FDB_PAYLOAD_V1_BUILDER_OPTIONS_V2_SIZE,
                "builder options ABI size");
+_Static_assert(FDB_PAYLOAD_V1_BUILDER_OPTIONS_V1_SIZE == UINT32_C(88),
+               "builder options V1 prefix size");
+_Static_assert(FDB_PAYLOAD_V1_BUILDER_OPTIONS_V2_SIZE == UINT32_C(96),
+               "builder options V2 size");
+_Static_assert(offsetof(fdb_payload_v1_builder_options_t, max_graph_objects) ==
+                   FDB_PAYLOAD_V1_BUILDER_OPTIONS_V1_SIZE,
+               "builder graph limit tail offset");
 _Static_assert(sizeof(fdb_payload_v1_open_options_t) ==
                    FDB_PAYLOAD_V1_OPEN_OPTIONS_V1_SIZE,
                "open options ABI size");
 _Static_assert(sizeof(fdb_payload_v1_plan_info_t) ==
-                   FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE,
+                   FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE,
                "plan info ABI size");
+_Static_assert(FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE == UINT32_C(104),
+               "plan info V1 prefix size");
+_Static_assert(FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE == UINT32_C(112),
+               "plan info V2 size");
+_Static_assert(offsetof(fdb_payload_v1_plan_info_t, graph_object_count) ==
+                   FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE,
+               "plan graph count tail offset");
+_Static_assert(sizeof(fdb_payload_v1_object_handle_t) == sizeof(uint64_t),
+               "builder object token width");
+_Static_assert(FDB_PAYLOAD_V1_INVALID_OBJECT_HANDLE == UINT64_C(0),
+               "invalid builder object token");
 _Static_assert(sizeof(fdb_payload_v1_execution_report_t) ==
                    FDB_PAYLOAD_V1_EXECUTION_REPORT_V1_SIZE,
                "execution report ABI size");
@@ -85,11 +103,13 @@ int main(void) {
     fdb_payload_v1_backing_init(&backing);
 
     if (builder_options.struct_size !=
-            FDB_PAYLOAD_V1_BUILDER_OPTIONS_V1_SIZE ||
+            FDB_PAYLOAD_V1_BUILDER_OPTIONS_V2_SIZE ||
+        builder_options.max_graph_objects != UINT64_C(10000000) ||
         fixed_run.struct_size != sizeof(fixed_run) ||
         fixed_run.data != NULL || fixed_run.validity != NULL ||
         open_options.struct_size != FDB_PAYLOAD_V1_OPEN_OPTIONS_V1_SIZE ||
-        plan_info.struct_size != FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE ||
+        plan_info.struct_size != FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE ||
+        plan_info.graph_object_count != UINT64_C(0) ||
         execution_report.struct_size !=
             FDB_PAYLOAD_V1_EXECUTION_REPORT_V1_SIZE ||
         backing.struct_size != sizeof(backing) || backing.context != NULL ||
@@ -164,6 +184,14 @@ int main(void) {
     fdb_payload_v1_view_retain((fdb_payload_v1_view_t*)0);
     fdb_payload_v1_view_release((fdb_payload_v1_view_t*)0);
     fdb_payload_v1_access_release((fdb_payload_v1_access_t*)0);
+
+    /* Keep all graph ABI declarations in the strict C11 link smoke. */
+    (void)&fdb_payload_v1_builder_object_declare;
+    (void)&fdb_payload_v1_builder_object_fill_begin;
+    (void)&fdb_payload_v1_builder_value_object;
+    (void)&fdb_payload_v1_builder_value_ref;
+    (void)&fdb_payload_v1_view_graph_identity;
+    (void)&fdb_payload_v1_view_ref_target;
 
     status = fdb_payload_v1_spec_compile_json(
         (const uint8_t*)valid_source,

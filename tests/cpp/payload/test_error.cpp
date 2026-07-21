@@ -65,6 +65,32 @@ static_assert(sizeof(fdb_payload_v1_capabilities_t) ==
               "capabilities ABI size");
 static_assert(std::is_same_v<fdb_payload_v1_status_t, std::uint32_t>);
 static_assert(std::is_same_v<fdb_payload_v1_profile_t, std::uint32_t>);
+static_assert(std::is_same_v<fdb_payload_v1_object_handle_t, std::uint64_t>);
+using ObjectDeclareFn = fdb_payload_v1_status_t (*)(
+    fdb_payload_v1_builder_t*, std::uint32_t,
+    fdb_payload_v1_object_handle_t*, fdb_payload_v1_error_t**);
+using ObjectBuilderFn = fdb_payload_v1_status_t (*)(
+    fdb_payload_v1_builder_t*, fdb_payload_v1_object_handle_t,
+    fdb_payload_v1_error_t**);
+using RefTargetFn = fdb_payload_v1_status_t (*)(
+    const fdb_payload_v1_view_t*, fdb_payload_v1_view_t**,
+    fdb_payload_v1_error_t**);
+using GraphIdentityFn = fdb_payload_v1_status_t (*)(
+    const fdb_payload_v1_view_t*, std::uint32_t*, std::uint64_t*,
+    fdb_payload_v1_error_t**);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_builder_object_declare),
+                             ObjectDeclareFn>);
+static_assert(std::is_same_v<
+              decltype(&fdb_payload_v1_builder_object_fill_begin),
+              ObjectBuilderFn>);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_builder_value_object),
+                             ObjectBuilderFn>);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_builder_value_ref),
+                             ObjectBuilderFn>);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_view_ref_target),
+                             RefTargetFn>);
+static_assert(std::is_same_v<decltype(&fdb_payload_v1_view_graph_identity),
+                             GraphIdentityFn>);
 
 namespace {
 

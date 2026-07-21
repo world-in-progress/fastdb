@@ -20,9 +20,12 @@
 #define FDB_PAYLOAD_V1_COMPILE_OPTIONS_V1_SIZE UINT32_C(80)
 #define FDB_PAYLOAD_V1_CAPABILITIES_V1_SIZE UINT32_C(72)
 #define FDB_PAYLOAD_V1_BUILDER_OPTIONS_V1_SIZE UINT32_C(88)
+#define FDB_PAYLOAD_V1_BUILDER_OPTIONS_V2_SIZE UINT32_C(96)
 #define FDB_PAYLOAD_V1_OPEN_OPTIONS_V1_SIZE UINT32_C(112)
 #define FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE UINT32_C(104)
+#define FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE UINT32_C(112)
 #define FDB_PAYLOAD_V1_EXECUTION_REPORT_V1_SIZE UINT32_C(72)
+#define FDB_PAYLOAD_V1_INVALID_OBJECT_HANDLE UINT64_C(0)
 
 #define FDB_PAYLOAD_BINARY_V1_HEADER_SIZE UINT32_C(128)
 #define FDB_PAYLOAD_BINARY_V1_REGION_DESCRIPTOR_SIZE UINT32_C(56)
@@ -149,6 +152,7 @@
 
 typedef uint32_t fdb_payload_v1_status_t;
 typedef uint32_t fdb_payload_v1_profile_t;
+typedef uint64_t fdb_payload_v1_object_handle_t;
 
 typedef struct fdb_payload_v1_spec fdb_payload_v1_spec_t;
 typedef struct fdb_payload_v1_blob fdb_payload_v1_blob_t;
@@ -193,6 +197,7 @@ typedef struct fdb_payload_v1_builder_options {
     uint64_t max_nesting_depth;
     uint64_t max_total_builder_bytes;
     uint64_t reserved[4];
+    uint64_t max_graph_objects;
 } fdb_payload_v1_builder_options_t;
 
 typedef struct fdb_payload_v1_open_options {
@@ -223,6 +228,7 @@ typedef struct fdb_payload_v1_plan_info {
     uint32_t max_alignment;
     uint32_t direct_build_status;
     uint64_t reserved[4];
+    uint64_t graph_object_count;
 } fdb_payload_v1_plan_info_t;
 
 typedef struct fdb_payload_v1_execution_report {
@@ -338,7 +344,7 @@ FDB_PAYLOAD_API void fdb_payload_v1_compile_options_init(
 /* A null output is accepted. Present output receives empty V1 capabilities. */
 FDB_PAYLOAD_API void fdb_payload_v1_capabilities_init(
     fdb_payload_v1_capabilities_t* capabilities);
-/* Present output receives builder-limit V1 defaults; null is accepted. */
+/* Present output receives builder-limit V2 defaults; null is accepted. */
 FDB_PAYLOAD_API void fdb_payload_v1_builder_options_init(
     fdb_payload_v1_builder_options_t* options);
 /* Present output receives target sizeof and null/zero members; null is accepted. */
@@ -347,7 +353,7 @@ FDB_PAYLOAD_API void fdb_payload_v1_fixed_run_init(
 /* Present output receives safe open-limit V1 defaults; null is accepted. */
 FDB_PAYLOAD_API void fdb_payload_v1_open_options_init(
     fdb_payload_v1_open_options_t* options);
-/* Present output receives a zeroed V1 plan-info report; null is accepted. */
+/* Present output receives a zeroed V2 plan-info report; null is accepted. */
 FDB_PAYLOAD_API void fdb_payload_v1_plan_info_init(
     fdb_payload_v1_plan_info_t* info);
 /* Present output receives a zeroed V1 execution report; null is accepted. */
@@ -385,6 +391,21 @@ FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_entry_begin(
     fdb_payload_v1_builder_t* builder,
     uint32_t entry_index,
     uint64_t value_count,
+    fdb_payload_v1_error_t** out_error);
+/*
+ * Object tokens are non-owning, builder-local authoring values. Zero is
+ * invalid; tokens have no retain/release operation and are not wire object IDs.
+ */
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_builder_object_declare(
+    fdb_payload_v1_builder_t* builder,
+    uint32_t component_index,
+    fdb_payload_v1_object_handle_t* out_object,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_builder_object_fill_begin(
+    fdb_payload_v1_builder_t* builder,
+    fdb_payload_v1_object_handle_t object,
     fdb_payload_v1_error_t** out_error);
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_value_null(
     fdb_payload_v1_builder_t* builder,
@@ -458,6 +479,15 @@ fdb_payload_v1_builder_value_list_begin(
     fdb_payload_v1_builder_t* builder,
     uint64_t item_count,
     fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_builder_value_object(
+    fdb_payload_v1_builder_t* builder,
+    fdb_payload_v1_object_handle_t object,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_value_ref(
+    fdb_payload_v1_builder_t* builder,
+    fdb_payload_v1_object_handle_t object,
+    fdb_payload_v1_error_t** out_error);
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_freeze(
     fdb_payload_v1_builder_t* builder,
     fdb_payload_v1_plan_t** out_plan,
@@ -493,7 +523,7 @@ FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_plan_execute(
  * acquires one reference with backing.retain before Core validation; failure
  * after a successful retain releases it exactly once, and success holds it
  * until invalidation or final payload release. Both use the same hardened Core
- * reader and reject profiles whose runtime is unavailable.
+ * reader for either supported profile.
  */
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_payload_open_copy(
     const fdb_payload_v1_spec_t* spec,
@@ -606,6 +636,17 @@ FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_field(
     const fdb_payload_v1_view_t* view,
     uint32_t field_index,
     fdb_payload_v1_view_t** out_field,
+    fdb_payload_v1_error_t** out_error);
+/* Ref traversal is explicit; ordinary field navigation never follows a ref. */
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_ref_target(
+    const fdb_payload_v1_view_t* view,
+    fdb_payload_v1_view_t** out_target,
+    fdb_payload_v1_error_t** out_error);
+/* Identity coordinates are stable only within the owning payload. */
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_graph_identity(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_component_index,
+    uint64_t* out_object_id,
     fdb_payload_v1_error_t** out_error);
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_get_bool(
     const fdb_payload_v1_view_t* view,

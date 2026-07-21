@@ -344,7 +344,7 @@ int test_complete_graph_authoring_and_coordinates() {
         component_index(compiled.value(), "Value");
 
     require(compiled.value().capabilities().direct_build_status ==
-            FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED);
+            FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
     auto created = PayloadBuilder::create(compiled.value());
     require(created.has_value());
     PayloadBuilder& builder = created.value();

@@ -198,9 +198,9 @@ def main() -> int:
     try:
         arguments = parse_arguments()
         expected = read_allowlist(ALLOWLIST)
-        if len(expected) != 99:
+        if len(expected) != 105:
             raise CheckError(
-                f"reviewed portable payload ABI must contain exactly 99 symbols, found {len(expected)}"
+                f"reviewed portable payload ABI must contain exactly 105 symbols, found {len(expected)}"
             )
         if arguments.wasm_build_dir is not None:
             build_directory = resolved_build_directory(arguments.wasm_build_dir)

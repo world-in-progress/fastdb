@@ -6,7 +6,6 @@
 #include "payload/error/Error.hpp"
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
-#include "payload/layout/RuntimeSchema.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 #include "payload/spec/SchemaRepository.hpp"
 #include "payload/view/PayloadOwner.hpp"
@@ -400,7 +399,7 @@ void clear_output_prefix(Value* value,
 fdb_payload_v1_builder_options_t default_builder_options() noexcept {
     const build::BuilderLimits limits = build::default_builder_limits();
     return {
-        FDB_PAYLOAD_V1_BUILDER_OPTIONS_V1_SIZE,
+        FDB_PAYLOAD_V1_BUILDER_OPTIONS_V2_SIZE,
         UINT32_C(0),
         limits.max_value_nodes,
         limits.max_list_elements,
@@ -409,6 +408,7 @@ fdb_payload_v1_builder_options_t default_builder_options() noexcept {
         limits.max_nesting_depth,
         limits.max_total_builder_bytes,
         {UINT64_C(0), UINT64_C(0), UINT64_C(0), UINT64_C(0)},
+        limits.max_graph_objects,
     };
 }
 
@@ -458,6 +458,10 @@ error::Result<build::BuilderLimits> builder_limits(
             supplied->max_total_builder_bytes == UINT64_C(0)
                 ? defaults.max_total_builder_bytes
                 : supplied->max_total_builder_bytes,
+            struct_size < FDB_PAYLOAD_V1_BUILDER_OPTIONS_V2_SIZE ||
+                    supplied->max_graph_objects == UINT64_C(0)
+                ? defaults.max_graph_objects
+                : supplied->max_graph_objects,
         });
 }
 
@@ -914,7 +918,7 @@ extern "C" void fdb_payload_v1_plan_info_init(
             return;
         }
         const fdb_payload_v1_plan_info_t initialized{
-            FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE,
+            FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE,
             UINT32_C(0),
             UINT64_C(0),
             UINT64_C(0),
@@ -926,6 +930,7 @@ extern "C" void fdb_payload_v1_plan_info_init(
             UINT32_C(0),
             FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED,
             {UINT64_C(0), UINT64_C(0), UINT64_C(0), UINT64_C(0)},
+            UINT64_C(0),
         };
         *info = initialized;
     });
@@ -999,13 +1004,6 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_builder_create(
             return fastdb::payload::error::Result<void>::failure(
                 std::move(limits).error());
         }
-        auto available =
-            fastdb::payload::layout::RuntimeSchema::require_record_runtime(
-                spec->compiled);
-        if (!available.has_value()) {
-            return fastdb::payload::error::Result<void>::failure(
-                std::move(available).error());
-        }
         auto created = fastdb::payload::build::PayloadBuilder::create(
             spec->compiled, limits.value());
         if (!created.has_value()) {
@@ -1034,6 +1032,47 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_builder_entry_begin(
             builder, [=](auto& value) {
                 return value.begin_entry(entry_index, value_count);
             });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t
+fdb_payload_v1_builder_object_declare(
+    fdb_payload_v1_builder_t* builder,
+    uint32_t component_index,
+    fdb_payload_v1_object_handle_t* out_object,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        if (out_object != nullptr) {
+            *out_object = FDB_PAYLOAD_V1_INVALID_OBJECT_HANDLE;
+        }
+        if (out_object == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "out_object", "null_output"));
+        }
+        auto valid = fastdb::payload::abi::require_builder(builder);
+        if (!valid.has_value()) {
+            return valid;
+        }
+        auto declared = builder->value->declare_object(component_index);
+        if (!declared.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(declared).error());
+        }
+        *out_object = declared.value();
+        return fastdb::payload::error::Result<void>::success();
+    });
+}
+
+extern "C" fdb_payload_v1_status_t
+fdb_payload_v1_builder_object_fill_begin(
+    fdb_payload_v1_builder_t* builder,
+    fdb_payload_v1_object_handle_t object,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::builder_call(
+            builder,
+            [=](auto& value) { return value.begin_object_fill(object); });
     });
 }
 
@@ -1230,6 +1269,27 @@ fdb_payload_v1_builder_value_list_begin(
     });
 }
 
+extern "C" fdb_payload_v1_status_t
+fdb_payload_v1_builder_value_object(
+    fdb_payload_v1_builder_t* builder,
+    fdb_payload_v1_object_handle_t object,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::builder_call(
+            builder, [=](auto& value) { return value.push_object(object); });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_builder_value_ref(
+    fdb_payload_v1_builder_t* builder,
+    fdb_payload_v1_object_handle_t object,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::builder_call(
+            builder, [=](auto& value) { return value.push_ref(object); });
+    });
+}
+
 extern "C" fdb_payload_v1_status_t fdb_payload_v1_builder_freeze(
     fdb_payload_v1_builder_t* builder,
     fdb_payload_v1_plan_t** out_plan,
@@ -1296,8 +1356,12 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_plan_info(
                 }
             }
         }
+        const std::uint32_t writable_size =
+            declared_size >= FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE
+                ? FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE
+                : FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE;
         fastdb::payload::abi::clear_output_prefix(
-            out_info, declared_size, FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE);
+            out_info, declared_size, writable_size);
         if (declared_size < FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE) {
             return fastdb::payload::abi::failure(
                 fastdb::payload::abi::unsupported_prefix(
@@ -1329,6 +1393,9 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_plan_info(
         out_info->validation_work = source.validation_work;
         out_info->max_alignment = source.max_alignment;
         out_info->direct_build_status = source.direct_build_status;
+        if (declared_size >= FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE) {
+            out_info->graph_object_count = source.graph_object_count;
+        }
         return fastdb::payload::error::Result<void>::success();
     });
 }
@@ -1460,13 +1527,6 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_payload_open_copy(
             return fastdb::payload::error::Result<void>::failure(
                 std::move(converted).error());
         }
-        auto available =
-            fastdb::payload::layout::RuntimeSchema::require_record_runtime(
-                spec->compiled);
-        if (!available.has_value()) {
-            return fastdb::payload::error::Result<void>::failure(
-                std::move(available).error());
-        }
         auto opened = fastdb::payload::view::PayloadOwner::open_copy(
             spec->compiled, bytes, byte_count, converted.value());
         if (!opened.has_value()) {
@@ -1506,13 +1566,6 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_payload_open_external(
         if (!converted_options.has_value()) {
             return fastdb::payload::error::Result<void>::failure(
                 std::move(converted_options).error());
-        }
-        auto available =
-            fastdb::payload::layout::RuntimeSchema::require_record_runtime(
-                spec->compiled);
-        if (!available.has_value()) {
-            return fastdb::payload::error::Result<void>::failure(
-                std::move(available).error());
         }
         auto converted_backing =
             fastdb::payload::abi::backing_callbacks(backing, true);
@@ -1908,6 +1961,57 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_field(
             [field_index](const fastdb::payload::view::View& value) {
                 return value.field(field_index);
             });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_ref_target(
+    const fdb_payload_v1_view_t* view,
+    fdb_payload_v1_view_t** out_target,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        return fastdb::payload::abi::publish_view(
+            view, out_target, "out_target",
+            [](const fastdb::payload::view::View& value) {
+                return value.ref_target();
+            });
+    });
+}
+
+extern "C" fdb_payload_v1_status_t fdb_payload_v1_view_graph_identity(
+    const fdb_payload_v1_view_t* view,
+    uint32_t* out_component_index,
+    uint64_t* out_object_id,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        if (out_component_index != nullptr) {
+            *out_component_index = UINT32_C(0);
+        }
+        if (out_object_id != nullptr) {
+            *out_object_id = UINT64_C(0);
+        }
+        if (out_component_index == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "out_component_index", "null_output"));
+        }
+        if (out_object_id == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "out_object_id", "null_output"));
+        }
+        if (view == nullptr) {
+            return fastdb::payload::abi::failure(
+                fastdb::payload::abi::invalid_argument(
+                    "view", "null_handle"));
+        }
+        auto identity = view->value.graph_identity();
+        if (!identity.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(identity).error());
+        }
+        *out_component_index = identity.value().component_index;
+        *out_object_id = identity.value().object_id;
+        return fastdb::payload::error::Result<void>::success();
     });
 }
 

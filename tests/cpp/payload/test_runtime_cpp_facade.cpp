@@ -22,11 +22,39 @@ using fastdb::payload::v1::Builder;
 using fastdb::payload::v1::ByteView;
 using fastdb::payload::v1::CompiledSpec;
 using fastdb::payload::v1::FixedRun;
+using fastdb::payload::v1::GraphIdentity;
+using fastdb::payload::v1::ObjectHandle;
 using fastdb::payload::v1::Payload;
 using fastdb::payload::v1::PayloadError;
 using fastdb::payload::v1::View;
 using fastdb::payload::v1::ViewKind;
 using fastdb::payload::v1::WideView;
+
+static_assert(std::is_trivially_copyable_v<ObjectHandle>);
+static_assert(std::is_copy_constructible_v<ObjectHandle>);
+static_assert(std::is_copy_assignable_v<ObjectHandle>);
+static_assert(std::is_nothrow_move_constructible_v<ObjectHandle>);
+static_assert(std::is_nothrow_move_assignable_v<ObjectHandle>);
+static_assert(!std::is_constructible_v<ObjectHandle,
+                                       fdb_payload_v1_object_handle_t>);
+static_assert(std::is_trivially_copyable_v<GraphIdentity>);
+static_assert(std::is_same_v<decltype(std::declval<Builder&>().declare_object(
+                                 std::uint32_t{})),
+                             ObjectHandle>);
+static_assert(std::is_same_v<decltype(std::declval<Builder&>().begin_object_fill(
+                                 std::declval<ObjectHandle>())),
+                             Builder&>);
+static_assert(std::is_same_v<decltype(std::declval<Builder&>().value_object(
+                                 std::declval<ObjectHandle>())),
+                             Builder&>);
+static_assert(std::is_same_v<decltype(std::declval<Builder&>().value_ref(
+                                 std::declval<ObjectHandle>())),
+                             Builder&>);
+static_assert(std::is_same_v<decltype(std::declval<const View&>().ref_target()),
+                             View>);
+static_assert(std::is_same_v<
+              decltype(std::declval<const View&>().graph_identity()),
+              GraphIdentity>);
 
 static_assert(!std::is_copy_constructible_v<Builder>);
 static_assert(!std::is_copy_assignable_v<Builder>);
@@ -72,6 +100,25 @@ constexpr std::string_view kSpec = R"({
     {"id":"Pair","kind":"record","fields":[
       {"id":"left","type":{"kind":"u8"}},
       {"id":"right","type":{"kind":"u8"}}
+    ]}
+  ]
+})";
+
+constexpr std::string_view kGraphSpec = R"({
+  "schema":"fastdb.payload.v1",
+  "profile":"object_graph.v1",
+  "entries":[
+    {"id":"root","cardinality":"one","type":{"kind":"component","id":"Node"}}
+  ],
+  "components":[
+    {"id":"Node","kind":"record","fields":[
+      {"id":"value","type":{"kind":"u32"}},
+      {"id":"self","type":{"kind":"ref","target":"Node"}},
+      {"id":"asset","type":{"kind":"ref","target":"Asset"}}
+    ]},
+    {"id":"Asset","kind":"record","fields":[
+      {"id":"name","type":{"kind":"str"}},
+      {"id":"owner","type":{"kind":"ref","target":"Node"}}
     ]}
   ]
 })";
@@ -370,6 +417,140 @@ int test_checked_native_sizes() {
     return EXIT_SUCCESS;
 }
 
+int test_graph_facade_is_thin_and_complete() {
+    const CompiledSpec spec = CompiledSpec::compile(kGraphSpec);
+    const std::uint32_t node_component = spec.component_index("Node");
+    const std::uint32_t asset_component = spec.component_index("Asset");
+    Builder builder = Builder::create(spec);
+    try {
+        builder.begin_object_fill(ObjectHandle{});
+        require(false);
+    } catch (const PayloadError& error) {
+        require(error.code() == FDB_PAYLOAD_E_INVALID_OBJECT_HANDLE);
+        require(error.symbol() == "INVALID_OBJECT_HANDLE");
+    }
+    const ObjectHandle node = builder.declare_object(node_component);
+    const ObjectHandle asset = builder.declare_object(asset_component);
+    builder.begin_object_fill(node)
+        .value_u32(UINT32_C(42))
+        .value_ref(node)
+        .value_ref(asset);
+    builder.begin_object_fill(asset).value_str("map").value_ref(node);
+    builder.entry_begin(UINT32_C(0), UINT64_C(1)).value_object(node);
+
+    BuildPlan plan = builder.freeze();
+    require(plan.info().value.graph_object_count == UINT64_C(2));
+    auto built = plan.execute(BuildPolicy::allow_staging);
+    const Blob facade_binary = built.payload.binary_blob();
+    require(built.payload.profile() ==
+            fastdb::payload::v1::Profile::object_graph_v1);
+
+    fdb_payload_v1_spec_t* raw_spec = nullptr;
+    fdb_payload_v1_error_t* raw_error = nullptr;
+    const auto raw_ok = [&raw_error](fdb_payload_v1_status_t status) {
+        return status == UINT32_C(0) && raw_error == nullptr;
+    };
+    require(raw_ok(fdb_payload_v1_spec_compile_json(
+        reinterpret_cast<const std::uint8_t*>(kGraphSpec.data()),
+        static_cast<std::uint64_t>(kGraphSpec.size()), nullptr, &raw_spec,
+        &raw_error)));
+    fdb_payload_v1_builder_t* raw_builder = nullptr;
+    require(raw_ok(fdb_payload_v1_builder_create(
+        raw_spec, nullptr, &raw_builder, &raw_error)));
+    std::uint32_t raw_node_component = UINT32_MAX;
+    std::uint32_t raw_asset_component = UINT32_MAX;
+    require(raw_ok(fdb_payload_v1_spec_component_index(
+        raw_spec, reinterpret_cast<const std::uint8_t*>("Node"), UINT64_C(4),
+        &raw_node_component, &raw_error)));
+    require(raw_ok(fdb_payload_v1_spec_component_index(
+        raw_spec, reinterpret_cast<const std::uint8_t*>("Asset"), UINT64_C(5),
+        &raw_asset_component, &raw_error)));
+    fdb_payload_v1_object_handle_t raw_node = UINT64_C(0);
+    fdb_payload_v1_object_handle_t raw_asset = UINT64_C(0);
+    require(raw_ok(fdb_payload_v1_builder_object_declare(
+        raw_builder, raw_node_component, &raw_node, &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_object_declare(
+        raw_builder, raw_asset_component, &raw_asset, &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_object_fill_begin(
+        raw_builder, raw_node, &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_value_u32(
+        raw_builder, UINT32_C(42), &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_value_ref(
+        raw_builder, raw_node, &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_value_ref(
+        raw_builder, raw_asset, &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_object_fill_begin(
+        raw_builder, raw_asset, &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_value_str(
+        raw_builder, reinterpret_cast<const std::uint8_t*>("map"),
+        UINT64_C(3), &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_value_ref(
+        raw_builder, raw_node, &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_entry_begin(
+        raw_builder, UINT32_C(0), UINT64_C(1), &raw_error)));
+    require(raw_ok(fdb_payload_v1_builder_value_object(
+        raw_builder, raw_node, &raw_error)));
+    fdb_payload_v1_plan_t* raw_plan = nullptr;
+    require(raw_ok(fdb_payload_v1_builder_freeze(
+        raw_builder, &raw_plan, &raw_error)));
+    fdb_payload_v1_payload_t* raw_payload = nullptr;
+    fdb_payload_v1_execution_report_t raw_report{};
+    fdb_payload_v1_execution_report_init(&raw_report);
+    require(raw_ok(fdb_payload_v1_plan_execute(
+        raw_plan, FDB_PAYLOAD_BUILD_ALLOW_STAGING, nullptr, &raw_payload,
+        &raw_report, &raw_error)));
+    fdb_payload_v1_blob_t* raw_binary = nullptr;
+    require(raw_ok(fdb_payload_v1_payload_binary_blob(
+        raw_payload, &raw_binary, &raw_error)));
+    const ByteView facade_bytes = facade_binary.bytes();
+    require(fdb_payload_v1_blob_size(raw_binary) == facade_bytes.size);
+    require(std::memcmp(fdb_payload_v1_blob_data(raw_binary),
+                        facade_bytes.data, facade_bytes.size) == 0);
+    require(raw_report.mode == built.report.value.mode);
+    require(raw_report.used_bytes == built.report.value.used_bytes);
+    require(raw_report.region_count == built.report.value.region_count);
+    fdb_payload_v1_blob_release(raw_binary);
+    fdb_payload_v1_payload_release(raw_payload);
+    fdb_payload_v1_plan_release(raw_plan);
+    fdb_payload_v1_builder_release(raw_builder);
+    fdb_payload_v1_spec_release(raw_spec);
+
+    View root = built.payload.entry_view(UINT32_C(0)).at(UINT64_C(0));
+    const GraphIdentity root_identity = root.graph_identity();
+    require(root_identity.component_index == node_component);
+    require(root_identity.object_id == UINT64_C(0));
+    require(root.field(UINT32_C(0)).get_u32() == UINT32_C(42));
+
+    View self = root.field(UINT32_C(1));
+    const GraphIdentity self_identity = self.graph_identity();
+    require(self_identity.component_index == node_component);
+    require(self_identity.object_id == root_identity.object_id);
+    require(self.ref_target().graph_identity().object_id ==
+            root_identity.object_id);
+
+    View asset_view = root.field(UINT32_C(2)).ref_target();
+    const GraphIdentity asset_identity = asset_view.graph_identity();
+    require(asset_identity.component_index == asset_component);
+    require(asset_identity.object_id == UINT64_C(0));
+    require(asset_view.field(UINT32_C(1)).ref_target().graph_identity().object_id ==
+            root_identity.object_id);
+
+    View detached = root.materialize();
+    built.payload.invalidate();
+    require(detached.graph_identity().component_index == node_component);
+    require(detached.field(UINT32_C(1))
+                .ref_target()
+                .graph_identity()
+                .object_id == UINT64_C(0));
+    try {
+        static_cast<void>(root.graph_identity());
+        require(false);
+    } catch (const PayloadError& error) {
+        require(error.code() == FDB_PAYLOAD_E_VIEW_INVALIDATED);
+    }
+    return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main() {
@@ -377,5 +558,6 @@ int main() {
             EXIT_SUCCESS);
     require(test_external_execute_and_open() == EXIT_SUCCESS);
     require(test_checked_native_sizes() == EXIT_SUCCESS);
+    require(test_graph_facade_is_thin_and_complete() == EXIT_SUCCESS);
     return EXIT_SUCCESS;
 }

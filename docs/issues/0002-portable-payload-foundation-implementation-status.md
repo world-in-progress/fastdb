@@ -100,17 +100,25 @@ Current repository state:
 - Task 11 also defines separate Emscripten and Python package jobs, native and wasm exact ABI-99 checks, exact sdist/wheel inventory validation, the exact seven-diagnostic SWIG baseline owned by Issue 0003, and one executable path-aware aggregate whose 16 scope combinations and every incorrect job result are tested. The package job now has exact Python 3.10/3.12 matrix legs. Its standard-library-only checker derives and cross-checks distribution identity from sdist/wheel filenames and their `PKG-INFO`/`METADATA`, so it does not import a Python-3.11-only TOML module. These are hosted job definitions only until an authorized run exists;
 - Task 11 adds `fuzz_payload_open` over borrowed input with bounded options, one fixed comprehensive matching spec and one deliberate digest-mismatch spec. All 10 reviewed seeds now embed the comprehensive spec digest: the Core-generated `component-list-empty` golden proves the empty form; reviewed scalar/text mutations provide distinct valid fixed/text forms; the full composition is the list form; and every malformed seed derives from one of those matching valid images. The deterministic runner asserts each seed's expected success or exact status/path before invoking the shared fuzz harness, so malformed offset/validity/text/list coverage cannot silently collapse to `DIGEST_MISMATCH`. Successful opens traverse every value kind through the public C ABI, exercise scoped spans, materialize before invalidation, and traverse the detached result afterward; fuzz failures are opened twice and compared across status, code, symbol, path, message, and canonical details. A machine-checked 14-class map names the hostile binary, backing, allocation, generation, and access-drain proofs;
 - Task 11's complete fresh post-review-fix local gate is green: Debug passes 30/30 in 22.46 seconds and Release passes 30/30 in 8.70 seconds, each with exact native ABI-99; the hard-fail ASan+UBSan suite passes 30/30 in 95.78 seconds with a zero-diagnostic retained-log scan; focused ThreadSanitizer passes 4/4; the Core, pure-C, C++ facade, and single-thread injected-failure Emscripten paths pass with exact wasm ABI-99 and structural flag inspection; the unchanged arm64/x86-64/wasm32 C11 checks remain green; Python passes 413/413 plus compileall; a fresh Python 3.10 sdist/wheel build passes the exact inventory checker under both Python 3.10 and the current interpreter; and a clean paired TypeScript/WASM rebuild passes 76/76. The local libFuzzer and LeakSanitizer toolchain limits remain explicitly bounded below. The first review's two Important findings are corrected, and the same reviewer confirms both closed with zero Critical, Important, or Minor findings;
-- P3 Tasks 1-7 now provide the Core-private graph topology, logical authoring,
-  complete normative profile-2 layout/encoding, hardened byte open, iterative
+- P3 Tasks 1-8 now provide one Core-owned graph topology, logical authoring,
+  complete normative profile-2 layout/encoding and hardened open, iterative
   reachability, typed index-cursor facts, immutable graph BuildPlan,
-  direct/staged backing execution, strict final-image validation, and one
-  shared owner publication path. Checked backed graph navigation, explicit ref
-  dereference, payload-scoped identity, and invalidation reuse that same owner,
-  generation, access barrier, and Access type as P2. Core-private
-  source-independent reachable-closure materialization now preserves every V1
-  value, root/ref kind, per-component dense identity, sharing, and cycle in an
-  immutable detached state. Public graph operations, capability publication,
-  language projections, and the rest of P3-P5 remain open;
+  direct/staged backing execution, strict final-image validation, checked
+  backed navigation, source-independent reachable-closure materialization, and
+  the shared P2 owner/access/invalidation lifecycle. Task 8 projects that one
+  implementation through exactly six additive C exports and a thin C++17
+  facade; public graph build/open/view/materialize/invalidate is now available;
+- Task 8 appends compatible `max_graph_objects` and `graph_object_count` tails,
+  keeps the V1 prefixes exactly 88/104 bytes, and freezes the public ABI at
+  exactly 105 symbols while preserving the old 99 declarations and record
+  behavior. Guard-page and canary tests prove old and partial prefixes do not
+  read or write the new tails;
+- graph manifests now truthfully report runtime `available`, layout
+  `object_pool_aos`, operations
+  `compile,query,build,open,view,materialize,invalidate`, direct build
+  `eligible/graph_layout_exact_after_freeze`, and no codegen targets. Task 9
+  robustness/corpus/fuzz/full-wasm/CI/package proof and final review, Task 10
+  D1/P3 closure, and all P4-P5 work remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 The P1 compiler/query and P2 record-runtime slices are implemented,
@@ -122,16 +130,15 @@ implemented.
 ## Current limit
 
 Users and downstream repositories can compile/query a specification and can
-now author, build, open, copy, inspect metadata for, and invalidate a complete
-non-reference `record.v1` payload through the public C ABI, navigate checked
-views, hold scoped borrowed access, materialize detached values, and use the
-thin C++ runtime facade. No Rust, Python, or TypeScript/WASM portable projection
-exists. Task 11 now defines the workflow/package gates, public build guidance,
-proof mapping, binary-opening robustness, and single-thread wasm
-failure-containment proof. Its complete fresh local gate and same-reviewer
-zero-findings confirmation make P2 locally complete and frozen; hosted
-outcomes remain pending. C-Two may consume only
-reviewed public FastDB contracts and must not depend on private headers or
+author, build, open, copy, navigate, materialize, and invalidate complete
+`record.v1` and ordinary `object_graph.v1` payloads through the public C ABI and
+thin C++ facade. Graph sharing, cycles, explicit ref dereference, payload-scoped
+identity, direct/staged backing, and the shared checked owner/access lifetime
+are executable. P2 is independently reviewed and locally frozen; P3 Task 8 is
+implemented but P3 robustness, full wasm graph proof, independent review, and
+D1 closure remain Tasks 9-10. No Rust, Python, or official TypeScript/WASM
+portable projection exists. Hosted outcomes remain pending. C-Two may consume
+only reviewed public FastDB contracts and must not depend on private headers or
 recreate FastDB semantics. Toodle consequently cannot yet treat the full
 structured-payload substrate as implemented because P3-P5 remain open.
 
@@ -200,7 +207,7 @@ so this P2 proof index is locally frozen.
 | Goal P2: open, traverse, scoped borrow, materialize, invalidate, and release through C/C++ | 99-symbol C ABI and `fastdb_payload.hpp` | `payload.runtime_abi`, `payload.runtime_cpp_facade`, `payload.checked_view` |
 | Goal P2: source-build WebAssembly contains Core failures as stable C statuses | `fastdb_payload_emscripten_exception_model`, public `fastdb` target, ABI catch sites | `fastdb_payload_wasm_runtime_abi_single_thread --single-thread-injected-failure`, `tools/check_emscripten_exception_flags.py` |
 | Goal P2: package surfaces contain the normative contract, Python extension, and native libraries without build debris or unreviewed SWIG diagnostics | `MANIFEST.in`, Python build configuration, Issue 0003 baseline | `tests/ci/test_check_python_package_inventory.py` and `tools/check_python_package_inventory.py` over the retained build log, one sdist, and one wheel |
-| P3 Section 9: graph specifications have one Core topology/logical authoring authority, complete Core-private profile-2 layout/encoding/hardened-open semantics, the shared plan/backing/owner lifecycle, and checked backed navigation for every V1 value | `RuntimeTopology`, `RuntimeSchema`, `GraphAuthoring`, `GraphLayout`, `GraphEncoder`, `ProfileLayout`, `BuildPlan`, `open_payload`/`open_graph`, `PayloadOwner`, explicit inline/object/ref cursor variants, and `GraphView`; stable public `RUNTIME_UNAVAILABLE` projection | `payload.graph_runtime_schema`, `payload.graph_builder`, `payload.graph_binary`, `payload.graph_backing`, `payload.payload_open`, `payload.graph_view`, seven annotated graph goldens, seven exact invalid receipts, allocation sweeps, the no-full-image direct proof, a 50,000-object cycle, 32-thread immutable traversal, generation/drain/release proofs, and record backing/open/view regressions; exact public ABI remains 99 symbols |
+| P3 Sections 9 and 14-16: graph specifications have one Core topology/logical authoring/runtime authority, complete profile-2 layout/encoding/hardened-open semantics, the shared plan/backing/owner lifecycle, checked navigation/materialization for every V1 value, and one additive public projection | `RuntimeTopology`, `RuntimeSchema`, `GraphAuthoring`, `GraphLayout`, `GraphEncoder`, `ProfileLayout`, `BuildPlan`, `open_payload`/`open_graph`, `PayloadOwner`, explicit inline/object/ref cursor variants, `GraphView`; six `fdb_payload_v1_*` graph exports and thin C++ `ObjectHandle`/`GraphIdentity` facade | `payload.graph_runtime_schema`, `payload.graph_builder`, `payload.graph_binary`, `payload.graph_backing`, `payload.payload_open`, `payload.graph_view`, `payload.graph_materialize`, `payload.runtime_abi`, `payload.runtime_cpp_facade`, guard-page/canary V1/V2 prefix tests, seven annotated graph goldens, seven exact invalid receipts, allocation sweeps, the no-full-image direct proof, a 50,000-object cycle, 32-thread immutable traversal, generation/drain/release proofs, record regressions, and exact public ABI-105; Task 9 robustness/full-wasm/final-review evidence remains open |
 
 ### Emscripten exception choice and current closure
 
@@ -570,99 +577,122 @@ publication, balanced pins, retryable source use, and eventual success. An
 external-backing race proves invalidation waits for the one full source pin,
 releases backing exactly once, and leaves the detached result usable.
 
-Native Debug, Release, and sanitizer builds and a fresh Core Emscripten build
-each retain exactly 99 public ABI symbols. Both Core WASM runtime harnesses,
-including the single-thread injected-failure path, pass. Python remains
-`413/413` plus compileall; a fresh sdist/wheel build passes exact package
-inventory; and a clean TypeScript/WASM rebuild remains `76/76`. Dependency and
-embedded-schema checks, the reviewed binary-open corpus `10/10`, all `17` CI
-helper tests, all `28` binary JSON documents under duplicate-key rejection,
-all seven graph SHA-256 receipts, nine changed-document relative links, and
-`git diff --check` pass. No hosted outcome, public graph function, manifest
-transition, release, push, or publication is claimed.
+At the Task 7 boundary, native Debug, Release, sanitizer, and a fresh Core
+Emscripten build still retained exactly 99 public ABI symbols. Both then-current
+Core WASM runtime harnesses, including the single-thread injected-failure path,
+passed. That evidence remains the historical private-runtime boundary; Task 8
+supersedes its public-unavailable and ABI-count claims.
 
-These are internal schema/logical-value/binary seams, not a public graph
-runtime. For otherwise valid ABI calls, `builder_create`, `open_copy`, and
-`open_external`
-still return stable `RUNTIME_UNAVAILABLE` (`2009`) with canonical details
-`{"profile":"object_graph.v1","reason":"runtime_slice_not_implemented"}`.
-Task 5 makes all three public guards explicit; `open_external` now rejects the
-unavailable graph profile before acquiring caller backing (`0/0` retain/
-release), while the Core-private owner path separately proves a valid graph
-external open retains and releases exactly once.
-Graph manifests remain `not_evaluated`, expose only `compile,query`, retain an
-empty codegen target list, and report direct reason
-`runtime_slice_not_implemented`.
+P3 Task 8 now projects the complete ordinary graph runtime through the existing
+public builder, plan, payload, owner, view, access, materialization, and
+invalidation handles. `builder_create`, `open_copy`, and `open_external` accept
+both supported profiles and dispatch to the same C++ Core path. Exactly six
+new exports add builder-local object declaration/fill/object/ref authoring and
+explicit ref-target/graph-identity observation. The object handle is a
+temporary, non-retained builder token; it is not a wire object ID. The C++17
+`ObjectHandle` and `GraphIdentity` facade types only make one C call per method
+and contain no graph topology, layout, reachability, binary, or materialization
+authority.
 
-Still absent from the public profile-2 surface are the six additive public ABI
-functions and their public handle/type/struct surfaces; the final graph
-manifest/capability transition; language projections; and code generation.
-Public callers therefore still cannot build, open, navigate, materialize,
-invalidate, or exchange a graph payload even though Core-private
-plan/backing/owner/view/materialization execution exists. All eight Task 5
-Core-private D1 facts, Task 6 checked-view/lifetime facts, and Task 7 detached
-closure facts are executable, but D1 remains open until the public ABI,
-hostile-input robustness, and independent final evidence close in Tasks 8-10.
-No new public function or struct layout has been introduced, and the exact
-public ABI remains 99 symbols.
-Object-graph runtime remains P3 until the complete binary and public-runtime
-closure criteria below pass; Tasks 1-7 are internal foundations within that
-phase.
+The builder options and plan-info structs are now 96 and 112 bytes. Their V1
+prefix constants remain exactly 88 and 104 bytes. A null options pointer uses
+the 10,000,000-object default; sizes 88 and 89-95 never read the new tail; size
+96 or larger reads `max_graph_objects`, with zero selecting the default. Plan
+info sizes 104 and 105-111 write only the original 104-byte prefix; size 112 or
+larger also writes `graph_object_count`. Unknown larger tails are ignored and
+preserved. Native guard-page tests place the exact old allocation immediately
+before `PROT_NONE`, proving no byte-88+ read and no byte-104+ write, while
+portable canary tests cover partial and future prefixes.
 
-**Reason:** The shared topology/storage-role seam had to land before graph
-authoring and binary work so manifest, builder, layout, open, and later
-language projections cannot acquire competing reachability or identity rules.
-Logical authoring had to establish deterministic identity, handle lifetime,
-fill ordering, limits, and reachable-closure rules before those values were
-committed to a wire format. The complete private byte/open layer now proves the
-profile, object-pool, ID, value, list/pool, and reachability contract. Checked
-graph navigation now proves that those cursor facts compose with the frozen P2
-owner, access-barrier, generation, and invalidation contracts. Detached closure
-materialization now proves the same graph meaning survives source release.
-Remaining publication work must project that runtime directly rather than
-create a second owner or expose a partially truthful public profile.
+This prefix contract is not an unconditional binary-compatibility promise for
+an already compiled 0.1 caller that invokes the updated initializer with only
+an 88- or 104-byte allocation. The unchanged initializer symbols now initialize
+the current 96- and 112-byte structs, as required by the frozen Task 8
+contract, and therefore require storage compiled from the current header. A
+pre-V2 source caller must rebuild, pass null options, or populate and declare
+the old prefix without calling the current initializer. FastDB is still 0.x,
+so Task 8 takes this clean cut instead of adding a seventh versioned export or
+hidden size inference. P5 owns release/migration wording; any later stable
+binary-compatibility guarantee for initializer evolution requires an Accepted
+ABI-versioning decision and an executable old-binary fixture.
 
-**Impact:** Core-private later P3 slices can consume one generic graph meaning,
-one complete logical graph, one complete hardened profile-2 byte reader, one
-shared plan/backing/owner path, one explicit cursor vocabulary, and one checked
-graph view/lifetime/materialization path without renumbering record types or
-inventing a second object identity model. Users and language SDKs still can
-only identify and query graph-shaped contracts; no graph payload can yet be
-built, opened, navigated, materialized, or exchanged through the public ABI.
+The graph manifest now reports runtime `available`, layout
+`object_pool_aos`, the shared-topology-derived pools, operations
+`compile,query,build,open,view,materialize,invalidate`, direct build
+`eligible/graph_layout_exact_after_freeze`, and an empty codegen target list.
+The public ABI is exactly 105 sorted unique symbols: the old 99 declarations
+and signatures plus the six approved graph exports. Apart from the two
+documented initializer revisions, canonical payload JSON/digests, the binary
+format, and record manifest/runtime behavior remain unchanged.
 
-**Owner and dependencies:** FastDB owns every remaining graph semantic in the
-C++ Core and projects it only through the stable C ABI. P3 Tasks 8-10 depend on
-the Task 1 topology, Task 2 logical authoring seam, Tasks 3-4 normative/private
-binary runtime, Task 5 plan/backing/owner integration, Task 6 checked graph
-views, Task 7 detached closure materialization, and frozen P2 lifetime
-contracts. P4 owns
-language projections/codegen only after P3 closes; C-Two remains a downstream
-composer and does not own FastDB graph meaning.
+Task 8's final local evidence includes complete Debug and Release suites at
+`36/36` in 57.94 and 36.10 seconds, a hard-fail ASan+UBSan suite at `36/36` in
+229.66 seconds with zero retained sanitizer diagnostics and the local Apple
+`detect_leaks=0` limitation, and a focused ThreadSanitizer
+runtime/facade/backing/view/materialization set at `6/6` in 45.95 seconds.
+The fresh Emscripten Core harness, pure-C link smoke, C++ facade, and
+single-thread injected-failure path pass with exact wasm ABI-105; complete wasm
+graph execution remains deliberately assigned to Task 9 and is not claimed
+here. Python remains `413/413` plus compileall and exact fresh sdist/wheel
+inventory; a clean TypeScript/WASM rebuild remains `76/76`. Dependency,
+embedded-schema, reviewed 10-seed corpus, 17 CI-helper, 28 duplicate-safe JSON,
+seven graph SHA-256, direct C11 arm64/x86_64/wasm32 compile/link, and document
+checks pass. These are local results only.
 
-**Closure criteria:** Complete P3 Tasks 8-10: project the complete graph
-build/open/view/materialize/
-invalidate model; enable truthful graph manifest/capability facts in the same
-slice as the public ABI; freeze exact ABI-105; and pass direct/staged,
-lifetime, corpus/fuzz, sanitizer, wasm, package, and independent review gates.
-No currently accepted ordinary P3 semantic is deferred merely to shorten
-implementation.
+Object-graph runtime remains P3 and is not closed by Task 8. Task 9 still owns
+the 16-seed graph-aware hostile
+corpus, fuzz traversal/equality, malformed-class proof map, full Core wasm graph
+execution, ABI/package/workflow hardening, complete fresh gates, and independent
+same-reviewer zero-finding loop. Task 10 still owns formal D1/P3 closure,
+truthful public documentation, complete evidence mapping, and final independent
+P3 review. Rust, Python, and official TypeScript/WASM projections and codegen
+remain P4; legacy clean cut, versioning, release, and C-Two composition remain
+P5. No hosted outcome, D1 closure, release, push, tag, or publication is
+claimed.
+
+**Reason:** Tasks 1-7 first established one Core graph meaning, deterministic
+identity and reachability, exact bytes, hardened open, checked lifetime, and
+detached closure semantics. Task 8 publishes that completed ordinary runtime
+directly instead of creating a second public graph implementation. Robustness,
+cross-toolchain proof, and closure remain separate because capability
+availability must not be confused with final phase readiness.
+
+**Impact:** C and C++ callers can now author, freeze, execute, open, navigate,
+materialize, invalidate, and exchange ordinary `object_graph.v1` payloads with
+all V1 values, sharing, and cycles. Other language SDKs still lack this
+portable-payload projection; the existing 0.1 call-db surface is not a
+substitute and does not own graph meaning. Consumers must not interpret the
+current public capability as P3 review closure or 0.2.0 release readiness.
+
+**Owner and dependencies:** FastDB owns graph semantics in its C++ Core and
+projects them through the stable C ABI. Task 9 consumes Task 8's exact ABI-105
+surface and adds robustness, wasm, CI/package proof, and review. Task 10
+consumes a review-clean Task 9 to close D1/P3 truthfully. P4 owns language
+projections/codegen only after P3 closes; C-Two remains a downstream composer
+and does not own FastDB graph meaning.
+
+**Closure criteria:** Complete P3 Tasks 9-10: pass direct/staged, lifetime,
+16-seed corpus/fuzz, sanitizer, full wasm graph, package, workflow-definition,
+proof-map, complete fresh-gate, and independent review requirements; then
+close D1 and P3 with exact evidence. No currently accepted ordinary P3 semantic
+is deferred merely to shorten implementation.
 
 ### P4 language projections and payload code generation
 
-**Current limit:** The P1 compile/query C ABI and C++ facade exist, Task 9
-publicly exposes C build/open/owner operations, and Task 10 locally adds the
-C++ runtime facade over the same C ABI. There is still no Rust, Python, or
-TypeScript/WASM portable-payload projection, and the Core does not generate
-C++, Rust, Python, or TypeScript payload artifacts. Existing hand-written 0.1.x
-call-db layers are migration inputs, not portable-payload projections.
+**Current limit:** The P1 compile/query, P2 record runtime, and P3 Task 8 graph
+runtime exist in the C ABI with thin C++ facades over that same ABI. There is
+still no Rust, Python, or official TypeScript/WASM portable-payload projection,
+and the Core does not generate C++, Rust, Python, or TypeScript payload
+artifacts. Existing hand-written 0.1.x call-db layers are migration inputs, not
+portable-payload projections.
 
 **Reason:** Safe binding lifetimes, value parity, and generated APIs depend on
 the frozen P2/P3 runtime ABI and binary meaning.
 
 **Impact:** Portable compile/query/build/open/view/materialize is available to
-C and C++ callers at the locally implemented Task 10 boundary. No Rust, Python,
-or TypeScript/WASM binding can yet exercise the shared golden corpus, and no
-language can consume a Core-owned generated artifact set.
+C and C++ callers through the locally implemented P3 Task 8 boundary. No Rust,
+Python, or official TypeScript/WASM binding can yet exercise the shared golden
+corpus, and no language can consume a Core-owned generated artifact set.
 
 **Next owner slice:** FastDB P4 after P3 closes.
 
@@ -856,7 +886,7 @@ result.
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
-| P3. Object-graph runtime | Tasks 1-7 shared topology, Core-private logical graph authoring, complete normative profile-2 bytes for all V1 values, hardened private open, iterative reachability, explicit index cursors, shared direct/staged plan/backing/owner publication, checked graph view/lifetime behavior, and source-independent detached reachable-closure materialization are implemented locally; public graph runtime remains unavailable | Complete Tasks 8-10: truthful public capabilities, ABI-105, hostile-input robustness, and full review/gates |
+| P3. Object-graph runtime | Tasks 1-8 implement and publicly project the one Core graph topology, authoring, profile-2 bytes/open, iterative reachability, direct/staged plan/backing/owner path, checked graph view/lifetime behavior, detached reachable-closure materialization, truthful manifest, thin C++ facade, and exact ABI-105 | Complete Tasks 9-10: 16-seed hostile-input/fuzz/full-wasm/CI/package proof, complete fresh gates, independent review, and formal D1/P3 closure |
 | P4. Language projections and payload codegen | Blocked on P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P3-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |
 
