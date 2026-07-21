@@ -115,7 +115,11 @@ Current repository state:
   adds the 16-seed graph-aware hostile corpus, fuzz traversal/equality, full
   Core Wasm graph runtime, ABI/package/workflow hardening, complete fresh local
   gates, and a zero-finding primary-agent review. Task 10 closes D1 and freezes
-  P3 locally at ABI-105. P4-P5 work remains open;
+  P3 locally at ABI-105. The P4 live delta audit is now complete and its
+  [language-projection/codegen design](../superpowers/specs/2026-07-21-portable-payload-language-projections-codegen-design.md)
+  plus [executable implementation plan](../superpowers/plans/2026-07-21-portable-payload-language-projections-codegen.md)
+  are frozen as documentation only; no P4 production capability is claimed.
+  P4 implementation and all P5 work remain open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 P1, P2, and P3 are locally implemented and frozen. P1/P2 retain their recorded
@@ -137,7 +141,9 @@ frozen at the exact 105-symbol boundary with D1 closed, complete Core Wasm
 graph execution, and the explicitly non-independent primary-agent review
 described below. No Rust, Python, or official TypeScript/WASM portable
 projection or Core-owned payload codegen exists. Hosted outcomes remain
-pending. Downstream consumers may use only reviewed public FastDB contracts
+pending. A reviewed P4 delta design and task plan now exist, but documents are
+not executable evidence. Downstream consumers may use only reviewed public
+FastDB contracts
 and must not depend on private headers or recreate FastDB semantics. The full
 structured-payload foundation remains incomplete because P4 and P5 are open.
 
@@ -864,6 +870,17 @@ and the Core does not generate C++, Rust, Python, or TypeScript payload
 artifacts. Existing hand-written 0.1.x call-db layers are migration inputs, not
 portable-payload projections.
 
+**Design state:** The complete live delta audit and docs-first design are
+recorded in
+[the P4 projection/codegen design](../superpowers/specs/2026-07-21-portable-payload-language-projections-codegen-design.md),
+with vertical TDD slices in
+[the P4 implementation plan](../superpowers/plans/2026-07-21-portable-payload-language-projections-codegen.md).
+They preserve ABI-105 runtime meaning, reuse the existing C++ RAII facade,
+create Rust/Python/TypeScript projections only with real callers, and reserve
+the only additive public Core delta for a nine-symbol immutable ArtifactSet
+family. The designed 114-symbol result is not a frozen implementation fact
+until native/Wasm scanners and all generated-output gates prove it.
+
 **Reason:** Safe binding lifetimes, value parity, and generated APIs depend on
 the frozen P2/P3 runtime ABI and binary meaning.
 
@@ -872,7 +889,9 @@ C and C++ callers through the locally frozen P3 boundary. No Rust,
 Python, or official TypeScript/WASM binding can yet exercise the shared golden
 corpus, and no language can consume a Core-owned generated artifact set.
 
-**Next owner slice:** FastDB P4 from the frozen ABI-105 boundary.
+**Next owner slice:** P4 Task 1 from the frozen ABI-105 boundary: one real
+four-language compile/query projection slice plus the shared native/Wasm link
+seams. It must keep the ABI at exactly 105.
 
 **Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
 the same Core ABI and pass canonical, binary, value, error, lifetime, and
@@ -1065,7 +1084,7 @@ result.
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P4. Language projections and payload codegen | Open; unblocked by the local P3 ABI-105 freeze | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
+| P4. Language projections and payload codegen | Docs-first live audit/design/plan complete; production implementation open and unblocked by the local P3 ABI-105 freeze | Execute the reviewed vertical plan; then prove C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then downstream composition delegates the nested FastDB sub-spec without semantic duplication |
 
 ## Non-deferrable 0.2.0 work
