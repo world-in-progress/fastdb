@@ -1,0 +1,9 @@
+[package]
+name = "fastdb-sys"
+version = "0.1.22"
+edition = "2024"
+links = "fastdb_payload_v1"
+publish = false
+
+[lib]
+path = "src/lib.rs"

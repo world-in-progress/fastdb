@@ -98,6 +98,35 @@ target_link_libraries(
 )
 fastdb_apply_sanitizers(fastdb_payload_core)
 
+# A payload-only archive for stable-C-ABI consumers such as the Rust binding.
+# It reuses the exact object files linked into the full FastDB library; no
+# portable-payload source is copied or compiled through a second definition.
+add_library(
+    fastdb_payload_native
+    STATIC
+    $<TARGET_OBJECTS:fastdb_payload_core>
+)
+set_target_properties(
+    fastdb_payload_native
+    PROPERTIES
+        OUTPUT_NAME fastdb_payload
+)
+target_include_directories(
+    fastdb_payload_native
+    PUBLIC
+        ${PROJECT_DIR}/include
+)
+target_link_libraries(
+    fastdb_payload_native
+    PUBLIC
+        fastdb_payload_emscripten_exception_model
+    PRIVATE
+        fastdb_yyjson
+        fastdb_double_conversion
+        fastdb_picosha2
+)
+fastdb_apply_sanitizers(fastdb_payload_native)
+
 if(is_emscripten)
     set(BUILD_TYPE STATIC)
 else()

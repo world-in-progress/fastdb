@@ -1,0 +1,119 @@
+use std::env;
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus};
+
+fn repository_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| panic!("fastdb-sys must remain under bindings/rust"))
+}
+
+fn run(command: &mut Command, description: &str) {
+    let status: ExitStatus = command
+        .status()
+        .unwrap_or_else(|error| panic!("failed to {description}: {error}"));
+    assert!(status.success(), "{description} failed with {status}");
+}
+
+fn emit_rerun_tree(path: &Path) {
+    let entries = fs::read_dir(path)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()));
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|error| {
+            panic!(
+                "failed to inspect an entry under {}: {error}",
+                path.display()
+            )
+        });
+        let entry_path = entry.path();
+        if entry.file_name() == OsStr::new(".git") {
+            continue;
+        }
+        if entry_path.is_dir() {
+            emit_rerun_tree(&entry_path);
+        } else {
+            println!("cargo:rerun-if-changed={}", entry_path.display());
+        }
+    }
+}
+
+fn main() {
+    let root = repository_root();
+    let out_dir = PathBuf::from(
+        env::var_os("OUT_DIR").unwrap_or_else(|| panic!("Cargo did not provide OUT_DIR")),
+    );
+    let build_dir = out_dir.join("cmake");
+
+    emit_rerun_tree(&root.join("fastcarto/fastdb/src/payload"));
+    emit_rerun_tree(&root.join("fastcarto/fastdb/include"));
+    emit_rerun_tree(&root.join("fastcarto/lib/yyjson/src"));
+    emit_rerun_tree(&root.join("fastcarto/lib/double-conversion/double-conversion"));
+    emit_rerun_tree(&root.join("fastcarto/lib/picosha2"));
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("fastcarto/CMakeLists.txt").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("fastcarto/fastdb/CMakeLists.txt").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        root.join("fastcarto/lib/CMakeLists.txt").display()
+    );
+
+    run(
+        Command::new("cmake")
+            .arg("-S")
+            .arg(root.join("fastcarto"))
+            .arg("-B")
+            .arg(&build_dir)
+            .arg("-DBUILD_TESTING=OFF")
+            .arg("-DBUILD_TOOLS=OFF")
+            .arg("-DUSE_SWIG_PYTHON=OFF")
+            .arg("-DUSE_SWIG_NODE=OFF")
+            .arg("-DUSE_SWIG_GO=OFF")
+            .arg("-DCMAKE_BUILD_TYPE=Release"),
+        "configure the FastDB payload Core",
+    );
+    let mut build = Command::new("cmake");
+    build
+        .arg("--build")
+        .arg(&build_dir)
+        .arg("--target")
+        .arg("fastdb_payload_native")
+        .arg("--config")
+        .arg("Release")
+        .arg("--parallel");
+    if let Some(jobs) = env::var_os("NUM_JOBS") {
+        build.arg(jobs);
+    }
+    run(&mut build, "build the FastDB payload Core");
+
+    for directory in [
+        build_dir.join("fastdb"),
+        build_dir.join("fastdb/Release"),
+        build_dir.join("lib"),
+        build_dir.join("lib/Release"),
+    ] {
+        println!("cargo:rustc-link-search=native={}", directory.display());
+    }
+    println!("cargo:rustc-link-lib=static=fastdb_payload");
+    println!("cargo:rustc-link-lib=static=fastdb_yyjson");
+    println!("cargo:rustc-link-lib=static=fastdb_double_conversion");
+
+    match env::var("CARGO_CFG_TARGET_ENV").as_deref() {
+        Ok("msvc") => {}
+        _ => match env::var("CARGO_CFG_TARGET_OS").as_deref() {
+            Ok("macos") | Ok("ios") => println!("cargo:rustc-link-lib=dylib=c++"),
+            _ => println!("cargo:rustc-link-lib=dylib=stdc++"),
+        },
+    }
+    if env::var("CARGO_CFG_TARGET_FAMILY").as_deref() == Ok("unix") {
+        println!("cargo:rustc-link-lib=dylib=pthread");
+    }
+}

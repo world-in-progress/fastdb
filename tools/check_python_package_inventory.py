@@ -46,6 +46,16 @@ SDIST_REQUIRED = {
     "schemas/fastdb.payload.manifest.v1.schema.json",
     "schemas/fastdb.payload.v1.schema.json",
     "schemas/fastdb.payload.v1.schema.sha256",
+    "python/fastdb4py/payload/__init__.py",
+    "python/fastdb4py/payload/_error.py",
+    "python/fastdb4py/payload/_ffi.py",
+    "python/fastdb4py/payload/_spec.py",
+}
+WHEEL_REQUIRED = {
+    "fastdb4py/payload/__init__.py",
+    "fastdb4py/payload/_error.py",
+    "fastdb4py/payload/_ffi.py",
+    "fastdb4py/payload/_spec.py",
 }
 FORBIDDEN_PARTS = {
     "__pycache__",
@@ -108,6 +118,12 @@ def reject_debris(names: set[str], label: str) -> None:
             bad.append(name)
     if bad:
         raise CheckError(f"{label} contains forbidden debris: {bad}")
+
+
+def require_members(names: set[str], required: set[str], label: str) -> None:
+    missing = sorted(required - names)
+    if missing:
+        raise CheckError(f"{label} is missing required portable-payload files: {missing}")
 
 
 def check_wheel_native_artifacts(names: set[str]) -> None:
@@ -249,9 +265,7 @@ def main() -> int:
             raise CheckError("sdist is missing its root PKG-INFO")
         sdist_metadata = metadata_identity(package_info.read(), "sdist PKG-INFO")
     sdist_names = strip_sdist_root(raw_names, root)
-    missing = sorted(SDIST_REQUIRED - sdist_names)
-    if missing:
-        raise CheckError(f"sdist is missing required portable-payload files: {missing}")
+    require_members(sdist_names, SDIST_REQUIRED, "sdist")
     reject_debris(sdist_names, "sdist")
 
     with zipfile.ZipFile(wheel) as archive:
@@ -286,6 +300,7 @@ def main() -> int:
                 f"identity {expected_identity}"
             )
     check_wheel_native_artifacts(wheel_names)
+    require_members(wheel_names, WHEEL_REQUIRED, "wheel")
     reject_debris(wheel_names, "wheel")
 
     print(

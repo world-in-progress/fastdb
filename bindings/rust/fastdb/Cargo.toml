@@ -1,0 +1,8 @@
+[package]
+name = "fastdb"
+version = "0.1.22"
+edition = "2024"
+publish = false
+
+[dependencies]
+fastdb-sys = { path = "../fastdb-sys" }

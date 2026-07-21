@@ -1,0 +1,19 @@
+[package]
+name = "fastdb-payload-integration-tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+members = [
+    "fastdb-sys",
+    "fastdb",
+]
+resolver = "2"
+
+[dependencies]
+fastdb = { path = "fastdb" }
+
+[[test]]
+name = "compile_query"
+path = "../../tests/rust/payload/tests/compile_query.rs"

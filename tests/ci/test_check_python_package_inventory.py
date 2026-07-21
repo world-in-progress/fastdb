@@ -66,6 +66,24 @@ class SwigDiagnosticTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_requires_task1_payload_projection_in_sdist_and_wheel(self) -> None:
+        sdist_required = {
+            "python/fastdb4py/payload/__init__.py",
+            "python/fastdb4py/payload/_error.py",
+            "python/fastdb4py/payload/_ffi.py",
+            "python/fastdb4py/payload/_spec.py",
+        }
+        wheel_required = {
+            "fastdb4py/payload/__init__.py",
+            "fastdb4py/payload/_error.py",
+            "fastdb4py/payload/_ffi.py",
+            "fastdb4py/payload/_spec.py",
+        }
+        self.assertTrue(sdist_required <= MODULE.SDIST_REQUIRED)
+        self.assertTrue(wheel_required <= MODULE.WHEEL_REQUIRED)
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.require_members(set(), wheel_required, "wheel")
+
     def test_requires_the_complete_p3_graph_core_inventory(self) -> None:
         required = {
             "fastcarto/fastdb/src/payload/build/GraphAuthoring.cpp",

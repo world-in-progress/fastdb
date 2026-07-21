@@ -79,6 +79,7 @@ build/
 build-wasm/
 build-wasm-check/
 dist/
+/bindings/rust/target/
 *.egg-info/
 .eggs/
 pip-wheel-metadata/

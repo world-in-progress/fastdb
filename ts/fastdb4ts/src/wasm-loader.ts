@@ -160,6 +160,124 @@ export interface FastdbModule {
   HEAPF64: Float64Array;
   _malloc(size: number): number;
   _free(ptr: number): void;
+  _fdb_payload_v1_abi_version(): number;
+  _fdb_payload_v1_spec_compile_json(
+    source: number,
+    sourceSize: bigint,
+    options: number,
+    outSpec: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_retain(spec: number): void;
+  _fdb_payload_v1_spec_release(spec: number): void;
+  _fdb_payload_v1_spec_canonical_json(
+    spec: number,
+    outBlob: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_sha256(
+    spec: number,
+    outDigest: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_manifest_json(
+    spec: number,
+    outBlob: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_profile(
+    spec: number,
+    outProfile: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_capabilities_init(capabilities: number): void;
+  _fdb_payload_v1_spec_capabilities(
+    spec: number,
+    outCapabilities: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_entry_count(
+    spec: number,
+    outCount: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_entry_id(
+    spec: number,
+    entryIndex: number,
+    outId: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_entry_index(
+    spec: number,
+    id: number,
+    idSize: bigint,
+    outEntryIndex: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_component_count(
+    spec: number,
+    outCount: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_component_id(
+    spec: number,
+    componentIndex: number,
+    outId: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_component_index(
+    spec: number,
+    id: number,
+    idSize: bigint,
+    outComponentIndex: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_component_field_count(
+    spec: number,
+    componentIndex: number,
+    outCount: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_component_field_id(
+    spec: number,
+    componentIndex: number,
+    fieldIndex: number,
+    outId: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_spec_component_field_index(
+    spec: number,
+    componentIndex: number,
+    id: number,
+    idSize: bigint,
+    outFieldIndex: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_blob_data(blob: number): number;
+  _fdb_payload_v1_blob_size(blob: number): bigint;
+  _fdb_payload_v1_blob_release(blob: number): void;
+  _fdb_payload_v1_error_code(error: number): number;
+  _fdb_payload_v1_error_symbol(
+    error: number,
+    outData: number,
+    outSize: number,
+  ): void;
+  _fdb_payload_v1_error_path(
+    error: number,
+    outData: number,
+    outSize: number,
+  ): void;
+  _fdb_payload_v1_error_message(
+    error: number,
+    outData: number,
+    outSize: number,
+  ): void;
+  _fdb_payload_v1_error_details_json(
+    error: number,
+    outData: number,
+    outSize: number,
+  ): void;
+  _fdb_payload_v1_error_release(error: number): void;
 }
 
 export interface FastdbModuleFactory {

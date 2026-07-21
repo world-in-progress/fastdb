@@ -24,6 +24,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./payload": {
+      "types": "./dist/payload/index.d.ts",
+      "import": "./dist/payload/index.js"
     }
   },
   "files": [
