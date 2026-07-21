@@ -48,6 +48,27 @@ EXPECTED_CASES = (
         3004,
         "/entries/records/0/bools",
     ),
+    ("valid-graph-cycle.bin", "valid-graph-cycle", 0, ""),
+    ("valid-graph-variable.bin", "valid-graph-variable", 0, ""),
+    ("valid-graph-null.bin", "valid-graph-null", 0, ""),
+    (
+        "malformed-graph-object-region.bin",
+        "malformed-graph-object-region",
+        3009,
+        "/binary/regions/1/stride",
+    ),
+    (
+        "malformed-graph-reference.bin",
+        "malformed-graph-reference",
+        3007,
+        "/objects/0/0/c_shared",
+    ),
+    (
+        "malformed-graph-unreachable.bin",
+        "malformed-graph-unreachable",
+        3009,
+        "/objects/Node/1",
+    ),
 )
 
 

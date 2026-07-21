@@ -165,6 +165,8 @@ jobs:
           node build/wasm-core/tests/cpp/fastdb_payload_test_runtime_cpp_facade.js
           node build/wasm-core/wasm-tests/payload_runtime_abi_single_thread.js \
             --single-thread-injected-failure
+          node build/wasm-core/wasm-tests/payload_runtime_abi_single_thread.js \
+            --graph-runtime-proof
 
       - name: Verify Emscripten exception propagation
         run: |
@@ -208,6 +210,11 @@ jobs:
         run: |
           python3 tests/ci/test_check_payload_binary_corpus.py
           python3 tools/check_payload_binary_corpus.py --check
+
+      - name: Verify P3 runtime quality contract
+        run: |
+          ruby tests/ci/test_check_p3_runtime_quality.rb
+          ruby tests/ci/check_p3_runtime_quality.rb --check-repository
 
       - name: Configure native tests
         run: >-

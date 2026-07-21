@@ -3870,6 +3870,19 @@ int main(int argc, char** argv) {
                 EXIT_SUCCESS);
         return EXIT_SUCCESS;
     }
+    if (argc == 2 &&
+        std::string_view{argv[1]} == "--graph-runtime-proof") {
+        require(verify_allocation_harness_invariants() == EXIT_SUCCESS);
+        require(test_initializers_and_constants() == EXIT_SUCCESS);
+        require(test_graph_builder_option_prefixes() == EXIT_SUCCESS);
+        require(test_guarded_v1_prefixes_do_not_touch_v2_tails() ==
+                EXIT_SUCCESS);
+        require(test_public_graph_handle_errors() == EXIT_SUCCESS);
+        require(test_complete_public_graph_runtime() == EXIT_SUCCESS);
+        require(test_handle_allocation_boundaries_and_owner_projection() ==
+                EXIT_SUCCESS);
+        return EXIT_SUCCESS;
+    }
 
     require(verify_allocation_harness_invariants() == EXIT_SUCCESS);
     require(test_initializers_and_constants() == EXIT_SUCCESS);

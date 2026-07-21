@@ -66,6 +66,23 @@ class SwigDiagnosticTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_requires_the_complete_p3_graph_core_inventory(self) -> None:
+        required = {
+            "fastcarto/fastdb/src/payload/build/GraphAuthoring.cpp",
+            "fastcarto/fastdb/src/payload/build/GraphAuthoring.hpp",
+            "fastcarto/fastdb/src/payload/build/GraphEncoder.cpp",
+            "fastcarto/fastdb/src/payload/build/GraphEncoder.hpp",
+            "fastcarto/fastdb/src/payload/layout/GraphLayout.cpp",
+            "fastcarto/fastdb/src/payload/layout/GraphLayout.hpp",
+            "fastcarto/fastdb/src/payload/spec/EmbeddedSchemas.inc",
+            "fastcarto/fastdb/src/payload/spec/Manifest.cpp",
+            "fastcarto/fastdb/src/payload/view/GraphMaterialize.cpp",
+            "fastcarto/fastdb/src/payload/view/GraphOpen.cpp",
+            "fastcarto/fastdb/src/payload/view/GraphOpen.hpp",
+            "fastcarto/fastdb/src/payload/view/GraphView.cpp",
+        }
+        self.assertTrue(required <= MODULE.SDIST_REQUIRED)
+
     def test_cli_help_starts_on_supported_python_3_10(self) -> None:
         python310 = shutil.which("python3.10")
         if python310 is None:
@@ -102,7 +119,12 @@ class InventoryTests(unittest.TestCase):
             )
 
     def test_rejects_top_level_build_and_dist_directories(self) -> None:
-        for path in ("build/leaked.o", "dist/leaked.whl"):
+        for path in (
+            "build/leaked.o",
+            "dist/leaked.whl",
+            "tests/golden/payload.bin",
+            "tests/fuzz/payload/corpus/seed",
+        ):
             with self.subTest(path=path), self.assertRaises(MODULE.CheckError):
                 MODULE.reject_debris({path}, "archive")
 

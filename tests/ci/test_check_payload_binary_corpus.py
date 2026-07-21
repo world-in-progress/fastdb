@@ -30,6 +30,21 @@ class BinaryCorpusGateTests(unittest.TestCase):
         MODULE.MANIFEST = self.original_manifest
         MODULE.CORPUS = self.original_corpus
 
+    def test_reviewed_inventory_has_exact_p3_sixteen_seed_order(self) -> None:
+        cases = MODULE.load_manifest()
+        self.assertEqual(len(cases), 16)
+        self.assertEqual(
+            [case["name"] for case in cases[-6:]],
+            [
+                "valid-graph-cycle.bin",
+                "valid-graph-variable.bin",
+                "valid-graph-null.bin",
+                "malformed-graph-object-region.bin",
+                "malformed-graph-reference.bin",
+                "malformed-graph-unreachable.bin",
+            ],
+        )
+
     def test_rejects_a_name_class_mapping_change(self) -> None:
         document = json.loads(self.original_manifest.read_text(encoding="utf-8"))
         document["cases"][0]["class"], document["cases"][1]["class"] = (

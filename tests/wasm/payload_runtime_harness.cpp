@@ -1,3 +1,5 @@
+#include "BackingTestSupport.hpp"
+
 #include "payload/backing/HeapBacking.hpp"
 #include "payload/build/PayloadBuilder.hpp"
 #include "payload/build/RecordEncoder.hpp"
@@ -7,6 +9,7 @@
 #include "payload/layout/RuntimeSchema.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 #include "payload/view/Open.hpp"
+#include "payload/view/View.hpp"
 
 #include <algorithm>
 #include <array>
@@ -64,6 +67,7 @@ static_assert(std::is_same_v<decltype(&fdb_payload_v1_view_graph_identity),
 namespace {
 
 using fastdb::payload::build::ByteSink;
+using fastdb::payload::build::ObjectHandle;
 using fastdb::payload::build::PayloadBuilder;
 using fastdb::payload::error::Result;
 using fastdb::payload::json::JsonPointer;
@@ -534,11 +538,281 @@ bool oversized_plan_fails_structurally_and_retries() {
     return true;
 }
 
+int test_graph_runtime_wasm(const std::string& root) {
+    using fastdb::payload::spec::Profile;
+    using fastdb::payload::test::BackingShape;
+    using fastdb::payload::test::CallbackKind;
+    using fastdb::payload::test::FailureInjection;
+    using fastdb::payload::test::FakeBacking;
+    using fastdb::payload::test::callback_count;
+    using fastdb::payload::test::direct_mode;
+    using fastdb::payload::test::owner_data;
+    using fastdb::payload::test::owner_size;
+    using fastdb::payload::test::require_direct;
+    using fastdb::payload::view::ViewKind;
+
+    auto compiled = CompiledSpec::compile(
+        read_file(root + "/spec/graph-all-values.source.json"));
+    if (!compiled.has_value()) {
+        return 100;
+    }
+    const auto node_index = compiled.value().component_index("Node");
+    const auto asset_index = compiled.value().component_index("Asset");
+    if (!node_index.has_value() || !asset_index.has_value()) {
+        return 101;
+    }
+    auto created = PayloadBuilder::create(compiled.value());
+    if (!created.has_value()) {
+        return 102;
+    }
+    PayloadBuilder& builder = created.value();
+    auto node = builder.declare_object(*node_index);
+    auto asset = builder.declare_object(*asset_index);
+    if (!node.has_value() || !asset.has_value()) {
+        return 103;
+    }
+
+#define FASTDB_WASM_GRAPH_STEP(expression)                                  \
+    do {                                                                     \
+        if (!(expression).has_value()) {                                     \
+            return 104;                                                      \
+        }                                                                    \
+    } while (false)
+    std::string text{"same"};
+    std::array<std::uint16_t, 3> wide{{
+        UINT16_C(0x0041), UINT16_C(0xd83d), UINT16_C(0xde00)}};
+    std::array<std::uint8_t, 3> opaque{{
+        UINT8_C(0x00), UINT8_C(0xff), UINT8_C(0x7e)}};
+    FASTDB_WASM_GRAPH_STEP(builder.begin_object_fill(node.value()));
+    FASTDB_WASM_GRAPH_STEP(builder.push_bool(UINT8_C(1)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_u8(UINT8_C(0x12)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_u16(UINT16_C(0x3456)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_u32(UINT32_C(0x789abcde)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_i32(INT32_C(-1234567)));
+    FASTDB_WASM_GRAPH_STEP(
+        builder.push_u8n_bits(UINT64_C(0x3fe0000000000000)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_u16n_bits(UINT64_C(0)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_f32_bits(UINT32_C(0x7fa12345)));
+    FASTDB_WASM_GRAPH_STEP(
+        builder.push_f64_bits(UINT64_C(0xfff8000000001234)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_str(text));
+    FASTDB_WASM_GRAPH_STEP(builder.push_wstr(wide.data(), wide.size()));
+    FASTDB_WASM_GRAPH_STEP(
+        builder.push_bytes(opaque.data(), opaque.size()));
+    FASTDB_WASM_GRAPH_STEP(builder.begin_component());
+    FASTDB_WASM_GRAPH_STEP(builder.push_null());
+    FASTDB_WASM_GRAPH_STEP(builder.push_u16(UINT16_C(0xbeef)));
+    FASTDB_WASM_GRAPH_STEP(builder.begin_list(UINT64_C(3)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_f32_bits(UINT32_C(0x80000000)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_null());
+    FASTDB_WASM_GRAPH_STEP(builder.push_f32_bits(UINT32_C(0xff800001)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_ref(node.value()));
+    FASTDB_WASM_GRAPH_STEP(builder.push_ref(asset.value()));
+
+    FASTDB_WASM_GRAPH_STEP(builder.begin_object_fill(asset.value()));
+    FASTDB_WASM_GRAPH_STEP(builder.push_str(text));
+    FASTDB_WASM_GRAPH_STEP(builder.push_ref(node.value()));
+
+    FASTDB_WASM_GRAPH_STEP(builder.begin_entry(UINT32_C(0), UINT64_C(1)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_object(node.value()));
+    FASTDB_WASM_GRAPH_STEP(builder.begin_entry(UINT32_C(1), UINT64_C(1)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_object(asset.value()));
+    FASTDB_WASM_GRAPH_STEP(builder.begin_entry(UINT32_C(2), UINT64_C(2)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_ref(node.value()));
+    FASTDB_WASM_GRAPH_STEP(builder.push_null());
+    FASTDB_WASM_GRAPH_STEP(builder.begin_entry(UINT32_C(3), UINT64_C(3)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_u8n_bits(UINT64_C(0)));
+    FASTDB_WASM_GRAPH_STEP(
+        builder.push_u8n_bits(UINT64_C(0x3fe0000000000000)));
+    FASTDB_WASM_GRAPH_STEP(
+        builder.push_u8n_bits(UINT64_C(0x3ff0000000000000)));
+    FASTDB_WASM_GRAPH_STEP(builder.begin_entry(UINT32_C(4), UINT64_C(3)));
+    FASTDB_WASM_GRAPH_STEP(
+        builder.push_u16n_bits(UINT64_C(0xbff0000000000000)));
+    FASTDB_WASM_GRAPH_STEP(builder.push_u16n_bits(UINT64_C(0)));
+    FASTDB_WASM_GRAPH_STEP(
+        builder.push_u16n_bits(UINT64_C(0x3ff0000000000000)));
+#undef FASTDB_WASM_GRAPH_STEP
+
+    std::fill(text.begin(), text.end(), 'x');
+    wide.fill(UINT16_C(0));
+    opaque.fill(UINT8_C(0));
+    auto planned = builder.freeze_plan();
+    if (!planned.has_value() ||
+        planned.value().info().graph_object_count != UINT64_C(2) ||
+        planned.value().info().total_bytes != UINT64_C(1304)) {
+        return 105;
+    }
+
+    FakeBacking failed(BackingShape::range_write_only,
+                       planned.value().info().total_bytes);
+    failed.inject(FailureInjection{CallbackKind::write, UINT64_C(1),
+                                   FDB_PAYLOAD_E_ALLOCATION_FAILED, false});
+    auto failed_callbacks = failed.production_callbacks(true);
+    auto rejected = planned.value().execute(require_direct, &failed_callbacks);
+    if (rejected.has_value() ||
+        rejected.error().code() != FDB_PAYLOAD_E_ALLOCATION_FAILED ||
+        callback_count(failed, CallbackKind::rollback) != UINT64_C(1)) {
+        return 106;
+    }
+
+    FakeBacking range(BackingShape::range_write_only,
+                      planned.value().info().total_bytes);
+    auto callbacks = range.production_callbacks(true);
+    auto built = planned.value().execute(require_direct, &callbacks);
+    if (!built.has_value() || built.value().profile() !=
+                                  Profile::object_graph_v1 ||
+        !built.value().execution_report().has_value()) {
+        return 107;
+    }
+    const auto& report = *built.value().execution_report();
+    if (report.mode != direct_mode ||
+        report.fallback_reason != FDB_PAYLOAD_FALLBACK_NONE ||
+        report.staging_bytes != UINT64_C(0) ||
+        report.used_bytes != planned.value().info().total_bytes ||
+        callback_count(range, CallbackKind::reserve) != UINT64_C(1) ||
+        callback_count(range, CallbackKind::commit) != UINT64_C(1) ||
+        callback_count(range, CallbackKind::rollback) != UINT64_C(0)) {
+        return 108;
+    }
+    std::uint64_t next_offset = UINT64_C(0);
+    std::uint64_t write_count = UINT64_C(0);
+    for (const auto& receipt : range.receipts()) {
+        if (receipt.callback != CallbackKind::write) {
+            continue;
+        }
+        if (receipt.offset != next_offset ||
+            receipt.source_size > report.used_bytes - next_offset) {
+            return 109;
+        }
+        next_offset += receipt.source_size;
+        ++write_count;
+    }
+    if (write_count == UINT64_C(0) || next_offset != report.used_bytes) {
+        return 110;
+    }
+    const auto* graph_data = owner_data(built.value());
+    const auto graph_size = owner_size(built.value());
+    if (graph_data == nullptr ||
+        graph_size != planned.value().info().total_bytes) {
+        return 111;
+    }
+    std::vector<std::uint8_t> graph_bytes(graph_data,
+                                          graph_data + graph_size);
+    if (!exact_golden(root, "graph-all-values", graph_bytes)) {
+        return 111;
+    }
+
+    auto root_sequence = built.value().entry_view(UINT32_C(0));
+    if (!root_sequence.has_value()) {
+        return 112;
+    }
+    auto root_view = root_sequence.value().at(UINT64_C(0));
+    if (!root_view.has_value()) {
+        return 113;
+    }
+    auto root_kind = root_view.value().kind();
+    auto root_identity = root_view.value().graph_identity();
+    if (!root_kind.has_value() || root_kind.value() != ViewKind::component ||
+        !root_identity.has_value() ||
+        root_identity.value().component_index != *node_index ||
+        root_identity.value().object_id != UINT64_C(0)) {
+        return 114;
+    }
+    auto scalar = root_view.value().field(UINT32_C(3));
+    if (!scalar.has_value()) {
+        return 115;
+    }
+    auto scalar_value = scalar.value().get_u32();
+    if (!scalar_value.has_value() ||
+        scalar_value.value() != UINT32_C(0x789abcde)) {
+        return 116;
+    }
+    {
+        auto text_view = root_view.value().field(UINT32_C(9));
+        if (!text_view.has_value()) {
+            return 117;
+        }
+        auto access = text_view.value().acquire();
+        if (!access.has_value()) {
+            return 118;
+        }
+        auto span = access.value().str();
+        if (!span.has_value() || span.value().size != UINT64_C(4) ||
+            span.value().data == nullptr ||
+            !std::equal(span.value().data, span.value().data + 4U,
+                        reinterpret_cast<const std::uint8_t*>("same"))) {
+            return 119;
+        }
+    }
+    auto self_ref = root_view.value().field(UINT32_C(14));
+    auto asset_ref = root_view.value().field(UINT32_C(15));
+    if (!self_ref.has_value() || !asset_ref.has_value()) {
+        return 120;
+    }
+    auto self_identity = self_ref.value().graph_identity();
+    auto self_target = self_ref.value().ref_target();
+    auto asset_identity = asset_ref.value().graph_identity();
+    auto asset_target = asset_ref.value().ref_target();
+    if (!self_identity.has_value() || !self_target.has_value() ||
+        !asset_identity.has_value() || !asset_target.has_value() ||
+        self_identity.value().component_index != *node_index ||
+        self_identity.value().object_id != UINT64_C(0) ||
+        asset_identity.value().component_index != *asset_index ||
+        asset_identity.value().object_id != UINT64_C(0)) {
+        return 121;
+    }
+    auto self_target_identity = self_target.value().graph_identity();
+    auto owner_ref = asset_target.value().field(UINT32_C(1));
+    if (!owner_ref.has_value()) {
+        return 122;
+    }
+    auto owner_identity = owner_ref.value().graph_identity();
+    if (!self_target_identity.has_value() || !owner_identity.has_value() ||
+        self_target_identity.value().component_index != *node_index ||
+        self_target_identity.value().object_id != UINT64_C(0) ||
+        owner_identity.value().component_index != *node_index ||
+        owner_identity.value().object_id != UINT64_C(0)) {
+        return 122;
+    }
+
+    auto detached = root_view.value().materialize();
+    if (!detached.has_value() || !built.value().invalidate().has_value()) {
+        return 123;
+    }
+    auto stale = root_view.value().kind();
+    auto detached_identity = detached.value().graph_identity();
+    auto detached_ref = detached.value().field(UINT32_C(14));
+    if (!detached_ref.has_value()) {
+        return 124;
+    }
+    auto detached_target = detached_ref.value().ref_target();
+    if (!detached_target.has_value()) {
+        return 124;
+    }
+    auto detached_target_identity =
+        detached_target.value().graph_identity();
+    if (stale.has_value() ||
+        stale.error().code() != FDB_PAYLOAD_E_VIEW_INVALIDATED ||
+        !detached_identity.has_value() ||
+        !detached_target_identity.has_value() ||
+        detached_identity.value().component_index != *node_index ||
+        detached_target_identity.value().component_index != *node_index ||
+        detached_target_identity.value().object_id != UINT64_C(0)) {
+        return 124;
+    }
+    return 0;
+}
+
 int run() {
     if (!oversized_plan_fails_structurally_and_retries()) {
         return 29;
     }
     const std::string root = FASTDB_PAYLOAD_BINARY_FIXTURE_DIR;
+    const int graph_status = test_graph_runtime_wasm(root);
+    if (graph_status != 0) {
+        return graph_status;
+    }
     auto compiled = CompiledSpec::compile(
         read_file(root + "/spec/fixed-scalars.source.json"));
     if (!compiled.has_value()) {

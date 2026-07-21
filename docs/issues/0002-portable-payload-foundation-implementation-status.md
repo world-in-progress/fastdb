@@ -639,13 +639,87 @@ embedded-schema, reviewed 10-seed corpus, 17 CI-helper, 28 duplicate-safe JSON,
 seven graph SHA-256, direct C11 arm64/x86_64/wasm32 compile/link, and document
 checks pass. These are local results only.
 
-Object-graph runtime remains P3 and is not closed by Task 8. Task 9 still owns
-the 16-seed graph-aware hostile
-corpus, fuzz traversal/equality, malformed-class proof map, full Core wasm graph
-execution, ABI/package/workflow hardening, complete fresh gates, and independent
-same-reviewer zero-finding loop. Task 10 still owns formal D1/P3 closure,
-truthful public documentation, complete evidence mapping, and final independent
-P3 review. Rust, Python, and official TypeScript/WASM projections and codegen
+#### P3 Task 9 local hardening evidence
+
+This section records the completed local Task 9 hardening evidence, not P3
+closure.
+The reviewed binary-open corpus is now exactly **16/16 reviewed binary-open seeds**:
+the frozen ten record seeds plus valid graph cycle/variable/null
+images and malformed object-region/reference/unreachable images. Every seed
+has one checked source recipe, SHA-256, matching Core specification, and exact
+success or status/path result. The deterministic runner verifies all sixteen
+before passing the same bytes to the graph-aware fuzz entrypoint. Repeated
+opens compare status, code, symbol, path, message, and canonical details;
+successful graph opens traverse explicit refs with a bounded visited
+`(component_index, object_id)` set, acquire variable spans, materialize,
+invalidate, and traverse the detached closure without parsing wire bytes in
+the harness.
+
+The executable 17-class P3 proof map covers profile/region inventory, object
+descriptors, padding/null slots, typed ID bounds, reachability, canonical
+values/lists/text, limits/work, builder handles, allocation and backing
+failures, direct no-full-image behavior, view generation/drain,
+materialization closure, ABI prefixes/output/exception containment, and Wasm.
+Its tested quality gate rejects missing, duplicate, misordered, absent, or
+unexecuted proofs; non-exact ABI-105/corpus inventories; stale graph manifest
+truth; incomplete D1 facts; forbidden downstream ownership/type terms; and
+missing workflow/package gates.
+
+The **full graph wasm runtime** proof now builds graph-all-values through Core,
+executes direct range writes, matches the exact golden bytes, traverses scalar
+and variable values plus self/cross-component cycles, injects a transactional
+allocation-class callback failure, materializes the root, invalidates the
+source, and re-traverses the detached cycle under wasm32/Node. The separate
+public single-thread ABI mode executes the exact six graph functions, old/new
+struct prefixes, allocation boundaries, and exception-to-status containment;
+the Wasm symbol gate remains exactly 105.
+
+The complete fresh local gate is green. Debug passes 37/37 in 70.83 seconds
+and Release passes 37/37 in 47.28 seconds, each with exact native ABI-105. The
+hard-fail ASan+UBSan suite passes 37/37 in 287.68 seconds with a zero-diagnostic
+retained-log scan; local Apple ASan uses `detect_leaks=0`, so this is not
+LeakSanitizer evidence. Focused ThreadSanitizer passes 6/6 in 59.58 seconds
+with no diagnostic. Core Wasm, pure-C Wasm, the C++ facade, single-thread
+failure injection, the complete graph ABI mode, exception propagation, and
+exact Wasm ABI-105 pass. Python remains 413/413 plus compileall; package-helper
+tests pass 13/13 and a fresh sdist/wheel passes exact inventory checks;
+TypeScript/Wasm remains 76/76 after a paired rebuild. Direct warning-clean C11
+compilation passes for arm64, x86_64, and wasm32, and the fresh x86_64 FastDB
+library plus pure-C smoke link and run. Dependency, embedded-schema, 16-seed
+corpus, P2/P3 quality, duplicate-key JSON/YAML, relative-link, and diff checks
+pass.
+
+The default AppleClang installation still lacks its own libFuzzer archive.
+Without mutating Homebrew, Xcode, or system dylinks, the local 1,000-run smoke
+used AppleClang 21 with its matching Xcode ASan/UBSan resources and a
+build-local resource overlay exposing only Homebrew LLVM 21's arm64
+`libclang_rt.fuzzer_osx.a`. The default entropic schedule completed all 1,000
+runs over the 16 seeds in six seconds with no sanitizer failure and no
+artifact. This is explicit adjusted local linkage evidence, not a claim that
+the default Apple toolchain contains libFuzzer; the standard hosted Linux
+definition remains the authoritative unadjusted sanitizer/fuzz job.
+
+**D1 remains open until Task 10.** Task 9 preserves the direct-path proof
+contract and its `mode`, `fallback_reason`, and `staging_bytes` report fields,
+but does not change D1 status before Task 10's formal closure review. The
+context-owning **primary-agent review** inspected authority, resource bounds,
+error equality, handle/access release, cycle termination, Wasm/Core ownership,
+ABI, package/workflow truth, and remaining-scope claims. It found and closed
+one test-harness robustness issue by rejecting null-plus-nonzero Wasm spans
+before pointer arithmetic; no Critical, Important, or material Minor finding
+remains. Per explicit user direction this is not an independent/subagent
+review, and no such review is claimed. **Hosted results remain pending**:
+workflow definitions are not hosted passes, and no push, tag, version,
+release, or publication is authorized.
+
+Object-graph runtime remains P3 and is not closed by Task 9 alone. Task 9 now
+owns a locally green 16-seed graph-aware hostile corpus, fuzz
+traversal/equality, malformed-class proof map, full Core Wasm graph execution,
+ABI/package/workflow hardening, complete fresh gates, and the context-owning
+primary-agent zero-finding review above. Task 10 still owns formal D1/P3
+closure, truthful public documentation, complete evidence mapping, and final
+primary-agent P3 review; the absence of independent delegation must remain
+explicit. Rust, Python, and official TypeScript/WASM projections and codegen
 remain P4; legacy clean cut, versioning, release, and C-Two composition remain
 P5. No hosted outcome, D1 closure, release, push, tag, or publication is
 claimed.

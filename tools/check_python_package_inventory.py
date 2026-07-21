@@ -20,6 +20,18 @@ class CheckError(RuntimeError):
 SDIST_REQUIRED = {
     "fastcarto/fastdb/include/fastdb_payload.h",
     "fastcarto/fastdb/include/fastdb_payload.hpp",
+    "fastcarto/fastdb/src/payload/build/GraphAuthoring.cpp",
+    "fastcarto/fastdb/src/payload/build/GraphAuthoring.hpp",
+    "fastcarto/fastdb/src/payload/build/GraphEncoder.cpp",
+    "fastcarto/fastdb/src/payload/build/GraphEncoder.hpp",
+    "fastcarto/fastdb/src/payload/layout/GraphLayout.cpp",
+    "fastcarto/fastdb/src/payload/layout/GraphLayout.hpp",
+    "fastcarto/fastdb/src/payload/spec/EmbeddedSchemas.inc",
+    "fastcarto/fastdb/src/payload/spec/Manifest.cpp",
+    "fastcarto/fastdb/src/payload/view/GraphMaterialize.cpp",
+    "fastcarto/fastdb/src/payload/view/GraphOpen.cpp",
+    "fastcarto/fastdb/src/payload/view/GraphOpen.hpp",
+    "fastcarto/fastdb/src/payload/view/GraphView.cpp",
     "fastcarto/lib/double-conversion/UPSTREAM.md",
     "fastcarto/lib/double-conversion/LICENSE",
     "fastcarto/lib/double-conversion/double-conversion/double-conversion.h",
@@ -87,7 +99,7 @@ def reject_debris(names: set[str], label: str) -> None:
         path = PurePosixPath(name)
         if (
             any(part in FORBIDDEN_PARTS for part in path.parts)
-            or (path.parts and path.parts[0] in {"build", "dist"})
+            or (path.parts and path.parts[0] in {"build", "dist", "tests"})
             or path.name == ".DS_Store"
             or path.suffix in {".pyc", ".pyo"}
             or path.is_absolute()

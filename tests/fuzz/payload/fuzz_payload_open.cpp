@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -20,11 +21,23 @@
 #ifndef FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC_PATH
 #error "FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC_PATH must name the mismatch spec"
 #endif
+#ifndef FASTDB_PAYLOAD_FUZZ_GRAPH_SPEC_PATH
+#error "FASTDB_PAYLOAD_FUZZ_GRAPH_SPEC_PATH must name the graph value spec"
+#endif
+#ifndef FASTDB_PAYLOAD_FUZZ_GRAPH_CYCLE_SPEC_PATH
+#error "FASTDB_PAYLOAD_FUZZ_GRAPH_CYCLE_SPEC_PATH must name the graph cycle spec"
+#endif
+#ifndef FASTDB_PAYLOAD_FUZZ_GRAPH_NULL_SPEC_PATH
+#error "FASTDB_PAYLOAD_FUZZ_GRAPH_NULL_SPEC_PATH must name the graph null spec"
+#endif
+#ifndef FASTDB_PAYLOAD_FUZZ_GRAPH_DISCONNECTED_SPEC_PATH
+#error "FASTDB_PAYLOAD_FUZZ_GRAPH_DISCONNECTED_SPEC_PATH must name the disconnected graph spec"
+#endif
 
 namespace {
 
 constexpr fdb_payload_v1_status_t kSuccess = UINT32_C(0);
-constexpr std::uint64_t kTraversalLimit = UINT64_C(65536);
+constexpr std::uint64_t kTraversalLimit = UINT64_C(262144);
 
 [[noreturn]] void invariant_failure(
     fdb_payload_v1_error_t* error = nullptr) {
@@ -72,20 +85,44 @@ fdb_payload_v1_spec_t* compile_spec(const char* path) {
 struct Specs final {
     Specs()
         : matching(compile_spec(FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC_PATH)),
-          mismatch(compile_spec(FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC_PATH)) {
-        std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE> matching_digest{};
-        std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE> mismatch_digest{};
+          mismatch(compile_spec(FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC_PATH)),
+          graph(compile_spec(FASTDB_PAYLOAD_FUZZ_GRAPH_SPEC_PATH)),
+          graph_cycle(
+              compile_spec(FASTDB_PAYLOAD_FUZZ_GRAPH_CYCLE_SPEC_PATH)),
+          graph_null(compile_spec(FASTDB_PAYLOAD_FUZZ_GRAPH_NULL_SPEC_PATH)),
+          graph_disconnected(compile_spec(
+              FASTDB_PAYLOAD_FUZZ_GRAPH_DISCONNECTED_SPEC_PATH)) {
+        const std::array<fdb_payload_v1_spec_t*, 6> all_specs{{
+            matching, mismatch, graph, graph_cycle, graph_null,
+            graph_disconnected}};
+        std::array<std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE>, 6>
+            digests{};
         fdb_payload_v1_error_t* error = nullptr;
-        FASTDB_FUZZ_REQUIRE_SUCCESS(fdb_payload_v1_spec_sha256(
-            matching, matching_digest.data(), &error));
-        FASTDB_FUZZ_REQUIRE_SUCCESS(fdb_payload_v1_spec_sha256(
-            mismatch, mismatch_digest.data(), &error));
-        if (matching_digest == mismatch_digest) {
-            invariant_failure();
+        for (std::size_t index = 0U; index < all_specs.size(); ++index) {
+            FASTDB_FUZZ_REQUIRE_SUCCESS(fdb_payload_v1_spec_sha256(
+                all_specs[index], digests[index].data(), &error));
+            fdb_payload_v1_profile_t profile = UINT32_C(0);
+            FASTDB_FUZZ_REQUIRE_SUCCESS(fdb_payload_v1_spec_profile(
+                all_specs[index], &profile, &error));
+            const auto expected_profile =
+                index < 2U ? FDB_PAYLOAD_PROFILE_RECORD_V1
+                           : FDB_PAYLOAD_PROFILE_OBJECT_GRAPH_V1;
+            if (profile != expected_profile) {
+                invariant_failure();
+            }
+            for (std::size_t prior = 0U; prior < index; ++prior) {
+                if (digests[index] == digests[prior]) {
+                    invariant_failure();
+                }
+            }
         }
     }
 
     ~Specs() {
+        fdb_payload_v1_spec_release(graph_disconnected);
+        fdb_payload_v1_spec_release(graph_null);
+        fdb_payload_v1_spec_release(graph_cycle);
+        fdb_payload_v1_spec_release(graph);
         fdb_payload_v1_spec_release(mismatch);
         fdb_payload_v1_spec_release(matching);
     }
@@ -95,6 +132,10 @@ struct Specs final {
 
     fdb_payload_v1_spec_t* matching;
     fdb_payload_v1_spec_t* mismatch;
+    fdb_payload_v1_spec_t* graph;
+    fdb_payload_v1_spec_t* graph_cycle;
+    fdb_payload_v1_spec_t* graph_null;
+    fdb_payload_v1_spec_t* graph_disconnected;
 };
 
 Specs& specs() {
@@ -173,7 +214,7 @@ fdb_payload_v1_open_options_t options_for_input(const std::uint8_t* data,
     options.max_components = UINT64_C(1024);
     options.max_nesting_depth = UINT64_C(512);
     options.max_list_elements = kTraversalLimit;
-    options.max_graph_objects = UINT64_C(1);
+    options.max_graph_objects = UINT64_C(65536);
     options.max_string_bytes = std::max(input_size, UINT64_C(1));
     options.max_validation_work = UINT64_C(262144);
 
@@ -315,18 +356,20 @@ void check_variable_access(fdb_payload_v1_view_t* view,
     fdb_payload_v1_access_release(access);
 }
 
-void traverse_owned_view(fdb_payload_v1_view_t* root) {
+void traverse_owned_view(fdb_payload_v1_view_t* root,
+                         fdb_payload_v1_profile_t profile) {
     if (root == nullptr) {
         invariant_failure();
     }
     std::vector<fdb_payload_v1_view_t*> pending;
     pending.push_back(root);
-    std::uint64_t visited = UINT64_C(0);
+    std::set<std::pair<std::uint32_t, std::uint64_t>> visited_objects;
+    std::uint64_t visited_values = UINT64_C(0);
     while (!pending.empty()) {
         fdb_payload_v1_view_t* const view = pending.back();
         pending.pop_back();
-        ++visited;
-        if (visited > kTraversalLimit) {
+        ++visited_values;
+        if (visited_values > kTraversalLimit) {
             fdb_payload_v1_view_release(view);
             for (auto* remaining : pending) {
                 fdb_payload_v1_view_release(remaining);
@@ -346,12 +389,45 @@ void traverse_owned_view(fdb_payload_v1_view_t* root) {
             continue;
         }
 
-        if (kind == FDB_PAYLOAD_VIEW_SEQUENCE ||
+        if (kind == FDB_PAYLOAD_VIEW_REF) {
+            if (profile != FDB_PAYLOAD_PROFILE_OBJECT_GRAPH_V1) {
+                fdb_payload_v1_view_release(view);
+                invariant_failure();
+            }
+            std::uint32_t component_index = UINT32_C(0);
+            std::uint64_t object_id = UINT64_C(0);
+            FASTDB_FUZZ_REQUIRE_SUCCESS(
+                fdb_payload_v1_view_graph_identity(
+                    view, &component_index, &object_id, &error));
+            fdb_payload_v1_view_t* target = nullptr;
+            FASTDB_FUZZ_REQUIRE_SUCCESS(fdb_payload_v1_view_ref_target(
+                view, &target, &error));
+            if (target == nullptr) {
+                invariant_failure();
+            }
+            std::uint32_t target_component = UINT32_C(0);
+            std::uint64_t target_object = UINT64_C(0);
+            FASTDB_FUZZ_REQUIRE_SUCCESS(
+                fdb_payload_v1_view_graph_identity(
+                    target, &target_component, &target_object, &error));
+            if (target_component != component_index ||
+                target_object != object_id) {
+                fdb_payload_v1_view_release(target);
+                fdb_payload_v1_view_release(view);
+                invariant_failure();
+            }
+            if (visited_objects.find({component_index, object_id}) !=
+                visited_objects.end()) {
+                fdb_payload_v1_view_release(target);
+            } else {
+                pending.push_back(target);
+            }
+        } else if (kind == FDB_PAYLOAD_VIEW_SEQUENCE ||
             kind == FDB_PAYLOAD_VIEW_LIST) {
             std::uint64_t length = UINT64_C(0);
             FASTDB_FUZZ_REQUIRE_SUCCESS(
                 fdb_payload_v1_view_length(view, &length, &error));
-            if (length > kTraversalLimit - visited ||
+            if (length > kTraversalLimit - visited_values ||
                 length > kTraversalLimit -
                              static_cast<std::uint64_t>(pending.size())) {
                 fdb_payload_v1_view_release(view);
@@ -373,6 +449,35 @@ void traverse_owned_view(fdb_payload_v1_view_t* root) {
             std::uint32_t component_index = UINT32_C(0);
             FASTDB_FUZZ_REQUIRE_SUCCESS(fdb_payload_v1_view_component_index(
                 view, &component_index, &error));
+            if (profile == FDB_PAYLOAD_PROFILE_OBJECT_GRAPH_V1) {
+                std::uint32_t identity_component = UINT32_C(0);
+                std::uint64_t object_id = UINT64_C(0);
+                const auto identity_status =
+                    fdb_payload_v1_view_graph_identity(
+                        view, &identity_component, &object_id, &error);
+                if (identity_status == kSuccess) {
+                    if (error != nullptr ||
+                        identity_component != component_index) {
+                        invariant_failure(error);
+                    }
+                    const bool inserted =
+                        visited_objects
+                            .insert({identity_component, object_id})
+                            .second;
+                    if (!inserted) {
+                        fdb_payload_v1_view_release(view);
+                        continue;
+                    }
+                } else if (identity_status == FDB_PAYLOAD_E_TYPE_MISMATCH &&
+                           error != nullptr &&
+                           fdb_payload_v1_error_code(error) ==
+                               identity_status) {
+                    fdb_payload_v1_error_release(error);
+                    error = nullptr;
+                } else {
+                    invariant_failure(error);
+                }
+            }
             std::uint32_t field_count = UINT32_C(0);
             FASTDB_FUZZ_REQUIRE_SUCCESS(fdb_payload_v1_view_field_count(
                 view, &field_count, &error));
@@ -421,7 +526,8 @@ void exercise_success(fdb_payload_v1_payload_t* payload,
     fdb_payload_v1_profile_t profile = UINT32_C(0);
     FASTDB_FUZZ_REQUIRE_SUCCESS(
         fdb_payload_v1_payload_profile(payload, &profile, &error));
-    if (profile != FDB_PAYLOAD_PROFILE_RECORD_V1) {
+    if (profile != FDB_PAYLOAD_PROFILE_RECORD_V1 &&
+        profile != FDB_PAYLOAD_PROFILE_OBJECT_GRAPH_V1) {
         invariant_failure();
     }
 
@@ -458,13 +564,13 @@ void exercise_success(fdb_payload_v1_payload_t* payload,
                 invariant_failure();
             }
         }
-        traverse_owned_view(sequence);
+        traverse_owned_view(sequence, profile);
     }
 
     FASTDB_FUZZ_REQUIRE_SUCCESS(
         fdb_payload_v1_payload_invalidate(payload, &error));
     if (detached != nullptr) {
-        traverse_owned_view(detached);
+        traverse_owned_view(detached, profile);
     }
     fdb_payload_v1_payload_release(payload);
 }
@@ -515,5 +621,9 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data,
     const auto options = options_for_input(data, size);
     exercise_spec(specs().matching, data, size, options);
     exercise_spec(specs().mismatch, data, size, options);
+    exercise_spec(specs().graph, data, size, options);
+    exercise_spec(specs().graph_cycle, data, size, options);
+    exercise_spec(specs().graph_null, data, size, options);
+    exercise_spec(specs().graph_disconnected, data, size, options);
     return 0;
 }

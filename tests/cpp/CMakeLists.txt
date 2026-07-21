@@ -59,9 +59,25 @@ set(FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC
 set(FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC
     ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/numeric-edges.source.json
 )
+set(FASTDB_PAYLOAD_FUZZ_GRAPH_SPEC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/graph-all-values.source.json
+)
+set(FASTDB_PAYLOAD_FUZZ_GRAPH_CYCLE_SPEC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/graph-shared-cycle.source.json
+)
+set(FASTDB_PAYLOAD_FUZZ_GRAPH_NULL_SPEC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/graph-null-empty.source.json
+)
+set(FASTDB_PAYLOAD_FUZZ_GRAPH_DISCONNECTED_SPEC
+    ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/graph-disconnected-roots.source.json
+)
 set(FASTDB_PAYLOAD_FUZZ_SPEC_DEFINITIONS
     "FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC_PATH=\"${FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC}\""
     "FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC_PATH=\"${FASTDB_PAYLOAD_FUZZ_MISMATCH_SPEC}\""
+    "FASTDB_PAYLOAD_FUZZ_GRAPH_SPEC_PATH=\"${FASTDB_PAYLOAD_FUZZ_GRAPH_SPEC}\""
+    "FASTDB_PAYLOAD_FUZZ_GRAPH_CYCLE_SPEC_PATH=\"${FASTDB_PAYLOAD_FUZZ_GRAPH_CYCLE_SPEC}\""
+    "FASTDB_PAYLOAD_FUZZ_GRAPH_NULL_SPEC_PATH=\"${FASTDB_PAYLOAD_FUZZ_GRAPH_NULL_SPEC}\""
+    "FASTDB_PAYLOAD_FUZZ_GRAPH_DISCONNECTED_SPEC_PATH=\"${FASTDB_PAYLOAD_FUZZ_GRAPH_DISCONNECTED_SPEC}\""
 )
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
@@ -73,10 +89,10 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     list(SORT FASTDB_PAYLOAD_REVIEWED_BINARY_SEEDS)
     list(LENGTH FASTDB_PAYLOAD_REVIEWED_BINARY_SEEDS
          FASTDB_PAYLOAD_REVIEWED_BINARY_SEED_COUNT)
-    if(NOT FASTDB_PAYLOAD_REVIEWED_BINARY_SEED_COUNT EQUAL 10)
+    if(NOT FASTDB_PAYLOAD_REVIEWED_BINARY_SEED_COUNT EQUAL 16)
         message(FATAL_ERROR
             "The reviewed portable payload binary corpus must contain exactly "
-            "10 seeds; found ${FASTDB_PAYLOAD_REVIEWED_BINARY_SEED_COUNT}"
+            "16 seeds; found ${FASTDB_PAYLOAD_REVIEWED_BINARY_SEED_COUNT}"
         )
     endif()
 
@@ -607,6 +623,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
     target_include_directories(
         fastdb_payload_wasm_runtime_harness
         PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/payload
             ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
             ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
     )
@@ -735,4 +752,13 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR
             --check-repository
     )
     set_tests_properties(payload.p2_task11_quality PROPERTIES TIMEOUT 30)
+
+    add_test(
+        NAME payload.p3_runtime_quality
+        COMMAND
+            ${FASTDB_RUBY_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/../ci/check_p3_runtime_quality.rb
+            --check-repository
+    )
+    set_tests_properties(payload.p3_runtime_quality PROPERTIES TIMEOUT 30)
 endif()

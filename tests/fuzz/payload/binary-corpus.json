@@ -94,6 +94,48 @@
       ],
       "expected": {"status": 3004, "path": "/entries/records/0/bools"},
       "sha256": "b38f73b7484055715151eaa593ea0dd2d5adecaaea9b5643818fb2aed761c494"
+    },
+    {
+      "name": "valid-graph-cycle.bin",
+      "class": "valid-graph-cycle",
+      "source_hex": "tests/golden/payload/v1/binary/valid/graph-shared-cycle.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "a6623d795b9fe018942015c04971a4a8f5129483e15d9f2ac1ff9f35b37b8627"
+    },
+    {
+      "name": "valid-graph-variable.bin",
+      "class": "valid-graph-variable",
+      "source_hex": "tests/golden/payload/v1/binary/valid/graph-all-values.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "728c4880df6797954f36e6af1ad0991e739f1c4da93b33e2917cceaac91f866c"
+    },
+    {
+      "name": "valid-graph-null.bin",
+      "class": "valid-graph-null",
+      "source_hex": "tests/golden/payload/v1/binary/valid/graph-null-empty.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "467739a1c928280e2eb57f8acce1bc66df217874f245d57392cf558fee930edc"
+    },
+    {
+      "name": "malformed-graph-object-region.bin",
+      "class": "malformed-graph-object-region",
+      "source_hex": "tests/golden/payload/v1/binary/invalid/graph-object-stride.bin.hex",
+      "expected": {"status": 3009, "path": "/binary/regions/1/stride"},
+      "sha256": "4d56b5ce311cf232e0c45c58fc859152323aa80ce9a0f89a905d12dbedb4aa04"
+    },
+    {
+      "name": "malformed-graph-reference.bin",
+      "class": "malformed-graph-reference",
+      "source_hex": "tests/golden/payload/v1/binary/invalid/graph-ref-id.bin.hex",
+      "expected": {"status": 3007, "path": "/objects/0/0/c_shared"},
+      "sha256": "09ddf4dd482f6dacca1629a15c098ee65786498767de02b44e0358fc36a502cd"
+    },
+    {
+      "name": "malformed-graph-unreachable.bin",
+      "class": "malformed-graph-unreachable",
+      "source_hex": "tests/golden/payload/v1/binary/invalid/graph-unreachable.bin.hex",
+      "expected": {"status": 3009, "path": "/objects/Node/1"},
+      "sha256": "cde0a2fe834cc7f8c08e6bd4fa24da86d26a3a772c50c58a62e2fe5e26869576"
     }
   ]
 }

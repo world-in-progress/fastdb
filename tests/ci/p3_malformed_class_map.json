@@ -1,0 +1,141 @@
+{
+  "schema": "fastdb.payload.p3-proof-map.v1",
+  "classes": [
+    {
+      "class": "profile-and-region-inventory",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_region_rule_and_public_boundary"},
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_complete_graph_malformed_field_matrix"}
+      ]
+    },
+    {
+      "class": "object-descriptor-shape",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_complete_graph_malformed_field_matrix"},
+        {"file": "tests/fuzz/payload/run_payload_open_corpus.cpp", "test": "malformed-graph-object-region.bin"}
+      ]
+    },
+    {
+      "class": "padding-validity-and-null-slots",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_complete_graph_malformed_field_matrix"},
+        {"file": "tests/cpp/payload/test_graph_view.cpp", "test": "test_nested_null_and_empty_values"}
+      ]
+    },
+    {
+      "class": "root-reference-and-object-id-bounds",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_complete_graph_malformed_field_matrix"},
+        {"file": "tests/fuzz/payload/run_payload_open_corpus.cpp", "test": "malformed-graph-reference.bin"}
+      ]
+    },
+    {
+      "class": "reachability",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_builder.cpp", "test": "test_handle_scope_state_and_failure_order"},
+        {"file": "tests/fuzz/payload/run_payload_open_corpus.cpp", "test": "malformed-graph-unreachable.bin"}
+      ]
+    },
+    {
+      "class": "scalar-and-value-canonicality",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_complete_graph_malformed_field_matrix"},
+        {"file": "tests/cpp/payload/test_graph_view.cpp", "test": "test_all_value_navigation"}
+      ]
+    },
+    {
+      "class": "list-partitions",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_complete_graph_malformed_field_matrix"},
+        {"file": "tests/cpp/payload/test_graph_view.cpp", "test": "test_nested_root_and_ref_lists"}
+      ]
+    },
+    {
+      "class": "utf8-and-utf16",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_complete_graph_malformed_field_matrix"},
+        {"file": "tests/cpp/payload/test_graph_view.cpp", "test": "test_all_value_navigation"}
+      ]
+    },
+    {
+      "class": "resource-limits-work-and-nesting",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_graph_resource_boundaries_and_empty_target_pool"},
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_fifty_thousand_object_binary_cycle_is_iterative"}
+      ]
+    },
+    {
+      "class": "builder-state-and-handles",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_builder.cpp", "test": "test_handle_scope_state_and_failure_order"},
+        {"file": "tests/cpp/payload/test_runtime_abi.cpp", "test": "test_public_graph_handle_errors"}
+      ]
+    },
+    {
+      "class": "allocation-failure",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_binary.cpp", "test": "test_graph_layout_and_open_allocation_sweeps"},
+        {"file": "tests/cpp/payload/test_graph_backing.cpp", "test": "test_graph_execution_allocation_cleanup"},
+        {"file": "tests/cpp/payload/test_graph_materialize.cpp", "test": "test_allocation_failure_is_transactional_and_balanced"}
+      ]
+    },
+    {
+      "class": "backing-direct-no-full-image",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_backing.cpp", "test": "test_direct_graph_has_no_full_image_allocation"}
+      ]
+    },
+    {
+      "class": "backing-callback-failures",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_backing.cpp", "test": "test_graph_staging_policy_and_cleanup"},
+        {"file": "tests/cpp/payload/test_graph_backing.cpp", "test": "test_graph_execution_allocation_cleanup"}
+      ]
+    },
+    {
+      "class": "view-generation-and-access-drain",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_view.cpp", "test": "test_lifetime_invalidation_and_concurrency"},
+        {"file": "tests/cpp/payload/test_graph_view.cpp", "test": "test_external_invalidation_drain"}
+      ]
+    },
+    {
+      "class": "materialization-closure",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_graph_materialize.cpp", "test": "test_union_closure_dense_remap_and_root_kinds"},
+        {"file": "tests/cpp/payload/test_graph_materialize.cpp", "test": "test_all_values_survive_source_release"}
+      ]
+    },
+    {
+      "class": "abi-prefix-output-and-exception",
+      "proofs": [
+        {"file": "tests/cpp/payload/test_runtime_abi.cpp", "test": "test_graph_builder_option_prefixes"},
+        {"file": "tests/cpp/payload/test_runtime_abi.cpp", "test": "test_guarded_v1_prefixes_do_not_touch_v2_tails"},
+        {"file": "tests/cpp/payload/test_runtime_abi.cpp", "test": "test_null_error_sink_rule"}
+      ]
+    },
+    {
+      "class": "wasm-graph-and-exception-containment",
+      "proofs": [
+        {"file": "tests/wasm/payload_runtime_harness.cpp", "test": "test_graph_runtime_wasm"},
+        {"file": "tests/cpp/payload/test_runtime_abi.cpp", "test": "test_complete_public_graph_runtime"}
+      ]
+    }
+  ],
+  "d1": {
+    "status": "open-until-task-10",
+    "direct_test": "test_direct_graph_has_no_full_image_allocation",
+    "source": "fastcarto/fastdb/src/payload/build/GraphEncoder.cpp",
+    "report_fields": ["mode", "fallback_reason", "staging_bytes"],
+    "facts": [
+      "direct-reserve-only",
+      "no-heap-reserve",
+      "monotonic-full-coverage",
+      "allocation-threshold",
+      "report-truth",
+      "staged-byte-identity",
+      "source-audit",
+      "cycles-sharing-variable-values-and-failures"
+    ]
+  }
+}
