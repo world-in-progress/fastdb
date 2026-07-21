@@ -50,6 +50,7 @@ SDIST_REQUIRED = {
     "python/fastdb4py/payload/_builder.py",
     "python/fastdb4py/payload/_error.py",
     "python/fastdb4py/payload/_ffi.py",
+    "python/fastdb4py/payload/_runtime.py",
     "python/fastdb4py/payload/_spec.py",
 }
 WHEEL_REQUIRED = {
@@ -57,6 +58,7 @@ WHEEL_REQUIRED = {
     "fastdb4py/payload/_builder.py",
     "fastdb4py/payload/_error.py",
     "fastdb4py/payload/_ffi.py",
+    "fastdb4py/payload/_runtime.py",
     "fastdb4py/payload/_spec.py",
 }
 FORBIDDEN_PARTS = {

@@ -882,13 +882,13 @@ independent. No ordinary P3 semantic was deferred to shorten implementation.
 
 **Current limit:** The P1 compile/query, P2 record runtime, and locally frozen
 P3 graph runtime exist in the exact ABI-105 C boundary with thin C++ facades
-over that same ABI. P4 Tasks 1-2 project compile/query plus complete V1
-authoring and immutable plan facts into Rust, `fastdb4py.payload`, and the
-official TypeScript/Wasm `./payload` subpath. The Core still does not generate
-C++, Rust, Python, or TypeScript payload artifacts, and the three projections
-do not yet expose backing execution, open, views/access, materialization, or
-invalidation. Existing hand-written 0.1.x call-db layers are migration inputs,
-not portable-payload projections.
+over that same ABI. P4 Tasks 1-3 project compile/query, complete V1 authoring,
+immutable plan facts, backing execution, payload ownership, and copied/external
+open into Rust, `fastdb4py.payload`, and the official TypeScript/Wasm
+`./payload` subpath. The Core still does not generate C++, Rust, Python, or
+TypeScript payload artifacts, and the three projections do not yet expose
+checked views/access, materialization, or invalidation. Existing hand-written
+0.1.x call-db layers are migration inputs, not portable-payload projections.
 
 **Design state:** The complete live delta audit and docs-first design are
 recorded in
@@ -957,16 +957,53 @@ JavaScript prototype/reflection forgery. It also closed formatting/clippy
 findings. The post-fix result has zero unresolved Critical, Important, or
 material Minor findings; it remains a same-agent, non-independent review.
 
+**Task 3 local evidence:** Rust, Python, and official TypeScript/Wasm now
+execute immutable plans through the frozen Core, project exact direct/staged
+reports and fallback reasons, retain caller backing through payload release,
+and open copied or explicitly host/Wasm-owned external images. Rust and Python
+safe backings serialize complete executions sharing one context as required by
+the stable C callback contract. Callback panic/exception and write/commit
+failure paths stop at C, return the closed Core error taxonomy, and roll back
+exactly once. The Wasm API names the JavaScript-to-Wasm copy explicitly and
+does not claim JavaScript `ArrayBuffer` zero-copy.
+
+Final local counts are 14 Rust non-doc tests with fmt and warning-denying
+clippy clean, 433 Python tests plus compileall, and 91 TypeScript/Wasm tests.
+Native, ASan+UBSan, and available focused TSan backing/runtime/open sets each
+pass 4/4. Native and Wasm scanners remain exactly 105 symbols; the Wasm export
+generator passes 2 tests, package inventory passes 16 tests, schema and
+16-seed corpus checks remain green, and the P3 quality gate remains 12 runs /
+48 assertions plus its repository check. `detect_leaks=0` was used for the
+ASan+UBSan run, so no LeakSanitizer result is claimed.
+
+Fresh Python 3.14t and 3.10 source/wheel builds pass exact inventory and
+installed compile/freeze/backing/build/copy-open/external-open smokes. Both
+installed wheels produce the same 128-byte image and Core digest. The local
+3.10 build retains the already-recorded SWIG, generated NumPy, and deployment
+target diagnostics; no warning-free package claim is made. These are local
+macOS 26.5.2 arm64 results on AppleClang 21, Rust 1.91, Python 3.14t/3.10,
+Node 25.8.1, Emscripten 5.0.2, and SWIG 4.4.1. Package version remains 0.1.22,
+and no hosted result is claimed.
+
+The context-owning primary-agent review found and closed missing complete-call
+serialization for shared Rust/Python backing contexts, incorrect Python
+allocation-failure mapping, insufficient Rust callback-panic coverage,
+forgeable runtime-handle regressions, and native Wasm owned-byte constructor
+exception safety. The post-fix result has zero unresolved Critical, Important,
+or material Minor findings. This is explicitly a same-agent review, not
+independent/subagent evidence.
+
 **Impact:** Portable compile/query/build/open/view/materialize remains available
 to C and C++ through the locally frozen P3 boundary. Rust, Python, and official
-TypeScript/Wasm now share compile/query plus complete author/freeze/plan
-semantics from that same Core. They still cannot execute or open a plan, retain
-backing, navigate a view, materialize, or invalidate through their new payload
-projections. No language can yet consume a Core-owned generated artifact set.
+TypeScript/Wasm now share compile/query, complete author/freeze/plan semantics,
+truthful execution/backing, payload ownership, and open from that same Core.
+They still cannot navigate checked record/graph views, materialize detached
+values, or invalidate through their new payload projections. No language can
+yet consume a Core-owned generated artifact set.
 
-**Next owner slice:** P4 Task 3 projects execution, backing ownership, and open
-vertically across the same public languages while preserving the frozen Core
-meaning and ABI-105.
+**Next owner slice:** P4 Task 4 projects checked access/views, materialization,
+invalidation, and stale-generation behavior vertically across the same public
+languages while preserving the frozen Core meaning and ABI-105.
 
 **Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
 the same Core ABI and pass canonical, binary, value, error, lifetime, and
@@ -1159,7 +1196,7 @@ result.
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P4. Language projections and payload codegen | Docs-first design is frozen; Tasks 1-2 compile/query and author/freeze/plan projections are locally complete over unchanged ABI-105 with primary-agent review and no independent/hosted claim; Tasks 3-9 remain open | Continue the reviewed vertical plan through execution/runtime/lifetime parity, then prove deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
+| P4. Language projections and payload codegen | Docs-first design is frozen; Tasks 1-3 compile/query, author/freeze/plan, execution/backing/ownership/open projections are locally complete over unchanged ABI-105 with primary-agent review and no independent/hosted claim; Tasks 4-9 remain open | Continue the reviewed vertical plan through checked-view/materialization/invalidation parity, then prove deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then downstream composition delegates the nested FastDB sub-spec without semantic duplication |
 
 ## Non-deferrable 0.2.0 work

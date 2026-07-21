@@ -13,12 +13,50 @@ ABI_VERSION = 1
 SHA256_SIZE = 32
 BUILDER_OPTIONS_SIZE = 96
 FIXED_RUN_SIZE = 96
+OPEN_OPTIONS_SIZE = 112
 PLAN_INFO_SIZE = 112
+EXECUTION_REPORT_SIZE = 72
+BACKING_SIZE = 96
 
 Handle = ctypes.c_void_p
 HandlePointer = ctypes.POINTER(Handle)
 BytePointer = ctypes.POINTER(ctypes.c_uint8)
 BytePointerPointer = ctypes.POINTER(BytePointer)
+VoidPointerPointer = ctypes.POINTER(ctypes.c_void_p)
+
+BackingReserveCallback = ctypes.CFUNCTYPE(
+    ctypes.c_uint32,
+    ctypes.c_void_p,
+    ctypes.c_uint32,
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    VoidPointerPointer,
+    BytePointerPointer,
+    ctypes.POINTER(ctypes.c_uint64),
+)
+BackingWriteCallback = ctypes.CFUNCTYPE(
+    ctypes.c_uint32,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_uint64,
+    BytePointer,
+    ctypes.c_uint64,
+)
+BackingCommitCallback = ctypes.CFUNCTYPE(
+    ctypes.c_uint32,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    ctypes.c_uint64,
+    BytePointerPointer,
+    ctypes.POINTER(ctypes.c_uint64),
+)
+BackingRollbackCallback = ctypes.CFUNCTYPE(
+    ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p
+)
+BackingRetainCallback = ctypes.CFUNCTYPE(
+    ctypes.c_uint32, ctypes.c_void_p, ctypes.c_void_p
+)
+BackingReleaseCallback = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_void_p)
 
 
 class CapabilitiesV1(ctypes.Structure):
@@ -64,6 +102,23 @@ class FixedRunV1(ctypes.Structure):
     ]
 
 
+class OpenOptionsV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("max_total_bytes", ctypes.c_uint64),
+        ("max_regions", ctypes.c_uint64),
+        ("max_entries", ctypes.c_uint64),
+        ("max_components", ctypes.c_uint64),
+        ("max_nesting_depth", ctypes.c_uint64),
+        ("max_list_elements", ctypes.c_uint64),
+        ("max_graph_objects", ctypes.c_uint64),
+        ("max_string_bytes", ctypes.c_uint64),
+        ("max_validation_work", ctypes.c_uint64),
+        ("reserved", ctypes.c_uint64 * 4),
+    ]
+
+
 class PlanInfoV2(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -82,12 +137,48 @@ class PlanInfoV2(ctypes.Structure):
     ]
 
 
+class ExecutionReportV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("mode", ctypes.c_uint32),
+        ("fallback_reason", ctypes.c_uint32),
+        ("reserved32", ctypes.c_uint32),
+        ("requested_bytes", ctypes.c_uint64),
+        ("used_bytes", ctypes.c_uint64),
+        ("staging_bytes", ctypes.c_uint64),
+        ("region_count", ctypes.c_uint64),
+        ("backing_capacity", ctypes.c_uint64),
+        ("reserved64", ctypes.c_uint64 * 2),
+    ]
+
+
+class BackingV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("context", ctypes.c_void_p),
+        ("reserve", BackingReserveCallback),
+        ("write", BackingWriteCallback),
+        ("commit", BackingCommitCallback),
+        ("rollback", BackingRollbackCallback),
+        ("retain", BackingRetainCallback),
+        ("release", BackingReleaseCallback),
+        ("reserved", ctypes.c_uint64 * 4),
+    ]
+
+
 if ctypes.sizeof(BuilderOptionsV2) != BUILDER_OPTIONS_SIZE:
     raise ImportError("FastDB builder-options ABI layout mismatch")
 if ctypes.sizeof(FixedRunV1) != FIXED_RUN_SIZE:
     raise ImportError("FastDB fixed-run ABI layout mismatch")
+if ctypes.sizeof(OpenOptionsV1) != OPEN_OPTIONS_SIZE:
+    raise ImportError("FastDB open-options ABI layout mismatch")
 if ctypes.sizeof(PlanInfoV2) != PLAN_INFO_SIZE:
     raise ImportError("FastDB plan-info ABI layout mismatch")
+if ctypes.sizeof(ExecutionReportV1) != EXECUTION_REPORT_SIZE:
+    raise ImportError("FastDB execution-report ABI layout mismatch")
+if ctypes.sizeof(BackingV1) != BACKING_SIZE:
+    raise ImportError("FastDB backing ABI layout mismatch")
 
 
 def _library_names() -> tuple[str, ...]:
@@ -137,10 +228,20 @@ def _declare(library: ctypes.CDLL) -> None:
         ctypes.POINTER(FixedRunV1)
     ]
     library.fdb_payload_v1_fixed_run_init.restype = None
+    library.fdb_payload_v1_open_options_init.argtypes = [
+        ctypes.POINTER(OpenOptionsV1)
+    ]
+    library.fdb_payload_v1_open_options_init.restype = None
     library.fdb_payload_v1_plan_info_init.argtypes = [
         ctypes.POINTER(PlanInfoV2)
     ]
     library.fdb_payload_v1_plan_info_init.restype = None
+    library.fdb_payload_v1_execution_report_init.argtypes = [
+        ctypes.POINTER(ExecutionReportV1)
+    ]
+    library.fdb_payload_v1_execution_report_init.restype = None
+    library.fdb_payload_v1_backing_init.argtypes = [ctypes.POINTER(BackingV1)]
+    library.fdb_payload_v1_backing_init.restype = None
 
     library.fdb_payload_v1_spec_compile_json.argtypes = [
         BytePointer,
@@ -347,6 +448,64 @@ def _declare(library: ctypes.CDLL) -> None:
         HandlePointer,
     ]
     library.fdb_payload_v1_plan_info.restype = ctypes.c_uint32
+    library.fdb_payload_v1_plan_execute.argtypes = [
+        Handle,
+        ctypes.c_uint32,
+        ctypes.POINTER(BackingV1),
+        HandlePointer,
+        ctypes.POINTER(ExecutionReportV1),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_plan_execute.restype = ctypes.c_uint32
+
+    library.fdb_payload_v1_payload_open_copy.argtypes = [
+        Handle,
+        BytePointer,
+        ctypes.c_uint64,
+        ctypes.POINTER(OpenOptionsV1),
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_open_copy.restype = ctypes.c_uint32
+    library.fdb_payload_v1_payload_open_external.argtypes = [
+        Handle,
+        BytePointer,
+        ctypes.c_uint64,
+        ctypes.POINTER(BackingV1),
+        ctypes.c_void_p,
+        ctypes.POINTER(OpenOptionsV1),
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_open_external.restype = ctypes.c_uint32
+    library.fdb_payload_v1_payload_retain.argtypes = [Handle]
+    library.fdb_payload_v1_payload_retain.restype = None
+    library.fdb_payload_v1_payload_release.argtypes = [Handle]
+    library.fdb_payload_v1_payload_release.restype = None
+    library.fdb_payload_v1_payload_sha256.argtypes = [
+        Handle,
+        BytePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_sha256.restype = ctypes.c_uint32
+    library.fdb_payload_v1_payload_profile.argtypes = [
+        Handle,
+        ctypes.POINTER(ctypes.c_uint32),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_profile.restype = ctypes.c_uint32
+    library.fdb_payload_v1_payload_execution_report.argtypes = [
+        Handle,
+        ctypes.POINTER(ExecutionReportV1),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_execution_report.restype = ctypes.c_uint32
+    library.fdb_payload_v1_payload_binary_blob.argtypes = [
+        Handle,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_binary_blob.restype = ctypes.c_uint32
 
     library.fdb_payload_v1_blob_release.argtypes = [Handle]
     library.fdb_payload_v1_blob_release.restype = None

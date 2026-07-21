@@ -21,3 +21,7 @@ path = "../../tests/rust/payload/tests/compile_query.rs"
 [[test]]
 name = "builder"
 path = "../../tests/rust/payload/tests/builder.rs"
+
+[[test]]
+name = "runtime"
+path = "../../tests/rust/payload/tests/runtime.rs"

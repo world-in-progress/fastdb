@@ -18,6 +18,12 @@ import {
 } from './abi.js';
 import { bindingError, checkStatus } from './error.js';
 import { CompiledSpec, compiledSpecHandle } from './spec.js';
+import {
+  executePlan,
+  type BuildPolicy,
+  type BuildResult,
+  type WasmMemoryBacking,
+} from './runtime.js';
 
 const BUILDER_OPTIONS_SIZE = 96;
 const FIXED_RUN_SIZE = 96;
@@ -28,6 +34,7 @@ const handleConstructionToken = Symbol('fastdb.payload.handleConstructionToken')
 const objectHandleValue = Symbol('fastdb.payload.objectHandleValue');
 const createObjectHandle = Symbol('fastdb.payload.createObjectHandle');
 const createBuildPlan = Symbol('fastdb.payload.createBuildPlan');
+const planHandleValue = Symbol('fastdb.payload.planHandleValue');
 
 export interface BuilderOptions {
   flags?: number;
@@ -193,12 +200,31 @@ export class BuildPlan {
     });
   }
 
+  execute(
+    policy: BuildPolicy,
+    backing?: WasmMemoryBacking,
+  ): BuildResult {
+    return executePlan(this, policy, backing);
+  }
+
+  /** @internal */
+  [planHandleValue](): number {
+    return this.requireHandle();
+  }
+
   private requireHandle(): number {
     if (this.#handle === 0) {
       throw bindingError('BuildPlan is disposed', 'disposed_handle');
     }
     return this.#handle;
   }
+}
+
+export function buildPlanHandle(plan: BuildPlan): number {
+  if (!(plan instanceof BuildPlan)) {
+    throw new TypeError('plan must be BuildPlan');
+  }
+  return BuildPlan.prototype[planHandleValue].call(plan);
 }
 
 const builderFinalizer = new FinalizationRegistry<number>((handle) => {

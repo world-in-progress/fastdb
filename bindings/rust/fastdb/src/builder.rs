@@ -514,6 +514,10 @@ impl BuildPlan {
             graph_object_count: raw.graph_object_count,
         })
     }
+
+    pub(crate) fn as_raw(&self) -> *mut sys::fdb_payload_v1_plan_t {
+        self.raw.as_ptr()
+    }
 }
 
 impl Clone for BuildPlan {

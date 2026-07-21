@@ -18,6 +18,29 @@ export interface FieldDefView {
   vmax: number;
 }
 
+export interface PayloadBackingStatsView {
+  reservations: bigint;
+  writes: bigint;
+  commits: bigint;
+  rollbacks: bigint;
+  retains: bigint;
+  releases: bigint;
+}
+
+export interface WxPayloadBackingHandle {
+  backingAddress(): number;
+  stats(): PayloadBackingStatsView;
+  delete(): void;
+}
+
+export interface WxPayloadOwnedBytesHandle {
+  dataAddress(): number;
+  size(): number;
+  backingAddress(): number;
+  ownerToken(): number;
+  delete(): void;
+}
+
 export interface WxLayerTableBuildHandle {
   name(): string;
   addField(name: string, fieldType: number, vmin?: number, vmax?: number): number;
@@ -131,6 +154,15 @@ export interface FastdbModule {
   WxMemoryStream: new () => WxMemoryStreamHandle;
   WxDatabaseBuild: new () => WxDatabaseBuildHandle;
   WxDatabase: WxDatabaseHandleStatic;
+  WxPayloadBacking: new (
+    allowDirect: boolean,
+    failWrite: boolean,
+    failCommit: boolean,
+  ) => WxPayloadBackingHandle;
+  WxPayloadOwnedBytes: new (
+    source: number,
+    size: number,
+  ) => WxPayloadOwnedBytesHandle;
   gtAny: number;
   gtPoint: number;
   gtLineString: number;
@@ -193,7 +225,9 @@ export interface FastdbModule {
   _fdb_payload_v1_capabilities_init(capabilities: number): void;
   _fdb_payload_v1_builder_options_init(options: number): void;
   _fdb_payload_v1_fixed_run_init(run: number): void;
+  _fdb_payload_v1_open_options_init(options: number): void;
   _fdb_payload_v1_plan_info_init(info: number): void;
+  _fdb_payload_v1_execution_report_init(report: number): void;
   _fdb_payload_v1_spec_capabilities(
     spec: number,
     outCapabilities: number,
@@ -381,6 +415,54 @@ export interface FastdbModule {
   _fdb_payload_v1_plan_info(
     plan: number,
     outInfo: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_plan_execute(
+    plan: number,
+    policy: number,
+    backing: number,
+    outPayload: number,
+    outReport: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_payload_open_copy(
+    spec: number,
+    bytes: number,
+    byteCount: bigint,
+    options: number,
+    outPayload: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_payload_open_external(
+    spec: number,
+    bytes: number,
+    byteCount: bigint,
+    backing: number,
+    ownerToken: number,
+    options: number,
+    outPayload: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_payload_retain(payload: number): void;
+  _fdb_payload_v1_payload_release(payload: number): void;
+  _fdb_payload_v1_payload_sha256(
+    payload: number,
+    outDigest: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_payload_profile(
+    payload: number,
+    outProfile: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_payload_execution_report(
+    payload: number,
+    outReport: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_payload_binary_blob(
+    payload: number,
+    outBlob: number,
     outError: number,
   ): number;
   _fdb_payload_v1_blob_data(blob: number): number;

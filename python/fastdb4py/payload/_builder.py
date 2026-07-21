@@ -7,11 +7,14 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import struct
 import threading
-from typing import Iterator, Optional, Sequence, Type, TypeVar
+from typing import TYPE_CHECKING, Iterator, Optional, Sequence, Type, TypeVar
 
 from . import _ffi
 from ._error import PayloadError, binding_error
 from ._spec import CompiledSpec, _check_status, _input_bytes
+
+if TYPE_CHECKING:
+    from ._runtime import BuildPolicy, BuildResult, MemoryBacking
 
 
 _U64_MAX = (1 << 64) - 1
@@ -193,6 +196,15 @@ class BuildPlan:
             direct_build_status=int(raw.direct_build_status),
             graph_object_count=int(raw.graph_object_count),
         )
+
+    def execute(
+        self,
+        policy: BuildPolicy,
+        backing: Optional[MemoryBacking] = None,
+    ) -> BuildResult:
+        from ._runtime import execute_plan
+
+        return execute_plan(self, policy, backing)
 
     def _require_handle_locked(self) -> _ffi.Handle:
         if self._handle is None:

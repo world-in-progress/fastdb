@@ -1,8 +1,14 @@
 //! Safe Rust projection of the FastDB portable-payload Core.
 
 mod builder;
+mod runtime;
 
 pub use builder::{BuildPlan, Builder, BuilderOptions, FixedRun, ObjectHandle, PlanInfo};
+pub use runtime::{
+    BackingFailure, BackingObserver, BuildPolicy, BuildResult, ExecutionMode, ExecutionReport,
+    ExternalBytes, FallbackReason, MemoryBacking, OpenOptions, Payload, ReservationRequest,
+    ReserveMode,
+};
 
 use fastdb_sys as sys;
 use std::error::Error;
@@ -16,7 +22,7 @@ pub enum Profile {
 }
 
 impl Profile {
-    fn from_raw(value: u32) -> Result<Self, PayloadError> {
+    pub(crate) fn from_raw(value: u32) -> Result<Self, PayloadError> {
         match value {
             sys::FDB_PAYLOAD_PROFILE_RECORD_V1 => Ok(Self::RecordV1),
             sys::FDB_PAYLOAD_PROFILE_OBJECT_GRAPH_V1 => Ok(Self::ObjectGraphV1),
@@ -173,7 +179,9 @@ pub struct Blob {
 }
 
 impl Blob {
-    unsafe fn from_raw(raw: *mut sys::fdb_payload_v1_blob_t) -> Result<Self, PayloadError> {
+    pub(crate) unsafe fn from_raw(
+        raw: *mut sys::fdb_payload_v1_blob_t,
+    ) -> Result<Self, PayloadError> {
         NonNull::new(raw).map(|raw| Self { raw }).ok_or_else(|| {
             PayloadError::binding(
                 sys::FDB_PAYLOAD_E_INTERNAL,
