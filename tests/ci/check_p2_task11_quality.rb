@@ -322,10 +322,12 @@ def check_documentation
                   "schema README does not link the P2 traceability map")
   require_quality(compact.call(changelog).include?("P2 record binary/runtime/lifetime"),
                   "changelog lacks the P2 local implementation entry")
-  expected_index =
-    "P2 locally complete/frozen; P3-P5 and hosted evidence pending"
-  require_quality(compact.call(index).include?(expected_index),
-                  "issue index overstates or omits the P2 review state")
+  issue_row = index.lines.find { |line| line.include?("[0002]") }
+  require_quality(!issue_row.nil? && issue_row.include?("Open") &&
+                  issue_row.include?("P2") &&
+                  issue_row.match?(/locally (?:complete\/)?frozen/) &&
+                  issue_row.include?("hosted evidence pending"),
+                  "issue index overstates or omits the frozen P2/local-hosted state")
 end
 
 def check_malformed_class_map
