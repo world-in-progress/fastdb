@@ -7,31 +7,73 @@
 
 ## Purpose
 
-FastDB 0.2.0 must establish the complete semantic foundation, not merely the shortest working path. The items below are deferred only where they require an additional storage/backing/platform design that is not necessary to make the declared V1 semantics correct and usable. Each deferral is explicit so a present implementation limit cannot be mistaken for a permanent protocol rule or silently forgotten.
+FastDB 0.2.0 must establish the complete semantic foundation, not merely the shortest working path. Open items below are deferred only where they require an additional storage/backing/platform design that is not necessary to make the declared V1 semantics correct and usable. Closed items remain in place with their resolution evidence so a historical limit is neither mistaken for a permanent protocol rule nor silently erased.
 
-## D1. Dynamic `object_graph.v1` with `REQUIRE_DIRECT`
+## D1. Dynamic `object_graph.v1` with `REQUIRE_DIRECT` — Closed
 
-### Current limit
+- **Closed locally:** 2026-07-20
+- **Design:** [Portable Payload Object-Graph Runtime
+  Design](../superpowers/specs/2026-07-20-portable-payload-object-graph-runtime-design.md)
+- **Implementation:** `5ee2eb8` (exact graph plan and direct/staged
+  execution), `2f06e52` (public ABI projection), and `2730e9e` (hostile-input,
+  fuzz, Wasm, ABI, package, and proof hardening); `5d5939b` verifies the
+  open-to-closed D1 proof-map transition itself, and `1f0be6c` fail-closes the
+  complete closure traceability contract
 
-Ordinary `object_graph.v1` compile, build, open, decode, checked view, materialize, and invalidation are required in 0.2.0. A graph whose final pool sizes and reference fixups are not knowable before authoring may build through `ALLOW_STAGING`, but `REQUIRE_DIRECT` returns `FDB_PAYLOAD_E_DIRECT_UNAVAILABLE` with a stable reason.
+### Resolution
 
-### Why it is deferred
+Complete logical authoring freezes into an exact immutable `GraphLayout` before
+execution. `GraphEncoder::encode_graph` writes through `AscendingWriter` and a
+`ByteSink`; the direct branch in `BuildPlan::execute` supplies
+`RangeCallbackSink` over the caller's final reservation. No growth callback,
+backing-ABI change, arbitrary maximum reservation, or second complete encoded
+image is required.
 
-Truthful direct construction requires the Core to know the final contiguous size and fixup locations before it reserves the final backing. Dynamic cyclic graphs can discover object, list, string, and reference-pool sizes during authoring. Pretending that a later full-image copy is direct would violate the backing contract; reserving an arbitrary maximum would create resource and denial-of-service problems.
+The named executable proof is
+`tests/cpp/payload/test_graph_backing.cpp::test_direct_graph_has_no_full_image_allocation`.
+It builds a variable-width graph larger than four MiB containing cycles,
+sharing, lists, `str`, `wstr`, and bytes, then proves together that:
 
-### Impact and dependencies
+- the caller backing receives exactly one direct reserve and no staged reserve;
+- the Core heap-backing observer records no direct or staged heap-image reserve;
+- range writes are monotonic, non-overlapping, and cover the exact final length;
+- an allocation threshold below one full image permits direct execution while a
+  deliberate complete-image allocation fails;
+- the direct report is `DIRECT/NONE` with `staging_bytes = 0`;
+- `test_graph_staging_policy_and_cleanup` proves allowed staged execution is
+  byte-identical and reports the actual fallback and staging byte count;
+- injected pre/post-commit failures preserve exact rollback/release behavior.
 
-- Users with dynamic graphs must permit staging or receive an explicit direct-unavailable error; all ordinary graph semantics remain available.
-- Integrators cannot advertise zero-copy/direct graph output merely because the final copy lands in shared memory.
-- Core developers need a size/growth and fixup design plus backing-ABI analysis before closing this item.
-- Correctness and interoperability are preserved now by reporting the actual mode instead of weakening `REQUIRE_DIRECT`.
+The source audit covers `GraphEncoder.cpp` (`AscendingWriter`, `ByteSink`,
+`zero_until`, and `encode_graph`), `BuildPlan.cpp` (`RangeCallbackSink`,
+`encode_profile`, reservation commit, and `ExecutionReport`), and the
+`BUILD_TESTING`-only observer in `HeapBacking.cpp`. The complete local P3 gate
+ran on macOS 26.5.2 arm64 with AppleClang 21.0.0, CMake 4.3.2, CMake's system
+Python 3.14.5, uv's test environment on Python 3.14.3, Node 25.8.1, and
+Emscripten 5.0.2. Apple ASan required `detect_leaks=0`, so no local
+LeakSanitizer result is claimed; hosted Linux/macOS results remain pending.
 
-### Closure criteria
+The context-owning primary agent reviewed the complete P3 range and the D1
+source/evidence boundary with no unresolved Critical, Important, or material
+Minor finding. Per explicit user direction this was not delegated, so no
+independent/subagent review is claimed.
 
-- A reviewed planning model can determine or safely grow final graph regions without creating a complete staged payload.
-- The backing ABI represents any required growth/fixup behavior without changing existing V1 callback meanings.
-- Direct execution passes graph cycles, shared refs, variable strings/lists, injected allocation failures, and deterministic-binary tests.
-- The execution report proves that no complete payload image was staged outside final backing.
+### Historical concern retained
+
+At issue opening, mutable authoring was assumed to imply that final pool sizes
+and fixups could remain unknown when final backing was reserved. That concern
+correctly rejected a later full-image copy mislabeled as direct and rejected an
+arbitrary maximum reservation. P3 superseded only the assumption: V1 already
+freezes complete logical authoring, and the resulting immutable plan knows all
+sizes, IDs, offsets, and fixups before execution.
+
+### Current impact
+
+There is no remaining D1 limit for ordinary `object_graph.v1`. A caller that
+requires direct execution receives it when the backing accepts the exact direct
+reservation; a backing that declines direct still produces
+`FDB_PAYLOAD_E_DIRECT_UNAVAILABLE` under `REQUIRE_DIRECT`, while
+`ALLOW_STAGING` may make a truthful staged fallback. D2-D5 below remain open.
 
 ## D2. Segmented or multipart final backing
 

@@ -3,14 +3,17 @@
 This directory contains the native implementation that the higher-level bindings build on.
 
 > **Portable payload status:** The C++ Core owns P1 specification compilation
-> and identity plus the P2 non-reference `record.v1` binary, build/open,
-> backing, checked-view, materialization, and invalidation behavior. The public
-> C ABI contains exactly 99 reviewed `fdb_payload_v1_*` symbols, and the C++17
-> facade projects that ABI. Task 11 now includes its reviewed binary-open
-> corpus/robustness target; its complete fresh local gate is green and its
-> same-reviewer final review reports zero findings. P2 is locally frozen, while
-> P3-P5 remain open. No Rust/Python/TypeScript portable projection
-> or 0.2.0 release is claimed. See the [current status
+> and identity, the frozen P2 non-reference `record.v1` runtime, and the locally
+> frozen P3 ordinary `object_graph.v1` runtime. Graph support includes every V1
+> value, roots/refs, sharing/cycles, exact profile-2 bytes and hardened open,
+> truthful direct/staged backing, checked views/invalidation, and detached
+> reachable-closure materialization. The public C ABI contains exactly 105
+> reviewed `fdb_payload_v1_*` symbols, and the C++17 facade projects that ABI.
+> D1 is closed by executable no-full-image evidence and the complete local P3
+> gate is green. The user-authorized final review was performed by the
+> context-owning primary agent and is not claimed as independent. P4-P5,
+> hosted CI, Rust/Python/official TypeScript portable projections, codegen, and
+> the 0.2.0 release remain open. See the [current status
 > issue](../docs/issues/0002-portable-payload-foundation-implementation-status.md)
 > and [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
 
@@ -57,8 +60,9 @@ The current 0.1.x storage API lives in:
 
 The implemented portable surface adds the stable C header
 `fastdb_payload.h` and the thin C++ RAII facade `fastdb_payload.hpp`. Both
-expose the P1 compile/query and P2 record runtime/lifetime families; neither
-binding owns independent wire-format semantics.
+expose the P1 compile/query, P2 record, and P3 graph runtime/lifetime families;
+neither facade owns independent topology, wire-format, planning,
+materialization, or lifetime semantics.
 
 ## Emscripten exception model
 

@@ -2,11 +2,13 @@
 
 - **Status:** Accepted
 - **Accepted:** 2026-07-20
+- **Local implementation:** Complete and frozen at the exact ABI-105 boundary;
+  hosted and release evidence remain pending
 - **Target tranche:** Portable payload P3
 - **Frozen baseline:** `74b50faa2013315f2db8a8dcb18dbf5551e2bb48`
 - **Parent design:** [FastDB Portable Payload Foundation Design](2026-07-16-portable-payload-foundation-design.md)
 - **Authority decision:** [ADR-0001](../../decisions/0001-portable-payload-core-authority.md)
-- **Current deferrals:** [Issue 0001](../../issues/0001-portable-payload-deferred-capabilities.md)
+- **Remaining deferrals:** [Issue 0001](../../issues/0001-portable-payload-deferred-capabilities.md)
 - **Implementation status:** [Issue 0002](../../issues/0002-portable-payload-foundation-implementation-status.md)
 - **Current binary authority:** [`fastdb.payload.bin.v1`](../../../schemas/fastdb.payload.bin.v1.md)
 
@@ -14,8 +16,18 @@
 
 This document is the accepted P3 delta design for the complete ordinary
 `object_graph.v1` runtime. It closes the design gaps left after the P1 compiler
-and P2 `record.v1` runtime were frozen. It does not claim that P3 is already
-implemented, reviewed, or release-ready.
+and P2 `record.v1` runtime were frozen. Tasks 1-9 implement and harden this
+design in the C++ Core and its C/C++ projection; Task 10 records the local P3
+freeze and D1 closure. The exact implementation commits are `7ed553e`,
+`996163e`, `34d4b44`, `3dd7336`, `5ee2eb8`, `a7cb69e`, `4e74350`,
+`2f06e52`, and `2730e9e`; `5d5939b` makes the proof-gate unit tests accept and
+adversarially verify the formal D1 state transition, and `1f0be6c` makes the
+closed-state gate fail on missing/misordered design or Goal trace rows and on
+absent implementation symbols. `5807f72` narrows the historical P2 quality
+gate to its owned P2/local-versus-hosted facts so it does not require the
+already completed P3 tranche to remain pending. This is local implementation
+evidence, not a 0.2.0 release or a hosted-CI result. P4 projections/codegen and
+P5 clean cut remain open.
 
 The design defines the exact graph storage model, builder state machine,
 binary profile, direct/staged planning behavior, hardened open rules, checked
@@ -37,12 +49,13 @@ The following P2 facts remain frozen:
 - committed payloads are immutable and invalidation drains checked accesses
   before the backing is released or reused.
 
-Where the parent design or Issue 0001 says that dynamic graph
-`REQUIRE_DIRECT` is deferred, this document records the accepted replacement
+The parent design and Issue 0001 historically said that dynamic graph
+`REQUIRE_DIRECT` was deferred. This document supplied the accepted replacement
 design: a complete graph is frozen into an exact immutable plan before
-execution, so P3 can write it directly. That design decision alone does not
-close D1. D1 remains open until the normative documents are revised and the
-reviewed implementation evidence in Section 18 exists.
+execution, so P3 can write it directly. Task 5 implemented that path, Task 9
+hardened its proof, and Task 10 revised the normative documents after the
+Section 18 evidence existed. D1 is therefore closed locally while its original
+fake-direct concern and rationale remain preserved as history.
 
 ## 2. Decision summary
 
@@ -573,9 +586,9 @@ The complete logical builder state is not an encoded staging image. D3 still
 accurately records that authoring memory grows with the complete logical
 payload and that V1 is not a streaming builder.
 
-D1 may be marked closed only after Section 18's direct-path proof and review
-are committed. Until then, manifest and implementation-status documents must
-not claim graph direct support merely because this design is accepted.
+D1 is closed locally by the committed Section 18 direct-path proof and the
+Task 10 evidence review. The executable manifest claim follows the implemented
+exact-plan path; it was not inferred from design acceptance alone.
 
 ## 11. Hardened graph open
 
@@ -1041,7 +1054,10 @@ The final P3 task reruns, after the last review fix:
 
 P3 then receives a fresh read-only completion review. Every Critical,
 Important, and correctness/portability/lifetime/determinism/ABI/format/coverage
-Minor is fixed and returned to the same reviewer until the result is zero.
+Minor is fixed and re-reviewed until the result is zero. For this local freeze,
+the user explicitly required the context-owning primary agent to perform that
+review instead of delegating it; the evidence therefore records a primary-agent
+review and does not claim an independent/subagent review.
 
 ## 19. Documentation transition and D1 closure
 
@@ -1115,8 +1131,11 @@ following:
 10. The C++ facade remains a thin C ABI projection.
 11. P2 record bytes, errors, validation work, lifetime, and its original 99
     symbols retain their frozen meaning.
-12. All focused and broad gates pass after final fixes, and independent review
-    has no unresolved Critical, Important, or material Minor finding.
+12. All focused and broad gates pass after final fixes, and the explicitly
+    authorized read-only completion review has no unresolved Critical,
+    Important, or material Minor finding. This local freeze used the
+    context-owning primary agent by user direction and does not claim
+    independent-review evidence.
 13. Issue 0001 D1 and Issue 0002 state implementation, local evidence, hosted
     status, and remaining limitations exactly.
 14. No version bump, push, tag, publish, or release claim occurs without a

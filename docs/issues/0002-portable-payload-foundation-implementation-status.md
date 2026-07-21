@@ -13,34 +13,29 @@
 ## Purpose
 
 The accepted 0.2.0 design defines a complete portable-payload foundation. The
-current repository implements the P1 compiler/query boundary, the complete P2
-non-reference record Core, the Task 9 public C builder/plan/open/owner tranche,
-and the local Task 10 checked view/access/materialization C ABI and C++ runtime
-facade, while it still ships the 0.1.x call-db/`ColumnEngine` implementation.
-P1 Task 9 has completed local
-independent implementation review; its first hosted CI execution remains
-pending. P2 Tasks 7 and 8 pass their local Debug, Release, Core-wasm,
-language/package, and ABI-33 gates; their independent completion reviews each
-report zero Critical, Important, or Minor findings. P2 Task 9 also passes its
-local Debug, Release, Core-wasm, language/package, cross-target C-header, and
-exact ABI-72 gates, and its final independent review reports zero Critical,
-Important, or Minor findings. A Task 10 retained-log audit found that the
-historical Task 7-9 sanitizer CTest exit-passes contained recoverable
-test-harness alignment diagnostics; the corrected cumulative Task 10
-halt-on-error sanitizer proof supersedes those earlier cleanliness claims as
-recorded below. P2 Task 10 local implementation and gates are complete with the
-exact 99-symbol ABI, and its final independent review reports zero Critical,
-Important, or Minor findings. Task 11 workflow/package quality,
-source-build Emscripten propagation, proof mapping, reviewed binary-open
-corpus, and deterministic/fuzz robustness targets are now implemented locally;
-its complete fresh local gate is green. The first final-P2 review found two
-Important proof/tooling defects: most named seeds stopped at an unrelated spec
-digest, and the package checker could not start on supported Python 3.10. Both
-are corrected and fully re-gated below. The same reviewer then confirmed both
-findings closed and reported zero Critical, Important, or Minor findings. P2
-is now locally complete and frozen at the exact 99-symbol C ABI.
-P3-P5 graph, language-parity, codegen, clean-cut, and release work also remain
-open. This issue records that temporary gap through the 0.2.0 clean cut.
+current repository now has locally frozen P1 compiler/query, P2
+`record.v1`, and P3 ordinary `object_graph.v1` Core/runtime slices. P3 Tasks
+1-9 implement one graph topology and authoring model, exact profile-2 bytes and
+hardened open, truthful direct/staged backing, checked views and invalidation,
+reachable-closure materialization, the exact 105-symbol C ABI, a thin C++17
+facade, the reviewed 16-seed hostile corpus/fuzz target, and full Core Wasm
+graph proof. Task 10 formally closes D1 and freezes that local evidence without
+changing production code, ABI, schema semantics, package version, or release
+metadata.
+
+The final P3 read-only review is performed by the context-owning primary agent
+because the user explicitly prohibited delegation for this work. It reports no
+unresolved Critical, Important, or material Minor finding, but it is not an
+independent/subagent review and this issue does not claim otherwise. Local
+macOS sanitizer/fuzzer constraints and all exact Task 10 gate results are
+recorded below. Hosted CI remains pending because no push was authorized.
+
+P4 Rust/Python/official TypeScript-Wasm portable projections and Core-owned
+four-language code generation remain open. P5 legacy authority removal,
+`RecordEngine` clean rename, package/version release readiness, and later
+C-Two-owned composition also remain open. The repository still ships the
+0.1.x call-db/`ColumnEngine` migration surface, so Issue 0002 remains open and
+no FastDB 0.2.0 release is claimed.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -100,7 +95,7 @@ Current repository state:
 - Task 11 also defines separate Emscripten and Python package jobs, native and wasm exact ABI-99 checks, exact sdist/wheel inventory validation, the exact seven-diagnostic SWIG baseline owned by Issue 0003, and one executable path-aware aggregate whose 16 scope combinations and every incorrect job result are tested. The package job now has exact Python 3.10/3.12 matrix legs. Its standard-library-only checker derives and cross-checks distribution identity from sdist/wheel filenames and their `PKG-INFO`/`METADATA`, so it does not import a Python-3.11-only TOML module. These are hosted job definitions only until an authorized run exists;
 - Task 11 adds `fuzz_payload_open` over borrowed input with bounded options, one fixed comprehensive matching spec and one deliberate digest-mismatch spec. All 10 reviewed seeds now embed the comprehensive spec digest: the Core-generated `component-list-empty` golden proves the empty form; reviewed scalar/text mutations provide distinct valid fixed/text forms; the full composition is the list form; and every malformed seed derives from one of those matching valid images. The deterministic runner asserts each seed's expected success or exact status/path before invoking the shared fuzz harness, so malformed offset/validity/text/list coverage cannot silently collapse to `DIGEST_MISMATCH`. Successful opens traverse every value kind through the public C ABI, exercise scoped spans, materialize before invalidation, and traverse the detached result afterward; fuzz failures are opened twice and compared across status, code, symbol, path, message, and canonical details. A machine-checked 14-class map names the hostile binary, backing, allocation, generation, and access-drain proofs;
 - Task 11's complete fresh post-review-fix local gate is green: Debug passes 30/30 in 22.46 seconds and Release passes 30/30 in 8.70 seconds, each with exact native ABI-99; the hard-fail ASan+UBSan suite passes 30/30 in 95.78 seconds with a zero-diagnostic retained-log scan; focused ThreadSanitizer passes 4/4; the Core, pure-C, C++ facade, and single-thread injected-failure Emscripten paths pass with exact wasm ABI-99 and structural flag inspection; the unchanged arm64/x86-64/wasm32 C11 checks remain green; Python passes 413/413 plus compileall; a fresh Python 3.10 sdist/wheel build passes the exact inventory checker under both Python 3.10 and the current interpreter; and a clean paired TypeScript/WASM rebuild passes 76/76. The local libFuzzer and LeakSanitizer toolchain limits remain explicitly bounded below. The first review's two Important findings are corrected, and the same reviewer confirms both closed with zero Critical, Important, or Minor findings;
-- P3 Tasks 1-8 now provide one Core-owned graph topology, logical authoring,
+- P3 Tasks 1-8 provide one Core-owned graph topology, logical authoring,
   complete normative profile-2 layout/encoding and hardened open, iterative
   reachability, typed index-cursor facts, immutable graph BuildPlan,
   direct/staged backing execution, strict final-image validation, checked
@@ -113,19 +108,22 @@ Current repository state:
   exactly 105 symbols while preserving the old 99 declarations and record
   behavior. Guard-page and canary tests prove old and partial prefixes do not
   read or write the new tails;
-- graph manifests now truthfully report runtime `available`, layout
+- graph manifests truthfully report runtime `available`, layout
   `object_pool_aos`, operations
   `compile,query,build,open,view,materialize,invalidate`, direct build
   `eligible/graph_layout_exact_after_freeze`, and no codegen targets. Task 9
-  robustness/corpus/fuzz/full-wasm/CI/package proof and final review, Task 10
-  D1/P3 closure, and all P4-P5 work remain open;
+  adds the 16-seed graph-aware hostile corpus, fuzz traversal/equality, full
+  Core Wasm graph runtime, ABI/package/workflow hardening, complete fresh local
+  gates, and a zero-finding primary-agent review. Task 10 closes D1 and freezes
+  P3 locally at ABI-105. P4-P5 work remains open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
-The P1 compiler/query and P2 record-runtime slices are implemented,
-independently reviewed, and locally frozen. Their first hosted CI execution
-remains pending. The repository must
-not claim that the complete portable payload foundation or FastDB 0.2.0 is
-implemented.
+P1, P2, and P3 are locally implemented and frozen. P1/P2 retain their recorded
+independent-review evidence; P3 uses the user-authorized context-owning
+primary-agent review and does not claim independence. Their first hosted CI
+execution remains pending. The repository must not claim that the complete
+portable payload foundation or FastDB 0.2.0 is implemented because P4 and P5
+remain non-deferrable.
 
 ## Current limit
 
@@ -134,13 +132,14 @@ author, build, open, copy, navigate, materialize, and invalidate complete
 `record.v1` and ordinary `object_graph.v1` payloads through the public C ABI and
 thin C++ facade. Graph sharing, cycles, explicit ref dereference, payload-scoped
 identity, direct/staged backing, and the shared checked owner/access lifetime
-are executable. P2 is independently reviewed and locally frozen; P3 Task 8 is
-implemented but P3 robustness, full wasm graph proof, independent review, and
-D1 closure remain Tasks 9-10. No Rust, Python, or official TypeScript/WASM
-portable projection exists. Hosted outcomes remain pending. C-Two may consume
-only reviewed public FastDB contracts and must not depend on private headers or
-recreate FastDB semantics. Toodle consequently cannot yet treat the full
-structured-payload substrate as implemented because P3-P5 remain open.
+are executable. P2 is independently reviewed and locally frozen; P3 is locally
+frozen at the exact 105-symbol boundary with D1 closed, complete Core Wasm
+graph execution, and the explicitly non-independent primary-agent review
+described below. No Rust, Python, or official TypeScript/WASM portable
+projection or Core-owned payload codegen exists. Hosted outcomes remain
+pending. Downstream consumers may use only reviewed public FastDB contracts
+and must not depend on private headers or recreate FastDB semantics. The full
+structured-payload foundation remains incomplete because P4 and P5 are open.
 
 Raw-file/object bytes remain correctly outside FastDB in file/object storage. This implementation gap does not change that owner boundary and is not a reason to route raw files through the existing call-db path.
 
@@ -207,7 +206,28 @@ so this P2 proof index is locally frozen.
 | Goal P2: open, traverse, scoped borrow, materialize, invalidate, and release through C/C++ | 99-symbol C ABI and `fastdb_payload.hpp` | `payload.runtime_abi`, `payload.runtime_cpp_facade`, `payload.checked_view` |
 | Goal P2: source-build WebAssembly contains Core failures as stable C statuses | `fastdb_payload_emscripten_exception_model`, public `fastdb` target, ABI catch sites | `fastdb_payload_wasm_runtime_abi_single_thread --single-thread-injected-failure`, `tools/check_emscripten_exception_flags.py` |
 | Goal P2: package surfaces contain the normative contract, Python extension, and native libraries without build debris or unreviewed SWIG diagnostics | `MANIFEST.in`, Python build configuration, Issue 0003 baseline | `tests/ci/test_check_python_package_inventory.py` and `tools/check_python_package_inventory.py` over the retained build log, one sdist, and one wheel |
-| P3 Sections 9 and 14-16: graph specifications have one Core topology/logical authoring/runtime authority, complete profile-2 layout/encoding/hardened-open semantics, the shared plan/backing/owner lifecycle, checked navigation/materialization for every V1 value, and one additive public projection | `RuntimeTopology`, `RuntimeSchema`, `GraphAuthoring`, `GraphLayout`, `GraphEncoder`, `ProfileLayout`, `BuildPlan`, `open_payload`/`open_graph`, `PayloadOwner`, explicit inline/object/ref cursor variants, `GraphView`; six `fdb_payload_v1_*` graph exports and thin C++ `ObjectHandle`/`GraphIdentity` facade | `payload.graph_runtime_schema`, `payload.graph_builder`, `payload.graph_binary`, `payload.graph_backing`, `payload.payload_open`, `payload.graph_view`, `payload.graph_materialize`, `payload.runtime_abi`, `payload.runtime_cpp_facade`, guard-page/canary V1/V2 prefix tests, seven annotated graph goldens, seven exact invalid receipts, allocation sweeps, the no-full-image direct proof, a 50,000-object cycle, 32-thread immutable traversal, generation/drain/release proofs, record regressions, and exact public ABI-105; Task 9 robustness/full-wasm/final-review evidence remains open |
+| P3 Sections 9 and 14-16: graph specifications have one Core topology/logical authoring/runtime authority, complete profile-2 layout/encoding/hardened-open semantics, the shared plan/backing/owner lifecycle, checked navigation/materialization for every V1 value, and one additive public projection | `RuntimeTopology`, `RuntimeSchema`, `GraphAuthoring`, `GraphLayout`, `GraphEncoder`, `ProfileLayout`, `BuildPlan`, `open_payload`/`open_graph`, `PayloadOwner`, explicit inline/object/ref cursor variants, `GraphView`; six `fdb_payload_v1_*` graph exports and thin C++ `ObjectHandle`/`GraphIdentity` facade | `payload.graph_runtime_schema`, `payload.graph_builder`, `payload.graph_binary`, `payload.graph_backing`, `payload.payload_open`, `payload.graph_view`, `payload.graph_materialize`, `payload.runtime_abi`, `payload.runtime_cpp_facade`, guard-page/canary V1/V2 prefix tests, seven annotated graph goldens, seven exact invalid receipts, allocation sweeps, the no-full-image direct proof, a 50,000-object cycle, 32-thread immutable traversal, generation/drain/release proofs, record regressions, the 16-seed graph-aware corpus/fuzz harness, full Core Wasm graph proof, and exact public ABI-105 |
+
+## P3 requirement-to-proof traceability
+
+The machine-readable
+[`p3_malformed_class_map.json`](../../tests/ci/p3_malformed_class_map.json)
+now contains two complementary proof indexes:
+
+- the original 17 exact hostile-input/runtime proof classes, whose entries are
+  checked for definition and execution by `check_p3_runtime_quality.rb`;
+- an 18-row mapping for every P3 design Section 4-21 and a 14-row mapping for
+  every active-goal Stage B requirement. Each row names the Core implementation
+  file/symbol and an exact test, golden, corpus, or repository gate.
+
+Together those rows explicitly cover all V1 values and nullability, roots and
+refs, shared/self/mutual cycles, immutable repeatable plans, direct/staged
+truth, malformed object/root/ref IDs and inventory, work/resource limits,
+checked views and drain-before-release lifetime, dense reachable-closure
+materialization, manifest truth, old/new ABI prefixes, exact ABI-105, full Core
+Wasm execution, fuzz/corpus evidence, and frozen record non-regression. The map
+sets D1 to `closed-task-10`; the repository quality gate accepts that state
+only when this issue contains the matching closure marker below.
 
 ### Emscripten exception choice and current closure
 
@@ -724,37 +744,121 @@ remain P4; legacy clean cut, versioning, release, and C-Two composition remain
 P5. No hosted outcome, D1 closure, release, push, tag, or publication is
 claimed.
 
-**Reason:** Tasks 1-7 first established one Core graph meaning, deterministic
+#### P3 Task 10 closure evidence
+
+D1 closure state: `closed-task-10`
+
+Task 10 closes the historical direct-graph deferral and freezes ordinary P3
+locally. The implementation range is:
+
+- `7ed553e` shared runtime topology;
+- `996163e` graph authoring and temporary handles;
+- `34d4b44` profile-2 binary freeze;
+- `3dd7336` complete graph binary/open runtime;
+- `5ee2eb8` exact immutable plans and truthful direct/staged execution;
+- `a7cb69e` checked graph views and shared lifetime barrier;
+- `4e74350` detached reachable-closure materialization;
+- `2f06e52` six-function public graph projection and exact ABI-105;
+- `2730e9e` graph-aware robustness, fuzz, full Wasm, package/workflow, and
+  proof-map hardening;
+- `5d5939b` strict proof-gate unit coverage for the open-to-closed D1
+  transition, including positive class-inventory validation in either state.
+- `1f0be6c` fail-closed validation for all design Sections 4-21 and all 14
+  active Stage B trace rows, including real implementation file/symbol checks.
+- `5807f72` preservation of the frozen P2 status gate without hard-coding P3
+  as pending after P3's real closure.
+
+D1 is closed by
+`test_direct_graph_has_no_full_image_allocation`, the paired
+`test_graph_staging_policy_and_cleanup`, and the source audit of
+`GraphEncoder::encode_graph`, `AscendingWriter`, `ByteSink`,
+`RangeCallbackSink`, `BuildPlan::execute`, the test-only heap-reserve observer,
+and `ExecutionReport`. Together they prove one direct reserve, no staged or
+Core heap-image reserve, exact monotonic full-length range coverage, success
+under a threshold that rejects a complete image, truthful
+`mode`/`fallback_reason`/`staging_bytes`, byte-identical staged execution, and
+cycles/sharing/lists/text/bytes plus injected backing failures.
+
+The tracked P3 proof map now maps all design Sections 4-21 and all 14 active
+Stage B requirements to exact implementation symbols and named tests, goldens,
+corpus entries, or repository gates. Its original 17-class executable matrix,
+exact 16-seed corpus, exact ABI-105, graph manifest truth, D1 fact inventory,
+package/workflow gates, and forbidden ownership/type checks remain enforced.
+
+The context-owning primary agent performed the final read-only review of the
+complete `f0aff71..5807f72` P3 design/implementation/quality range plus the
+Task 10 documentation and proof-map delta. It reviewed Core authority,
+topology/runtime agreement,
+binary/ID/canonicality, direct/staged truth, ownership and invalidation,
+materialized closure, stable errors/resource bounds, C ABI prefixes/symbols,
+Wasm/fuzz/package/workflow evidence, and all remaining-scope claims. No
+Critical, Important, or material Minor finding remains. The user explicitly
+required this primary-context review to avoid delegation drift; it is not an
+independent/subagent review and no such evidence is claimed.
+
+The fresh Task 10 native builds pass 37/37 Debug tests in 54.38 seconds and
+37/37 Release tests in 32.87 seconds with the exact 105-symbol ABI in both
+configurations. A halt-on-error ASan+UBSan build passes 37/37 in 223.87
+seconds with no retained diagnostic; `detect_leaks=0` is explicit, so this is
+not a LeakSanitizer claim. Focused TSan passes the runtime ABI, C++ facade,
+backing, checked-view, graph-view, and graph-materialization targets 6/6 in
+48.77 seconds without a retained diagnostic. The adjusted local AppleClang
+libFuzzer run consumes the exact 16-seed corpus for 1,000 runs in six seconds
+without a sanitizer diagnostic or crash artifact; hosted Linux remains the
+portable default-fuzzer authority.
+
+The Emscripten build passes the Core graph harness, pure-C link smoke, C++
+facade, single-thread injected-failure runtime proof, graph-runtime proof, and
+exception helper, while retaining ABI-105. Python passes 413/413 plus
+compileall; the package helper passes 13/13 after a fresh `uv build`, producing
+only the expected 0.1.22 cp314t arm64 wheel and source distribution inventory.
+The paired TypeScript/Wasm build passes 76/76. Strict C11 header compilation
+passes arm64, x86_64, and wasm32; the x86_64 native build, pure-C smoke under
+Rosetta, and ABI-105 check pass. A production `BUILD_TESTING=OFF` build passes
+and contains no test-only heap-reserve-observer symbol.
+
+The final tracked-tree replay after this evidence edit reproduces those test
+counts and passes pinned-dependency, embedded-schema, exact 16-seed corpus,
+P2/P3 repository-quality, duplicate-key JSON/proof-map, Markdown JSON/link,
+placeholder, exact-scope, and `git diff --check` gates. It ran on macOS 26.5.2
+arm64 with AppleClang 21.0.0, CMake 4.3.2, CMake's system Python 3.14.5, uv's
+Python 3.14.3 environment, Node 25.8.1, and Emscripten 5.0.2. Hosted
+Linux/macOS jobs remain definitions rather than passes. No version, push, tag,
+release, or publication operation is authorized.
+
+**Reason:** Tasks 1-7 established one Core graph meaning, deterministic
 identity and reachability, exact bytes, hardened open, checked lifetime, and
 detached closure semantics. Task 8 publishes that completed ordinary runtime
-directly instead of creating a second public graph implementation. Robustness,
-cross-toolchain proof, and closure remain separate because capability
-availability must not be confused with final phase readiness.
+directly instead of creating a second public graph implementation. Task 9
+separately hardened robustness and cross-toolchain proof, and Task 10 closes
+P3 documentation only after that evidence existed.
 
 **Impact:** C and C++ callers can now author, freeze, execute, open, navigate,
 materialize, invalidate, and exchange ordinary `object_graph.v1` payloads with
 all V1 values, sharing, and cycles. Other language SDKs still lack this
 portable-payload projection; the existing 0.1 call-db surface is not a
-substitute and does not own graph meaning. Consumers must not interpret the
-current public capability as P3 review closure or 0.2.0 release readiness.
+substitute and does not own graph meaning. P3 closure does not imply P4/P5,
+hosted-CI, package-version, or 0.2.0 release readiness.
 
 **Owner and dependencies:** FastDB owns graph semantics in its C++ Core and
 projects them through the stable C ABI. Task 9 consumes Task 8's exact ABI-105
 surface and adds robustness, wasm, CI/package proof, and review. Task 10
-consumes a review-clean Task 9 to close D1/P3 truthfully. P4 owns language
-projections/codegen only after P3 closes; C-Two remains a downstream composer
-and does not own FastDB graph meaning.
+consumes that hardened Task 9 boundary to close D1/P3 truthfully. P4 is now the
+next FastDB owner slice for language projections/codegen; downstream
+composition remains outside FastDB and does not own FastDB graph meaning.
 
-**Closure criteria:** Complete P3 Tasks 9-10: pass direct/staged, lifetime,
-16-seed corpus/fuzz, sanitizer, full wasm graph, package, workflow-definition,
-proof-map, complete fresh-gate, and independent review requirements; then
-close D1 and P3 with exact evidence. No currently accepted ordinary P3 semantic
-is deferred merely to shorten implementation.
+**Closure result:** P3 direct/staged, lifetime, 16-seed corpus/fuzz, sanitizer,
+full Wasm graph, package, workflow-definition, proof-map, ABI-105, and complete
+fresh local-gate requirements pass. D1 and P3 are closed locally with exact
+evidence. The accepted independent-review step is explicitly replaced for this
+freeze by the user's primary-context review direction and is not misreported as
+independent. No ordinary P3 semantic was deferred to shorten implementation.
 
 ### P4 language projections and payload code generation
 
-**Current limit:** The P1 compile/query, P2 record runtime, and P3 Task 8 graph
-runtime exist in the C ABI with thin C++ facades over that same ABI. There is
+**Current limit:** The P1 compile/query, P2 record runtime, and locally frozen
+P3 graph runtime exist in the exact ABI-105 C boundary with thin C++ facades
+over that same ABI. There is
 still no Rust, Python, or official TypeScript/WASM portable-payload projection,
 and the Core does not generate C++, Rust, Python, or TypeScript payload
 artifacts. Existing hand-written 0.1.x call-db layers are migration inputs, not
@@ -764,11 +868,11 @@ portable-payload projections.
 the frozen P2/P3 runtime ABI and binary meaning.
 
 **Impact:** Portable compile/query/build/open/view/materialize is available to
-C and C++ callers through the locally implemented P3 Task 8 boundary. No Rust,
+C and C++ callers through the locally frozen P3 boundary. No Rust,
 Python, or official TypeScript/WASM binding can yet exercise the shared golden
 corpus, and no language can consume a Core-owned generated artifact set.
 
-**Next owner slice:** FastDB P4 after P3 closes.
+**Next owner slice:** FastDB P4 from the frozen ABI-105 boundary.
 
 **Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
 the same Core ABI and pass canonical, binary, value, error, lifetime, and
@@ -960,9 +1064,9 @@ result.
 |---|---|---|
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
-| P3. Object-graph runtime | Tasks 1-8 implement and publicly project the one Core graph topology, authoring, profile-2 bytes/open, iterative reachability, direct/staged plan/backing/owner path, checked graph view/lifetime behavior, detached reachable-closure materialization, truthful manifest, thin C++ facade, and exact ABI-105 | Complete Tasks 9-10: 16-seed hostile-input/fuzz/full-wasm/CI/package proof, complete fresh gates, independent review, and formal D1/P3 closure |
-| P4. Language projections and payload codegen | Blocked on P3 | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
-| P5. Clean cut, release, downstream composition | Blocked on P3-P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then C-Two composes the nested FastDB sub-spec without semantic duplication |
+| P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
+| P4. Language projections and payload codegen | Open; unblocked by the local P3 ABI-105 freeze | C++/Rust/Python/TypeScript-WASM parity and deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
+| P5. Clean cut, release, downstream composition | Blocked on P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then downstream composition delegates the nested FastDB sub-spec without semantic duplication |
 
 ## Non-deferrable 0.2.0 work
 

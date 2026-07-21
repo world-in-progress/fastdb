@@ -15,9 +15,12 @@ ordered record and first annotated graph images are in the
 The frozen record mapping from accepted requirements to Core symbols, named
 tests, and ordered goldens remains the [P2 requirement-to-test
 traceability](../docs/issues/0002-portable-payload-foundation-implementation-status.md#p2-requirement-to-test-traceability)
-table; the same issue now also records the staged P3 evidence and limitations.
-It records local evidence only and keeps hosted results and later
-runtime/binding stages explicitly open.
+table. The same issue's [P3 requirement-to-proof
+traceability](../docs/issues/0002-portable-payload-foundation-implementation-status.md#p3-requirement-to-proof-traceability)
+links the locally frozen Core graph runtime to every P3 design Section 4-21,
+active-goal Stage B requirement, exact ABI-105, ordered graph goldens, and the
+17-class executable proof map. These are local P3 facts only; hosted results,
+P4 language projections/codegen, P5 clean cut, and release remain open.
 The reviewed binary-open seed inventory and exact byte recipes live in
 [`tests/fuzz/payload/binary-corpus.json`](../tests/fuzz/payload/binary-corpus.json);
 the deterministic runner and coverage-guided target both consume those bytes

@@ -339,7 +339,12 @@ They do not create FastDB resource classes, and there is no two-resource-by-two-
 - Uses validated object IDs for references; raw process pointers never appear in the binary format.
 - Allows shared references and cycles.
 - Defines entry component values as graph roots into those pools.
-- Supports ordinary build, open, decode, checked view, materialize, and invalidation in 0.2.0. Only direct final-backing construction for dynamic graphs is deferred.
+- Supports ordinary build, open, decode, checked view, materialize, invalidation,
+  and truthful direct/staged final-backing execution in 0.2.0. Complete freeze
+  produces an exact immutable graph plan, so dynamic authoring does not require
+  a complete staged encoded image during `REQUIRE_DIRECT`; the exact delta and
+  proof contract are defined by the [P3 object-graph runtime
+  design](2026-07-20-portable-payload-object-graph-runtime-design.md).
 
 The source document always declares its profile. The compiler never infers a profile from types or input values.
 
@@ -828,7 +833,10 @@ The implementation plan must add focused commands for golden parity, fuzz target
 1. Land the strict source schema, Core compiler, normalization, canonical bytes, digest, resolved model, manifest, error object, and C ABI query surface.
 2. Freeze the exact `fastdb.payload.bin.v1` byte layout with golden fixtures and implement record build/open for the complete non-ref type algebra.
 3. Add backing callbacks, build plan, direct/staged truth reporting, payload ownership, checked views, materialization, and invalidation.
-4. Add the complete ordinary `object_graph.v1` build/open/view/materialize path, including cycles and refs; dynamic graph `REQUIRE_DIRECT` remains the recorded deferral.
+4. Add the complete ordinary `object_graph.v1`
+   build/open/view/materialize/invalidate and direct/staged path, including
+   cycles and refs; close the historical dynamic-graph direct concern only
+   after the P3 no-full-image proof and formal D1 evidence review.
 5. Add C++ RAII, Rust raw/safe, Python, and TypeScript/WASM projections against the same ABI with parity tests.
 6. Add Core-owned four-target artifact generation and C-Two composition integration.
 7. Remove the old call-db/columnar authority path, rename `ColumnEngine` to `RecordEngine`, update package surfaces, and pass clean-cut gates.

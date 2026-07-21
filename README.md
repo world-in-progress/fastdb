@@ -8,38 +8,47 @@
 
 ## Portable payload status and 0.2.0 direction
 
-The current tree implements the P1 `fastdb.payload.v1` compiler/query Core and
-the P2 non-reference `record.v1` binary/runtime/lifetime path for C and C++.
-The pure-C boundary now has exactly 99 `fdb_payload_v1_*` exports. It covers
-record authoring, immutable repeatable plans, heap and external final backing,
+The current tree implements the P1 `fastdb.payload.v1` compiler/query Core,
+the P2 non-reference `record.v1` runtime, and the complete ordinary P3
+`object_graph.v1` Core/runtime path for C and C++. The pure-C boundary is
+locally frozen at exactly 105 `fdb_payload_v1_*` exports: the original 99 P2
+symbols plus six graph authoring/navigation functions. The frozen P2
+sub-boundary remains exactly 99 `fdb_payload_v1_*` exports; P3 does not rewrite
+their meaning. The combined surface covers all V1
+values and nullability, graph roots/refs, sharing and cycles, immutable
+repeatable plans, truthful direct/staged heap and external final backing,
 hardened copy/external open, checked views and scoped access, detached
-materialization, drain-before-release invalidation, and stable owned errors.
-The header-only C++17 facade projects the same C ABI rather than defining a
-second parser, layout, quantizer, or lifetime model.
+reachable-closure materialization, drain-before-release invalidation, and
+stable owned errors. The header-only C++17 facade projects the same C ABI
+rather than defining a second parser, topology, layout, graph runtime, or
+lifetime model.
 
 Native coverage-guided targets are a sanitizer configuration, not an isolated
 executable toggle. `FASTDB_BUILD_FUZZERS=ON` requires `BUILD_TESTING=ON` and
 Clang or AppleClang, and enables ASan+UBSan consistently for native libraries,
 ordinary tests, and the libFuzzer executable.
 
-Task 11 workflow, package, compatibility, traceability, and binary-opening
-quality gates are present, including a reviewed 10-seed corpus and a named
-14-class malformed-input proof map. The complete fresh Task 11 local gate is
-green, and its same-reviewer final review reports zero Critical, Important, or
-Minor findings after closing both initial Important findings. P2 is locally
-complete and frozen at the exact 99-symbol C ABI. The single-thread WebAssembly
-runtime-ABI proof uses
-the public `fastdb` CMake target and verifies that injected allocation failures
-remain contained as stable C status/error pairs. WebAssembly pthread behavior
-is not inferred from that proof; native tests plus ThreadSanitizer remain the
-concurrency authority. Hosted Linux/macOS results remain pending because this
-branch has not been pushed.
+The P3 quality boundary includes a reviewed 16-seed record/graph binary-open
+corpus, graph-aware deterministic/fuzz traversal, a 17-class executable proof
+map, exact Sections 4-21 and active Stage B traceability, full Core
+WebAssembly graph execution, and exact native/applicable-Wasm ABI-105 checks.
+D1 is closed by the large range-write-only direct test, allocation threshold,
+heap-reserve observation, staged byte-identity check, execution reports, and
+source audit. The complete local gate is green. The context-owning primary
+agent performed the final P3 review with no unresolved Critical, Important, or
+material Minor finding; by explicit user direction it was not delegated, so
+no independent/subagent review is claimed. WebAssembly pthread behavior is not
+inferred from the single-thread proof; native tests plus ThreadSanitizer remain
+the concurrency authority. Hosted Linux/macOS results remain pending because
+this branch has not been pushed.
 
 Rust, Python, and official TypeScript/WASM portable projections and Core-owned
-four-language code generation are not implemented. The `object_graph.v1`
-runtime remains P3. Those non-deferrable P2-P5 gaps are tracked in [Issue
+four-language code generation are not implemented; they remain P4. P5 legacy
+authority removal, `RecordEngine` clean rename, release readiness, and later
+downstream composition also remain open. Those non-deferrable gaps are tracked
+in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
-No hosted CI definition is represented as a hosted pass.
+No local result or workflow definition is represented as a hosted pass.
 
 The current package version and published packages remain 0.1.x and still
 contain legacy `fastdb.schema.v1`, call-db, `columnar.v1`, and `ColumnEngine`
@@ -67,7 +76,7 @@ This repository now contains three closely related layers:
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — the 0.2.0 target makes the C++ Core, rather than a language binding, the semantic authority
 - **Schema-driven codegen** — the target Core returns deterministic C++/Rust/Python/TypeScript payload artifacts in memory
-- **Portable record payload runtime** — P1 provides canonical identity and P2 now provides the locally frozen C/C++ record build/open/view/materialize/invalidate path at the exact 99-symbol boundary; P3-P5 remain open
+- **Portable record and object-graph runtime** — P1 provides canonical identity, P2 provides the frozen record path, and P3 provides the locally frozen C/C++ graph build/open/view/materialize/invalidate path with truthful direct/staged execution at the exact 105-symbol boundary; P4-P5 remain open
 
 ## Documentation map
 

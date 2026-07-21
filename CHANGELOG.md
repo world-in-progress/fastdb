@@ -96,6 +96,15 @@ When a binding is released (tagged), its section is automatically copied to the 
 ## fastdb C++ core
 
 ### Added
+- Locally completed and froze the P3 ordinary `object_graph.v1` C++ Core and
+  C/C++ runtime at the exact 105-symbol C ABI. The runtime covers all V1
+  values, graph roots/refs, sharing/cycles, exact profile-2 bytes and hardened
+  open, truthful direct/staged final backing, checked views/invalidation,
+  detached reachable-closure materialization, the 16-seed graph-aware
+  robustness/fuzz corpus, and full Core WebAssembly graph proof. D1 is closed
+  by the executable no-full-image direct evidence. This is unreleased local
+  foundation work: P4 projections/codegen, P5 clean cut, hosted CI, version
+  change, tag, publication, and 0.2.0 release remain open.
 - P1 `fastdb.payload.v1` compile/query support and the P2 record
   binary/runtime/lifetime implementation in the C++ Core, exposed through an
   exact 99-symbol pure-C `fdb_payload_v1_*` ABI and a header-only C++17 RAII
