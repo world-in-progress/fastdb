@@ -15,19 +15,29 @@ class P3RuntimeQualityTest < Minitest::Test
   end
 
   def test_rejects_missing_duplicate_or_misordered_class
+    baseline = proof_document
+    expected_d1_status = baseline.fetch("d1").fetch("status")
+    P3RuntimeQuality.check_class_inventory(baseline, expected_d1_status)
+
     document = proof_document
     document.fetch("classes").delete_at(0)
-    assert_quality_error { P3RuntimeQuality.check_class_inventory(document) }
+    assert_quality_error do
+      P3RuntimeQuality.check_class_inventory(document, expected_d1_status)
+    end
 
     document = proof_document
     document.fetch("classes")[1]["class"] =
       document.fetch("classes")[0].fetch("class")
-    assert_quality_error { P3RuntimeQuality.check_class_inventory(document) }
+    assert_quality_error do
+      P3RuntimeQuality.check_class_inventory(document, expected_d1_status)
+    end
 
     document = proof_document
     document.fetch("classes")[0], document.fetch("classes")[1] =
       document.fetch("classes")[1], document.fetch("classes")[0]
-    assert_quality_error { P3RuntimeQuality.check_class_inventory(document) }
+    assert_quality_error do
+      P3RuntimeQuality.check_class_inventory(document, expected_d1_status)
+    end
   end
 
   def test_rejects_missing_or_unexecuted_proof_symbol
@@ -78,18 +88,29 @@ class P3RuntimeQualityTest < Minitest::Test
   end
 
   def test_rejects_missing_d1_proof_fields
-    P3RuntimeQuality.check_d1_contract(proof_document.fetch("d1"))
+    d1 = proof_document.fetch("d1")
+    expected_status = d1.fetch("status")
+    P3RuntimeQuality.check_d1_contract(d1, expected_status)
     P3RuntimeQuality::D1_KEYS.each do |key|
-      invalid = proof_document.fetch("d1").dup
+      invalid = d1.dup
       invalid.delete(key)
-      assert_quality_error { P3RuntimeQuality.check_d1_contract(invalid) }
+      assert_quality_error do
+        P3RuntimeQuality.check_d1_contract(invalid, expected_status)
+      end
     end
   end
 
   def test_d1_status_requires_the_explicit_expected_transition
-    open_d1 = proof_document.fetch("d1")
-    closed_d1 = open_d1.merge("status" => P3RuntimeQuality::D1_CLOSED_STATUS)
+    current_d1 = proof_document.fetch("d1")
+    open_d1 = current_d1.merge("status" => P3RuntimeQuality::D1_OPEN_STATUS)
+    closed_d1 = current_d1.merge(
+      "status" => P3RuntimeQuality::D1_CLOSED_STATUS
+    )
 
+    P3RuntimeQuality.check_d1_contract(
+      open_d1,
+      P3RuntimeQuality::D1_OPEN_STATUS
+    )
     P3RuntimeQuality.check_d1_contract(
       closed_d1,
       P3RuntimeQuality::D1_CLOSED_STATUS
