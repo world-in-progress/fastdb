@@ -49,6 +49,18 @@ class CheckError(RuntimeError):
     """The npm payload package is incomplete or unsafe to consume."""
 
 
+def load_json_no_duplicates(source: str, label: str) -> Any:
+    def object_from_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise CheckError(f"{label} contains duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    return json.loads(source, object_pairs_hook=object_from_pairs)
+
+
 def exact_package(package_dir: Path) -> Path:
     try:
         entries = sorted(package_dir.resolve(strict=True).iterdir())
@@ -218,7 +230,11 @@ def main() -> int:
             package_json = archive.extractfile("package/package.json")
             if package_json is None:
                 raise CheckError("npm package is missing package.json contents")
-            check_package_json(json.loads(package_json.read().decode("utf-8")))
+            check_package_json(
+                load_json_no_duplicates(
+                    package_json.read().decode("utf-8"), "package.json"
+                )
+            )
         run_smoke(package)
     except (
         CheckError,

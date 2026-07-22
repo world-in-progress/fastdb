@@ -85,6 +85,14 @@ def valid_document() -> dict[str, object]:
 
 
 class ProjectionMapTests(unittest.TestCase):
+    def test_rejects_duplicate_json_keys(self) -> None:
+        self.assertEqual(
+            MODULE.load_json_no_duplicates('{"first":1,"second":2}', "fixture"),
+            {"first": 1, "second": 2},
+        )
+        with self.assertRaises(MODULE.QualityError):
+            MODULE.load_json_no_duplicates('{"same":1,"same":2}', "fixture")
+
     def test_accepts_exact_ordered_contract(self) -> None:
         MODULE.check_map(valid_document())
 

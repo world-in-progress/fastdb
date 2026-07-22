@@ -46,6 +46,10 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
         ):
             with self.assertRaises(MODULE.CheckError):
                 MODULE.check_package_json(changed)
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.load_json_no_duplicates(
+                '{"type":"module","type":"commonjs"}', "package.json"
+            )
 
     def test_requires_one_clean_tarball_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

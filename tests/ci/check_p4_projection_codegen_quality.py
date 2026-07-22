@@ -129,6 +129,18 @@ class QualityError(RuntimeError):
     """The checked repository does not satisfy the frozen P4 contract."""
 
 
+def load_json_no_duplicates(source: str, label: str) -> Any:
+    def object_from_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise QualityError(f"{label} contains duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    return json.loads(source, object_pairs_hook=object_from_pairs)
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise QualityError(message)
@@ -438,7 +450,9 @@ def check_workflow_results(environment: dict[str, str]) -> None:
 
 def check_repository() -> None:
     try:
-        document = json.loads(PROOF_MAP.read_text(encoding="utf-8"))
+        document = load_json_no_duplicates(
+            PROOF_MAP.read_text(encoding="utf-8"), "P4 proof map"
+        )
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise QualityError(f"cannot load P4 projection/codegen map: {error}") from error
     require(isinstance(document, dict), "P4 proof map root must be an object")

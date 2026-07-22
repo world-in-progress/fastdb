@@ -47,6 +47,42 @@ def require_quality(condition, message)
   raise QualityError, message unless condition
 end
 
+def reject_duplicate_yaml_keys(node, label, path = "$")
+  case node
+  when Psych::Nodes::Mapping
+    seen = {}
+    node.children.each_slice(2) do |key_node, value_node|
+      require_quality(key_node.is_a?(Psych::Nodes::Scalar),
+                      "#{label} has a non-scalar YAML key at #{path}")
+      key = key_node.value
+      require_quality(!seen.key?(key),
+                      "#{label} contains duplicate YAML key #{key.inspect} at #{path}")
+      seen[key] = true
+      reject_duplicate_yaml_keys(value_node, label, "#{path}/#{key}")
+    end
+  when Psych::Nodes::Sequence
+    node.children.each_with_index do |child, index|
+      reject_duplicate_yaml_keys(child, label, "#{path}/#{index}")
+    end
+  when Psych::Nodes::Stream, Psych::Nodes::Document
+    node.children.each do |child|
+      reject_duplicate_yaml_keys(child, label, path)
+    end
+  end
+end
+
+def self_test_yaml_duplicates
+  reject_duplicate_yaml_keys(Psych.parse("root:\n  child: value\n"),
+                             "self-test")
+  begin
+    reject_duplicate_yaml_keys(Psych.parse("root:\n  same: 1\n  same: 2\n"),
+                               "self-test")
+  rescue QualityError
+    return
+  end
+  raise QualityError, "duplicate YAML self-test was accepted"
+end
+
 def expected_to_run?(job, scopes)
   JOBS.fetch(job).any? { |scope| scopes.fetch(scope) }
 end
@@ -129,6 +165,7 @@ def self_test_results
       )
     end
   end
+  self_test_yaml_duplicates
 end
 
 def expression_scopes(job)
@@ -143,12 +180,15 @@ def step_run(job, name)
 end
 
 def check_workflow
+  reject_duplicate_yaml_keys(Psych.parse_file(WORKFLOW), "workflow")
   workflow = YAML.load_file(WORKFLOW)
   jobs = workflow.fetch("jobs")
   detect = jobs.fetch("detect_changes")
   filter_step = detect.fetch("steps").find { |step| step["id"] == "filter" }
   require_quality(!filter_step.nil?, "detect_changes lacks its path filter")
-  filters = YAML.safe_load(filter_step.fetch("with").fetch("filters"))
+  filter_source = filter_step.fetch("with").fetch("filters")
+  reject_duplicate_yaml_keys(Psych.parse(filter_source), "workflow filters")
+  filters = YAML.safe_load(filter_source)
   {
     "core" => %w[tools/check_emscripten_exception_flags.py
                  tools/check_payload_binary_corpus.py],
