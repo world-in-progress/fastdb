@@ -332,13 +332,15 @@ std::string render_typescript(const spec::CompiledSpec& compiled,
     output.push_back(static_cast<char>(0x60));
     output +=
         ";\n"
-        "export const CANONICAL_SOURCE = new TextEncoder().encode(CANONICAL_SOURCE_TEXT);\n"
+        "export function canonicalSource(): Uint8Array {\n"
+        "  return new TextEncoder().encode(CANONICAL_SOURCE_TEXT);\n"
+        "}\n"
         "export const PAYLOAD_SHA256 = '";
     output += digest;
     output +=
         "' as const;\n\n"
         "export function compileSpec(): CompiledSpec {\n"
-        "  return CompiledSpec.compile(CANONICAL_SOURCE);\n"
+        "  return CompiledSpec.compile(canonicalSource());\n"
         "}\n\n";
     append_metadata(output, resolved);
     for (const Entry& entry : resolved.entries()) {

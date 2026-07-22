@@ -154,10 +154,6 @@ void append_entry(std::string& output,
     output +=
         " final {\n"
         "public:\n"
-        "    explicit ";
-    output += type;
-    output +=
-        "(fastdb::payload::v1::View view) : view_(std::move(view)) {}\n\n"
         "    fastdb::payload::v1::View generic_view() const { return view_; }\n"
         "    std::uint64_t size() const { return view_.length(); }\n"
         "    fastdb::payload::v1::View at(std::uint64_t index) const {\n"
@@ -187,6 +183,16 @@ void append_entry(std::string& output,
         "(view_.materialize());\n"
         "    }\n\n"
         "private:\n"
+        "    friend ";
+    output += type;
+    output += " ";
+    output += symbol;
+    output +=
+        "_from_payload(const fastdb::payload::v1::Payload& payload);\n\n"
+        "    explicit ";
+    output += type;
+    output +=
+        "(fastdb::payload::v1::View view) : view_(std::move(view)) {}\n\n"
         "    fastdb::payload::v1::View view_;\n"
         "};\n\ninline ";
     output += type;

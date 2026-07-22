@@ -1233,7 +1233,7 @@ the narrower accepted ASCII grammar. The allocation sweep reaches success
 after induced failures and every observed failure returns the exact
 `allocation_failed` result without a partial ArtifactSet.
 
-The context-owning primary review found and closed nine material issues before
+The context-owning primary review found and closed twelve material issues before
 freeze: record output incorrectly exposed graph helpers; component wrappers
 could be forged around the wrong schema component; limit details represented
 exact integers as JSON numbers; generated C++ named the non-existent
@@ -1250,12 +1250,31 @@ constructors allowed the same ambiguous ownership. Focused REDs reproduce each
 behavior before the corrections. Successful component casts now clone the
 official runtime handle, and entry construction requires a module-owned token
 so factories transfer the sole new entry View into the wrapper. The post-fix
-C++ rich artifact passes Clang C++17 syntax compilation with warnings denied, Rust
-passes a relocated Cargo check against the safe crate, Python passes syntax
+C++ rich artifact passes Clang C++17 syntax compilation with warnings denied,
+Rust passes a relocated Cargo check against the safe crate, Python passes syntax
 plus real import/Core compile, and both empty and rich TypeScript artifacts
 pass strict type-checking with unused locals denied against the official
 payload source. These build-tree diagnostics validate Task 7 output shape but
 do not replace or close Task 8's tracked generated-output runtime harnesses.
+
+The tenth finding was the remaining C++/Rust entry-construction escape: both
+targets publicly accepted an arbitrary View even though only the generated
+payload factory can establish the entry identity. C++ now keeps its View
+constructor private and exposes only `from_payload`; Rust keeps `new` module
+private. Focused output checks and real C++/Rust compilation prove those
+surfaces after the correction.
+
+The eleventh finding was a latent target-routing mismatch: the private Core
+target enum used ordinal `1/2/3/4` values while the designed Task 8 public
+target flags are `1/2/4/8`. The private values now use those exact bits, and a
+focused regression fixes all four mappings before Task 8 introduces the C ABI.
+
+The twelfth finding was mutable TypeScript provenance: the generated module
+exported one shared `Uint8Array`, so a caller could modify the bytes later used
+by `compileSpec()`. TypeScript now keeps the canonical text as the immutable
+source and returns a fresh encoding from `canonicalSource()` for every caller
+and compile. The exact golden and strict compiler matrix cover the corrected
+surface.
 
 Task 7 also makes one private-boundary limitation explicit: its component cast
 can prove only the Core-reported component index, not that the View came from
@@ -1270,9 +1289,18 @@ identical Core `DIGEST_MISMATCH` facts before any generated wrapper publication
 or builder mutation. Until that proof passes, manifest targets and codegen
 proof rows remain empty.
 
-The final local rerun passes native Debug `38/38` in 61.21 seconds, Release
-`38/38` in 39.10 seconds, and hard-fail ASan+UBSan `38/38` in 230.77 seconds;
-the available focused ThreadSanitizer codegen target passes `1/1` in 1.52
+Task 7 has a second private-boundary limit: the known one-artifact inventory is
+rendered before `max_artifacts` is checked, and `max_total_bytes` rejects an
+oversized completed draft before ArtifactSet publication only after that draft
+has been constructed in memory. These are publication limits, not yet early
+work/allocation ceilings. Task 8 must reject an impossible artifact count
+before rendering and enforce the byte limit through a checked output sink or
+equivalent exact preflight before the public options ABI and manifest targets
+are exposed.
+
+The final local rerun passes native Debug `38/38` in 59.62 seconds, Release
+`38/38` in 36.71 seconds, and hard-fail ASan+UBSan `38/38` in 262.29 seconds;
+the available focused ThreadSanitizer codegen target passes `1/1` in 1.23
 seconds. Apple ASan uses `detect_leaks=0`, so this is not LeakSanitizer
 evidence. Rust passes formatting, warning-denying clippy, 19 non-doc tests,
 and one compile-fail doctest; Python passes 440 tests plus compileall; the
@@ -1288,9 +1316,9 @@ passes exact inventory, and its isolated installed wheel passes all 27 payload
 tests. The build emits the same seven SWIG 325/451 diagnostics governed by
 Issue 0003; no warning-free package claim is made. The final sdist and wheel
 SHA-256 values are respectively
-`52750091be7d897a14a3b7d0f0b41472d492ad1a752125fa2a803c7355a29613`
+`3a3a692ef657aadea3d4302c57f6770c1696000343f60fe855e11039088168c6`
 and
-`38c34874fbfd79cf9c4cfbb23e82933b36faa33f4e8a4f05987d7d6d962aaf30`.
+`dfab93e2302620b5ae83c5e2e74946fad4f31af73d79e0f4fe5907c851309cbf`.
 The packed TypeScript artifact and official JavaScript/Wasm hashes remain
 `fdf3f6fe2d7a663b2db8b77af92c2528f972321c24784f701afa5fc05af471b4`,
 `d763262fb5bc87196fcbc56781561e128595af55ae85546fff67ca6f81192e22`,

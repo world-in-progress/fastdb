@@ -224,6 +224,10 @@ bool has_source_id(const fastdb::payload::spec::ResolvedSpec& resolved,
 int test_identifier_projection_is_total_and_collision_free() {
     require(generator_version == "fastdb.payload.codegen.v1");
     require(generator_core_abi_version == FDB_PAYLOAD_V1_ABI_VERSION);
+    require(static_cast<std::uint8_t>(Target::cpp) == UINT8_C(1));
+    require(static_cast<std::uint8_t>(Target::rust) == UINT8_C(2));
+    require(static_cast<std::uint8_t>(Target::python) == UINT8_C(4));
+    require(static_cast<std::uint8_t>(Target::typescript) == UINT8_C(8));
 
     std::string all_bytes;
     std::string all_hex;
@@ -261,6 +265,15 @@ int test_artifact_set_validates_paths_order_hashes_and_limits() {
     require(unsupported.error().path() == "/codegen/target");
     require(unsupported.error().details_json() ==
             R"({"reason":"unknown_target"})");
+
+    auto multiple = validate_target(static_cast<Target>(UINT8_C(3)));
+    require(!multiple.has_value());
+    require(multiple.error().code() == FDB_PAYLOAD_E_UNSUPPORTED_TARGET);
+    require(multiple.error().path() == "/codegen/target");
+
+    auto empty = validate_target(static_cast<Target>(UINT8_C(0)));
+    require(!empty.has_value());
+    require(empty.error().code() == FDB_PAYLOAD_E_UNSUPPORTED_TARGET);
 
     std::vector<ArtifactDraft> drafts;
     drafts.push_back(
@@ -547,6 +560,17 @@ int test_rich_specs_emit_only_official_runtime_ergonomics() {
                 require(bytes.find("  ObjectHandle,\n") ==
                         std::string_view::npos);
             }
+            if (expectation.target == Target::typescript) {
+                require(bytes.find(
+                            "export const CANONICAL_SOURCE = new TextEncoder()") ==
+                        std::string_view::npos);
+                require(bytes.find(
+                            "export function canonicalSource(): Uint8Array") !=
+                        std::string_view::npos);
+                require(bytes.find(
+                            "CompiledSpec.compile(canonicalSource())") !=
+                        std::string_view::npos);
+            }
             if (spec.facts().has_references) {
                 require(bytes.find(expectation.ref_target_marker) !=
                         std::string_view::npos);
@@ -592,6 +616,34 @@ int test_rich_specs_emit_only_official_runtime_ergonomics() {
                 }
             }
             if (!spec.resolved().entries().empty()) {
+                const auto& first_entry = spec.resolved().entries().front();
+                const std::string entry_symbol =
+                    project_identifier(expectation.target, first_entry.id);
+                if (expectation.target == Target::cpp) {
+                    const std::string entry_type =
+                        "FdbCppEntry_" + entry_symbol + "_Sequence";
+                    require(bytes.find("friend " + entry_type + " " +
+                                       entry_symbol + "_from_payload(") !=
+                            std::string_view::npos);
+                    require(bytes.find("private:\n    friend " + entry_type) !=
+                            std::string_view::npos);
+                    require(bytes.find("public:\n    explicit " + entry_type) ==
+                            std::string_view::npos);
+                    require(bytes.find("    explicit " + entry_type +
+                                       "(fastdb::payload::v1::View view)") !=
+                            std::string_view::npos);
+                    require(bytes.find("return " + entry_type +
+                                       "(payload.entry_view(") !=
+                            std::string_view::npos);
+                }
+                if (expectation.target == Target::rust) {
+                    require(bytes.find(
+                                "pub fn new(view: fastdb::View) -> Self") ==
+                            std::string_view::npos);
+                    require(bytes.find(
+                                "fn new(view: fastdb::View) -> Self") !=
+                            std::string_view::npos);
+                }
                 if (expectation.target == Target::python) {
                     require(bytes.find("_fastdb_entry_view_token") !=
                             std::string_view::npos);

@@ -13,8 +13,8 @@ namespace fastdb::payload::codegen {
 enum class Target : std::uint8_t {
     cpp = UINT8_C(1),
     rust = UINT8_C(2),
-    python = UINT8_C(3),
-    typescript = UINT8_C(4),
+    python = UINT8_C(4),
+    typescript = UINT8_C(8),
 };
 
 enum class ArtifactKind : std::uint32_t {

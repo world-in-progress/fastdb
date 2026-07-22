@@ -482,6 +482,9 @@ freeze the real post-P4 ABI only after generated code executes.
 - Modify: `fastcarto/fastdb/include/fastdb_payload.hpp`
 - Modify: `fastcarto/fastdb/src/payload/abi/Handles.hpp`
 - Modify: `fastcarto/fastdb/src/payload/abi/fastdb_payload.cpp`
+- Modify: `fastcarto/fastdb/src/payload/build/PayloadBuilder.{hpp,cpp}`
+- Modify: `fastcarto/fastdb/src/payload/view/View.{hpp,cpp}`
+- Modify: `fastcarto/fastdb/src/payload/view/{Materialize,GraphMaterialize}.cpp`
 - Modify: `fastcarto/fastdb/src/payload/spec/Manifest.{hpp,cpp}`
 - Modify: `schemas/fastdb.payload.manifest.v1.schema.json`
 - Regenerate: `fastcarto/fastdb/src/payload/spec/EmbeddedSchemas.inc`
@@ -517,6 +520,10 @@ manifest target list.
   Core `DIGEST_MISMATCH` code/path/details in every projection.
 - All failures clear every output before validation and publish no partial
   result.
+- the known one-artifact inventory is rejected before rendering when
+  `max_artifacts < 1`, and `max_total_bytes` is enforced while constructing
+  renderer output through a checked sink or equivalent exact preflight;
+  post-render rejection alone is insufficient for the public API.
 - Result/blob/error ownership survives arbitrary valid retain/release order.
 - Generated outputs compile/import/type-check and call the real official
   projection for a runtime smoke.

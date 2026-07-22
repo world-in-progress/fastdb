@@ -8,11 +8,13 @@ import {
 } from 'fastdb4ts/payload';
 
 export const CANONICAL_SOURCE_TEXT = `{"components":[],"entries":[],"profile":"record.v1","schema":"fastdb.payload.v1"}`;
-export const CANONICAL_SOURCE = new TextEncoder().encode(CANONICAL_SOURCE_TEXT);
+export function canonicalSource(): Uint8Array {
+  return new TextEncoder().encode(CANONICAL_SOURCE_TEXT);
+}
 export const PAYLOAD_SHA256 = '92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71' as const;
 
 export function compileSpec(): CompiledSpec {
-  return CompiledSpec.compile(CANONICAL_SOURCE);
+  return CompiledSpec.compile(canonicalSource());
 }
 
 export interface IdMetadata {

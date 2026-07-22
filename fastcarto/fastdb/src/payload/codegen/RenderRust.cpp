@@ -149,7 +149,7 @@ void append_entry(std::string& output,
     output += type;
     output +=
         " {\n"
-        "    pub fn new(view: fastdb::View) -> Self { Self { view } }\n"
+        "    fn new(view: fastdb::View) -> Self { Self { view } }\n"
         "    pub fn generic_view(&self) -> fastdb::View { self.view.clone() }\n"
         "    pub fn len(&self) -> Result<u64, fastdb::PayloadError> {\n"
         "        self.view.length()\n"

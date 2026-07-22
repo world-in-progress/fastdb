@@ -447,7 +447,9 @@ The Core validates before publication that:
   empty, `.`, or `..` segment, backslash, drive prefix, or NUL;
 - artifact paths are unique and strictly sorted by unsigned UTF-8 bytes;
 - kinds are known target-neutral values;
-- bytes are immutable and within configured output limits; and
+- bytes are immutable and within configured output limits, with the byte limit
+  enforced during renderer construction rather than only after a complete
+  oversized draft exists; and
 - SHA-256 is computed over exactly those bytes.
 
 Failure publishes no partial result.
@@ -489,7 +491,9 @@ escape. Metadata maps each emitted symbol to the original ID and stable index.
 
 Each target emits only per-spec ergonomics over its official runtime:
 
-- canonical source and digest provenance constants;
+- canonical source and digest provenance constants; TypeScript exposes
+  immutable canonical text and returns a fresh byte encoding rather than a
+  shared mutable `Uint8Array`;
 - a function that compiles the embedded canonical source through Core;
 - stable entry/component/field index constants and original-ID metadata;
 - entry sequence wrappers;
@@ -524,6 +528,13 @@ before using an index. A same-index handle from another specification must
 fail with Core `DIGEST_MISMATCH`; it must never become a generated wrapper or
 mutate a builder.
 
+Entry wrappers likewise cannot be constructed from an arbitrary sequence
+View. C++ keeps the View constructor private and exposes a payload factory;
+Rust keeps its View constructor module-private; Python and TypeScript require
+their generated module's internal creation token. Task 8 adds the Core payload
+provenance guard to each public factory before it selects the generated entry
+index.
+
 ## 12. Additive stable C ABI
 
 ### 12.1 New constants and types
@@ -548,6 +559,8 @@ typedef struct fdb_payload_v1_codegen_result
 
 A target argument must contain exactly one known target bit. Capability target
 flags use the same bits and may contain all supported targets.
+The Core-internal target enum uses these exact bit values; the ABI adapter
+validates one known bit and does not maintain a second ordinal mapping.
 
 ### 12.2 Options prefix
 
