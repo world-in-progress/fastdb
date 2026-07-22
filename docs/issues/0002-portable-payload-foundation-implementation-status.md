@@ -923,9 +923,10 @@ with vertical TDD slices in
 [the P4 implementation plan](../superpowers/plans/2026-07-21-portable-payload-language-projections-codegen.md).
 They preserve ABI-105 runtime meaning, reuse the existing C++ RAII facade,
 create Rust/Python/TypeScript projections only with real callers, and reserve
-the only additive public Core delta for a nine-symbol immutable ArtifactSet
-family. The designed 114-symbol result is not a frozen implementation fact
-until native/Wasm scanners and all generated-output gates prove it.
+an exact twelve-symbol additive P4 Core delta: three specification-provenance
+guards plus the nine-symbol immutable ArtifactSet family. The designed
+117-symbol result is not a frozen implementation fact until native/Wasm
+scanners and all generated-output gates prove it.
 
 **Reason:** Safe binding lifetimes, value parity, and generated APIs depend on
 the frozen P2/P3 runtime ABI and binary meaning.
@@ -1232,7 +1233,7 @@ the narrower accepted ASCII grammar. The allocation sweep reaches success
 after induced failures and every observed failure returns the exact
 `allocation_failed` result without a partial ArtifactSet.
 
-The context-owning primary review found and closed eight material issues before
+The context-owning primary review found and closed nine material issues before
 freeze: record output incorrectly exposed graph helpers; component wrappers
 could be forged around the wrong schema component; limit details represented
 exact integers as JSON numbers; generated C++ named the non-existent
@@ -1241,18 +1242,37 @@ allocation could escape the generator boundary; the four renderers duplicated
 the generator and Core ABI provenance instead of consuming one Core constant;
 empty or topology-reduced TypeScript output imported runtime types it did not
 use and therefore failed strict `noUnusedLocals`; and drive-prefix recognition
-depended on the process C locale rather than explicit ASCII semantics. Focused
-REDs reproduce each behavior before the corrections. The post-fix C++ rich
-artifact passes Clang C++17 syntax compilation with warnings denied, Rust
+depended on the process C locale rather than explicit ASCII semantics. The
+ninth finding was a cross-language lifetime mismatch: successful Python/
+TypeScript component construction retained the caller's same View object, so
+closing that alias invalidated the generated wrapper, while their entry
+constructors allowed the same ambiguous ownership. Focused REDs reproduce each
+behavior before the corrections. Successful component casts now clone the
+official runtime handle, and entry construction requires a module-owned token
+so factories transfer the sole new entry View into the wrapper. The post-fix
+C++ rich artifact passes Clang C++17 syntax compilation with warnings denied, Rust
 passes a relocated Cargo check against the safe crate, Python passes syntax
 plus real import/Core compile, and both empty and rich TypeScript artifacts
 pass strict type-checking with unused locals denied against the official
 payload source. These build-tree diagnostics validate Task 7 output shape but
 do not replace or close Task 8's tracked generated-output runtime harnesses.
 
-The final local rerun passes native Debug `38/38` in 82.81 seconds, Release
-`38/38` in 62.66 seconds, and hard-fail ASan+UBSan `38/38` in 247.53 seconds;
-the available focused ThreadSanitizer codegen target passes `1/1` in 2.20
+Task 7 also makes one private-boundary limitation explicit: its component cast
+can prove only the Core-reported component index, not that the View came from
+the generated `CompiledSpec`; entry and builder helpers likewise assume a
+matching specification. Indexes are spec-scoped, so a different schema can
+legitimately reuse index zero. ABI-105 has no Builder/View provenance guard,
+and binding-owned digest comparison would create a second error authority.
+Because no Task 7 artifact is public or advertised, Task 8 owns the clean
+closure: add the three Core `require_spec_sha256` guards, project them equally,
+and prove that same-index cross-spec Builder/Payload/View inputs fail with
+identical Core `DIGEST_MISMATCH` facts before any generated wrapper publication
+or builder mutation. Until that proof passes, manifest targets and codegen
+proof rows remain empty.
+
+The final local rerun passes native Debug `38/38` in 61.21 seconds, Release
+`38/38` in 39.10 seconds, and hard-fail ASan+UBSan `38/38` in 230.77 seconds;
+the available focused ThreadSanitizer codegen target passes `1/1` in 1.52
 seconds. Apple ASan uses `detect_leaks=0`, so this is not LeakSanitizer
 evidence. Rust passes formatting, warning-denying clippy, 19 non-doc tests,
 and one compile-fail doctest; Python passes 440 tests plus compileall; the
@@ -1268,9 +1288,9 @@ passes exact inventory, and its isolated installed wheel passes all 27 payload
 tests. The build emits the same seven SWIG 325/451 diagnostics governed by
 Issue 0003; no warning-free package claim is made. The final sdist and wheel
 SHA-256 values are respectively
-`9644ceb9513e3c8250214c1f217a96843af938616bcb3e7b02d018d4b5ddd773`
+`52750091be7d897a14a3b7d0f0b41472d492ad1a752125fa2a803c7355a29613`
 and
-`45aadae650b48ab12534f3c0dadef48dffa7ca62832ac1bfb26d6aa451bd7125`.
+`38c34874fbfd79cf9c4cfbb23e82933b36faa33f4e8a4f05987d7d6d962aaf30`.
 The packed TypeScript artifact and official JavaScript/Wasm hashes remain
 `fdf3f6fe2d7a663b2db8b77af92c2528f972321c24784f701afa5fc05af471b4`,
 `d763262fb5bc87196fcbc56781561e128595af55ae85546fff67ca6f81192e22`,
@@ -1293,12 +1313,12 @@ now indexed by the ordered executable four-language parity map, and the
 source/system/wheel/npm boundaries are locally executable. No language can yet
 consume a Core-owned generated artifact set.
 
-**Next owner slice:** P4 Task 8 publishes the complete ArtifactSet atomically
-through the reviewed nine-symbol C ABI family, thin C++ RAII facade, and equal
-Rust/Python/TypeScript projections; it must then run the tracked real generated
-compile/import/type-check/runtime harnesses before manifests advertise any
-target. Codegen rows remain explicitly open until those proofs and Task 9
-closure pass.
+**Next owner slice:** P4 Task 8 first closes generated-handle schema provenance,
+then publishes the complete ArtifactSet atomically through the reviewed
+twelve-symbol P4 C ABI delta, thin C++ RAII facade, and equal Rust/Python/
+TypeScript projections; it must then run the tracked real generated compile/
+import/type-check/runtime harnesses before manifests advertise any target.
+Codegen rows remain explicitly open until those proofs and Task 9 closure pass.
 
 **Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
 the same Core ABI and pass canonical, binary, value, error, lifetime, and

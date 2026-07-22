@@ -146,7 +146,11 @@ void append_entry(std::string& output,
     output += type;
     output +=
         " {\n"
-        "  constructor(private readonly view: View) {}\n\n"
+        "  constructor(private readonly view: View, token: symbol) {\n"
+        "    if (token !== fastdbEntryViewToken) {\n"
+        "      throw new TypeError('FastDB generated entry views require owned construction');\n"
+        "    }\n"
+        "  }\n\n"
         "  genericView(): View { return this.view.clone(); }\n"
         "  length(): bigint { return this.view.length(); }\n"
         "  at(index: bigint): View { return this.view.at(index); }\n";
@@ -164,7 +168,7 @@ void append_entry(std::string& output,
     output += " { return new ";
     output += type;
     output +=
-        "(this.view.materialize()); }\n"
+        "(this.view.materialize(), fastdbEntryViewToken); }\n"
         "  dispose(): void { this.view.dispose(); }\n"
         "}\n\nexport function ";
     output += symbol;
@@ -175,7 +179,7 @@ void append_entry(std::string& output,
     output += "(payload.entryView(";
     output += symbol;
     output +=
-        "_entry_index));\n"
+        "_entry_index), fastdbEntryViewToken);\n"
         "}\n\nexport function ";
     output += symbol;
     output +=
@@ -216,7 +220,7 @@ void append_component(std::string& output,
         "    return new ";
     output += type;
     output +=
-        "(view, fastdbComponentViewToken);\n"
+        "(view.clone(), fastdbComponentViewToken);\n"
         "  }\n\n"
         "  genericView(): View { return this.view.clone(); }\n";
     if (is_identity) {
@@ -308,9 +312,18 @@ std::string render_typescript(const spec::CompiledSpec& compiled,
         output += "  View,\n";
     }
     output += "} from 'fastdb4ts/payload';\n\n";
+    if (!resolved.entries().empty()) {
+        output +=
+            "const fastdbEntryViewToken = Symbol('fastdb.payload.codegen.entry-view');\n";
+    }
     if (!resolved.components().empty()) {
+        if (!resolved.entries().empty()) {
+            output += "\n";
+        }
         output +=
             "const fastdbComponentViewToken = Symbol('fastdb.payload.codegen.component-view');\n\n";
+    } else if (!resolved.entries().empty()) {
+        output += "\n";
     }
     output +=
         "export const CANONICAL_SOURCE_TEXT = ";

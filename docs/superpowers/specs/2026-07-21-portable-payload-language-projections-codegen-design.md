@@ -494,7 +494,8 @@ Each target emits only per-spec ergonomics over its official runtime:
 - stable entry/component/field index constants and original-ID metadata;
 - entry sequence wrappers;
 - component view wrappers with schema-specific field accessors and checked
-  construction against the Core-reported component index;
+  construction against the Core-owned specification digest and component
+  index;
 - ref-target helpers only for actual `ref` values, and graph-identity helpers
   only for values whose Core-derived runtime topology has identity;
 - builder helpers that select the correct entry indexes and declare only
@@ -509,6 +510,19 @@ Generated code never contains schema validation, JCS/SHA, profile decisions,
 layout offsets, binary headers, ref reachability, direct/staged decisions, or
 recursive materialization. Cycles remain Core graph views; generated code does
 not recursively instantiate an infinite object model.
+
+Schema provenance is not inferred from an index. Component and entry indexes
+are scoped to one `CompiledSpec`; two unrelated specifications may both have a
+component or entry at index zero. The private Task 7 generator can check only
+the component index because ABI-105 does not expose a Core-owned provenance
+requirement on Builder or View handles. Its artifacts therefore remain private
+and unadvertised. Before Task 8 publishes them, Core adds the three exact
+`require_spec_sha256` functions below and every projection exposes them without
+binding-owned comparison/error semantics. Generated entry factories, builder
+helpers, and component constructors call the applicable Core requirement
+before using an index. A same-index handle from another specification must
+fail with Core `DIGEST_MISMATCH`; it must never become a generated wrapper or
+mutate a builder.
 
 ## 12. Additive stable C ABI
 
@@ -555,6 +569,41 @@ never artifact bytes.
 
 ### 12.3 Exact additive function family
 
+Generated schema-specific ergonomics first require three Core-owned provenance
+guards over the specification digest associated with each handle:
+
+```c
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_builder_require_spec_sha256(
+    const fdb_payload_v1_builder_t* builder,
+    const uint8_t expected_sha256[FDB_PAYLOAD_V1_SHA256_SIZE],
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_payload_require_spec_sha256(
+    const fdb_payload_v1_payload_t* payload,
+    const uint8_t expected_sha256[FDB_PAYLOAD_V1_SHA256_SIZE],
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_view_require_spec_sha256(
+    const fdb_payload_v1_view_t* view,
+    const uint8_t expected_sha256[FDB_PAYLOAD_V1_SHA256_SIZE],
+    fdb_payload_v1_error_t** out_error);
+```
+
+The fixed-size argument is borrowed only for the call. A mismatch reuses the
+Core binary-open digest contract exactly: code `3006`, symbol
+`DIGEST_MISMATCH`, message `Portable payload spec digest does not match`, and
+canonical details
+`{"actual":"<handle lowercase hex>","expected":"<argument lowercase hex>","reason":"spec_digest_mismatch"}`.
+The path is `/builder/spec_sha256`, `/payload/spec_sha256`, or
+`/view/spec_sha256`. Null arguments retain the ordinary invalid-argument
+contract. These guards do not parse, canonicalize, hash, or change P3 runtime
+meaning; they project identity already owned by the handle. Detached views
+must retain that Core-owned identity through materialization so their guard
+has the same result as the source view.
+
+The immutable ArtifactSet/codegen family is:
+
 ```text
 fdb_payload_v1_codegen_options_init
 fdb_payload_v1_spec_codegen
@@ -567,10 +616,10 @@ fdb_payload_v1_codegen_result_artifact_bytes
 fdb_payload_v1_codegen_result_artifact_sha256
 ```
 
-This is an exact nine-symbol additive design over ABI-105. If implementation
-proves this family sufficient, the reviewed post-P4 boundary will be 114. That
-number is not claimed as frozen until the native and Wasm export scanners see
-the implemented symbols and every generated target passes.
+Together these are an exact twelve-symbol additive P4 design over ABI-105. If
+implementation proves this family sufficient, the reviewed post-P4 boundary
+will be 117. That number is not claimed as frozen until the native and Wasm
+export scanners see the implemented symbols and every generated target passes.
 
 `spec_codegen` accepts a non-null compiled spec, one target, a non-null
 initialized options prefix, and result/error outputs. Query functions accept a

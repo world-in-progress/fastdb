@@ -576,6 +576,48 @@ int test_rich_specs_emit_only_official_runtime_ergonomics() {
             if (!spec.resolved().components().empty()) {
                 require(bytes.find(expectation.component_guard_marker) !=
                         std::string_view::npos);
+                if (expectation.target == Target::python) {
+                    require(bytes.find(
+                                "return cls(view.clone(), _fastdb_component_view_token)") !=
+                            std::string_view::npos);
+                }
+                if (expectation.target == Target::typescript) {
+                    require(bytes.find(
+                                "new " +
+                                project_type_identifier(
+                                    Target::typescript,
+                                    spec.resolved().components().front().id) +
+                                "(view.clone(), fastdbComponentViewToken)") !=
+                            std::string_view::npos);
+                }
+            }
+            if (!spec.resolved().entries().empty()) {
+                if (expectation.target == Target::python) {
+                    require(bytes.find("_fastdb_entry_view_token") !=
+                            std::string_view::npos);
+                    require(bytes.find(
+                                "def __init__(self, view: View, token: object) -> None:") !=
+                            std::string_view::npos);
+                    require(bytes.find(
+                                "if token is not _fastdb_entry_view_token:") !=
+                            std::string_view::npos);
+                    require(bytes.find(
+                                "FastDB generated entry views require owned construction") !=
+                            std::string_view::npos);
+                }
+                if (expectation.target == Target::typescript) {
+                    require(bytes.find("fastdbEntryViewToken") !=
+                            std::string_view::npos);
+                    require(bytes.find(
+                                "constructor(private readonly view: View, token: symbol) {") !=
+                            std::string_view::npos);
+                    require(bytes.find(
+                                "if (token !== fastdbEntryViewToken) {") !=
+                            std::string_view::npos);
+                    require(bytes.find(
+                                "FastDB generated entry views require owned construction") !=
+                            std::string_view::npos);
+                }
             }
             require(bytes.find("entry") != std::string_view::npos);
             require(bytes.find("builder") != std::string_view::npos ||

@@ -9,10 +9,12 @@ through C++, Rust, Python, and TypeScript/Wasm, then add deterministic
 Core-owned C++/Rust/Python/TypeScript in-memory codegen.
 
 **Architecture:** The existing C++ Core remains the sole semantic authority.
-The exact ABI-105 runtime is consumed unchanged. Language projections wrap the
-C ABI; generated code wraps those projections. The only public Core extension
-is the reviewed nine-symbol immutable ArtifactSet/codegen family, introduced
-after all projection APIs it generates against are executable.
+The exact ABI-105 runtime meaning is consumed unchanged. Language projections
+wrap the C ABI; generated code wraps those projections. The public Core
+extension is the reviewed twelve-symbol P4 delta: three Core-owned
+specification-provenance guards plus the nine-symbol immutable ArtifactSet/
+codegen family, introduced atomically before generated artifacts are
+advertised.
 
 **Governing design:**
 [2026-07-21-portable-payload-language-projections-codegen-design.md](../specs/2026-07-21-portable-payload-language-projections-codegen-design.md)
@@ -495,18 +497,24 @@ freeze the real post-P4 ABI only after generated code executes.
 Write first:
 
 - pure C output-clearing, prefix, ownership, target/index/error tests;
+- pure C and four-language same-index/cross-spec provenance rejection for
+  Builder, Payload, and View;
 - C++ RAII ArtifactSet tests;
 - Rust/Python/TypeScript codegen query tests;
 - manifest operation/target capability tests; and
 - a harness that asks Core for all four artifacts, writes only to a temporary
   test tree, then compiles/imports/type-checks and executes them.
 
-Expected RED is the missing reviewed nine-symbol ABI family and empty manifest
-target list.
+Expected RED is the missing reviewed twelve-symbol P4 ABI delta and empty
+manifest target list.
 
 **GREEN requirements**
 
-- Add exactly the nine reviewed functions and no unrelated export.
+- Add exactly the three reviewed Core provenance guards and nine ArtifactSet/
+  codegen functions, with no unrelated export.
+- Generated entry factories, builder helpers, and component constructors
+  reject a same-index handle from a different specification through the same
+  Core `DIGEST_MISMATCH` code/path/details in every projection.
 - All failures clear every output before validation and publish no partial
   result.
 - Result/blob/error ownership survives arbitrary valid retain/release order.
@@ -515,7 +523,7 @@ target list.
 - Manifest operations/targets, capability bits, schema, embedded bytes, and
   goldens change together only after all four target gates pass.
 - Native and Wasm scanners freeze the actual exact allowlist. If it is the
-  designed 105+9 set, record 114; otherwise stop and reconcile the design
+  designed 105+12 set, record 117; otherwise stop and reconcile the design
   before accepting drift.
 
 **Focused gates**

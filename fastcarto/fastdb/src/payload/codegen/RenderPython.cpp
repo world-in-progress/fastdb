@@ -144,7 +144,9 @@ void append_entry(std::string& output,
     output += type;
     output +=
         ":\n"
-        "    def __init__(self, view: View) -> None:\n"
+        "    def __init__(self, view: View, token: object) -> None:\n"
+        "        if token is not _fastdb_entry_view_token:\n"
+        "            raise TypeError('FastDB generated entry views require owned construction')\n"
         "        self._view = view\n\n"
         "    def generic_view(self) -> View:\n"
         "        return self._view.clone()\n\n"
@@ -167,7 +169,7 @@ void append_entry(std::string& output,
     output += type;
     output +=
         "':\n"
-        "        return type(self)(self._view.materialize())\n\n"
+        "        return type(self)(self._view.materialize(), _fastdb_entry_view_token)\n\n"
         "    def close(self) -> None:\n"
         "        self._view.close()\n\n"
         "def ";
@@ -179,7 +181,7 @@ void append_entry(std::string& output,
     output += "(payload.entry_view(";
     output += symbol;
     output +=
-        "_entry_index))\n\n"
+        "_entry_index), _fastdb_entry_view_token)\n\n"
         "def ";
     output += symbol;
     output +=
@@ -217,7 +219,7 @@ void append_component(std::string& output,
     output +=
         "_component_index:\n"
         "            return None\n"
-        "        return cls(view, _fastdb_component_view_token)\n\n"
+        "        return cls(view.clone(), _fastdb_component_view_token)\n\n"
         "    def generic_view(self) -> View:\n"
         "        return self._view.clone()\n\n";
     if (is_identity) {
@@ -297,8 +299,16 @@ std::string render_python(const spec::CompiledSpec& compiled,
         "    PayloadError,\n"
         "    View,\n"
         ")\n\n";
+    if (!resolved.entries().empty()) {
+        output += "_fastdb_entry_view_token = object()\n";
+    }
     if (!resolved.components().empty()) {
+        if (!resolved.entries().empty()) {
+            output += "\n";
+        }
         output += "_fastdb_component_view_token = object()\n\n";
+    } else if (!resolved.entries().empty()) {
+        output += "\n";
     }
     output +=
         "CANONICAL_SOURCE = b'";
