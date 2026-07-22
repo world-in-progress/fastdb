@@ -253,6 +253,11 @@
               "markers": ["error_is(", "reason\":\"null_data"]
             },
             {
+              "file": "tests/cpp/payload/test_payload_open.cpp",
+              "test": "test_invalid_golden_corpus",
+              "markers": ["invalid->expected.status", "invalid->expected.symbol", "invalid->expected.path", "invalid->expected.message", "invalid->expected.details_json"]
+            },
+            {
               "file": "tests/cpp/payload/test_runtime_abi.cpp",
               "test": "test_complete_record_runtime",
               "markers": ["FDB_PAYLOAD_E_BUILDER_STATE", "FDB_PAYLOAD_E_NON_CANONICAL_BINARY", "FDB_PAYLOAD_E_DIRECT_UNAVAILABLE", "FDB_PAYLOAD_E_VIEW_INVALIDATED"]
