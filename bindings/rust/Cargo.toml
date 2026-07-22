@@ -29,3 +29,7 @@ path = "../../tests/rust/payload/tests/runtime.rs"
 [[test]]
 name = "record_view"
 path = "../../tests/rust/payload/tests/record_view.rs"
+
+[[test]]
+name = "graph_view"
+path = "../../tests/rust/payload/tests/graph_view.rs"

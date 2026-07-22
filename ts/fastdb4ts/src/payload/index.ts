@@ -17,6 +17,7 @@ export {
   ExecutionMode,
   ExecutionReport,
   FallbackReason,
+  GraphIdentity,
   OpenOptions,
   Payload,
   WasmMemoryBacking,

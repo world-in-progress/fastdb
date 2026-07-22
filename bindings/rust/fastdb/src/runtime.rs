@@ -610,6 +610,13 @@ impl ViewKind {
     }
 }
 
+/// Core-owned identity coordinates meaningful only within one payload owner.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct GraphIdentity {
+    pub component_index: u32,
+    pub object_id: u64,
+}
+
 type ViewU8Getter = unsafe extern "C" fn(
     *const sys::fdb_payload_v1_view_t,
     *mut u8,
@@ -696,6 +703,40 @@ impl View {
         };
         check_status(status, error)?;
         Self::from_raw(raw)
+    }
+
+    /// Follows exactly one explicit Core ref edge. Ordinary field navigation
+    /// never dereferences a ref implicitly.
+    pub fn ref_target(&self) -> Result<Self, PayloadError> {
+        let mut raw = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and the owned-handle/error outputs are valid.
+        let status =
+            unsafe { sys::fdb_payload_v1_view_ref_target(self.raw.as_ptr(), &mut raw, &mut error) };
+        check_status(status, error)?;
+        Self::from_raw(raw)
+    }
+
+    /// Returns the exact payload-scoped Core identity pair. Equal coordinates
+    /// from different payload owners do not establish cross-payload identity.
+    pub fn graph_identity(&self) -> Result<GraphIdentity, PayloadError> {
+        let mut component_index = 0_u32;
+        let mut object_id = 0_u64;
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and all scalar/error outputs are valid.
+        let status = unsafe {
+            sys::fdb_payload_v1_view_graph_identity(
+                self.raw.as_ptr(),
+                &mut component_index,
+                &mut object_id,
+                &mut error,
+            )
+        };
+        check_status(status, error)?;
+        Ok(GraphIdentity {
+            component_index,
+            object_id,
+        })
     }
 
     pub fn get_bool(&self) -> Result<bool, PayloadError> {

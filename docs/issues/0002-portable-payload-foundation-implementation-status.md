@@ -31,11 +31,11 @@ macOS sanitizer/fuzzer constraints and all exact Task 10 gate results are
 recorded below. Hosted CI remains pending because no push was authorized.
 
 P4 Rust/Python/official TypeScript-Wasm portable projections now include the
-locally complete Tasks 1-4 compile/query, author/freeze/plan,
-execution/backing/open, and complete checked `record.v1`
-view/access/materialization/invalidation slices. Safe graph ref/identity
-ergonomics, the four-language parity closure, and Core-owned four-language
-code generation remain open in Tasks 5-9. P5 legacy authority removal,
+locally complete Tasks 1-5 compile/query, author/freeze/plan,
+execution/backing/open, complete checked `record.v1` views, and safe
+`object_graph.v1` ref/identity/sharing/cycle observation with Core-owned
+materialization/invalidation. The four-language parity closure and Core-owned
+four-language code generation remain open in Tasks 6-9. P5 legacy authority removal,
 `RecordEngine` clean rename, package/version release readiness, and later
 C-Two-owned composition also remain open. The repository still ships the
 0.1.x call-db/`ColumnEngine` migration surface, so Issue 0002 remains open and
@@ -1061,20 +1061,77 @@ pthread coverage. This is an explicit host-use constraint, not permission to
 weaken Core invalidation. The review is same-agent, not independent/subagent
 evidence.
 
+**Task 5 local evidence:** Rust, Python, and official TypeScript/Wasm now
+project the existing ABI-105 `view_ref_target` and `view_graph_identity`
+operations as thin safe APIs. `GraphIdentity` is exactly the Core pair
+`(component_index, object_id)` and is meaningful only within its owning
+payload; equal numeric pairs from separate payloads do not assert shared
+identity. Field navigation never dereferences a ref implicitly, and no binding
+recursively decodes, caches, enumerates, or materializes a graph.
+
+The shared callers author the checked-in all-values graph through Core before
+filling the forward target, then observe a Node self-cycle, the Node/Asset
+mutual cycle, repeated refs to one shared Node, a null ref, an inline component
+without identity, and two disconnected roots. They compare Core coordinates,
+not host pointers. One Core materialization call preserves the selected
+reachable cycle after source invalidation/release; source identity and target
+calls fail with exact five-field `VIEW_INVALIDATED(4001)`, while null target and
+identity calls preserve exact `UNEXPECTED_NULL(2003)`. Rust and free-threaded
+Python also exercise cloned handles concurrently; TypeScript exercises 1,000
+retain/dispose traversals in the official single-thread Wasm host.
+
+Final local counts are 18 Rust non-doc tests plus the Task 4 compile-fail
+borrow doctest, with formatting and warning-denying clippy clean; 439 Python
+tests plus compileall; and 95 TypeScript/Wasm tests. Native Debug and Release
+pass 37/37 in 70.46 and 46.56 seconds. The 12-test runtime/record/graph/
+backing/open/view/materialization set passes hard-fail ASan+UBSan in 202.61
+seconds and a fully built available ThreadSanitizer configuration in 358.95
+seconds. The first expanded TSan invocation found that the retained Task 4
+build had registered but not built three graph executables; that incomplete
+run was stopped and is not evidence. All 12 exact targets were then built and
+the clean 12/12 run was started from the beginning. Apple ASan still uses
+`detect_leaks=0`, so no LeakSanitizer result is claimed.
+
+The Core graph Wasm harness and single-thread injected-failure path pass.
+Native, official-Wasm-build, and fresh Core wasm32 symbol scans remain exactly
+105. Export generation passes 2 tests; package inventory passes 16; schema,
+pinned dependencies, the 4-test corpus helper, all 16 reviewed seeds, and the
+P3 quality gate at 12 runs / 48 assertions plus repository check remain green.
+The unchanged official artifacts remain
+`d763262fb5bc87196fcbc56781561e128595af55ae85546fff67ca6f81192e22`
+for JavaScript and
+`511b3cbdd5cd1e09c497ca85cc5ef2981d3ec85753cc18b257575d2ac1b10fae`
+for Wasm.
+
+Fresh Python 3.14t and 3.10 source/wheel builds pass exact inventory. An
+isolated install of each wheel passes all six Task 4-5 record/graph tests
+against its packaged Core. SHA-256 values are:
+
+- 3.14t sdist `315610e70525518fe9aa5b6562a714c69d2e194dd53276331d491e796e8a708e`;
+- 3.14t wheel `43174c8a1f8da628b474732c5a507d7471bb159b6941aa6722187e8d87bf315e`;
+- 3.10 sdist `28025839fef9596a7329a1697670249d4f3b6ba32350390ff2a92c5ad1fe0229`;
+- 3.10 wheel `97bcdba24e3e592ea526e8f86a3798439dd7c232d6bd3a61fd8c0db4f8fbdd08`.
+
+The 3.10 build retains the diagnostics already governed by Issue 0003,
+including SWIG 325/451 and local deployment-target warnings. Package version
+remains 0.1.22, no Core/header/schema/manifest/ABI meaning changed, and no
+hosted result is claimed. The primary-agent review is same-agent rather than
+independent/subagent evidence.
+
 **Impact:** Portable compile/query/build/open/view/materialize remains available
 to C and C++ through the locally frozen P3 boundary. Rust, Python, and official
 TypeScript/Wasm now share compile/query, complete author/freeze/plan semantics,
 truthful execution/backing, payload ownership, open, complete checked record
-navigation/access, detached materialization, and invalidation from that same
-Core. They still cannot expose graph ref targets and payload-scoped identity or
-prove cross-language sharing/cycle observation through safe APIs. No language
-can yet consume a Core-owned generated artifact set.
+navigation/access, graph ref/identity/sharing/cycle observation, detached
+materialization, and invalidation from that same Core. Per-language tests are
+green, but the ordered executable four-language parity map and independent
+receipts do not yet exist. No language can yet consume a Core-owned generated
+artifact set.
 
-**Next owner slice:** P4 Task 5 projects graph ref targets, payload-scoped
-identity, sharing, cycles, null refs, and reachable-closure materialization
-vertically across the same public languages while preserving the frozen Core
-meaning and ABI-105. It must call the existing Core operations, not add a
-binding-owned graph walker.
+**Next owner slice:** P4 Task 6 freezes the ordered cross-language runtime
+parity and package/lifetime proof map over Tasks 1-5, including canonical,
+binary, value, error, backing, ownership, invalidation, and graph identity
+receipts. Codegen rows remain explicitly open until Tasks 7-9.
 
 **Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
 the same Core ABI and pass canonical, binary, value, error, lifetime, and
@@ -1267,7 +1324,7 @@ result.
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P4. Language projections and payload codegen | Docs-first design is frozen; Tasks 1-4 compile/query, author/freeze/plan, execution/backing/ownership/open, and complete checked-record-view/materialization/invalidation projections are locally complete over unchanged ABI-105 with primary-agent review and no independent/hosted claim; Tasks 5-9 remain open | Continue with graph ref/identity/sharing/cycle parity, then prove deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
+| P4. Language projections and payload codegen | Docs-first design is frozen; Tasks 1-5 compile/query, author/freeze/plan, execution/backing/ownership/open, checked record views, and graph ref/identity/sharing/cycle projections are locally complete over unchanged ABI-105 with primary-agent review and no independent/hosted claim; Tasks 6-9 remain open | Freeze executable four-language runtime parity and package boundaries, then prove deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
 | P5. Clean cut, release, downstream composition | Blocked on P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then downstream composition delegates the nested FastDB sub-spec without semantic duplication |
 
 ## Non-deferrable 0.2.0 work

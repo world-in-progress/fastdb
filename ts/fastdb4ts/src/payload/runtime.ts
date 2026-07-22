@@ -64,6 +64,16 @@ export enum ViewKind {
   Ref = 16,
 }
 
+/** Core identity coordinates meaningful only within one payload owner. */
+export class GraphIdentity {
+  constructor(
+    readonly componentIndex: number,
+    readonly objectId: bigint,
+  ) {
+    Object.freeze(this);
+  }
+}
+
 export interface PayloadBackingStats {
   readonly reservations: bigint;
   readonly writes: bigint;
@@ -604,6 +614,41 @@ export class View {
       return View[createView](
         readU32(module, outputs),
         viewConstructionToken,
+      );
+    });
+  }
+
+  /** Follow exactly one explicit Core ref edge. */
+  refTarget(): View {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = module._fdb_payload_v1_view_ref_target(
+        this.requireHandle(),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return View[createView](
+        readU32(module, outputs),
+        viewConstructionToken,
+      );
+    });
+  }
+
+  /** Return Core coordinates meaningful only within this payload owner. */
+  graphIdentity(): GraphIdentity {
+    const module = payloadModule();
+    return withAllocation(module, 16 + POINTER_SIZE, (outputs) => {
+      const status = module._fdb_payload_v1_view_graph_identity(
+        this.requireHandle(),
+        outputs,
+        outputs + 8,
+        outputs + 16,
+      );
+      checkStatus(status, outputs + 16);
+      return new GraphIdentity(
+        readU32(module, outputs),
+        readU64(module, outputs + 8),
       );
     });
   }

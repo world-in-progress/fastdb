@@ -388,6 +388,14 @@ class ViewKind(IntEnum):
     REF = 16
 
 
+@dataclass(frozen=True)
+class GraphIdentity:
+    """Core identity coordinates scoped to one payload owner."""
+
+    component_index: int
+    object_id: int
+
+
 _ACCESS_TOKEN = object()
 _AccessT = TypeVar("_AccessT", bound="Access")
 
@@ -630,6 +638,38 @@ class View:
             "fdb_payload_v1_view_field",
             ctypes.c_uint32(_checked_unsigned(index, 0xFFFF_FFFF, "index")),
         )
+
+    def ref_target(self: _ViewT) -> _ViewT:
+        """Follow exactly one explicit Core ref edge."""
+        native = _ffi.library()
+        result = _ffi.Handle()
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_view_ref_target(
+                    handle, ctypes.byref(result), ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        return type(self)._from_handle(result)
+
+    def graph_identity(self) -> GraphIdentity:
+        """Return Core coordinates meaningful only within this payload."""
+        native = _ffi.library()
+        component_index = ctypes.c_uint32(0)
+        object_id = ctypes.c_uint64(0)
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_view_graph_identity(
+                    handle,
+                    ctypes.byref(component_index),
+                    ctypes.byref(object_id),
+                    ctypes.byref(error),
+                )
+            )
+            _check_status(status, error)
+        return GraphIdentity(int(component_index.value), int(object_id.value))
 
     def get_bool(self) -> bool:
         return bool(self._scalar("fdb_payload_v1_view_get_bool", ctypes.c_uint8))
