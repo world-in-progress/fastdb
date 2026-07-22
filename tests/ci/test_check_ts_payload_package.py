@@ -68,6 +68,15 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
             MODULE.strip_root(["package/a", "package/a"])
         with self.assertRaises(MODULE.CheckError):
             MODULE.strip_root(["outside"])
+        for unsafe in (
+            "package/../escape",
+            "package/..\\escape",
+            "package/./file",
+            "package/double//file",
+        ):
+            with self.subTest(unsafe=unsafe):
+                with self.assertRaises(MODULE.CheckError):
+                    MODULE.strip_root([unsafe])
 
     def test_rejects_links_and_other_special_tar_members(self) -> None:
         regular = tarfile.TarInfo("package/file")

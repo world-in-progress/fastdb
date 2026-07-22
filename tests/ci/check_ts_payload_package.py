@@ -72,10 +72,35 @@ def strip_root(names: list[str]) -> set[str]:
     if len(names) != len(set(names)):
         raise CheckError("npm tarball contains duplicate member names")
     prefix = "package/"
-    outside = [name for name in names if name != "package" and not name.startswith(prefix)]
+    outside = [
+        name
+        for name in names
+        if name != "package" and not name.startswith(prefix)
+    ]
     if outside:
         raise CheckError(f"npm tarball contains members outside package/: {outside}")
-    return {name[len(prefix) :] for name in names if name.startswith(prefix)}
+    relative_names = [
+        name[len(prefix) :] for name in names if name.startswith(prefix)
+    ]
+    invalid = []
+    canonical_names = []
+    for name in relative_names:
+        path = PurePosixPath(name)
+        canonical = path.as_posix()
+        if (
+            not name
+            or "\\" in name
+            or path.is_absolute()
+            or ".." in path.parts
+            or canonical != name
+        ):
+            invalid.append(name)
+        canonical_names.append(canonical)
+    if invalid:
+        raise CheckError(f"npm tarball contains non-canonical paths: {invalid}")
+    if len(canonical_names) != len(set(canonical_names)):
+        raise CheckError("npm tarball contains colliding normalized paths")
+    return set(canonical_names)
 
 
 def check_inventory(names: set[str]) -> None:
@@ -87,6 +112,7 @@ def check_inventory(names: set[str]) -> None:
         path = PurePosixPath(name)
         if (
             path.is_absolute()
+            or "\\" in name
             or ".." in path.parts
             or any(part in FORBIDDEN_PARTS for part in path.parts)
             or path.suffix in {".tsbuildinfo", ".pyc", ".pyo"}
