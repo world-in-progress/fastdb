@@ -21,6 +21,11 @@ JOBS = {
   "package_tests" => %w[core python workflow]
 }.freeze
 
+# Later phases may add independently validated jobs to the repository-wide
+# aggregate, but this historical gate must still fail closed over the exact
+# current inventory rather than silently accepting arbitrary extra jobs.
+POST_P2_AGGREGATE_JOBS = %w[rust_payload projection_parity].freeze
+
 MALFORMED_CLASSES = %w[
   header-identity-version-profile-length-digest
   truncation
@@ -244,7 +249,8 @@ def check_workflow
                   "package job lacks focused package-gate tests")
 
   aggregate = jobs.fetch("test")
-  required_needs = ["detect_changes", *JOBS.keys].sort
+  required_needs = ["detect_changes", *JOBS.keys,
+                    *POST_P2_AGGREGATE_JOBS].sort
   require_quality(Array(aggregate.fetch("needs")).sort == required_needs,
                   "aggregate needs are not exact")
   aggregate_run = step_run(aggregate, "Validate required test results")

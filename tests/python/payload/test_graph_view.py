@@ -16,10 +16,15 @@ from fastdb4py.payload import (
 
 
 FIXTURES = Path(__file__).parents[2] / "golden/payload/v1/binary/spec"
+BINARY_FIXTURES = Path(__file__).parents[2] / "golden/payload/v1/binary/valid"
 
 
 def _compile(name: str) -> CompiledSpec:
     return CompiledSpec.compile((FIXTURES / name).read_bytes())
+
+
+def _binary_golden(name: str) -> bytes:
+    return bytes.fromhex((BINARY_FIXTURES / name).read_text(encoding="ascii"))
 
 
 def graph_payload() -> tuple[Payload, int, int, int]:
@@ -106,6 +111,7 @@ def require_error(
 
 def test_graph_identity_refs_cycles_and_materialized_closure_are_core_owned() -> None:
     payload, node_index, inline_index, asset_index = graph_payload()
+    assert payload.binary_bytes() == _binary_golden("graph-all-values.bin.hex")
     source_root = root(payload, 0)
     root_identity = GraphIdentity(node_index, 0)
     asset_identity = GraphIdentity(asset_index, 0)

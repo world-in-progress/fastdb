@@ -39,6 +39,40 @@ Not included in the current TS package:
 
 `fastdb4ts` owns generic browser/WASM access to FastDB schemas and binary buffers. External RPC systems may consume those schemas and buffers, but their contract planning, route identity, relay behavior, and generated client helpers belong in those systems rather than in `fastdb4ts`.
 
+## Portable payload subpath
+
+`fastdb4ts/payload` is the official browser-capable WebAssembly projection of
+the stable `fastdb.payload.v1` C ABI:
+
+```ts
+import { CompiledSpec, Profile, initPayload } from 'fastdb4ts/payload';
+
+await initPayload();
+const source = new TextEncoder().encode(
+  '{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]}',
+);
+const spec = CompiledSpec.compile(source);
+try {
+  console.assert(spec.profile() === Profile.RecordV1);
+} finally {
+  spec.dispose();
+}
+```
+
+The packed subpath includes the reviewed Wasm module and works in browser,
+worker, and Node test hosts without a Node-native FastDB projection. It checks
+the Core ABI version and calls only exported `fdb_payload_v1_*` functions. It
+does not parse portable schemas or binaries, compute canonical identity, plan
+layout, walk graphs, or materialize values in TypeScript; the C++ Core remains
+the sole authority.
+
+Owned handles use explicit, idempotent `dispose()` with finalization only as a
+fallback. Safe text and byte methods copy out of scoped Wasm access, graph
+sharing/cycles use Core `(componentIndex, objectId)` coordinates, and detached
+materialization is one Core call. Four-target Core-owned codegen remains open
+through P4 Tasks 7-9; existing `fdb codegen --ts` behavior below is legacy
+0.1.x migration input and is not extended by this projection.
+
 ## Installation
 
 ```bash

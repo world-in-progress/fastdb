@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       core: ${{ steps.filter.outputs.core }}
+      rust: ${{ steps.filter.outputs.rust }}
       python: ${{ steps.filter.outputs.python }}
       ts: ${{ steps.filter.outputs.ts }}
       workflow: ${{ steps.filter.outputs.workflow }}
@@ -53,6 +54,9 @@ jobs:
               - 'tests/python/**'
               - 'tools/check_python_package_inventory.py'
               - 'py_utils.sh'
+            rust:
+              - 'bindings/rust/**'
+              - 'tests/rust/**'
             ts:
               - 'ts/**'
               - 'tests/ts/**'
@@ -60,6 +64,49 @@ jobs:
             workflow:
               - '.github/workflows/tests.yml'
               - 'tests/ci/**'
+              - 'README.md'
+              - 'docs/issues/0002-portable-payload-foundation-implementation-status.md'
+
+  rust_payload:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.rust == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust with formatting and lint components
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Run Rust source-link projection tests
+        run: >-
+          cargo test --manifest-path bindings/rust/Cargo.toml
+          --workspace --all-features
+
+      - name: Check Rust formatting and warnings
+        run: |
+          cargo fmt --manifest-path bindings/rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path bindings/rust/Cargo.toml \
+            --workspace --all-targets --all-features -- -D warnings
+
+      - name: Configure shared FastDB for relocated system linking
+        run: >-
+          cmake -S fastcarto -B build/rust-system
+          -DBUILD_TESTING=OFF
+          -DBUILD_TOOLS=OFF
+          -DUSE_SWIG_PYTHON=OFF
+          -DUSE_SWIG_NODE=OFF
+          -DUSE_SWIG_GO=OFF
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build and link relocated Rust consumer to the system Core
+        run: |
+          cmake --build build/rust-system --target fastdb --parallel
+          python3 tests/ci/test_check_rust_payload_package.py
+          python3 tests/ci/check_rust_payload_package.py \
+            --build-dir build/rust-system
 
   python_tests:
     needs: detect_changes
@@ -118,6 +165,28 @@ jobs:
 
       - name: Run TypeScript tests
         run: npm run test:ts
+
+      - name: Verify packed portable-payload subpath
+        run: |
+          python3 tests/ci/test_check_ts_payload_package.py
+          cmake -E make_directory build/ts-package
+          npm pack ./ts/fastdb4ts --pack-destination build/ts-package
+          python3 tests/ci/check_ts_payload_package.py \
+            --package-dir build/ts-package
+
+  projection_parity:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.rust == 'true' || needs.detect_changes.outputs.python == 'true' || needs.detect_changes.outputs.ts == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Validate ordered projection and open-codegen map
+        run: |
+          python3 tests/ci/test_check_p4_projection_codegen_quality.py
+          python3 tests/ci/check_p4_projection_codegen_quality.py \
+            --check-repository
 
   wasm_core:
     needs: detect_changes
@@ -325,7 +394,7 @@ jobs:
           python-version: "${{ matrix.python-version }}"
 
       - name: Compile Python sources
-        run: uv run python -m compileall -q python/fastdb4py tests/python
+        run: python -m compileall -q python/fastdb4py tests/python
 
       - name: Build Python sdist and wheel
         run: |
@@ -339,16 +408,27 @@ jobs:
             --dist-dir build/package-dist \
             --build-log build/package-build.log
 
+      - name: Run payload suite from the installed wheel
+        run: |
+          wheels=(build/package-dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          uv run --isolated --no-project \
+            --python "${{ matrix.python-version }}" \
+            --with "${wheels[0]}" --with pytest \
+            python -m pytest tests/python/payload -q
+
   test:
     name: test
     needs:
       - detect_changes
       - python_tests
+      - rust_payload
       - ts_tests
       - native_tests
       - native_sanitizers
       - wasm_core
       - package_tests
+      - projection_parity
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -359,6 +439,7 @@ jobs:
         env:
           DETECT_RESULT: ${{ needs.detect_changes.result }}
           CORE_SCOPE: ${{ needs.detect_changes.outputs.core }}
+          RUST_SCOPE: ${{ needs.detect_changes.outputs.rust }}
           PYTHON_SCOPE: ${{ needs.detect_changes.outputs.python }}
           TS_SCOPE: ${{ needs.detect_changes.outputs.ts }}
           WORKFLOW_SCOPE: ${{ needs.detect_changes.outputs.workflow }}
@@ -368,4 +449,9 @@ jobs:
           NATIVE_SANITIZERS_RESULT: ${{ needs.native_sanitizers.result }}
           WASM_CORE_RESULT: ${{ needs.wasm_core.result }}
           PACKAGE_TESTS_RESULT: ${{ needs.package_tests.result }}
-        run: ruby tests/ci/check_p2_task11_quality.rb --validate-results
+          RUST_PAYLOAD_RESULT: ${{ needs.rust_payload.result }}
+          PROJECTION_PARITY_RESULT: ${{ needs.projection_parity.result }}
+        run: |
+          python3 tests/ci/check_p4_projection_codegen_quality.py \
+            --validate-results
+          ruby tests/ci/check_p2_task11_quality.rb --validate-results

@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Verify and execute the packed fastdb4ts portable-payload subpath."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path, PurePosixPath
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+from typing import Any
+
+
+REQUIRED = {
+    "README.md",
+    "package.json",
+    "dist/payload/abi.d.ts",
+    "dist/payload/abi.js",
+    "dist/payload/builder.d.ts",
+    "dist/payload/builder.js",
+    "dist/payload/error.d.ts",
+    "dist/payload/error.js",
+    "dist/payload/index.d.ts",
+    "dist/payload/index.js",
+    "dist/payload/runtime.d.ts",
+    "dist/payload/runtime.js",
+    "dist/payload/spec.d.ts",
+    "dist/payload/spec.js",
+    "dist/wasm-loader.d.ts",
+    "dist/wasm-loader.js",
+    "dist/wasm/fastdb4ts.d.ts",
+    "dist/wasm/fastdb4ts.js",
+    "dist/wasm/fastdb4ts.wasm",
+}
+FORBIDDEN_PARTS = {
+    "node_modules",
+    "src",
+    "tests",
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+}
+
+
+class CheckError(RuntimeError):
+    """The npm payload package is incomplete or unsafe to consume."""
+
+
+def exact_package(package_dir: Path) -> Path:
+    try:
+        entries = sorted(package_dir.resolve(strict=True).iterdir())
+    except (FileNotFoundError, NotADirectoryError) as error:
+        raise CheckError(f"package directory is unavailable: {package_dir}") from error
+    packages = [
+        path
+        for path in entries
+        if path.is_file() and not path.is_symlink() and path.suffix == ".tgz"
+    ]
+    unexpected = [path.name for path in entries if path not in packages]
+    if len(packages) != 1 or unexpected:
+        raise CheckError(
+            "package directory must contain exactly one npm tarball; "
+            f"packages={len(packages)}, unexpected={unexpected}"
+        )
+    return packages[0]
+
+
+def strip_root(names: list[str]) -> set[str]:
+    if len(names) != len(set(names)):
+        raise CheckError("npm tarball contains duplicate member names")
+    prefix = "package/"
+    outside = [name for name in names if name != "package" and not name.startswith(prefix)]
+    if outside:
+        raise CheckError(f"npm tarball contains members outside package/: {outside}")
+    return {name[len(prefix) :] for name in names if name.startswith(prefix)}
+
+
+def check_inventory(names: set[str]) -> None:
+    missing = sorted(REQUIRED - names)
+    if missing:
+        raise CheckError(f"npm package is missing payload artifacts: {missing}")
+    debris = []
+    for name in sorted(names):
+        path = PurePosixPath(name)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or any(part in FORBIDDEN_PARTS for part in path.parts)
+            or path.suffix in {".tsbuildinfo", ".pyc", ".pyo"}
+            or path.name == ".DS_Store"
+        ):
+            debris.append(name)
+    if debris:
+        raise CheckError(f"npm package contains forbidden debris: {debris}")
+
+
+def reject_special_members(members: list[tarfile.TarInfo]) -> None:
+    special = [
+        member.name
+        for member in members
+        if not (member.isfile() or member.isdir())
+    ]
+    if special:
+        raise CheckError(f"npm tarball contains non-file members: {special}")
+
+
+def check_package_json(document: Any) -> None:
+    if not isinstance(document, dict):
+        raise CheckError("package.json root must be an object")
+    expected = {
+        "types": "./dist/payload/index.d.ts",
+        "import": "./dist/payload/index.js",
+    }
+    exports = document.get("exports")
+    if not isinstance(exports, dict) or exports.get("./payload") != expected:
+        raise CheckError("package.json must export the exact ./payload subpath")
+    files = document.get("files")
+    if not isinstance(files, list) or "dist" not in files or "README.md" not in files:
+        raise CheckError("package.json files must include dist and README.md")
+    if document.get("type") != "module":
+        raise CheckError("fastdb4ts payload package must remain an ES module")
+
+
+def run_smoke(package: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="fastdb-ts-package-") as temporary:
+        root = Path(temporary)
+        with tarfile.open(package, "r:gz") as archive:
+            members = archive.getmembers()
+            names = [member.name for member in members]
+            check_inventory(strip_root(names))
+            reject_special_members(members)
+            archive.extractall(root)
+        node_modules = root / "node_modules"
+        node_modules.mkdir()
+        shutil.move(str(root / "package"), str(node_modules / "fastdb4ts"))
+        smoke = root / "smoke.mjs"
+        smoke.write_text(
+            """import { CompiledSpec, Profile, initPayload } from 'fastdb4ts/payload';
+
+await initPayload();
+const source = new TextEncoder().encode(
+  '{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]}',
+);
+const spec = CompiledSpec.compile(source);
+try {
+  if (spec.profile() !== Profile.RecordV1) throw new Error('profile mismatch');
+  if (spec.entryCount() !== 0 || spec.componentCount() !== 0) {
+    throw new Error('empty spec indexes mismatch');
+  }
+  if (spec.sha256().byteLength !== 32) throw new Error('digest mismatch');
+} finally {
+  spec.dispose();
+}
+""",
+            encoding="utf-8",
+        )
+        completed = subprocess.run(
+            ["node", str(smoke)],
+            cwd=root,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+        )
+        if completed.returncode != 0:
+            raise CheckError(
+                f"packed fastdb4ts/payload smoke failed with exit "
+                f"{completed.returncode}:\n{completed.stdout}"
+            )
+
+
+def parse_arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--package-dir", required=True, type=Path)
+    return parser.parse_args()
+
+
+def main() -> int:
+    arguments = parse_arguments()
+    try:
+        package = exact_package(arguments.package_dir)
+        with tarfile.open(package, "r:gz") as archive:
+            members = archive.getmembers()
+            reject_special_members(members)
+            names = strip_root([member.name for member in members])
+            check_inventory(names)
+            package_json = archive.extractfile("package/package.json")
+            if package_json is None:
+                raise CheckError("npm package is missing package.json contents")
+            check_package_json(json.loads(package_json.read().decode("utf-8")))
+        run_smoke(package)
+    except (
+        CheckError,
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        tarfile.TarError,
+    ) as error:
+        print(f"TypeScript payload package check failed: {error}", file=sys.stderr)
+        return 1
+    print("TypeScript packed fastdb4ts/payload inventory and Wasm smoke passed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

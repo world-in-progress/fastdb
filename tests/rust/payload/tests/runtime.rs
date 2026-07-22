@@ -17,6 +17,40 @@ fn fixture(name: &str) -> Vec<u8> {
     fs::read(root.join(name)).expect("fixture")
 }
 
+fn binary_golden(name: &str) -> Vec<u8> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/golden/payload/v1/binary/valid");
+    let source = fs::read_to_string(root.join(name)).expect("binary golden");
+    let source = source.trim();
+    assert_eq!(source.len() % 2, 0);
+    source
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).expect("golden hex is ASCII");
+            u8::from_str_radix(text, 16).expect("golden hex is valid")
+        })
+        .collect()
+}
+
+fn invalid_binary_golden(name: &str) -> Vec<u8> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("tests/golden/payload/v1/binary/invalid");
+    let source = fs::read_to_string(root.join(name)).expect("invalid binary golden");
+    let source = source.trim();
+    assert_eq!(source.len() % 2, 0);
+    source
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).expect("golden hex is ASCII");
+            u8::from_str_radix(text, 16).expect("golden hex is valid")
+        })
+        .collect()
+}
+
 fn fixed_plan() -> (CompiledSpec, BuildPlan) {
     let spec = CompiledSpec::compile(&fixture("fixed-scalars.source.json")).expect("compile");
     let mut builder = Builder::create(&spec).expect("builder");
@@ -184,11 +218,9 @@ fn internal_heap_execution_and_payload_facts_are_core_owned() {
     assert!(result.report.backing_capacity >= info.total_bytes);
     assert_eq!(result.payload.profile().unwrap(), Profile::RecordV1);
     assert_eq!(result.payload.execution_report().unwrap(), result.report);
-    assert_eq!(result.payload.sha256().unwrap().len(), 32);
-    assert_eq!(
-        result.payload.binary_bytes().unwrap().len() as u64,
-        info.total_bytes
-    );
+    let expected_binary = binary_golden("fixed-scalars.bin.hex");
+    assert_eq!(result.payload.binary_bytes().unwrap(), expected_binary);
+    assert_eq!(expected_binary.len() as u64, info.total_bytes);
 
     let clone = result.payload.clone();
     drop(result.payload);
@@ -288,6 +320,22 @@ fn copied_and_external_open_have_explicit_independent_lifetimes() {
     assert_eq!(
         error.details_json(),
         r#"{"reason":"opened_payload_has_no_execution_report"}"#
+    );
+}
+
+#[test]
+fn invalid_open_preserves_every_core_field() {
+    let spec = CompiledSpec::compile(&fixture("empty.source.json")).expect("compile empty spec");
+    let source = invalid_binary_golden("header-magic.bin.hex");
+    let error = Payload::open_copy(&spec, &source, &OpenOptions::default())
+        .expect_err("the invalid Core binary golden must be rejected");
+    assert_eq!(error.code(), 3001);
+    assert_eq!(error.symbol(), "INVALID_MAGIC");
+    assert_eq!(error.path(), "/binary/header/magic");
+    assert_eq!(error.message(), "Portable payload magic is invalid");
+    assert_eq!(
+        error.details_json(),
+        r#"{"actual":"4744425041593100","expected":"4644425041593100","reason":"invalid_magic"}"#
     );
 }
 

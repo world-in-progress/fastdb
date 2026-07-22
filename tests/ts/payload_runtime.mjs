@@ -19,6 +19,21 @@ import {
 import { __testingWasmMemoryBacking } from '../../ts/fastdb4ts/dist/payload/runtime.js';
 
 const specUrl = new URL('../golden/payload/v1/binary/spec/', import.meta.url);
+const binaryUrl = new URL('../golden/payload/v1/binary/valid/', import.meta.url);
+const invalidBinaryUrl = new URL(
+  '../golden/payload/v1/binary/invalid/',
+  import.meta.url,
+);
+
+async function binaryGolden(name) {
+  const source = await readFile(new URL(name, binaryUrl), 'ascii');
+  return new Uint8Array(Buffer.from(source.trim(), 'hex'));
+}
+
+async function invalidBinaryGolden(name) {
+  const source = await readFile(new URL(name, invalidBinaryUrl), 'ascii');
+  return new Uint8Array(Buffer.from(source.trim(), 'hex'));
+}
 
 async function fixedPlan() {
   const spec = CompiledSpec.compile(
@@ -67,11 +82,9 @@ test('internal heap execution and payload facts are Core-owned', async () => {
       assert.ok(result.report.backingCapacity >= info.totalBytes);
       assert.equal(result.payload.profile(), Profile.RecordV1);
       assert.deepEqual(result.payload.executionReport(), result.report);
-      assert.equal(result.payload.sha256().byteLength, 32);
-      assert.equal(
-        BigInt(result.payload.binaryBytes().byteLength),
-        info.totalBytes,
-      );
+      const expectedBinary = await binaryGolden('fixed-scalars.bin.hex');
+      assert.deepEqual(result.payload.binaryBytes(), expectedBinary);
+      assert.equal(BigInt(expectedBinary.byteLength), info.totalBytes);
 
       const clone = result.payload.clone();
       result.payload.dispose();
@@ -186,6 +199,33 @@ test('copy and Wasm-owned external open keep truthful lifetimes', async () => {
   built.payload.dispose();
   plan.dispose();
   spec.dispose();
+});
+
+test('invalid open preserves every Core field', async () => {
+  await initPayload();
+  const spec = CompiledSpec.compile(
+    await readFile(new URL('empty.source.json', specUrl)),
+  );
+  try {
+    const invalid = await invalidBinaryGolden('header-magic.bin.hex');
+    assert.throws(
+      () => Payload.openCopy(spec, invalid, new OpenOptions()),
+      (error) => {
+        assert.ok(error instanceof PayloadError);
+        assert.equal(error.code, 3001);
+        assert.equal(error.symbol, 'INVALID_MAGIC');
+        assert.equal(error.path, '/binary/header/magic');
+        assert.equal(error.message, 'Portable payload magic is invalid');
+        assert.equal(
+          error.detailsJson,
+          '{"actual":"4744425041593100","expected":"4644425041593100","reason":"invalid_magic"}',
+        );
+        return true;
+      },
+    );
+  } finally {
+    spec.dispose();
+  }
 });
 
 test('runtime handles cannot be forged from JavaScript', async () => {

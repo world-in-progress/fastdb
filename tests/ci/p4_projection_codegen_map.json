@@ -1,0 +1,656 @@
+{
+  "schema": "fastdb.payload.p4-projection-codegen-map.v1",
+  "authority": {
+    "semantic_authority": "cpp-core",
+    "projection_rule": "abi-only-no-binding-semantics"
+  },
+  "abi": {
+    "version": 1,
+    "symbol_count": 105,
+    "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
+    "status": "frozen-p3"
+  },
+  "runtime_receipts": [
+    {
+      "id": "canonical",
+      "status": "closed-task-6",
+      "fixtures": [
+        "tests/golden/payload/v1/spec/valid/record-all-types.source.json",
+        "tests/golden/payload/v1/spec/valid/record-all-types.canonical.hex",
+        "tests/golden/payload/v1/spec/valid/record-all-types.manifest.hex",
+        "tests/golden/payload/v1/spec/valid/record-all-types.sha256"
+      ],
+      "observations": [
+        "canonical-json",
+        "manifest-json",
+        "sha256",
+        "profile-capabilities-stable-indexes"
+      ],
+      "proofs": [
+        {
+          "language": "cpp",
+          "cases": [
+            {
+              "file": "tests/cpp/payload/test_compiled_spec.cpp",
+              "test": "test_ordered_golden_corpus",
+              "markers": ["canonical_bytes()", "manifest_bytes()", "sha256_lower_hex"]
+            },
+            {
+              "file": "tests/cpp/payload/test_compiled_spec.cpp",
+              "test": "test_manifest_indexes_facts_and_capabilities",
+              "markers": ["component_count", "capabilities", "profile"]
+            }
+          ]
+        },
+        {
+          "language": "rust",
+          "cases": [
+            {
+              "file": "tests/rust/payload/tests/compile_query.rs",
+              "test": "compile_and_query_record_all_types_through_core",
+              "markers": ["CANONICAL_HEX", "MANIFEST_HEX", "Capabilities"]
+            }
+          ]
+        },
+        {
+          "language": "python",
+          "cases": [
+            {
+              "file": "tests/python/payload/test_compile_query.py",
+              "test": "test_compile_and_query_record_all_types_through_core",
+              "markers": ["record-all-types.canonical.hex", "record-all-types.manifest.hex", "Capabilities"]
+            }
+          ]
+        },
+        {
+          "language": "typescript",
+          "cases": [
+            {
+              "file": "tests/ts/payload_compile_query.mjs",
+              "test": "compile and query record-all-types through Core",
+              "markers": ["record-all-types.canonical.hex", "record-all-types.manifest.hex", "Capabilities"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "binary",
+      "status": "closed-task-6",
+      "fixtures": [
+        "tests/golden/payload/v1/binary/valid/fixed-scalars.bin.hex",
+        "tests/golden/payload/v1/binary/valid/fixed-scalars.sha256",
+        "tests/golden/payload/v1/binary/valid/graph-all-values.bin.hex",
+        "tests/golden/payload/v1/binary/valid/graph-all-values.sha256"
+      ],
+      "observations": [
+        "record-deterministic-bytes",
+        "graph-deterministic-bytes"
+      ],
+      "proofs": [
+        {
+          "language": "cpp",
+          "cases": [
+            {
+              "file": "tests/cpp/payload/test_record_binary.cpp",
+              "test": "test_binary_goldens_determinism_hash_and_headers",
+              "markers": ["fixed-scalars", "success.binary_hex", "sha256_lower_hex"]
+            },
+            {
+              "file": "tests/cpp/payload/test_graph_binary.cpp",
+              "test": "test_ordered_graph_goldens_and_strict_open",
+              "markers": ["graph-all-values", "success.binary_hex", "sha256_lower_hex"]
+            }
+          ]
+        },
+        {
+          "language": "rust",
+          "cases": [
+            {
+              "file": "tests/rust/payload/tests/runtime.rs",
+              "test": "internal_heap_execution_and_payload_facts_are_core_owned",
+              "markers": ["fixed-scalars.bin.hex", "binary_bytes"]
+            },
+            {
+              "file": "tests/rust/payload/tests/graph_view.rs",
+              "test": "graph_identity_refs_cycles_and_materialized_closure_are_core_owned",
+              "markers": ["GRAPH_BINARY_HEX", "binary_bytes"]
+            }
+          ]
+        },
+        {
+          "language": "python",
+          "cases": [
+            {
+              "file": "tests/python/payload/test_runtime.py",
+              "test": "test_internal_heap_execution_and_payload_facts_are_core_owned",
+              "markers": ["fixed-scalars.bin.hex", "binary_bytes"]
+            },
+            {
+              "file": "tests/python/payload/test_graph_view.py",
+              "test": "test_graph_identity_refs_cycles_and_materialized_closure_are_core_owned",
+              "markers": ["graph-all-values.bin.hex", "binary_bytes"]
+            }
+          ]
+        },
+        {
+          "language": "typescript",
+          "cases": [
+            {
+              "file": "tests/ts/payload_runtime.mjs",
+              "test": "internal heap execution and payload facts are Core-owned",
+              "markers": ["fixed-scalars.bin.hex", "binaryBytes"]
+            },
+            {
+              "file": "tests/ts/payload_graph_view.mjs",
+              "test": "graph identity, refs, cycles, and materialized closure are Core-owned",
+              "markers": ["graph-all-values.bin.hex", "binaryBytes"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "logical-value",
+      "status": "closed-task-6",
+      "fixtures": [
+        "tests/golden/payload/v1/spec/valid/record-all-types.source.json",
+        "tests/golden/payload/v1/binary/spec/graph-all-values.source.json",
+        "tests/golden/payload/v1/binary/spec/nested-lists.source.json"
+      ],
+      "observations": [
+        "all-v1-scalars",
+        "normalized-values",
+        "str-wstr-bytes",
+        "nested-component-recursive-list",
+        "null-empty-cardinality",
+        "graph-refs-identity-sharing-cycles"
+      ],
+      "proofs": [
+        {
+          "language": "cpp",
+          "cases": [
+            {
+              "file": "tests/cpp/payload/test_runtime_cpp_facade.cpp",
+              "test": "test_typed_authoring_heap_open_views_and_lifetimes",
+              "markers": ["wstr()", "bytes()", "ViewKind::list"]
+            },
+            {
+              "file": "tests/cpp/payload/test_runtime_cpp_facade.cpp",
+              "test": "test_graph_facade_is_thin_and_complete",
+              "markers": ["graph_identity", "value_ref", "materialize"]
+            }
+          ]
+        },
+        {
+          "language": "rust",
+          "cases": [
+            {
+              "file": "tests/rust/payload/tests/record_view.rs",
+              "test": "complete_record_views_are_core_owned_and_materialized",
+              "markers": ["get_u8n", "wstr", "bytes()"]
+            },
+            {
+              "file": "tests/rust/payload/tests/graph_view.rs",
+              "test": "graph_identity_refs_cycles_and_materialized_closure_are_core_owned",
+              "markers": ["GraphIdentity", "ref_target", "is_null"]
+            }
+          ]
+        },
+        {
+          "language": "python",
+          "cases": [
+            {
+              "file": "tests/python/payload/test_record_view.py",
+              "test": "test_complete_record_views_are_core_owned_and_materialized",
+              "markers": ["get_u8n", "wstr", "bytes()"]
+            },
+            {
+              "file": "tests/python/payload/test_graph_view.py",
+              "test": "test_graph_identity_refs_cycles_and_materialized_closure_are_core_owned",
+              "markers": ["GraphIdentity", "ref_target", "is_null"]
+            }
+          ]
+        },
+        {
+          "language": "typescript",
+          "cases": [
+            {
+              "file": "tests/ts/payload_record_view.mjs",
+              "test": "complete record views are Core-owned and materialized",
+              "markers": ["getU8n", "wstr", "bytes()"]
+            },
+            {
+              "file": "tests/ts/payload_graph_view.mjs",
+              "test": "graph identity, refs, cycles, and materialized closure are Core-owned",
+              "markers": ["GraphIdentity", "refTarget", "isNull"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "error",
+      "status": "closed-task-6",
+      "fixtures": [
+        "tests/golden/payload/v1/spec/invalid/bad-kind.source.json",
+        "tests/golden/payload/v1/spec/invalid/bad-kind.error.json",
+        "tests/golden/payload/v1/binary/invalid/header-magic.bin.hex",
+        "tests/golden/payload/v1/binary/invalid/header-magic.error.json",
+        "tests/golden/payload/v1/binary/invalid/graph-ref-id.error.json"
+      ],
+      "observations": [
+        "five-core-fields",
+        "compile-builder-open-type-backing-invalidation"
+      ],
+      "proofs": [
+        {
+          "language": "cpp",
+          "cases": [
+            {
+              "file": "tests/cpp/payload/test_spec_abi.cpp",
+              "test": "test_nullability_output_clearing_and_exact_errors",
+              "markers": ["error_is(", "reason\":\"null_data"]
+            },
+            {
+              "file": "tests/cpp/payload/test_runtime_abi.cpp",
+              "test": "test_complete_record_runtime",
+              "markers": ["FDB_PAYLOAD_E_BUILDER_STATE", "FDB_PAYLOAD_E_NON_CANONICAL_BINARY", "FDB_PAYLOAD_E_DIRECT_UNAVAILABLE", "FDB_PAYLOAD_E_VIEW_INVALIDATED"]
+            },
+            {
+              "file": "tests/cpp/payload/test_runtime_cpp_facade.cpp",
+              "test": "test_typed_authoring_heap_open_views_and_lifetimes",
+              "markers": ["FDB_PAYLOAD_E_TYPE_MISMATCH", "TYPE_MISMATCH"]
+            }
+          ]
+        },
+        {
+          "language": "rust",
+          "cases": [
+            {
+              "file": "tests/rust/payload/tests/compile_query.rs",
+              "test": "compile_error_preserves_every_core_field",
+              "markers": ["INVALID_TYPE", "details_json"]
+            },
+            {
+              "file": "tests/rust/payload/tests/runtime.rs",
+              "test": "invalid_open_preserves_every_core_field",
+              "markers": ["INVALID_MAGIC", "/binary/header/magic", "invalid_magic"]
+            },
+            {
+              "file": "tests/rust/payload/tests/builder.rs",
+              "test": "core_owned_builder_limits_are_projected_without_binding_semantics",
+              "markers": ["BUILDER_RESOURCE_LIMIT", "/objects/Node/1"]
+            },
+            {
+              "file": "tests/rust/payload/tests/runtime.rs",
+              "test": "caller_backing_falls_back_truthfully_and_direct_required_is_exact",
+              "markers": ["DIRECT_UNAVAILABLE", "backing_declined_direct"]
+            },
+            {
+              "file": "tests/rust/payload/tests/graph_view.rs",
+              "test": "graph_identity_refs_cycles_and_materialized_closure_are_core_owned",
+              "markers": ["VIEW_INVALIDATED", "TYPE_MISMATCH"]
+            }
+          ]
+        },
+        {
+          "language": "python",
+          "cases": [
+            {
+              "file": "tests/python/payload/test_compile_query.py",
+              "test": "test_compile_error_preserves_every_core_field",
+              "markers": ["bad-kind.source.json", "details_json"]
+            },
+            {
+              "file": "tests/python/payload/test_runtime.py",
+              "test": "test_invalid_open_preserves_every_core_field",
+              "markers": ["INVALID_MAGIC", "/binary/header/magic", "invalid_magic"]
+            },
+            {
+              "file": "tests/python/payload/test_builder.py",
+              "test": "test_core_owned_builder_limits_are_projected_without_binding_semantics",
+              "markers": ["BUILDER_RESOURCE_LIMIT", "/objects/Node/1"]
+            },
+            {
+              "file": "tests/python/payload/test_runtime.py",
+              "test": "test_caller_backing_falls_back_truthfully_and_direct_required_is_exact",
+              "markers": ["DIRECT_UNAVAILABLE", "backing_declined_direct"]
+            },
+            {
+              "file": "tests/python/payload/test_graph_view.py",
+              "test": "test_graph_identity_refs_cycles_and_materialized_closure_are_core_owned",
+              "markers": ["VIEW_INVALIDATED", "TYPE_MISMATCH"]
+            }
+          ]
+        },
+        {
+          "language": "typescript",
+          "cases": [
+            {
+              "file": "tests/ts/payload_compile_query.mjs",
+              "test": "compile error preserves every Core field",
+              "markers": ["bad-kind.source.json", "detailsJson"]
+            },
+            {
+              "file": "tests/ts/payload_runtime.mjs",
+              "test": "invalid open preserves every Core field",
+              "markers": ["INVALID_MAGIC", "/binary/header/magic", "invalid_magic"]
+            },
+            {
+              "file": "tests/ts/payload_builder.mjs",
+              "test": "Core-owned builder limits are projected without binding semantics",
+              "markers": ["BUILDER_RESOURCE_LIMIT", "/objects/Node/1"]
+            },
+            {
+              "file": "tests/ts/payload_runtime.mjs",
+              "test": "Wasm backing reports direct, staged fallback, and exact rejection",
+              "markers": ["DIRECT_UNAVAILABLE", "backing_declined_direct"]
+            },
+            {
+              "file": "tests/ts/payload_graph_view.mjs",
+              "test": "graph identity, refs, cycles, and materialized closure are Core-owned",
+              "markers": ["VIEW_INVALIDATED", "TYPE_MISMATCH"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "lifetime",
+      "status": "closed-task-6",
+      "fixtures": [
+        "tests/golden/payload/v1/spec/valid/record-all-types.source.json",
+        "tests/golden/payload/v1/binary/spec/fixed-scalars.source.json",
+        "tests/golden/payload/v1/binary/spec/graph-all-values.source.json"
+      ],
+      "observations": [
+        "clone-retain-release",
+        "copy-external-ownership",
+        "checked-access-invalidation",
+        "detached-materialization",
+        "failure-cleanup"
+      ],
+      "proofs": [
+        {
+          "language": "cpp",
+          "cases": [
+            {
+              "file": "tests/cpp/payload/test_runtime_cpp_facade.cpp",
+              "test": "test_typed_authoring_heap_open_views_and_lifetimes",
+              "markers": ["open_copy", "materialize", "invalidate"]
+            },
+            {
+              "file": "tests/cpp/payload/test_graph_view.cpp",
+              "test": "test_lifetime_invalidation_and_concurrency",
+              "markers": ["invalidate", "thread_count", "failures"]
+            },
+            {
+              "file": "tests/cpp/payload/test_runtime_abi.cpp",
+              "test": "test_complete_record_runtime",
+              "markers": ["failure_cases", "rollback", "releases"]
+            }
+          ]
+        },
+        {
+          "language": "rust",
+          "cases": [
+            {
+              "file": "tests/rust/payload/tests/runtime.rs",
+              "test": "copied_and_external_open_have_explicit_independent_lifetimes",
+              "markers": ["open_copy", "open_external"]
+            },
+            {
+              "file": "tests/rust/payload/tests/record_view.rs",
+              "test": "invalidation_waits_for_the_unique_access_pin",
+              "markers": ["invalidate", "recv_timeout", "VIEW_INVALIDATED"]
+            },
+            {
+              "file": "tests/rust/payload/tests/graph_view.rs",
+              "test": "graph_identity_refs_cycles_and_materialized_closure_are_core_owned",
+              "markers": ["clone", "materialize", "invalidate"]
+            },
+            {
+              "file": "tests/rust/payload/tests/runtime.rs",
+              "test": "callback_failures_rollback_once_without_unwinding",
+              "markers": ["rollbacks", "releases"]
+            }
+          ]
+        },
+        {
+          "language": "python",
+          "cases": [
+            {
+              "file": "tests/python/payload/test_runtime.py",
+              "test": "test_copied_and_external_open_have_explicit_independent_lifetimes",
+              "markers": ["open_copy", "open_external"]
+            },
+            {
+              "file": "tests/python/payload/test_record_view.py",
+              "test": "test_python_copy_protocol_preserves_native_ownership",
+              "markers": ["copy.copy", "copy.deepcopy"]
+            },
+            {
+              "file": "tests/python/payload/test_graph_view.py",
+              "test": "test_graph_identity_refs_cycles_and_materialized_closure_are_core_owned",
+              "markers": ["clone", "materialize", "invalidate"]
+            },
+            {
+              "file": "tests/python/payload/test_runtime.py",
+              "test": "test_callback_failures_rollback_once_without_unwinding",
+              "markers": ["rollbacks", "releases"]
+            }
+          ]
+        },
+        {
+          "language": "typescript",
+          "cases": [
+            {
+              "file": "tests/ts/payload_runtime.mjs",
+              "test": "copy and Wasm-owned external open keep truthful lifetimes",
+              "markers": ["openCopy", "openWasmOwned"]
+            },
+            {
+              "file": "tests/ts/payload_record_view.mjs",
+              "test": "view and access handles cannot be forged or reused after disposal",
+              "markers": ["dispose", "invalidat"]
+            },
+            {
+              "file": "tests/ts/payload_graph_view.mjs",
+              "test": "graph identity, refs, cycles, and materialized closure are Core-owned",
+              "markers": ["clone", "materialize", "invalidate"]
+            },
+            {
+              "file": "tests/ts/payload_runtime.mjs",
+              "test": "native Wasm callback failures rollback exactly once",
+              "markers": ["rollbacks", "releases"]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "direct-staged",
+      "status": "closed-task-6",
+      "fixtures": [
+        "tests/golden/payload/v1/binary/spec/fixed-scalars.source.json",
+        "tests/golden/payload/v1/binary/spec/graph-all-values.source.json"
+      ],
+      "observations": [
+        "internal-heap-direct",
+        "host-direct",
+        "forced-staged-fallback",
+        "direct-required-rejection",
+        "truthful-execution-report"
+      ],
+      "proofs": [
+        {
+          "language": "cpp",
+          "cases": [
+            {
+              "file": "tests/cpp/payload/test_runtime_abi.cpp",
+              "test": "test_complete_record_runtime",
+              "markers": ["FDB_PAYLOAD_BUILD_REQUIRE_DIRECT", "FDB_PAYLOAD_EXECUTION_STAGED", "execution_report"]
+            },
+            {
+              "file": "tests/cpp/payload/test_runtime_abi.cpp",
+              "test": "test_complete_public_graph_runtime",
+              "markers": ["same_as_binary", "FDB_PAYLOAD_FALLBACK_BACKING_DECLINED_DIRECT"]
+            }
+          ]
+        },
+        {
+          "language": "rust",
+          "cases": [
+            {
+              "file": "tests/rust/payload/tests/runtime.rs",
+              "test": "internal_heap_execution_and_payload_facts_are_core_owned",
+              "markers": ["ExecutionMode::Direct", "execution_report"]
+            },
+            {
+              "file": "tests/rust/payload/tests/runtime.rs",
+              "test": "caller_backing_falls_back_truthfully_and_direct_required_is_exact",
+              "markers": ["ExecutionMode::Staged", "RequireDirect"]
+            }
+          ]
+        },
+        {
+          "language": "python",
+          "cases": [
+            {
+              "file": "tests/python/payload/test_runtime.py",
+              "test": "test_internal_heap_execution_and_payload_facts_are_core_owned",
+              "markers": ["ExecutionMode.DIRECT", "execution_report"]
+            },
+            {
+              "file": "tests/python/payload/test_runtime.py",
+              "test": "test_caller_backing_falls_back_truthfully_and_direct_required_is_exact",
+              "markers": ["ExecutionMode.STAGED", "REQUIRE_DIRECT"]
+            }
+          ]
+        },
+        {
+          "language": "typescript",
+          "cases": [
+            {
+              "file": "tests/ts/payload_runtime.mjs",
+              "test": "internal heap execution and payload facts are Core-owned",
+              "markers": ["ExecutionMode.Direct", "executionReport"]
+            },
+            {
+              "file": "tests/ts/payload_runtime.mjs",
+              "test": "Wasm backing reports direct, staged fallback, and exact rejection",
+              "markers": ["ExecutionMode.Staged", "RequireDirect"]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "package_boundaries": [
+    {
+      "id": "rust-source",
+      "status": "local-executable",
+      "proofs": [
+        {
+          "file": "bindings/rust/fastdb-sys/build.rs",
+          "marker": "LinkMode::Source"
+        },
+        {
+          "file": "bindings/rust/fastdb/README.md",
+          "marker": "C++ Core is the sole semantic authority"
+        }
+      ],
+      "workflow_markers": [
+        "cargo test --manifest-path bindings/rust/Cargo.toml",
+        "cargo clippy --manifest-path bindings/rust/Cargo.toml"
+      ]
+    },
+    {
+      "id": "rust-system",
+      "status": "local-executable",
+      "proofs": [
+        {
+          "file": "bindings/rust/fastdb-sys/build.rs",
+          "marker": "FASTDB_PAYLOAD_LINK_MODE"
+        },
+        {
+          "file": "tests/ci/check_rust_payload_package.py",
+          "marker": "check_relocated_system_consumer"
+        }
+      ],
+      "workflow_markers": [
+        "check_rust_payload_package.py",
+        "--build-dir build/rust-system"
+      ]
+    },
+    {
+      "id": "python-3.10-wheel",
+      "status": "local-executable",
+      "proofs": [
+        {
+          "file": "tools/check_python_package_inventory.py",
+          "marker": "python/fastdb4py/payload/_runtime.py"
+        },
+        {
+          "file": "python/README.md",
+          "marker": "Python 3.10+"
+        }
+      ],
+      "workflow_markers": [
+        "python-version: [\"3.10\", \"3.12\"]",
+        "uv run --isolated --no-project",
+        "python -m pytest tests/python/payload -q"
+      ]
+    },
+    {
+      "id": "typescript-wasm-package",
+      "status": "local-executable",
+      "proofs": [
+        {
+          "file": "ts/fastdb4ts/package.json",
+          "marker": "\"./payload\""
+        },
+        {
+          "file": "tests/ci/check_ts_payload_package.py",
+          "marker": "fastdb4ts/payload"
+        }
+      ],
+      "workflow_markers": [
+        "npm pack ./ts/fastdb4ts",
+        "check_ts_payload_package.py"
+      ]
+    }
+  ],
+  "workflow": {
+    "file": ".github/workflows/tests.yml",
+    "jobs": [
+      "rust_payload",
+      "projection_parity"
+    ],
+    "definition_status": "definitions-only",
+    "hosted_status": "pending"
+  },
+  "codegen": [
+    {
+      "target": "cpp",
+      "status": "open",
+      "proofs": []
+    },
+    {
+      "target": "rust",
+      "status": "open",
+      "proofs": []
+    },
+    {
+      "target": "python",
+      "status": "open",
+      "proofs": []
+    },
+    {
+      "target": "typescript",
+      "status": "open",
+      "proofs": []
+    }
+  ]
+}

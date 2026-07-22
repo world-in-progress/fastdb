@@ -13,9 +13,18 @@ import {
 } from '../../ts/fastdb4ts/dist/payload/index.js';
 
 const fixtures = new URL('../golden/payload/v1/binary/spec/', import.meta.url);
+const binaryFixtures = new URL(
+  '../golden/payload/v1/binary/valid/',
+  import.meta.url,
+);
 
 async function compile(name) {
   return CompiledSpec.compile(await readFile(new URL(name, fixtures)));
+}
+
+async function binaryGolden(name) {
+  const source = await readFile(new URL(name, binaryFixtures), 'ascii');
+  return new Uint8Array(Buffer.from(source.trim(), 'hex'));
 }
 
 async function graphPayload() {
@@ -115,6 +124,10 @@ function requireError(error, code, symbol, path, message, detailsJson) {
 test('graph identity, refs, cycles, and materialized closure are Core-owned', async () => {
   await initPayload();
   const { payload, nodeIndex, inlineIndex, assetIndex } = await graphPayload();
+  assert.deepEqual(
+    payload.binaryBytes(),
+    await binaryGolden('graph-all-values.bin.hex'),
+  );
   const sourceRoot = root(payload, 0);
   const rootIdentity = new GraphIdentity(nodeIndex, 0n);
   const assetIdentity = new GraphIdentity(assetIndex, 0n);

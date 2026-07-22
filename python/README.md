@@ -47,6 +47,38 @@ Important directories:
 - `python/fastdb4py/core/`
   - generated binding layer; do not edit manually
 
+## Portable payload projection
+
+`fastdb4py.payload` is the official Python 3.10+ projection of
+`fastdb.payload.v1`. It binds the stable native ABI packaged beside
+`fastdb4py.core`; the C++ Core remains the sole authority for compilation,
+canonical JSON, SHA-256, layout, binary validation, graph identity,
+materialization, and errors.
+
+```python
+from fastdb4py.payload import CompiledSpec, Profile
+
+source = b'{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]}'
+
+with CompiledSpec.compile(source) as spec:
+    assert spec.profile() is Profile.RECORD_V1
+    assert len(spec.sha256()) == 32
+```
+
+Owned payload objects support `close()` and context-manager use. Closure is
+locally idempotent, every Core error preserves `code`, `symbol`, `path`,
+`message`, and exact `details_json`, and safe `str`, `wstr`, and bytes accessors
+copy before their native access guard is released. Checked views are invalid
+after Core invalidation; `materialize()` asks Core for a detached value rather
+than recursively decoding one in Python.
+
+The wheel contains one native FastDB Core and Python projection source, not a
+second Python runtime. Python 3.10 compile/import and installed-wheel execution
+are package gates. Core-owned C++/Rust/Python/TypeScript codegen remains open
+through P4 Tasks 7-9; the historical Python-to-TypeScript generator described
+later in this document is a 0.1.x migration input, not portable-payload
+authority.
+
 ## Installation
 
 From PyPI:

@@ -4,6 +4,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
+const LINK_MODE_ENV: &str = "FASTDB_PAYLOAD_LINK_MODE";
+const SYSTEM_LIB_DIR_ENV: &str = "FASTDB_PAYLOAD_SYSTEM_LIB_DIR";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LinkMode {
+    Source,
+    System,
+}
+
 fn repository_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -41,7 +50,59 @@ fn emit_rerun_tree(path: &Path) {
     }
 }
 
-fn main() {
+fn link_mode() -> LinkMode {
+    match env::var(LINK_MODE_ENV).as_deref() {
+        Err(env::VarError::NotPresent) | Ok("source") => LinkMode::Source,
+        Ok("system") => LinkMode::System,
+        Ok(value) => {
+            panic!("{LINK_MODE_ENV} must be either 'source' or 'system', received {value:?}")
+        }
+        Err(error) => panic!("failed to read {LINK_MODE_ENV}: {error}"),
+    }
+}
+
+fn system_library_filename() -> &'static str {
+    match env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("macos") | Ok("ios") => "libfastdb.dylib",
+        Ok("linux") | Ok("android") | Ok("freebsd") => "libfastdb.so",
+        Ok("windows") => "fastdb.lib",
+        Ok(target) => panic!("system FastDB linking is unsupported for target OS {target:?}"),
+        Err(error) => panic!("Cargo did not provide CARGO_CFG_TARGET_OS: {error}"),
+    }
+}
+
+fn link_system() {
+    let raw_directory = env::var_os(SYSTEM_LIB_DIR_ENV)
+        .unwrap_or_else(|| panic!("{SYSTEM_LIB_DIR_ENV} is required in system link mode"));
+    let requested = PathBuf::from(raw_directory);
+    assert!(
+        requested.is_absolute(),
+        "{SYSTEM_LIB_DIR_ENV} must be an absolute path"
+    );
+    let directory = requested.canonicalize().unwrap_or_else(|error| {
+        panic!(
+            "failed to resolve {SYSTEM_LIB_DIR_ENV}={}: {error}",
+            requested.display()
+        )
+    });
+    assert!(
+        directory.is_dir(),
+        "{SYSTEM_LIB_DIR_ENV} must name a directory: {}",
+        directory.display()
+    );
+    let library = directory.join(system_library_filename());
+    assert!(
+        library.is_file(),
+        "system FastDB library is missing: {}",
+        library.display()
+    );
+
+    println!("cargo:rerun-if-changed={}", library.display());
+    println!("cargo:rustc-link-search=native={}", directory.display());
+    println!("cargo:rustc-link-lib=dylib=fastdb");
+}
+
+fn link_source() {
     let root = repository_root();
     let out_dir = PathBuf::from(
         env::var_os("OUT_DIR").unwrap_or_else(|| panic!("Cargo did not provide OUT_DIR")),
@@ -115,5 +176,14 @@ fn main() {
     }
     if env::var("CARGO_CFG_TARGET_FAMILY").as_deref() == Ok("unix") {
         println!("cargo:rustc-link-lib=dylib=pthread");
+    }
+}
+
+fn main() {
+    println!("cargo:rerun-if-env-changed={LINK_MODE_ENV}");
+    println!("cargo:rerun-if-env-changed={SYSTEM_LIB_DIR_ENV}");
+    match link_mode() {
+        LinkMode::Source => link_source(),
+        LinkMode::System => link_system(),
     }
 }

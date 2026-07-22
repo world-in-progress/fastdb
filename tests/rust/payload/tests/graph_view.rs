@@ -5,6 +5,8 @@ use std::thread;
 
 const GRAPH_SPEC: &[u8] =
     include_bytes!("../../../golden/payload/v1/binary/spec/graph-all-values.source.json");
+const GRAPH_BINARY_HEX: &str =
+    include_str!("../../../golden/payload/v1/binary/valid/graph-all-values.bin.hex");
 const DISCONNECTED_SPEC: &[u8] =
     include_bytes!("../../../golden/payload/v1/binary/spec/graph-disconnected-roots.source.json");
 
@@ -13,6 +15,19 @@ struct GraphFixture {
     node_index: u32,
     inline_index: u32,
     asset_index: u32,
+}
+
+fn decode_hex(source: &str) -> Vec<u8> {
+    let source = source.trim();
+    assert_eq!(source.len() % 2, 0);
+    source
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let text = std::str::from_utf8(pair).expect("golden hex is ASCII");
+            u8::from_str_radix(text, 16).expect("golden hex is valid")
+        })
+        .collect()
 }
 
 fn graph_payload() -> Result<GraphFixture, PayloadError> {
@@ -102,6 +117,7 @@ fn graph_identity_refs_cycles_and_materialized_closure_are_core_owned() -> Resul
 {
     let fixture = graph_payload()?;
     let payload = fixture.payload;
+    assert_eq!(payload.binary_bytes()?, decode_hex(GRAPH_BINARY_HEX));
     let root = root(&payload, 0)?;
     let root_identity = GraphIdentity {
         component_index: fixture.node_index,

@@ -42,13 +42,23 @@ inferred from the single-thread proof; native tests plus ThreadSanitizer remain
 the concurrency authority. Hosted Linux/macOS results remain pending because
 this branch has not been pushed.
 
-Rust, Python, and official TypeScript/WASM portable projections and Core-owned
-four-language code generation are not implemented; they remain P4. P5 legacy
-authority removal, `RecordEngine` clean rename, release readiness, and later
-downstream composition also remain open. Those non-deferrable gaps are tracked
-in [Issue
+P4 Tasks 1-6 now provide safe Rust, Python 3.10+, and official
+TypeScript/WASM portable projections over the unchanged C ABI alongside the
+existing C++ facade. Their shared executable map covers canonical identity,
+record and graph binary bytes, complete logical values, five-field errors,
+ownership/invalidation/materialization, and truthful direct/staged execution.
+Rust source/system link seams, installed Python wheels, and the packed
+browser-capable `fastdb4ts/payload` subpath are locally exercised. The C++ Core
+remains the only semantic authority; none of these bindings contains a second
+parser, canonicalizer, digest, layout, binary, graph, or materialization model.
+
+Core-owned four-language code generation remains open for P4 Tasks 7-9. P5
+legacy authority removal, `RecordEngine` clean rename, release readiness, and
+later downstream composition also remain open. Those non-deferrable gaps are
+tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
-No local result or workflow definition is represented as a hosted pass.
+No local result or workflow definition is represented as a hosted pass; the
+new projection jobs are definitions until an authorized hosted run exists.
 
 The current package version and published packages remain 0.1.x and still
 contain legacy `fastdb.schema.v1`, call-db, `columnar.v1`, and `ColumnEngine`

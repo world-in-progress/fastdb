@@ -25,6 +25,16 @@ from fastdb4py.payload import (
 
 
 SPEC_ROOT = Path(__file__).parents[2] / "golden/payload/v1/binary/spec"
+BINARY_ROOT = Path(__file__).parents[2] / "golden/payload/v1/binary/valid"
+INVALID_BINARY_ROOT = Path(__file__).parents[2] / "golden/payload/v1/binary/invalid"
+
+
+def binary_golden(name: str) -> bytes:
+    return bytes.fromhex((BINARY_ROOT / name).read_text(encoding="ascii"))
+
+
+def invalid_binary_golden(name: str) -> bytes:
+    return bytes.fromhex((INVALID_BINARY_ROOT / name).read_text(encoding="ascii"))
 
 
 def fixed_plan():
@@ -135,8 +145,9 @@ def test_internal_heap_execution_and_payload_facts_are_core_owned():
     assert result.report.backing_capacity >= info.total_bytes
     assert result.payload.profile() is Profile.RECORD_V1
     assert result.payload.execution_report() == result.report
-    assert len(result.payload.sha256()) == 32
-    assert len(result.payload.binary_bytes()) == info.total_bytes
+    expected_binary = binary_golden("fixed-scalars.bin.hex")
+    assert result.payload.binary_bytes() == expected_binary
+    assert len(expected_binary) == info.total_bytes
 
     clone = result.payload.clone()
     result.payload.close()
@@ -230,6 +241,24 @@ def test_copied_and_external_open_have_explicit_independent_lifetimes():
     built.payload.close()
     plan.close()
     spec.close()
+
+
+def test_invalid_open_preserves_every_core_field() -> None:
+    with CompiledSpec.compile((SPEC_ROOT / "empty.source.json").read_bytes()) as spec:
+        with pytest.raises(PayloadError) as raised:
+            Payload.open_copy(
+                spec,
+                invalid_binary_golden("header-magic.bin.hex"),
+                OpenOptions(),
+            )
+    assert raised.value.code == 3001
+    assert raised.value.symbol == "INVALID_MAGIC"
+    assert raised.value.path == "/binary/header/magic"
+    assert raised.value.message == "Portable payload magic is invalid"
+    assert (
+        raised.value.details_json
+        == '{"actual":"4744425041593100","expected":"4644425041593100","reason":"invalid_magic"}'
+    )
 
 
 def test_shared_safe_backing_serializes_complete_plan_executions():

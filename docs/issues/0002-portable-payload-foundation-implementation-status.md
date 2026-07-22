@@ -8,6 +8,7 @@
 - **First implementation plan:** [Portable Payload Core Contract Implementation Plan](../superpowers/plans/2026-07-16-portable-payload-core-contract.md)
 - **P2 implementation plan:** [Portable Payload Record Runtime Implementation Plan](../superpowers/plans/2026-07-17-portable-payload-record-runtime.md)
 - **P3 implementation plan:** [Portable Payload Object-Graph Runtime Implementation Plan](../superpowers/plans/2026-07-20-portable-payload-object-graph-runtime.md)
+- **P4 implementation plan:** [Portable Payload Language Projections and Codegen Implementation Plan](../superpowers/plans/2026-07-21-portable-payload-language-projections-codegen.md)
 - **Post-0.2 deferrals:** [Issue 0001](0001-portable-payload-deferred-capabilities.md)
 
 ## Purpose
@@ -31,11 +32,12 @@ macOS sanitizer/fuzzer constraints and all exact Task 10 gate results are
 recorded below. Hosted CI remains pending because no push was authorized.
 
 P4 Rust/Python/official TypeScript-Wasm portable projections now include the
-locally complete Tasks 1-5 compile/query, author/freeze/plan,
+locally complete Tasks 1-6 compile/query, author/freeze/plan,
 execution/backing/open, complete checked `record.v1` views, and safe
 `object_graph.v1` ref/identity/sharing/cycle observation with Core-owned
-materialization/invalidation. The four-language parity closure and Core-owned
-four-language code generation remain open in Tasks 6-9. P5 legacy authority removal,
+materialization/invalidation. Their ordered four-language runtime parity and
+package/link boundaries are locally frozen over unchanged ABI-105. Core-owned
+four-language code generation remains open in Tasks 7-9. P5 legacy authority removal,
 `RecordEngine` clean rename, package/version release readiness, and later
 C-Two-owned composition also remain open. The repository still ships the
 0.1.x call-db/`ColumnEngine` migration surface, so Issue 0002 remains open and
@@ -1118,20 +1120,77 @@ remains 0.1.22, no Core/header/schema/manifest/ABI meaning changed, and no
 hosted result is claimed. The primary-agent review is same-agent rather than
 independent/subagent evidence.
 
+#### P4 Task 6 local evidence
+
+Task 6 adds one fail-closed executable map with exactly six ordered runtime
+receipts: canonical, binary, logical value, error, lifetime, and direct/staged.
+Every receipt names non-empty C++, Rust, Python, and TypeScript/Wasm callers in
+that order and pins their existing Core-owned fixtures or observations. The
+checker rejects missing, duplicated, reordered, or nonexistent proof tests and
+markers. It also freezes ABI version 1 and the exact 105-symbol allowlist. The
+four codegen rows are exactly `cpp`, `rust`, `python`, and `typescript`, remain
+`open`, and contain no fabricated proof.
+
+The record and graph projection tests now independently compare the binary
+bytes returned by Core with the checked-in `fixed-scalars` and
+`graph-all-values` hex goldens. No binding computes an expected layout or
+binary digest. Existing callers supply the rest of the receipt: canonical
+JSON/manifest/SHA-256/index facts; every V1 logical value; exact five-field
+compile/builder/type/backing/invalidation errors; clone/retain/release,
+copy/external ownership, checked invalidation, detached materialization, and
+failure cleanup; and exact internal/direct/staged/direct-required reports.
+The existing fixtures were sufficient, so Task 6 creates no duplicate parity
+golden or binding-side expectation generator.
+
+Rust keeps repository `source` linking as its default and adds an explicit,
+fail-closed `FASTDB_PAYLOAD_LINK_MODE=system` boundary. System mode requires an
+absolute `FASTDB_PAYLOAD_SYSTEM_LIB_DIR` containing the platform shared
+`libfastdb`; it never reaches into a source tree. A relocated consumer copied
+outside the repository links that library, calls the safe API, and validates
+the real Core ABI version. Cargo source inventories include both crate READMEs
+and contain no Core copy, test tree, or build debris. The embedding process
+still owns its ordinary dynamic-loader search path; Task 6 does not hide or
+duplicate a native library inside the Rust crate.
+
+The Python 3.10 installed wheel runs all 27 portable-payload tests locally.
+The npm tarball contains the `./payload` export, compiled projection modules,
+Wasm loader, and reviewed Wasm artifact; an extracted clean package resolves
+`fastdb4ts/payload`, initializes Wasm, compiles and queries a real Core spec,
+and disposes the handle. The package check rejects missing payload members,
+debris, links, an altered subpath, or a non-ES-module package. These package
+proofs add no native Node projection and do not broaden the browser/worker/Wasm
+claim.
+
+The quality checker has 10 unit tests, the Rust package checker has 3, and the
+TypeScript package checker has 5. Focused Rust binary parity, Python binary
+parity, TypeScript binary parity, the relocated Rust system consumer, and the
+packed TypeScript/Wasm smoke pass locally. The Rust and projection-parity
+GitHub Actions jobs plus Python 3.10 installed-wheel and npm packed-package
+steps are workflow definitions. Hosted Task 6 execution remains pending; no
+definition is rewritten as a hosted result. Final full-gate counts and the
+frozen commit are recorded in the retained Task 6 report after the scoped
+commit and exact-range review.
+
+Task 6 changes no C++ Core source, public header/facade, schema, manifest,
+binary meaning, ABI symbol, package version, P5 legacy surface, C-Two, or
+Toodle file. The context-owning primary agent performs the required spec and
+code-quality review; it is same-agent evidence, not independent/subagent
+review.
+
 **Impact:** Portable compile/query/build/open/view/materialize remains available
 to C and C++ through the locally frozen P3 boundary. Rust, Python, and official
 TypeScript/Wasm now share compile/query, complete author/freeze/plan semantics,
 truthful execution/backing, payload ownership, open, complete checked record
 navigation/access, graph ref/identity/sharing/cycle observation, detached
 materialization, and invalidation from that same Core. Per-language tests are
-green, but the ordered executable four-language parity map and independent
-receipts do not yet exist. No language can yet consume a Core-owned generated
-artifact set.
+now indexed by the ordered executable four-language parity map, and the
+source/system/wheel/npm boundaries are locally executable. No language can yet
+consume a Core-owned generated artifact set.
 
-**Next owner slice:** P4 Task 6 freezes the ordered cross-language runtime
-parity and package/lifetime proof map over Tasks 1-5, including canonical,
-binary, value, error, backing, ownership, invalidation, and graph identity
-receipts. Codegen rows remain explicitly open until Tasks 7-9.
+**Next owner slice:** P4 Task 7 implements the private Core-owned immutable
+ArtifactSet and all four generators without advertising targets or changing
+the public ABI. Codegen rows remain explicitly open until their generated
+outputs pass Tasks 7-9.
 
 **Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
 the same Core ABI and pass canonical, binary, value, error, lifetime, and
@@ -1324,7 +1383,7 @@ result.
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P4. Language projections and payload codegen | Docs-first design is frozen; Tasks 1-5 compile/query, author/freeze/plan, execution/backing/ownership/open, checked record views, and graph ref/identity/sharing/cycle projections are locally complete over unchanged ABI-105 with primary-agent review and no independent/hosted claim; Tasks 6-9 remain open | Freeze executable four-language runtime parity and package boundaries, then prove deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core |
+| P4. Language projections and payload codegen | Docs-first design is frozen; Tasks 1-6 projection runtime parity and source/system/wheel/npm package boundaries are locally complete over unchanged ABI-105 with primary-agent review and no independent/hosted claim; Tasks 7-9 remain open | Prove deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core, publish it atomically, then close P4 robustness and documentation |
 | P5. Clean cut, release, downstream composition | Blocked on P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then downstream composition delegates the nested FastDB sub-spec without semantic duplication |
 
 ## Non-deferrable 0.2.0 work
