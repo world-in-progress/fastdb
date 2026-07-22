@@ -24,7 +24,11 @@ JOBS = {
 # Later phases may add independently validated jobs to the repository-wide
 # aggregate, but this historical gate must still fail closed over the exact
 # current inventory rather than silently accepting arbitrary extra jobs.
-POST_P2_AGGREGATE_JOBS = %w[rust_payload projection_parity].freeze
+POST_P2_JOBS = {
+  "rust_payload" => %w[core rust workflow],
+  "projection_parity" => %w[core python rust ts workflow]
+}.freeze
+POST_P2_AGGREGATE_JOBS = POST_P2_JOBS.keys.freeze
 
 MALFORMED_CLASSES = %w[
   header-identity-version-profile-length-digest
@@ -184,6 +188,9 @@ def check_workflow
   workflow = YAML.load_file(WORKFLOW)
   jobs = workflow.fetch("jobs")
   detect = jobs.fetch("detect_changes")
+  require_quality(detect.fetch("outputs").keys.sort ==
+                    %w[core python rust ts workflow],
+                  "detect_changes outputs are not exact")
   filter_step = detect.fetch("steps").find { |step| step["id"] == "filter" }
   require_quality(!filter_step.nil?, "detect_changes lacks its path filter")
   filter_source = filter_step.fetch("with").fetch("filters")
@@ -193,6 +200,7 @@ def check_workflow
     "core" => %w[tools/check_emscripten_exception_flags.py
                  tools/check_payload_binary_corpus.py],
     "python" => %w[tools/check_python_package_inventory.py],
+    "rust" => %w[bindings/rust/** tests/rust/**],
     "workflow" => %w[tests/ci/**]
   }.each do |scope, required_paths|
     missing_paths = required_paths - filters.fetch(scope)
@@ -202,6 +210,11 @@ def check_workflow
 
   JOBS.each do |name, scopes|
     require_quality(jobs.key?(name), "missing workflow job #{name}")
+    require_quality(expression_scopes(jobs.fetch(name)) == scopes.sort,
+                    "#{name} path scope does not match #{scopes.sort.inspect}")
+  end
+  POST_P2_JOBS.each do |name, scopes|
+    require_quality(jobs.key?(name), "missing post-P2 workflow job #{name}")
     require_quality(expression_scopes(jobs.fetch(name)) == scopes.sort,
                     "#{name} path scope does not match #{scopes.sort.inspect}")
   end
@@ -294,6 +307,22 @@ def check_workflow
   require_quality(Array(aggregate.fetch("needs")).sort == required_needs,
                   "aggregate needs are not exact")
   aggregate_run = step_run(aggregate, "Validate required test results")
+  aggregate_step = aggregate.fetch("steps").find do |step|
+    step["name"] == "Validate required test results"
+  end
+  aggregate_env = aggregate_step.fetch("env")
+  {
+    "RUST_SCOPE" => "${{ needs.detect_changes.outputs.rust }}",
+    "RUST_PAYLOAD_RESULT" => "${{ needs.rust_payload.result }}",
+    "PROJECTION_PARITY_RESULT" => "${{ needs.projection_parity.result }}"
+  }.each do |name, expected|
+    require_quality(aggregate_env.fetch(name) == expected,
+                    "aggregate #{name} wiring is not exact")
+  end
+  require_quality(aggregate_run.include?(
+                    "check_p4_projection_codegen_quality.py") &&
+                  aggregate_run.include?("--validate-results"),
+                  "aggregate does not use the P4 result validator")
   require_quality(aggregate_run.include?("check_p2_task11_quality.rb --validate-results"),
                   "aggregate does not use the tested result validator")
 

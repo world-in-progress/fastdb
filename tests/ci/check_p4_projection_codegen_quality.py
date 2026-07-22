@@ -396,6 +396,14 @@ def check_workflow(document: dict[str, Any], source: str) -> None:
         is not None,
         "workflow does not execute the Task 6 repository quality gate",
     )
+    require(
+        re.search(
+            r"check_p4_projection_codegen_quality\.py[\s\\]*--validate-results",
+            source,
+        )
+        is not None,
+        "workflow aggregate does not execute the Task 6 result validator",
+    )
 
 
 def check_abi_allowlist(source: str) -> None:

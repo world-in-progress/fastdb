@@ -206,6 +206,7 @@ class ProjectionMapTests(unittest.TestCase):
                     for marker in row["workflow_markers"]
                 ),
                 "check_p4_projection_codegen_quality.py --check-repository",
+                "check_p4_projection_codegen_quality.py --validate-results",
             ]
         )
         MODULE.check_workflow(document, workflow)
@@ -214,6 +215,14 @@ class ProjectionMapTests(unittest.TestCase):
                 document,
                 workflow.replace(
                     f"- '{MODULE.WORKFLOW_QUALITY_PATHS[0]}'", ""
+                ),
+            )
+        with self.assertRaises(MODULE.QualityError):
+            MODULE.check_workflow(
+                document,
+                workflow.replace(
+                    "check_p4_projection_codegen_quality.py --validate-results",
+                    "missing aggregate validator",
                 ),
             )
 
