@@ -319,6 +319,26 @@ target_compile_definitions(
 set_tests_properties(payload.compiled_spec PROPERTIES TIMEOUT 60)
 
 add_fastdb_payload_test(
+    codegen
+    SOURCES payload/test_codegen.cpp
+    EXTRA_LIBRARIES fastdb_payload_core
+)
+target_include_directories(
+    fastdb_payload_test_codegen
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+)
+target_compile_definitions(
+    fastdb_payload_test_codegen
+    PRIVATE
+        "FASTDB_PAYLOAD_CODEGEN_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/codegen\""
+        "FASTDB_PAYLOAD_SPEC_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/spec\""
+        "FASTDB_PAYLOAD_BINARY_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary\""
+)
+set_tests_properties(payload.codegen PROPERTIES TIMEOUT 180)
+
+add_fastdb_payload_test(
     c_header_smoke
     SOURCES payload/test_c_header_smoke.c
     EXTRA_LIBRARIES fastdb

@@ -1,0 +1,34 @@
+{
+  "schema": "fastdb.payload.codegen-golden.v1",
+  "payload_sha256": "92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71",
+  "artifacts": [
+    {
+      "target": "cpp",
+      "relative_path": "fastdb_payload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.hpp",
+      "kind": "source",
+      "golden": "empty-record.expected.hpp",
+      "sha256": "3c03f9bc2ffdddef3f7b696bf8229848265bbff20a1e144d0a07b8676c8982e6"
+    },
+    {
+      "target": "rust",
+      "relative_path": "fastdb_payload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.rs",
+      "kind": "source",
+      "golden": "empty-record.expected.rs",
+      "sha256": "1997b551fbda02c685bf297053ebdb8771d3f8dd80b46a4fbe2f18d5245dc322"
+    },
+    {
+      "target": "python",
+      "relative_path": "fastdb_payload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.py",
+      "kind": "source",
+      "golden": "empty-record.expected.py",
+      "sha256": "0e3d549cd5f452252bb4b6e6056c463fbde2debba6d5216fea2ffa10a51a8d4f"
+    },
+    {
+      "target": "typescript",
+      "relative_path": "fastdb_payload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.ts",
+      "kind": "source",
+      "golden": "empty-record.expected.ts",
+      "sha256": "c92ee433c7e7da7717c899828bebf5825060ad6bb4fb29f03280da1bc5930a28"
+    }
+  ]
+}

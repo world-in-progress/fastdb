@@ -36,8 +36,10 @@ locally complete Tasks 1-6 compile/query, author/freeze/plan,
 execution/backing/open, complete checked `record.v1` views, and safe
 `object_graph.v1` ref/identity/sharing/cycle observation with Core-owned
 materialization/invalidation. Their ordered four-language runtime parity and
-package/link boundaries are locally frozen over unchanged ABI-105. Core-owned
-four-language code generation remains open in Tasks 7-9. P5 legacy authority removal,
+package/link boundaries are locally frozen over unchanged ABI-105. Task 7 now
+adds the private Core-owned immutable ArtifactSet and deterministic four-target
+renderer without exposing a public target. Public codegen publication,
+generated-output execution, and P4 closure remain open in Tasks 8-9. P5 legacy authority removal,
 `RecordEngine` clean rename, package/version release readiness, and later
 C-Two-owned composition also remain open. The repository still ships the
 0.1.x call-db/`ColumnEngine` migration surface, so Issue 0002 remains open and
@@ -124,7 +126,7 @@ Current repository state:
   P3 locally at ABI-105. The P4 live delta audit is now complete and its
   [language-projection/codegen design](../superpowers/specs/2026-07-21-portable-payload-language-projections-codegen-design.md)
   plus [executable implementation plan](../superpowers/plans/2026-07-21-portable-payload-language-projections-codegen.md)
-  are frozen as P4 delta authority. P4 Tasks 1-4 now add real compile/query,
+  are frozen as P4 delta authority. P4 Tasks 1-7 now add real compile/query,
   author/freeze/plan, execution/backing/open, and checked-record-view
   projection slices over the unchanged ABI-105: a
   payload-only native archive
@@ -138,9 +140,12 @@ Current repository state:
   facts; execute through truthful Core backing modes; copy/open owned images;
   and navigate every non-ref record value through generation-checked views.
   Task 4 adds scoped access, exact scalar bits, `str`/`wstr`/bytes, detached
-  Core materialization, and synchronous drain-before-release invalidation.
-  Safe graph ref/identity navigation, parity closure, and Core-owned codegen
-  remain later P4 tasks. All P5 work remains open;
+  Core materialization, and synchronous drain-before-release invalidation;
+  Task 5 adds safe graph ref/identity observation; Task 6 freezes ordered
+  parity and package/link proof; and Task 7 adds one private Core-owned
+  ArtifactSet and four deterministic renderers. Public codegen ABI/projections,
+  executable generated-output gates, truthful target advertisement, and final
+  P4 robustness remain later tasks. All P5 work remains open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 P1, P2, and P3 are locally implemented and frozen. P1/P2 retain their recorded
@@ -167,10 +172,16 @@ fixtures through the ABI-105 Core. Their projections preserve canonical bytes,
 digest, manifest, capabilities, stable indexes, every V1 authoring kind,
 Core-owned limit/errors, exact immutable plan facts, retained clones, and
 explicit disposal. They also execute/open payloads and expose the complete
-read-only `record.v1` view algebra, safe access copies/borrows, detached
-materialization, and exact stale-generation errors from Core. Safe graph
-ref-target/identity ergonomics, graph-language parity closure, and every
-Core-owned codegen target remain absent. Hosted outcomes remain pending.
+read-only `record.v1` view algebra, safe graph ref-target and payload-scoped
+identity observation, safe access copies/borrows, detached materialization,
+and exact stale-generation errors from Core. Their runtime parity and source/
+system/wheel/npm boundaries are locally frozen. A private Core-owned
+ArtifactSet can now render deterministic payload-only C++, Rust, Python, and
+TypeScript source, but no public C ABI, C++ facade, binding projection,
+manifest operation, or advertised codegen target exposes it yet. The codegen
+proof-map rows therefore remain open, and the diagnostic local compiler/import
+checks do not claim the Task 8 generated-runtime gate. Hosted outcomes remain
+pending.
 Downstream consumers may use
 only reviewed public FastDB contracts
 and must not depend on private headers or recreate FastDB semantics. The full
@@ -893,14 +904,16 @@ independent. No ordinary P3 semantic was deferred to shorten implementation.
 
 **Current limit:** The P1 compile/query, P2 record runtime, and locally frozen
 P3 graph runtime exist in the exact ABI-105 C boundary with thin C++ facades
-over that same ABI. P4 Tasks 1-4 project compile/query, complete V1 authoring,
+over that same ABI. P4 Tasks 1-6 project compile/query, complete V1 authoring,
 immutable plan facts, backing execution, payload ownership, copied/external
-open, and complete checked `record.v1` views/access/materialization/
-invalidation into Rust, `fastdb4py.payload`, and the official TypeScript/Wasm
-`./payload` subpath. The Core still does not generate C++, Rust, Python, or
-TypeScript payload artifacts, and the three projections do not yet expose the
-graph-specific ref-target and payload-scoped identity ergonomics needed to
-prove sharing/cycle parity. Existing hand-written 0.1.x call-db layers are
+open, complete checked `record.v1` views, graph ref/identity/sharing/cycle
+observation, and ordered runtime/package parity into Rust,
+`fastdb4py.payload`, and the official TypeScript/Wasm `./payload` subpath.
+Task 7 adds deterministic payload-only C++, Rust, Python, and TypeScript source
+generation behind one private Core-owned immutable ArtifactSet. It remains
+unreachable through the public C ABI, C++ facade, and language projections;
+the manifest still advertises no codegen operation or target and every codegen
+proof-map row remains open. Existing hand-written 0.1.x call-db layers are
 migration inputs, not portable-payload projections.
 
 **Design state:** The complete live delta audit and docs-first design are
@@ -1177,6 +1190,94 @@ Toodle file. The context-owning primary agent performs the required spec and
 code-quality review; it is same-agent evidence, not independent/subagent
 review.
 
+#### P4 Task 7 local evidence
+
+Task 7 adds one Core-private `Target`, immutable `ArtifactSet`, validated
+artifact factory, byte-total identifier projection, and four renderers under
+`src/payload/codegen/`. One call accepts one compiled specification and one
+target and returns exactly one in-memory payload-only source artifact. The
+generator consumes the existing `CompiledSpec`, `ResolvedSpec`, canonical
+bytes/digest, stable indexes, and Core-derived `RuntimeTopology`; it does not
+reparse JSON, read a manifest into a second model, write a destination tree, or
+reimplement schema, canonicalization, digest, layout, binary, graph, backing,
+or materialization semantics.
+
+Artifact paths are digest-derived, relative, UTF-8, slash-normalized, unique,
+and unsigned-byte sorted. Kinds, exact byte totals, literal output limits, and
+SHA-256 receipts are checked before the immutable result is published.
+Unknown targets, invalid paths/kinds, duplicate paths, literal count/byte
+limits, allocation failure, renderer exception, and topology failure have
+stable Core codegen errors and publish no partial set. Allocation injection
+also covers error construction for an invalid target, so `std::bad_alloc`
+does not escape merely because target validation failed before rendering.
+
+Each artifact embeds exact environment-free provenance, the Core canonical
+source/digest, original-ID metadata, stable indexes, entry wrappers, checked
+component wrappers, official-runtime scalar conveniences, generic recursive
+view escape, and builder selection helpers. Ref-target helpers exist only for
+actual refs. Graph identity and object declaration exist only where the
+Core-derived topology assigns identity. A schema-specific component wrapper
+cannot be constructed around an arbitrary valid `View`: C++ and TypeScript
+use private construction, Rust exposes a checked `Result<Option<_>>`, and
+Python uses a module-private creation token; all four compare the Core-reported
+component index before publication.
+
+The exact empty-record C++/Rust/Python/TypeScript artifacts and a receipt that
+binds target, path, kind, fixture, bytes, SHA-256, and order are checked in.
+Rich tests cover record-all-types, recursive lists, keyword/escape-shaped IDs,
+and shared/cyclic graphs; repeat generation under distinct HOME/TMP/locale/
+timezone values is byte-identical and environment strings are absent. The
+identifier test covers all 256 byte values even though V1 source IDs remain
+the narrower accepted ASCII grammar. The allocation sweep reaches success
+after induced failures and every observed failure returns the exact
+`allocation_failed` result without a partial ArtifactSet.
+
+The context-owning primary review found and closed five material issues before
+freeze: record output incorrectly exposed graph helpers; component wrappers
+could be forged around the wrong schema component; limit details represented
+exact integers as JSON numbers; generated C++ named the non-existent
+`fastdb::payload` facade instead of `fastdb::payload::v1`; and invalid-target
+error allocation could escape the generator boundary. Focused REDs reproduce
+each behavior before the corrections. The post-fix C++ rich artifact passes
+Clang C++17 syntax compilation with warnings denied, Rust passes a relocated
+Cargo check against the safe crate, Python passes syntax plus real import/Core
+compile, and TypeScript passes strict type-checking against the official
+payload source. These build-tree diagnostics validate Task 7 output shape but
+do not replace or close Task 8's tracked generated-output runtime harnesses.
+
+The final local rerun passes native Debug `38/38` in 85.98 seconds, Release
+`38/38` in 68.36 seconds, and hard-fail ASan+UBSan `38/38` in 257.01 seconds;
+the available focused ThreadSanitizer codegen target passes `1/1` in 1.15
+seconds. Apple ASan uses `detect_leaks=0`, so this is not LeakSanitizer
+evidence. Rust passes formatting, warning-denying clippy, 19 non-doc tests,
+and one compile-fail doctest; Python passes 440 tests plus compileall; the
+fresh official TypeScript/Wasm rebuild passes 96 tests. Native and fresh
+official Wasm scanners each remain exactly ABI-105. The embedded-schema check,
+16-seed binary corpus, vendored dependency transaction suite, retained P2/P3
+quality gates, 13-test P4 quality checker, 16-test Python package checker,
+Rust source/system relocation check, and five-test packed TypeScript package
+checker are green.
+
+A fresh Python 3.14t sdist/wheel build contains every Task 7 Core source,
+passes exact inventory, and its isolated installed wheel passes all 27 payload
+tests. The build emits the same seven SWIG 325/451 diagnostics governed by
+Issue 0003; no warning-free package claim is made. The final sdist and wheel
+SHA-256 values are respectively
+`ac7606c303699ab70aeba2ddf7f5a60392a7e4ad5684c8c5e83521998ccdb314`
+and
+`dc1402253d0cc4eadcc6ea3660157f0e5a49747d17765585c1234cd6a80c4e71`.
+The packed TypeScript artifact and official JavaScript/Wasm hashes remain
+`fdf3f6fe2d7a663b2db8b77af92c2528f972321c24784f701afa5fc05af471b4`,
+`d763262fb5bc87196fcbc56781561e128595af55ae85546fff67ca6f81192e22`,
+and `511b3cbdd5cd1e09c497ca85cc5ef2981d3ec85753cc18b257575d2ac1b10fae`.
+
+Task 7 changes no public C header/facade, ABI allowlist, schema, manifest,
+projection API, proof-map codegen status, binary meaning, package version, P5
+legacy surface, C-Two, or Toodle file. The public native and official Wasm
+boundaries remain ABI-105 and advertise an empty codegen target list. Hosted
+execution remains pending, and the required review is same-agent primary
+review rather than independent/subagent evidence.
+
 **Impact:** Portable compile/query/build/open/view/materialize remains available
 to C and C++ through the locally frozen P3 boundary. Rust, Python, and official
 TypeScript/Wasm now share compile/query, complete author/freeze/plan semantics,
@@ -1187,10 +1288,12 @@ now indexed by the ordered executable four-language parity map, and the
 source/system/wheel/npm boundaries are locally executable. No language can yet
 consume a Core-owned generated artifact set.
 
-**Next owner slice:** P4 Task 7 implements the private Core-owned immutable
-ArtifactSet and all four generators without advertising targets or changing
-the public ABI. Codegen rows remain explicitly open until their generated
-outputs pass Tasks 7-9.
+**Next owner slice:** P4 Task 8 publishes the complete ArtifactSet atomically
+through the reviewed nine-symbol C ABI family, thin C++ RAII facade, and equal
+Rust/Python/TypeScript projections; it must then run the tracked real generated
+compile/import/type-check/runtime harnesses before manifests advertise any
+target. Codegen rows remain explicitly open until those proofs and Task 9
+closure pass.
 
 **Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
 the same Core ABI and pass canonical, binary, value, error, lifetime, and
@@ -1383,7 +1486,7 @@ result.
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P4. Language projections and payload codegen | Docs-first design is frozen; Tasks 1-6 projection runtime parity and source/system/wheel/npm package boundaries are locally complete over unchanged ABI-105 with primary-agent review and no independent/hosted claim; Tasks 7-9 remain open | Prove deterministic C++/Rust/Python/TypeScript in-memory artifact generation from Core, publish it atomically, then close P4 robustness and documentation |
+| P4. Language projections and payload codegen | Docs-first design is frozen; Tasks 1-6 projection/runtime/package parity plus Task 7 private deterministic four-target Core generation are locally complete over unchanged ABI-105 with primary-agent review and no independent/hosted claim; Tasks 8-9 remain open | Publish the ArtifactSet atomically through the equal public projections, execute every generated target against its official runtime, then close P4 robustness and documentation |
 | P5. Clean cut, release, downstream composition | Blocked on P4 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then downstream composition delegates the nested FastDB sub-spec without semantic duplication |
 
 ## Non-deferrable 0.2.0 work

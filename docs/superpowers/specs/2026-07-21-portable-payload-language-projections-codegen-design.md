@@ -493,9 +493,12 @@ Each target emits only per-spec ergonomics over its official runtime:
 - a function that compiles the embedded canonical source through Core;
 - stable entry/component/field index constants and original-ID metadata;
 - entry sequence wrappers;
-- component view wrappers with schema-specific field accessors;
-- ref-target and graph-identity helpers;
-- builder helpers that select the correct entry/component indexes;
+- component view wrappers with schema-specific field accessors and checked
+  construction against the Core-reported component index;
+- ref-target helpers only for actual `ref` values, and graph-identity helpers
+  only for values whose Core-derived runtime topology has identity;
+- builder helpers that select the correct entry indexes and declare only
+  identity-bearing components;
 - typed scalar conveniences where the official runtime already provides them;
 - generic checked list/component view escape for recursively composed values;
   and
