@@ -219,6 +219,56 @@ def check_workflow
                     "#{name} path scope does not match #{scopes.sort.inspect}")
   end
 
+  rust_payload = jobs.fetch("rust_payload")
+  require_quality(rust_payload.fetch("runs-on") == "ubuntu-24.04",
+                  "rust_payload must use ubuntu-24.04")
+  rust_source = step_run(rust_payload, "Run Rust source-link projection tests")
+  require_quality(rust_source.include?(
+                    "cargo test --manifest-path bindings/rust/Cargo.toml") &&
+                  rust_source.include?("--workspace --all-features"),
+                  "rust_payload lacks the full source-link projection suite")
+  rust_lints = step_run(rust_payload, "Check Rust formatting and warnings")
+  require_quality(rust_lints.include?(
+                    "cargo fmt --manifest-path bindings/rust/Cargo.toml") &&
+                  rust_lints.include?(
+                    "cargo clippy --manifest-path bindings/rust/Cargo.toml") &&
+                  rust_lints.include?("--workspace --all-targets --all-features") &&
+                  rust_lints.include?("-D warnings"),
+                  "rust_payload lacks the complete format/clippy gates")
+  rust_configure = step_run(
+    rust_payload, "Configure shared FastDB for relocated system linking"
+  )
+  require_quality(rust_configure.include?(
+                    "cmake -S fastcarto -B build/rust-system") &&
+                  rust_configure.include?("-DBUILD_TESTING=OFF") &&
+                  rust_configure.include?("-DBUILD_TOOLS=OFF") &&
+                  rust_configure.include?("-DCMAKE_BUILD_TYPE=Release"),
+                  "rust_payload lacks the bounded shared-Core configuration")
+  rust_system = step_run(
+    rust_payload, "Build and link relocated Rust consumer to the system Core"
+  )
+  require_quality(rust_system.include?(
+                    "cmake --build build/rust-system --target fastdb") &&
+                  rust_system.include?(
+                    "python3 tests/ci/test_check_rust_payload_package.py") &&
+                  rust_system.include?(
+                    "python3 tests/ci/check_rust_payload_package.py") &&
+                  rust_system.include?("--build-dir build/rust-system"),
+                  "rust_payload lacks the tested relocated system-link proof")
+
+  projection = jobs.fetch("projection_parity")
+  require_quality(projection.fetch("runs-on") == "ubuntu-24.04",
+                  "projection_parity must use ubuntu-24.04")
+  projection_gate = step_run(
+    projection, "Validate ordered projection and open-codegen map"
+  )
+  require_quality(projection_gate.include?(
+                    "python3 tests/ci/test_check_p4_projection_codegen_quality.py") &&
+                  projection_gate.include?(
+                    "python3 tests/ci/check_p4_projection_codegen_quality.py") &&
+                  projection_gate.include?("--check-repository"),
+                  "projection_parity lacks the tested repository quality gate")
+
   native = jobs.fetch("native_tests")
   matrix = native.fetch("strategy").fetch("matrix").fetch("include")
   require_quality(matrix == [
@@ -300,6 +350,28 @@ def check_workflow
                   "package job lacks the executable exact inventory gate")
   require_quality(package_verify.include?("test_check_python_package_inventory.py"),
                   "package job lacks focused package-gate tests")
+  installed_wheel = step_run(package,
+                             "Run payload suite from the installed wheel")
+  require_quality(installed_wheel.include?(
+                    'wheels=(build/package-dist/*.whl)') &&
+                  installed_wheel.include?('test "${#wheels[@]}" -eq 1') &&
+                  installed_wheel.include?("uv run --isolated --no-project") &&
+                  installed_wheel.include?('--python "${{ matrix.python-version }}"') &&
+                  installed_wheel.include?('--with "${wheels[0]}" --with pytest') &&
+                  installed_wheel.include?(
+                    "python -m pytest tests/python/payload -q"),
+                  "package job lacks the exact installed-wheel payload suite")
+
+  ts_package = step_run(jobs.fetch("ts_tests"),
+                        "Verify packed portable-payload subpath")
+  require_quality(ts_package.include?(
+                    "python3 tests/ci/test_check_ts_payload_package.py") &&
+                  ts_package.include?("npm pack ./ts/fastdb4ts") &&
+                  ts_package.include?("--pack-destination build/ts-package") &&
+                  ts_package.include?(
+                    "python3 tests/ci/check_ts_payload_package.py") &&
+                  ts_package.include?("--package-dir build/ts-package"),
+                  "ts_tests lacks the tested packed payload-package proof")
 
   aggregate = jobs.fetch("test")
   required_needs = ["detect_changes", *JOBS.keys,
