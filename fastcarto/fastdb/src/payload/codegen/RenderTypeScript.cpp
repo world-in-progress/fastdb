@@ -1,5 +1,6 @@
 #include "payload/codegen/Renderer.hpp"
 
+#include "payload/codegen/Generator.hpp"
 #include "payload/codegen/Identifier.hpp"
 #include "payload/identity/Sha256.hpp"
 #include "payload/spec/Model.hpp"
@@ -54,11 +55,16 @@ ScalarGetter typescript_scalar_getter(TypeKind kind) noexcept {
 
 void append_provenance(std::string& output,
                        std::string_view digest) {
-    output += "// generated-by: fastdb.payload.codegen.v1\n";
+    output += "// generated-by: ";
+    output += generator_version;
+    output += "\n";
     output += "// payload-sha256: ";
     output += digest;
-    output += "\n// core-abi-version: 1\n";
-    output += "// generator-version: fastdb.payload.codegen.v1\n";
+    output += "\n// core-abi-version: ";
+    output += std::to_string(generator_core_abi_version);
+    output += "\n// generator-version: ";
+    output += generator_version;
+    output += "\n";
     output += "// target: typescript\n";
 }
 
@@ -282,15 +288,26 @@ std::string render_typescript(const spec::CompiledSpec& compiled,
     std::string output;
     output.reserve(compiled.canonical_bytes().size() + 4096U);
     append_provenance(output, digest);
-    output +=
-        "import {\n"
-        "  Builder,\n"
-        "  CompiledSpec,\n"
-        "  GraphIdentity,\n"
-        "  ObjectHandle,\n"
-        "  Payload,\n"
-        "  View,\n"
-        "} from 'fastdb4ts/payload';\n\n";
+    const bool has_entries = !resolved.entries().empty();
+    const bool has_components = !resolved.components().empty();
+    const bool has_identity = topology.has_objects;
+    output += "import {\n";
+    if (has_entries || has_identity) {
+        output += "  Builder,\n";
+    }
+    output += "  CompiledSpec,\n";
+    if (has_identity) {
+        output +=
+            "  GraphIdentity,\n"
+            "  ObjectHandle,\n";
+    }
+    if (has_entries) {
+        output += "  Payload,\n";
+    }
+    if (has_entries || has_components) {
+        output += "  View,\n";
+    }
+    output += "} from 'fastdb4ts/payload';\n\n";
     if (!resolved.components().empty()) {
         output +=
             "const fastdbComponentViewToken = Symbol('fastdb.payload.codegen.component-view');\n\n";

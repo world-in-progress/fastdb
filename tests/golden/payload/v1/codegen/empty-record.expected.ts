@@ -4,12 +4,7 @@
 // generator-version: fastdb.payload.codegen.v1
 // target: typescript
 import {
-  Builder,
   CompiledSpec,
-  GraphIdentity,
-  ObjectHandle,
-  Payload,
-  View,
 } from 'fastdb4ts/payload';
 
 export const CANONICAL_SOURCE_TEXT = `{"components":[],"entries":[],"profile":"record.v1","schema":"fastdb.payload.v1"}`;

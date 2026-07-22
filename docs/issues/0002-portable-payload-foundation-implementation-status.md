@@ -1232,22 +1232,27 @@ the narrower accepted ASCII grammar. The allocation sweep reaches success
 after induced failures and every observed failure returns the exact
 `allocation_failed` result without a partial ArtifactSet.
 
-The context-owning primary review found and closed five material issues before
+The context-owning primary review found and closed eight material issues before
 freeze: record output incorrectly exposed graph helpers; component wrappers
 could be forged around the wrong schema component; limit details represented
 exact integers as JSON numbers; generated C++ named the non-existent
-`fastdb::payload` facade instead of `fastdb::payload::v1`; and invalid-target
-error allocation could escape the generator boundary. Focused REDs reproduce
-each behavior before the corrections. The post-fix C++ rich artifact passes
-Clang C++17 syntax compilation with warnings denied, Rust passes a relocated
-Cargo check against the safe crate, Python passes syntax plus real import/Core
-compile, and TypeScript passes strict type-checking against the official
+`fastdb::payload` facade instead of `fastdb::payload::v1`; invalid-target error
+allocation could escape the generator boundary; the four renderers duplicated
+the generator and Core ABI provenance instead of consuming one Core constant;
+empty or topology-reduced TypeScript output imported runtime types it did not
+use and therefore failed strict `noUnusedLocals`; and drive-prefix recognition
+depended on the process C locale rather than explicit ASCII semantics. Focused
+REDs reproduce each behavior before the corrections. The post-fix C++ rich
+artifact passes Clang C++17 syntax compilation with warnings denied, Rust
+passes a relocated Cargo check against the safe crate, Python passes syntax
+plus real import/Core compile, and both empty and rich TypeScript artifacts
+pass strict type-checking with unused locals denied against the official
 payload source. These build-tree diagnostics validate Task 7 output shape but
 do not replace or close Task 8's tracked generated-output runtime harnesses.
 
-The final local rerun passes native Debug `38/38` in 85.98 seconds, Release
-`38/38` in 68.36 seconds, and hard-fail ASan+UBSan `38/38` in 257.01 seconds;
-the available focused ThreadSanitizer codegen target passes `1/1` in 1.15
+The final local rerun passes native Debug `38/38` in 82.81 seconds, Release
+`38/38` in 62.66 seconds, and hard-fail ASan+UBSan `38/38` in 247.53 seconds;
+the available focused ThreadSanitizer codegen target passes `1/1` in 2.20
 seconds. Apple ASan uses `detect_leaks=0`, so this is not LeakSanitizer
 evidence. Rust passes formatting, warning-denying clippy, 19 non-doc tests,
 and one compile-fail doctest; Python passes 440 tests plus compileall; the
@@ -1263,9 +1268,9 @@ passes exact inventory, and its isolated installed wheel passes all 27 payload
 tests. The build emits the same seven SWIG 325/451 diagnostics governed by
 Issue 0003; no warning-free package claim is made. The final sdist and wheel
 SHA-256 values are respectively
-`ac7606c303699ab70aeba2ddf7f5a60392a7e4ad5684c8c5e83521998ccdb314`
+`9644ceb9513e3c8250214c1f217a96843af938616bcb3e7b02d018d4b5ddd773`
 and
-`dc1402253d0cc4eadcc6ea3660157f0e5a49747d17765585c1234cd6a80c4e71`.
+`45aadae650b48ab12534f3c0dadef48dffa7ca62832ac1bfb26d6aa451bd7125`.
 The packed TypeScript artifact and official JavaScript/Wasm hashes remain
 `fdf3f6fe2d7a663b2db8b77af92c2528f972321c24784f701afa5fc05af471b4`,
 `d763262fb5bc87196fcbc56781561e128595af55ae85546fff67ca6f81192e22`,

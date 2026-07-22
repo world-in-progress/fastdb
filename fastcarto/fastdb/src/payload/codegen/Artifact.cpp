@@ -8,7 +8,6 @@
 #include <fastdb_payload.h>
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -101,6 +100,13 @@ bool unsigned_utf8_less(std::string_view left, std::string_view right) {
         });
 }
 
+bool ascii_letter(unsigned char byte) noexcept {
+    return (byte >= static_cast<unsigned char>('A') &&
+            byte <= static_cast<unsigned char>('Z')) ||
+           (byte >= static_cast<unsigned char>('a') &&
+            byte <= static_cast<unsigned char>('z'));
+}
+
 const char* invalid_path_reason(std::string_view path) {
     if (path.empty()) {
         return "empty_path";
@@ -115,7 +121,7 @@ const char* invalid_path_reason(std::string_view path) {
         return "nul_byte";
     }
     if (path.size() >= 2U &&
-        std::isalpha(static_cast<unsigned char>(path[0])) != 0 &&
+        ascii_letter(static_cast<unsigned char>(path[0])) &&
         path[1] == ':') {
         return "drive_prefix";
     }

@@ -88,6 +88,8 @@ using fastdb::payload::codegen::ArtifactSet;
 using fastdb::payload::codegen::GenerationLimits;
 using fastdb::payload::codegen::Target;
 using fastdb::payload::codegen::generate;
+using fastdb::payload::codegen::generator_core_abi_version;
+using fastdb::payload::codegen::generator_version;
 using fastdb::payload::codegen::make_artifact_set;
 using fastdb::payload::codegen::project_identifier;
 using fastdb::payload::codegen::project_type_identifier;
@@ -220,6 +222,9 @@ bool has_source_id(const fastdb::payload::spec::ResolvedSpec& resolved,
 }
 
 int test_identifier_projection_is_total_and_collision_free() {
+    require(generator_version == "fastdb.payload.codegen.v1");
+    require(generator_core_abi_version == FDB_PAYLOAD_V1_ABI_VERSION);
+
     std::string all_bytes;
     std::string all_hex;
     constexpr char kHex[] = "0123456789abcdef";
@@ -275,6 +280,15 @@ int test_artifact_set_validates_paths_order_hashes_and_limits() {
     require(artifacts[0].sha256() ==
             sha256(reinterpret_cast<const std::uint8_t*>("first"),
                    UINT64_C(5)));
+
+    std::vector<ArtifactDraft> utf8_relative;
+    utf8_relative.push_back(ArtifactDraft{
+        std::string{"\xc3\xa9:relative.hpp"}, ArtifactKind::source, "x"});
+    auto utf8_path = make_artifact_set(
+        Target::cpp, std::move(utf8_relative), GenerationLimits{});
+    require(utf8_path.has_value());
+    require(utf8_path.value().artifacts().front().relative_path() ==
+            std::string_view{"\xc3\xa9:relative.hpp"});
 
     constexpr std::array<std::string_view, 11> invalid_paths{{
         "",
@@ -524,6 +538,13 @@ int test_rich_specs_emit_only_official_runtime_ergonomics() {
                 require(bytes.find(expectation.graph_identity_marker) ==
                         std::string_view::npos);
                 require(bytes.find("_builder_declare") ==
+                        std::string_view::npos);
+            }
+            if (expectation.target == Target::typescript &&
+                !has_identity) {
+                require(bytes.find("  GraphIdentity,\n") ==
+                        std::string_view::npos);
+                require(bytes.find("  ObjectHandle,\n") ==
                         std::string_view::npos);
             }
             if (spec.facts().has_references) {

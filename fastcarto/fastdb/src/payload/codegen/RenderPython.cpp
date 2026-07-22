@@ -1,5 +1,6 @@
 #include "payload/codegen/Renderer.hpp"
 
+#include "payload/codegen/Generator.hpp"
 #include "payload/codegen/Identifier.hpp"
 #include "payload/identity/Sha256.hpp"
 #include "payload/spec/Model.hpp"
@@ -56,11 +57,16 @@ ScalarGetter python_scalar_getter(TypeKind kind) noexcept {
 
 void append_provenance(std::string& output,
                        std::string_view digest) {
-    output += "# generated-by: fastdb.payload.codegen.v1\n";
+    output += "# generated-by: ";
+    output += generator_version;
+    output += "\n";
     output += "# payload-sha256: ";
     output += digest;
-    output += "\n# core-abi-version: 1\n";
-    output += "# generator-version: fastdb.payload.codegen.v1\n";
+    output += "\n# core-abi-version: ";
+    output += std::to_string(generator_core_abi_version);
+    output += "\n# generator-version: ";
+    output += generator_version;
+    output += "\n";
     output += "# target: python\n";
 }
 
