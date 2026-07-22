@@ -1161,7 +1161,7 @@ debris, links, an altered subpath, or a non-ES-module package. These package
 proofs add no native Node projection and do not broaden the browser/worker/Wasm
 claim.
 
-The quality checker has 11 unit tests, the Rust package checker has 3, and the
+The quality checker has 13 unit tests, the Rust package checker has 3, and the
 TypeScript package checker has 5. Focused Rust binary parity, Python binary
 parity, TypeScript binary parity, the relocated Rust system consumer, and the
 packed TypeScript/Wasm smoke pass locally. The Rust and projection-parity

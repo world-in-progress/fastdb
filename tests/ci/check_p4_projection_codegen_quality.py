@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 from typing import Any, Callable
@@ -159,6 +159,32 @@ def non_empty_strings(value: Any, label: str) -> None:
     require(len(value) == len(set(value)), f"{label} must be unique")
 
 
+def check_repository_relative_path(value: Any, label: str) -> str:
+    require(isinstance(value, str) and bool(value), f"{label} must be non-empty")
+    path = PurePosixPath(value)
+    require(
+        not path.is_absolute()
+        and "\\" not in value
+        and ".." not in path.parts
+        and path.as_posix() == value,
+        f"{label} must be a normalized repository-relative path",
+    )
+    return value
+
+
+def repository_file(relative: str, label: str) -> Path:
+    check_repository_relative_path(relative, label)
+    try:
+        resolved = (ROOT / relative).resolve(strict=True)
+    except OSError as error:
+        raise QualityError(f"cannot resolve {label} {relative}: {error}") from error
+    require(
+        resolved.is_relative_to(ROOT) and resolved.is_file(),
+        f"{label} must resolve to a regular file inside the repository: {relative}",
+    )
+    return resolved
+
+
 def check_map(document: dict[str, Any]) -> None:
     exact_keys(document, TOP_LEVEL_KEYS, "P4 proof map")
     require(document["schema"] == SCHEMA, "unexpected P4 proof-map schema")
@@ -195,6 +221,8 @@ def check_map(document: dict[str, Any]) -> None:
             f"runtime receipt {receipt_id} must be closed by Task 6",
         )
         non_empty_strings(row["fixtures"], f"{receipt_id} fixtures")
+        for fixture in row["fixtures"]:
+            check_repository_relative_path(fixture, f"{receipt_id} fixture")
         require(
             tuple(row["observations"]) == OBSERVATIONS[receipt_id],
             f"{receipt_id} observations must be exact and ordered",
@@ -221,6 +249,9 @@ def check_map(document: dict[str, Any]) -> None:
                 require(
                     isinstance(case["file"], str) and bool(case["file"]),
                     f"{receipt_id}/{language} proof file must be non-empty",
+                )
+                check_repository_relative_path(
+                    case["file"], f"{receipt_id}/{language} proof file"
                 )
                 require(
                     isinstance(case["test"], str) and bool(case["test"]),
@@ -260,6 +291,9 @@ def check_map(document: dict[str, Any]) -> None:
                 f"{package_id} package proof must be non-empty",
             )
             require(pair not in seen, f"{package_id} package proof is duplicated")
+            check_repository_relative_path(
+                proof["file"], f"{package_id} package proof file"
+            )
             seen.add(pair)
         non_empty_strings(
             row["workflow_markers"], f"{package_id} workflow markers"
@@ -324,7 +358,7 @@ def proof_region(source: str, language: str, name: str) -> str:
 
 
 def default_reader(relative: str) -> str:
-    path = ROOT / relative
+    path = repository_file(relative, "proof source")
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
@@ -337,11 +371,7 @@ def check_proof_sources(
     for row in document["runtime_receipts"]:
         receipt_id = row["id"]
         for fixture in row["fixtures"]:
-            try:
-                exists = (ROOT / fixture).is_file()
-            except OSError as error:
-                raise QualityError(f"cannot inspect fixture {fixture}: {error}") from error
-            require(exists, f"{receipt_id} fixture is missing: {fixture}")
+            repository_file(fixture, f"{receipt_id} fixture")
         for proof in row["proofs"]:
             language = proof["language"]
             for case in proof["cases"]:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import copy
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -107,6 +108,45 @@ class ProjectionMapTests(unittest.TestCase):
                 mutate(document["runtime_receipts"])
                 with self.assertRaises(MODULE.QualityError):
                     MODULE.check_map(document)
+
+    def test_rejects_noncanonical_or_escaping_repository_paths(self) -> None:
+        for invalid in (
+            "/absolute/source.py",
+            "../outside.py",
+            "tests/../outside.py",
+            "tests\\outside.py",
+            "tests//outside.py",
+        ):
+            document = valid_document()
+            document["runtime_receipts"][0]["proofs"][0]["cases"][0][
+                "file"
+            ] = invalid
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(MODULE.QualityError):
+                    MODULE.check_map(document)
+
+    def test_rejects_repository_symlink_escaping_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_root = Path(temporary)
+            repository = temporary_root / "repository"
+            repository.mkdir()
+            inside = repository / "inside.source"
+            outside = temporary_root / "outside.source"
+            inside.write_text("inside", encoding="utf-8")
+            outside.write_text("outside", encoding="utf-8")
+            (repository / "escape.source").symlink_to(outside)
+
+            previous_root = MODULE.ROOT
+            MODULE.ROOT = repository.resolve()
+            try:
+                self.assertEqual(
+                    MODULE.repository_file("inside.source", "inside proof"),
+                    inside.resolve(),
+                )
+                with self.assertRaises(MODULE.QualityError):
+                    MODULE.repository_file("escape.source", "escaping proof")
+            finally:
+                MODULE.ROOT = previous_root
 
     def test_rejects_missing_duplicate_or_reordered_language_evidence(self) -> None:
         document = valid_document()
