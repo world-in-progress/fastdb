@@ -5,9 +5,9 @@ mod runtime;
 
 pub use builder::{BuildPlan, Builder, BuilderOptions, FixedRun, ObjectHandle, PlanInfo};
 pub use runtime::{
-    BackingFailure, BackingObserver, BuildPolicy, BuildResult, ExecutionMode, ExecutionReport,
-    ExternalBytes, FallbackReason, MemoryBacking, OpenOptions, Payload, ReservationRequest,
-    ReserveMode,
+    Access, BackingFailure, BackingObserver, BuildPolicy, BuildResult, ExecutionMode,
+    ExecutionReport, ExternalBytes, FallbackReason, MemoryBacking, OpenOptions, Payload,
+    ReservationRequest, ReserveMode, View, ViewKind,
 };
 
 use fastdb_sys as sys;

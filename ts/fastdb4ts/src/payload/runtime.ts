@@ -9,6 +9,8 @@ import {
   checkedU32,
   checkedU64,
   copyBytes,
+  f32FromBits,
+  f64FromBits,
   payloadModule,
   readU32,
   readU64,
@@ -41,6 +43,25 @@ export enum FallbackReason {
   None = 0,
   PlanRequiresStaging = 1,
   BackingDeclinedDirect = 2,
+}
+
+export enum ViewKind {
+  Sequence = 1,
+  Bool = 2,
+  U8 = 3,
+  U16 = 4,
+  U32 = 5,
+  I32 = 6,
+  U8n = 7,
+  U16n = 8,
+  F32 = 9,
+  F64 = 10,
+  Str = 11,
+  Wstr = 12,
+  Bytes = 13,
+  Component = 14,
+  List = 15,
+  Ref = 16,
 }
 
 export interface PayloadBackingStats {
@@ -265,6 +286,504 @@ export class WasmOwnedBytes {
 const payloadConstructionToken = Symbol('fastdb.payload.payloadConstructionToken');
 const createPayload = Symbol('fastdb.payload.createPayload');
 
+const SPAN_SIZE_OFFSET = 8;
+const SPAN_ERROR_OFFSET = 16;
+const SPAN_OUTPUT_SIZE = SPAN_ERROR_OFFSET + POINTER_SIZE;
+// `ignoreBOM: true` makes a leading U+FEFF ordinary user content instead of
+// silently stripping it; FastDB Core already owns encoding validation.
+const utf8Decoder = new TextDecoder('utf-8', {
+  fatal: true,
+  ignoreBOM: true,
+});
+const utf16Decoder = new TextDecoder('utf-16le', {
+  fatal: true,
+  ignoreBOM: true,
+});
+
+type AccessSpanCall = (
+  access: number,
+  outData: number,
+  outSize: number,
+  outError: number,
+) => number;
+
+const accessConstructionToken = Symbol(
+  'fastdb.payload.accessConstructionToken',
+);
+const createAccess = Symbol('fastdb.payload.createAccess');
+const accessFinalizer = new FinalizationRegistry<number>((handle) => {
+  try {
+    payloadModule()._fdb_payload_v1_access_release(handle);
+  } catch {
+    // Explicit disposal is authoritative; finalization is only a fallback.
+  }
+});
+
+/** A unique Core access pin. Safe methods always return JavaScript-owned copies. */
+export class Access {
+  #handle: number;
+  readonly #finalizerToken = {};
+
+  private constructor(
+    handle: number,
+    token: typeof accessConstructionToken,
+  ) {
+    if (token !== accessConstructionToken) {
+      throw new TypeError('Access handles are created only by FastDB');
+    }
+    if (handle === 0) {
+      throw bindingError(
+        'FastDB Core returned success without an access pin',
+        'missing_access_handle',
+      );
+    }
+    this.#handle = handle;
+    accessFinalizer.register(this, handle, this.#finalizerToken);
+  }
+
+  static [createAccess](
+    handle: number,
+    token: typeof accessConstructionToken,
+  ): Access {
+    if (token !== accessConstructionToken) {
+      throw new TypeError('Access handles are created only by FastDB');
+    }
+    try {
+      return new Access(handle, accessConstructionToken);
+    } catch (error) {
+      if (handle !== 0) {
+        payloadModule()._fdb_payload_v1_access_release(handle);
+      }
+      throw error;
+    }
+  }
+
+  dispose(): void {
+    if (this.#handle !== 0) {
+      const handle = this.#handle;
+      this.#handle = 0;
+      accessFinalizer.unregister(this.#finalizerToken);
+      payloadModule()._fdb_payload_v1_access_release(handle);
+    }
+  }
+
+  payloadBytes(): Uint8Array {
+    const module = payloadModule();
+    return this.copyByteSpan((access, data, size, error) =>
+      module._fdb_payload_v1_access_payload_bytes(
+        access,
+        data,
+        size,
+        error,
+      ),
+    );
+  }
+
+  str(): string {
+    const module = payloadModule();
+    const bytes = this.copyByteSpan((access, data, size, error) =>
+      module._fdb_payload_v1_access_str(access, data, size, error),
+    );
+    try {
+      return utf8Decoder.decode(bytes);
+    } catch (error) {
+      throw bindingError(
+        'FastDB Core returned invalid UTF-8 from a validated str view',
+        'invalid_core_utf8',
+      );
+    }
+  }
+
+  wstr(): string {
+    const module = payloadModule();
+    const bytes = withAllocation(module, SPAN_OUTPUT_SIZE, (outputs) => {
+      const status = module._fdb_payload_v1_access_wstr(
+        this.requireHandle(),
+        outputs,
+        outputs + SPAN_SIZE_OFFSET,
+        outputs + SPAN_ERROR_OFFSET,
+      );
+      checkStatus(status, outputs + SPAN_ERROR_OFFSET);
+      const units = readU64(module, outputs + SPAN_SIZE_OFFSET);
+      if (units > BigInt(Number.MAX_SAFE_INTEGER) / 2n) {
+        throw bindingError(
+          'FastDB Core wstr span exceeds the JavaScript address space',
+          'host_size_overflow',
+        );
+      }
+      const data = readU32(module, outputs);
+      if (units !== 0n && data % 2 !== 0) {
+        throw bindingError(
+          'FastDB Core returned unaligned wstr storage',
+          'invalid_core_wstr_span',
+        );
+      }
+      return copyBytes(module, data, units * 2n);
+    });
+    try {
+      // wasm32 is little-endian; Core already projected aligned host uint16s.
+      return utf16Decoder.decode(bytes);
+    } catch (error) {
+      throw bindingError(
+        'FastDB Core returned invalid UTF-16 from a validated wstr view',
+        'invalid_core_utf16',
+      );
+    }
+  }
+
+  bytes(): Uint8Array {
+    const module = payloadModule();
+    return this.copyByteSpan((access, data, size, error) =>
+      module._fdb_payload_v1_access_bytes(access, data, size, error),
+    );
+  }
+
+  private copyByteSpan(call: AccessSpanCall): Uint8Array {
+    const module = payloadModule();
+    return withAllocation(module, SPAN_OUTPUT_SIZE, (outputs) => {
+      const status = call(
+        this.requireHandle(),
+        outputs,
+        outputs + SPAN_SIZE_OFFSET,
+        outputs + SPAN_ERROR_OFFSET,
+      );
+      checkStatus(status, outputs + SPAN_ERROR_OFFSET);
+      return copyBytes(
+        module,
+        readU32(module, outputs),
+        readU64(module, outputs + SPAN_SIZE_OFFSET),
+      );
+    });
+  }
+
+  private requireHandle(): number {
+    if (this.#handle === 0) {
+      throw bindingError('Access is disposed', 'disposed_handle');
+    }
+    return this.#handle;
+  }
+}
+
+type ViewScalarCall = (
+  view: number,
+  outValue: number,
+  outError: number,
+) => number;
+
+const viewConstructionToken = Symbol('fastdb.payload.viewConstructionToken');
+const createView = Symbol('fastdb.payload.createView');
+const viewFinalizer = new FinalizationRegistry<number>((handle) => {
+  try {
+    payloadModule()._fdb_payload_v1_view_release(handle);
+  } catch {
+    // Explicit disposal is authoritative; finalization is only a fallback.
+  }
+});
+
+/** A retainable immutable Core view with generation-checked operations. */
+export class View {
+  #handle: number;
+  readonly #finalizerToken = {};
+
+  private constructor(handle: number, token: typeof viewConstructionToken) {
+    if (token !== viewConstructionToken) {
+      throw new TypeError('View handles are created only by FastDB');
+    }
+    if (handle === 0) {
+      throw bindingError(
+        'FastDB Core returned success without a view',
+        'missing_view_handle',
+      );
+    }
+    this.#handle = handle;
+    viewFinalizer.register(this, handle, this.#finalizerToken);
+  }
+
+  static [createView](
+    handle: number,
+    token: typeof viewConstructionToken,
+  ): View {
+    if (token !== viewConstructionToken) {
+      throw new TypeError('View handles are created only by FastDB');
+    }
+    try {
+      return new View(handle, viewConstructionToken);
+    } catch (error) {
+      if (handle !== 0) {
+        payloadModule()._fdb_payload_v1_view_release(handle);
+      }
+      throw error;
+    }
+  }
+
+  clone(): View {
+    const handle = this.requireHandle();
+    payloadModule()._fdb_payload_v1_view_retain(handle);
+    return View[createView](handle, viewConstructionToken);
+  }
+
+  dispose(): void {
+    if (this.#handle !== 0) {
+      const handle = this.#handle;
+      this.#handle = 0;
+      viewFinalizer.unregister(this.#finalizerToken);
+      payloadModule()._fdb_payload_v1_view_release(handle);
+    }
+  }
+
+  kind(): ViewKind {
+    const value = this.readU32((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_kind(view, output, error),
+    );
+    if (value < ViewKind.Sequence || value > ViewKind.Ref) {
+      throw bindingError(
+        'FastDB Core returned an unknown payload view kind',
+        'unknown_view_kind',
+      );
+    }
+    return value as ViewKind;
+  }
+
+  isNull(): boolean {
+    return (
+      this.readU8((view, output, error) =>
+        payloadModule()._fdb_payload_v1_view_is_null(view, output, error),
+      ) !== 0
+    );
+  }
+
+  length(): bigint {
+    return this.readU64((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_length(view, output, error),
+    );
+  }
+
+  at(index: bigint): View {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = module._fdb_payload_v1_view_at(
+        this.requireHandle(),
+        checkedU64(index, 'index'),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return View[createView](
+        readU32(module, outputs),
+        viewConstructionToken,
+      );
+    });
+  }
+
+  componentIndex(): number {
+    return this.readU32((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_component_index(
+        view,
+        output,
+        error,
+      ),
+    );
+  }
+
+  fieldCount(): number {
+    return this.readU32((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_field_count(view, output, error),
+    );
+  }
+
+  field(index: number): View {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = module._fdb_payload_v1_view_field(
+        this.requireHandle(),
+        checkedU32(index, 'index'),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return View[createView](
+        readU32(module, outputs),
+        viewConstructionToken,
+      );
+    });
+  }
+
+  getBool(): boolean {
+    return (
+      this.readU8((view, output, error) =>
+        payloadModule()._fdb_payload_v1_view_get_bool(view, output, error),
+      ) !== 0
+    );
+  }
+
+  getU8(): number {
+    return this.readU8((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_get_u8(view, output, error),
+    );
+  }
+
+  getU16(): number {
+    return this.readU16((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_get_u16(view, output, error),
+    );
+  }
+
+  getU32(): number {
+    return this.readU32((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_get_u32(view, output, error),
+    );
+  }
+
+  getI32(): number {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = module._fdb_payload_v1_view_get_i32(
+        this.requireHandle(),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return new DataView(module.HEAPU8.buffer).getInt32(outputs, true);
+    });
+  }
+
+  getU8nF64Bits(): bigint {
+    return this.readU64((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_get_u8n_f64_bits(
+        view,
+        output,
+        error,
+      ),
+    );
+  }
+
+  getU8n(): number {
+    return f64FromBits(this.getU8nF64Bits());
+  }
+
+  getU16nF64Bits(): bigint {
+    return this.readU64((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_get_u16n_f64_bits(
+        view,
+        output,
+        error,
+      ),
+    );
+  }
+
+  getU16n(): number {
+    return f64FromBits(this.getU16nF64Bits());
+  }
+
+  getF32Bits(): number {
+    return this.readU32((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_get_f32_bits(view, output, error),
+    );
+  }
+
+  getF32(): number {
+    return f32FromBits(this.getF32Bits());
+  }
+
+  getF64Bits(): bigint {
+    return this.readU64((view, output, error) =>
+      payloadModule()._fdb_payload_v1_view_get_f64_bits(view, output, error),
+    );
+  }
+
+  getF64(): number {
+    return f64FromBits(this.getF64Bits());
+  }
+
+  acquire(): Access {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = module._fdb_payload_v1_view_acquire(
+        this.requireHandle(),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return Access[createAccess](
+        readU32(module, outputs),
+        accessConstructionToken,
+      );
+    });
+  }
+
+  /** Performs exactly one Core materialization call. */
+  materialize(): View {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = module._fdb_payload_v1_view_materialize(
+        this.requireHandle(),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return View[createView](
+        readU32(module, outputs),
+        viewConstructionToken,
+      );
+    });
+  }
+
+  private readU8(call: ViewScalarCall): number {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = call(
+        this.requireHandle(),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return module.HEAPU8[outputs];
+    });
+  }
+
+  private readU16(call: ViewScalarCall): number {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = call(
+        this.requireHandle(),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return new DataView(module.HEAPU8.buffer).getUint16(outputs, true);
+    });
+  }
+
+  private readU32(call: ViewScalarCall): number {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = call(
+        this.requireHandle(),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return readU32(module, outputs);
+    });
+  }
+
+  private readU64(call: ViewScalarCall): bigint {
+    const module = payloadModule();
+    return withAllocation(module, 8 + POINTER_SIZE, (outputs) => {
+      const status = call(this.requireHandle(), outputs, outputs + 8);
+      checkStatus(status, outputs + 8);
+      return readU64(module, outputs);
+    });
+  }
+
+  private requireHandle(): number {
+    if (this.#handle === 0) {
+      throw bindingError('View is disposed', 'disposed_handle');
+    }
+    return this.#handle;
+  }
+}
+
 const payloadFinalizer = new FinalizationRegistry<number>((handle) => {
   try {
     payloadModule()._fdb_payload_v1_payload_release(handle);
@@ -459,6 +978,52 @@ export class Payload {
       } finally {
         module._fdb_payload_v1_blob_release(blob);
       }
+    });
+  }
+
+  acquire(): Access {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = module._fdb_payload_v1_payload_acquire(
+        this.requireHandle(),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return Access[createAccess](
+        readU32(module, outputs),
+        accessConstructionToken,
+      );
+    });
+  }
+
+  entryView(entryIndex: number): View {
+    const module = payloadModule();
+    return withAllocation(module, POINTER_SIZE * 2, (outputs) => {
+      const status = module._fdb_payload_v1_payload_entry_view(
+        this.requireHandle(),
+        checkedU32(entryIndex, 'entryIndex'),
+        outputs,
+        outputs + POINTER_SIZE,
+      );
+      checkStatus(status, outputs + POINTER_SIZE);
+      return View[createView](readU32(module, outputs), viewConstructionToken);
+    });
+  }
+
+  /**
+   * Invalidates synchronously after all access pins have been disposed.
+   * The official Wasm host is single-threaded, so retaining an Access here
+   * would prevent Core's drain from completing.
+   */
+  invalidate(): void {
+    const module = payloadModule();
+    withAllocation(module, POINTER_SIZE, (error) => {
+      const status = module._fdb_payload_v1_payload_invalidate(
+        this.requireHandle(),
+        error,
+      );
+      checkStatus(status, error);
     });
   }
 

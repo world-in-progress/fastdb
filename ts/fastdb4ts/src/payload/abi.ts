@@ -191,3 +191,17 @@ export function f64Bits(value: number): bigint {
   view.setFloat64(0, value, true);
   return view.getBigUint64(0, true);
 }
+
+export function f32FromBits(bits: number): number {
+  const storage = new ArrayBuffer(4);
+  const view = new DataView(storage);
+  view.setUint32(0, bits, true);
+  return view.getFloat32(0, true);
+}
+
+export function f64FromBits(bits: bigint): number {
+  const storage = new ArrayBuffer(8);
+  const view = new DataView(storage);
+  view.setBigUint64(0, bits, true);
+  return view.getFloat64(0, true);
+}

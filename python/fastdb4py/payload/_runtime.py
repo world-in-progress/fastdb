@@ -6,6 +6,8 @@ import ctypes
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from enum import IntEnum
+import struct
+import sys
 import threading
 from typing import Iterator, Optional, Type, TypeVar
 
@@ -139,6 +141,12 @@ class MemoryBacking:
         self._rollback_callback = _ffi.BackingRollbackCallback(self._rollback)
         self._retain_callback = _ffi.BackingRetainCallback(self._retain)
         self._release_callback = _ffi.BackingReleaseCallback(self._release)
+
+    def __copy__(self) -> MemoryBacking:
+        raise TypeError("MemoryBacking owns mutable callback state and cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> MemoryBacking:
+        raise TypeError("MemoryBacking owns mutable callback state and cannot be copied")
 
     def _raw(self) -> _ffi.BackingV1:
         raw = _ffi.BackingV1()
@@ -317,6 +325,12 @@ class ExternalBytes:
         self._retain_callback = _ffi.BackingRetainCallback(self._retain)
         self._release_callback = _ffi.BackingReleaseCallback(self._release)
 
+    def __copy__(self) -> ExternalBytes:
+        return self
+
+    def __deepcopy__(self, memo: object) -> ExternalBytes:
+        return self
+
     def _raw(self) -> _ffi.BackingV1:
         raw = _ffi.BackingV1()
         _ffi.library().fdb_payload_v1_backing_init(ctypes.byref(raw))
@@ -355,6 +369,391 @@ _PayloadT = TypeVar("_PayloadT", bound="Payload")
 _PAYLOAD_TOKEN = object()
 
 
+class ViewKind(IntEnum):
+    SEQUENCE = 1
+    BOOL = 2
+    U8 = 3
+    U16 = 4
+    U32 = 5
+    I32 = 6
+    U8N = 7
+    U16N = 8
+    F32 = 9
+    F64 = 10
+    STR = 11
+    WSTR = 12
+    BYTES = 13
+    COMPONENT = 14
+    LIST = 15
+    REF = 16
+
+
+_ACCESS_TOKEN = object()
+_AccessT = TypeVar("_AccessT", bound="Access")
+
+
+class Access:
+    """Unique Core access pin whose safe methods return Python-owned copies."""
+
+    def __init__(self, handle: _ffi.Handle, token: object) -> None:
+        if token is not _ACCESS_TOKEN:
+            raise TypeError("Access handles are created only by fastdb4py.payload")
+        if not handle.value:
+            raise binding_error(
+                "FastDB Core returned success without an access pin",
+                reason="missing_access_handle",
+            )
+        self._lock = threading.Lock()
+        self._handle: Optional[_ffi.Handle] = handle
+
+    @classmethod
+    def _from_handle(cls: Type[_AccessT], handle: _ffi.Handle) -> _AccessT:
+        try:
+            return cls(handle, _ACCESS_TOKEN)
+        except BaseException:
+            if handle.value:
+                _ffi.library().fdb_payload_v1_access_release(handle)
+            raise
+
+    def close(self) -> None:
+        with self._lock:
+            handle = self._handle
+            self._handle = None
+        if handle is not None:
+            _ffi.library().fdb_payload_v1_access_release(handle)
+
+    def __enter__(self: _AccessT) -> _AccessT:
+        with self._lock:
+            self._require_handle_locked()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __copy__(self) -> Access:
+        raise TypeError("Access is unique and cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> Access:
+        raise TypeError("Access is unique and cannot be copied")
+
+    def payload_bytes(self) -> bytes:
+        return self._copy_bytes("fdb_payload_v1_access_payload_bytes")
+
+    def str(self) -> str:
+        value = self._copy_bytes("fdb_payload_v1_access_str")
+        try:
+            return value.decode("utf-8", "strict")
+        except UnicodeDecodeError as exc:
+            raise binding_error(
+                "FastDB Core returned invalid UTF-8 from a validated str view",
+                path="/access",
+                reason="invalid_core_utf8",
+            ) from exc
+
+    def wstr(self) -> str:
+        native = _ffi.library()
+        data = _ffi.U16Pointer()
+        count = ctypes.c_uint64(0)
+        error = _ffi.Handle()
+        with self._lock:
+            handle = self._require_handle_locked()
+            status = int(
+                native.fdb_payload_v1_access_wstr(
+                    handle,
+                    ctypes.byref(data),
+                    ctypes.byref(count),
+                    ctypes.byref(error),
+                )
+            )
+            _check_status(status, error)
+            byte_count = _checked_span_size(int(count.value), 2, "/access/wstr")
+            if byte_count and not bool(data):
+                raise binding_error(
+                    "FastDB Core returned non-empty wstr storage with a null pointer",
+                    path="/access/wstr",
+                    reason="invalid_core_wstr_span",
+                )
+            address = ctypes.cast(data, ctypes.c_void_p).value or 0
+            if byte_count and address % ctypes.alignment(ctypes.c_uint16) != 0:
+                raise binding_error(
+                    "FastDB Core returned unaligned wstr storage",
+                    path="/access/wstr",
+                    reason="invalid_core_wstr_span",
+                )
+            copied = ctypes.string_at(data, byte_count) if byte_count else b""
+        codec = "utf-16-le" if sys.byteorder == "little" else "utf-16-be"
+        try:
+            return copied.decode(codec, "strict")
+        except UnicodeDecodeError as exc:
+            raise binding_error(
+                "FastDB Core returned invalid UTF-16 from a validated wstr view",
+                path="/access/wstr",
+                reason="invalid_core_utf16",
+            ) from exc
+
+    def bytes(self) -> bytes:
+        return self._copy_bytes("fdb_payload_v1_access_bytes")
+
+    def _copy_bytes(self, name: str) -> bytes:
+        native = _ffi.library()
+        data = _ffi.BytePointer()
+        size = ctypes.c_uint64(0)
+        error = _ffi.Handle()
+        with self._lock:
+            handle = self._require_handle_locked()
+            status = int(
+                getattr(native, name)(
+                    handle,
+                    ctypes.byref(data),
+                    ctypes.byref(size),
+                    ctypes.byref(error),
+                )
+            )
+            _check_status(status, error)
+            native_size = _checked_span_size(int(size.value), 1, "/access")
+            if native_size and not bool(data):
+                raise binding_error(
+                    "FastDB Core returned non-empty access storage with a null pointer",
+                    path="/access",
+                    reason="invalid_core_byte_span",
+                )
+            return ctypes.string_at(data, native_size) if native_size else b""
+
+    def _require_handle_locked(self) -> _ffi.Handle:
+        if self._handle is None:
+            raise binding_error(
+                "Access is closed", path="/access", reason="closed_handle"
+            )
+        return self._handle
+
+
+_VIEW_TOKEN = object()
+_ViewT = TypeVar("_ViewT", bound="View")
+
+
+class View:
+    """Retainable immutable Core view with generation-checked operations."""
+
+    def __init__(self, handle: _ffi.Handle, token: object) -> None:
+        if token is not _VIEW_TOKEN:
+            raise TypeError("View handles are created only by fastdb4py.payload")
+        if not handle.value:
+            raise binding_error(
+                "FastDB Core returned success without a view",
+                reason="missing_view_handle",
+            )
+        self._lock = threading.Lock()
+        self._handle: Optional[_ffi.Handle] = handle
+
+    @classmethod
+    def _from_handle(cls: Type[_ViewT], handle: _ffi.Handle) -> _ViewT:
+        try:
+            return cls(handle, _VIEW_TOKEN)
+        except BaseException:
+            if handle.value:
+                _ffi.library().fdb_payload_v1_view_release(handle)
+            raise
+
+    def close(self) -> None:
+        with self._lock:
+            handle = self._handle
+            self._handle = None
+        if handle is not None:
+            _ffi.library().fdb_payload_v1_view_release(handle)
+
+    def __enter__(self: _ViewT) -> _ViewT:
+        with self._lock:
+            self._require_handle_locked()
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def clone(self: _ViewT) -> _ViewT:
+        with self._lock:
+            handle = self._require_handle_locked()
+            _ffi.library().fdb_payload_v1_view_retain(handle)
+            clone = _ffi.Handle(handle.value)
+        return type(self)._from_handle(clone)
+
+    def __copy__(self: _ViewT) -> _ViewT:
+        return self.clone()
+
+    def __deepcopy__(self: _ViewT, memo: object) -> _ViewT:
+        return self.clone()
+
+    def kind(self) -> ViewKind:
+        value = self._scalar("fdb_payload_v1_view_kind", ctypes.c_uint32)
+        try:
+            return ViewKind(value)
+        except ValueError as exc:
+            raise binding_error(
+                "FastDB Core returned an unknown payload view kind",
+                path="/view/kind",
+                reason="unknown_view_kind",
+            ) from exc
+
+    def is_null(self) -> bool:
+        return bool(self._scalar("fdb_payload_v1_view_is_null", ctypes.c_uint8))
+
+    def length(self) -> int:
+        return self._scalar("fdb_payload_v1_view_length", ctypes.c_uint64)
+
+    def at(self: _ViewT, index: int) -> _ViewT:
+        return self._child(
+            "fdb_payload_v1_view_at",
+            ctypes.c_uint64(_checked_unsigned(index, (1 << 64) - 1, "index")),
+        )
+
+    def component_index(self) -> int:
+        return self._scalar(
+            "fdb_payload_v1_view_component_index", ctypes.c_uint32
+        )
+
+    def field_count(self) -> int:
+        return self._scalar("fdb_payload_v1_view_field_count", ctypes.c_uint32)
+
+    def field(self: _ViewT, index: int) -> _ViewT:
+        return self._child(
+            "fdb_payload_v1_view_field",
+            ctypes.c_uint32(_checked_unsigned(index, 0xFFFF_FFFF, "index")),
+        )
+
+    def get_bool(self) -> bool:
+        return bool(self._scalar("fdb_payload_v1_view_get_bool", ctypes.c_uint8))
+
+    def get_u8(self) -> int:
+        return self._scalar("fdb_payload_v1_view_get_u8", ctypes.c_uint8)
+
+    def get_u16(self) -> int:
+        return self._scalar("fdb_payload_v1_view_get_u16", ctypes.c_uint16)
+
+    def get_u32(self) -> int:
+        return self._scalar("fdb_payload_v1_view_get_u32", ctypes.c_uint32)
+
+    def get_i32(self) -> int:
+        return self._scalar("fdb_payload_v1_view_get_i32", ctypes.c_int32)
+
+    def get_u8n_f64_bits(self) -> int:
+        return self._scalar(
+            "fdb_payload_v1_view_get_u8n_f64_bits", ctypes.c_uint64
+        )
+
+    def get_u8n(self) -> float:
+        return struct.unpack("=d", struct.pack("=Q", self.get_u8n_f64_bits()))[0]
+
+    def get_u16n_f64_bits(self) -> int:
+        return self._scalar(
+            "fdb_payload_v1_view_get_u16n_f64_bits", ctypes.c_uint64
+        )
+
+    def get_u16n(self) -> float:
+        return struct.unpack("=d", struct.pack("=Q", self.get_u16n_f64_bits()))[0]
+
+    def get_f32_bits(self) -> int:
+        return self._scalar("fdb_payload_v1_view_get_f32_bits", ctypes.c_uint32)
+
+    def get_f32(self) -> float:
+        return struct.unpack("=f", struct.pack("=I", self.get_f32_bits()))[0]
+
+    def get_f64_bits(self) -> int:
+        return self._scalar("fdb_payload_v1_view_get_f64_bits", ctypes.c_uint64)
+
+    def get_f64(self) -> float:
+        return struct.unpack("=d", struct.pack("=Q", self.get_f64_bits()))[0]
+
+    def acquire(self) -> Access:
+        native = _ffi.library()
+        result = _ffi.Handle()
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_view_acquire(
+                    handle, ctypes.byref(result), ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        return Access._from_handle(result)
+
+    def materialize(self: _ViewT) -> _ViewT:
+        native = _ffi.library()
+        result = _ffi.Handle()
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_view_materialize(
+                    handle, ctypes.byref(result), ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        return type(self)._from_handle(result)
+
+    def _scalar(self, name: str, value_type: type[ctypes._SimpleCData]) -> int:
+        native = _ffi.library()
+        result = value_type(0)
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                getattr(native, name)(
+                    handle, ctypes.byref(result), ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        return int(result.value)
+
+    def _child(self: _ViewT, name: str, index: object) -> _ViewT:
+        native = _ffi.library()
+        result = _ffi.Handle()
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                getattr(native, name)(
+                    handle, index, ctypes.byref(result), ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        return type(self)._from_handle(result)
+
+    def _require_handle_locked(self) -> _ffi.Handle:
+        if self._handle is None:
+            raise binding_error("View is closed", path="/view", reason="closed_handle")
+        return self._handle
+
+    @contextmanager
+    def _borrow_handle(self) -> Iterator[_ffi.Handle]:
+        native = _ffi.library()
+        with self._lock:
+            handle = self._require_handle_locked()
+            native.fdb_payload_v1_view_retain(handle)
+            borrowed = _ffi.Handle(handle.value)
+        try:
+            yield borrowed
+        finally:
+            native.fdb_payload_v1_view_release(borrowed)
+
+
+def _checked_span_size(count: int, width: int, path: str) -> int:
+    if count < 0 or count > sys.maxsize // width:
+        raise binding_error(
+            "FastDB Core access span exceeds the host address space",
+            path=path,
+            reason="host_size_overflow",
+        )
+    return count * width
+
+
 class Payload:
     """Owned immutable Core payload, optionally retaining its backing adapter."""
 
@@ -374,7 +773,12 @@ class Payload:
     def _from_handle(
         cls: Type[_PayloadT], handle: _ffi.Handle, keeper: object = None
     ) -> _PayloadT:
-        return cls(handle, _PAYLOAD_TOKEN, keeper)
+        try:
+            return cls(handle, _PAYLOAD_TOKEN, keeper)
+        except BaseException:
+            if handle.value:
+                _ffi.library().fdb_payload_v1_payload_release(handle)
+            raise
 
     @classmethod
     def open_copy(
@@ -465,6 +869,12 @@ class Payload:
             keeper = self._keeper
         return type(self)._from_handle(clone, keeper)
 
+    def __copy__(self: _PayloadT) -> _PayloadT:
+        return self.clone()
+
+    def __deepcopy__(self: _PayloadT, memo: object) -> _PayloadT:
+        return self.clone()
+
     def sha256(self) -> bytes:
         native = _ffi.library()
         digest = (ctypes.c_uint8 * _ffi.SHA256_SIZE)()
@@ -523,6 +933,53 @@ class Payload:
             )
             _check_status(status, error)
         return CompiledSpec._copy_blob(blob)
+
+    def acquire(self) -> Access:
+        native = _ffi.library()
+        result = _ffi.Handle()
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_payload_acquire(
+                    handle, ctypes.byref(result), ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        return Access._from_handle(result)
+
+    def entry_view(self, entry_index: int) -> View:
+        native = _ffi.library()
+        result = _ffi.Handle()
+        error = _ffi.Handle()
+        entry_index = _checked_unsigned(entry_index, 0xFFFF_FFFF, "entry_index")
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_payload_entry_view(
+                    handle,
+                    entry_index,
+                    ctypes.byref(result),
+                    ctypes.byref(error),
+                )
+            )
+            _check_status(status, error)
+        return View._from_handle(result)
+
+    def invalidate(self) -> None:
+        """Invalidate after all same-thread access pins have been closed.
+
+        Core waits synchronously for every active access pin to drain, so a
+        caller cannot keep an Access on this thread and release it after this
+        method returns.
+        """
+        native = _ffi.library()
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_payload_invalidate(
+                    handle, ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
 
     def _require_handle_locked(self) -> _ffi.Handle:
         if self._handle is None:

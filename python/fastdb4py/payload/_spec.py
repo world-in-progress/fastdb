@@ -110,7 +110,12 @@ class CompiledSpec:
 
     @classmethod
     def _from_handle(cls: Type[_CompiledSpecT], handle: _ffi.Handle) -> _CompiledSpecT:
-        return cls(handle, _HANDLE_TOKEN)
+        try:
+            return cls(handle, _HANDLE_TOKEN)
+        except BaseException:
+            if handle.value:
+                _ffi.library().fdb_payload_v1_spec_release(handle)
+            raise
 
     @classmethod
     def compile(cls: Type[_CompiledSpecT], source: bytes) -> _CompiledSpecT:
@@ -158,6 +163,12 @@ class CompiledSpec:
             _ffi.library().fdb_payload_v1_spec_retain(handle)
             cloned_handle = _ffi.Handle(handle.value)
         return type(self)._from_handle(cloned_handle)
+
+    def __copy__(self: _CompiledSpecT) -> _CompiledSpecT:
+        return self.clone()
+
+    def __deepcopy__(self: _CompiledSpecT, memo: object) -> _CompiledSpecT:
+        return self.clone()
 
     def canonical_json(self) -> bytes:
         return self._query_blob("fdb_payload_v1_spec_canonical_json")

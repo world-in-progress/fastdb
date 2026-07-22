@@ -141,7 +141,12 @@ class BuildPlan:
 
     @classmethod
     def _from_handle(cls: Type[_BuildPlanT], handle: _ffi.Handle) -> _BuildPlanT:
-        return cls(handle, _HANDLE_TOKEN)
+        try:
+            return cls(handle, _HANDLE_TOKEN)
+        except BaseException:
+            if handle.value:
+                _ffi.library().fdb_payload_v1_plan_release(handle)
+            raise
 
     def close(self) -> None:
         with self._lock:
@@ -170,6 +175,12 @@ class BuildPlan:
             _ffi.library().fdb_payload_v1_plan_retain(handle)
             clone = _ffi.Handle(handle.value)
         return type(self)._from_handle(clone)
+
+    def __copy__(self: _BuildPlanT) -> _BuildPlanT:
+        return self.clone()
+
+    def __deepcopy__(self: _BuildPlanT, memo: object) -> _BuildPlanT:
+        return self.clone()
 
     def info(self) -> PlanInfo:
         native = _ffi.library()
@@ -246,7 +257,12 @@ class Builder:
 
     @classmethod
     def _from_handle(cls: Type[_BuilderT], handle: _ffi.Handle) -> _BuilderT:
-        return cls(handle, _HANDLE_TOKEN)
+        try:
+            return cls(handle, _HANDLE_TOKEN)
+        except BaseException:
+            if handle.value:
+                _ffi.library().fdb_payload_v1_builder_release(handle)
+            raise
 
     @classmethod
     def create(
@@ -291,6 +307,12 @@ class Builder:
             self.close()
         except Exception:
             pass
+
+    def __copy__(self) -> Builder:
+        raise TypeError("Builder is unique and cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> Builder:
+        raise TypeError("Builder is unique and cannot be copied")
 
     def entry_begin(self, entry_index: int, value_count: int) -> Builder:
         return self._call(

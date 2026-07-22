@@ -465,6 +465,151 @@ export interface FastdbModule {
     outBlob: number,
     outError: number,
   ): number;
+  _fdb_payload_v1_payload_acquire(
+    payload: number,
+    outAccess: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_payload_entry_view(
+    payload: number,
+    entryIndex: number,
+    outView: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_payload_invalidate(
+    payload: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_retain(view: number): void;
+  _fdb_payload_v1_view_release(view: number): void;
+  _fdb_payload_v1_view_kind(
+    view: number,
+    outKind: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_is_null(
+    view: number,
+    outIsNull: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_length(
+    view: number,
+    outLength: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_at(
+    view: number,
+    index: bigint,
+    outChild: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_component_index(
+    view: number,
+    outComponentIndex: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_field_count(
+    view: number,
+    outFieldCount: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_field(
+    view: number,
+    fieldIndex: number,
+    outField: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_ref_target(
+    view: number,
+    outTarget: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_graph_identity(
+    view: number,
+    outComponentIndex: number,
+    outObjectId: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_bool(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_u8(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_u16(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_u32(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_i32(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_u8n_f64_bits(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_u16n_f64_bits(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_f32_bits(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_get_f64_bits(
+    view: number,
+    outValue: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_acquire(
+    view: number,
+    outAccess: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_view_materialize(
+    view: number,
+    outMaterialized: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_access_release(access: number): void;
+  _fdb_payload_v1_access_payload_bytes(
+    access: number,
+    outData: number,
+    outSize: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_access_str(
+    access: number,
+    outData: number,
+    outSize: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_access_wstr(
+    access: number,
+    outData: number,
+    outSize: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_access_bytes(
+    access: number,
+    outData: number,
+    outSize: number,
+    outError: number,
+  ): number;
   _fdb_payload_v1_blob_data(blob: number): number;
   _fdb_payload_v1_blob_size(blob: number): bigint;
   _fdb_payload_v1_blob_release(blob: number): void;

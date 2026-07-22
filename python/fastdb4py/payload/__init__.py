@@ -11,6 +11,7 @@ from ._builder import (
 )
 from ._spec import Capabilities, CompiledSpec, Profile
 from ._runtime import (
+    Access,
     BackingStatus,
     BuildPolicy,
     BuildResult,
@@ -22,9 +23,12 @@ from ._runtime import (
     OpenOptions,
     Payload,
     ReserveMode,
+    View,
+    ViewKind,
 )
 
 __all__ = [
+    "Access",
     "BuildPlan",
     "BackingStatus",
     "BuildPolicy",
@@ -46,4 +50,6 @@ __all__ = [
     "PlanInfo",
     "Profile",
     "ReserveMode",
+    "View",
+    "ViewKind",
 ]

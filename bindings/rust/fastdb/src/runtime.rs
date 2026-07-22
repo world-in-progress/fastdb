@@ -559,6 +559,414 @@ unsafe extern "C" fn external_release(_context: *mut c_void, owner_token: *mut c
     unsafe { Arc::decrement_strong_count(owner_token.cast::<ExternalInner>()) };
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub enum ViewKind {
+    Sequence = sys::FDB_PAYLOAD_VIEW_SEQUENCE,
+    Bool = sys::FDB_PAYLOAD_VIEW_BOOL,
+    U8 = sys::FDB_PAYLOAD_VIEW_U8,
+    U16 = sys::FDB_PAYLOAD_VIEW_U16,
+    U32 = sys::FDB_PAYLOAD_VIEW_U32,
+    I32 = sys::FDB_PAYLOAD_VIEW_I32,
+    U8n = sys::FDB_PAYLOAD_VIEW_U8N,
+    U16n = sys::FDB_PAYLOAD_VIEW_U16N,
+    F32 = sys::FDB_PAYLOAD_VIEW_F32,
+    F64 = sys::FDB_PAYLOAD_VIEW_F64,
+    Str = sys::FDB_PAYLOAD_VIEW_STR,
+    Wstr = sys::FDB_PAYLOAD_VIEW_WSTR,
+    Bytes = sys::FDB_PAYLOAD_VIEW_BYTES,
+    Component = sys::FDB_PAYLOAD_VIEW_COMPONENT,
+    List = sys::FDB_PAYLOAD_VIEW_LIST,
+    Ref = sys::FDB_PAYLOAD_VIEW_REF,
+}
+
+impl ViewKind {
+    fn from_raw(value: u32) -> Result<Self, PayloadError> {
+        match value {
+            sys::FDB_PAYLOAD_VIEW_SEQUENCE => Ok(Self::Sequence),
+            sys::FDB_PAYLOAD_VIEW_BOOL => Ok(Self::Bool),
+            sys::FDB_PAYLOAD_VIEW_U8 => Ok(Self::U8),
+            sys::FDB_PAYLOAD_VIEW_U16 => Ok(Self::U16),
+            sys::FDB_PAYLOAD_VIEW_U32 => Ok(Self::U32),
+            sys::FDB_PAYLOAD_VIEW_I32 => Ok(Self::I32),
+            sys::FDB_PAYLOAD_VIEW_U8N => Ok(Self::U8n),
+            sys::FDB_PAYLOAD_VIEW_U16N => Ok(Self::U16n),
+            sys::FDB_PAYLOAD_VIEW_F32 => Ok(Self::F32),
+            sys::FDB_PAYLOAD_VIEW_F64 => Ok(Self::F64),
+            sys::FDB_PAYLOAD_VIEW_STR => Ok(Self::Str),
+            sys::FDB_PAYLOAD_VIEW_WSTR => Ok(Self::Wstr),
+            sys::FDB_PAYLOAD_VIEW_BYTES => Ok(Self::Bytes),
+            sys::FDB_PAYLOAD_VIEW_COMPONENT => Ok(Self::Component),
+            sys::FDB_PAYLOAD_VIEW_LIST => Ok(Self::List),
+            sys::FDB_PAYLOAD_VIEW_REF => Ok(Self::Ref),
+            _ => Err(PayloadError::binding(
+                sys::FDB_PAYLOAD_E_UNSUPPORTED_ABI,
+                "UNSUPPORTED_ABI",
+                "/view/kind",
+                "FastDB Core returned an unknown payload view kind",
+                format!(r#"{{"actual":{value},"reason":"unknown_view_kind"}}"#),
+            )),
+        }
+    }
+}
+
+type ViewU8Getter = unsafe extern "C" fn(
+    *const sys::fdb_payload_v1_view_t,
+    *mut u8,
+    *mut *mut sys::fdb_payload_v1_error_t,
+) -> u32;
+type ViewU16Getter = unsafe extern "C" fn(
+    *const sys::fdb_payload_v1_view_t,
+    *mut u16,
+    *mut *mut sys::fdb_payload_v1_error_t,
+) -> u32;
+type ViewU32Getter = unsafe extern "C" fn(
+    *const sys::fdb_payload_v1_view_t,
+    *mut u32,
+    *mut *mut sys::fdb_payload_v1_error_t,
+) -> u32;
+type ViewU64Getter = unsafe extern "C" fn(
+    *const sys::fdb_payload_v1_view_t,
+    *mut u64,
+    *mut *mut sys::fdb_payload_v1_error_t,
+) -> u32;
+type AccessBytesGetter = unsafe extern "C" fn(
+    *const sys::fdb_payload_v1_access_t,
+    *mut *const u8,
+    *mut u64,
+    *mut *mut sys::fdb_payload_v1_error_t,
+) -> u32;
+
+/// A retainable immutable view whose backed operations are generation checked
+/// by FastDB Core. No mutation surface is projected.
+pub struct View {
+    raw: NonNull<sys::fdb_payload_v1_view_t>,
+}
+
+impl View {
+    fn from_raw(raw: *mut sys::fdb_payload_v1_view_t) -> Result<Self, PayloadError> {
+        NonNull::new(raw).map(|raw| Self { raw }).ok_or_else(|| {
+            PayloadError::binding(
+                sys::FDB_PAYLOAD_E_INTERNAL,
+                "BINDING_CONTRACT",
+                "",
+                "FastDB Core returned success without a view",
+                r#"{"reason":"missing_view_handle"}"#,
+            )
+        })
+    }
+
+    pub fn kind(&self) -> Result<ViewKind, PayloadError> {
+        let value = self.read_u32(sys::fdb_payload_v1_view_kind)?;
+        ViewKind::from_raw(value)
+    }
+
+    pub fn is_null(&self) -> Result<bool, PayloadError> {
+        Ok(self.read_u8(sys::fdb_payload_v1_view_is_null)? != 0)
+    }
+
+    pub fn length(&self) -> Result<u64, PayloadError> {
+        self.read_u64(sys::fdb_payload_v1_view_length)
+    }
+
+    pub fn at(&self, index: u64) -> Result<Self, PayloadError> {
+        let mut raw = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and the owned-handle/error outputs are valid.
+        let status =
+            unsafe { sys::fdb_payload_v1_view_at(self.raw.as_ptr(), index, &mut raw, &mut error) };
+        check_status(status, error)?;
+        Self::from_raw(raw)
+    }
+
+    pub fn component_index(&self) -> Result<u32, PayloadError> {
+        self.read_u32(sys::fdb_payload_v1_view_component_index)
+    }
+
+    pub fn field_count(&self) -> Result<u32, PayloadError> {
+        self.read_u32(sys::fdb_payload_v1_view_field_count)
+    }
+
+    pub fn field(&self, index: u32) -> Result<Self, PayloadError> {
+        let mut raw = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and the owned-handle/error outputs are valid.
+        let status = unsafe {
+            sys::fdb_payload_v1_view_field(self.raw.as_ptr(), index, &mut raw, &mut error)
+        };
+        check_status(status, error)?;
+        Self::from_raw(raw)
+    }
+
+    pub fn get_bool(&self) -> Result<bool, PayloadError> {
+        Ok(self.read_u8(sys::fdb_payload_v1_view_get_bool)? != 0)
+    }
+
+    pub fn get_u8(&self) -> Result<u8, PayloadError> {
+        self.read_u8(sys::fdb_payload_v1_view_get_u8)
+    }
+
+    pub fn get_u16(&self) -> Result<u16, PayloadError> {
+        self.read_u16(sys::fdb_payload_v1_view_get_u16)
+    }
+
+    pub fn get_u32(&self) -> Result<u32, PayloadError> {
+        self.read_u32(sys::fdb_payload_v1_view_get_u32)
+    }
+
+    pub fn get_i32(&self) -> Result<i32, PayloadError> {
+        let mut value = 0_i32;
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and value/error outputs are valid.
+        let status =
+            unsafe { sys::fdb_payload_v1_view_get_i32(self.raw.as_ptr(), &mut value, &mut error) };
+        check_status(status, error)?;
+        Ok(value)
+    }
+
+    pub fn get_u8n_f64_bits(&self) -> Result<u64, PayloadError> {
+        self.read_u64(sys::fdb_payload_v1_view_get_u8n_f64_bits)
+    }
+
+    pub fn get_u8n(&self) -> Result<f64, PayloadError> {
+        Ok(f64::from_bits(self.get_u8n_f64_bits()?))
+    }
+
+    pub fn get_u16n_f64_bits(&self) -> Result<u64, PayloadError> {
+        self.read_u64(sys::fdb_payload_v1_view_get_u16n_f64_bits)
+    }
+
+    pub fn get_u16n(&self) -> Result<f64, PayloadError> {
+        Ok(f64::from_bits(self.get_u16n_f64_bits()?))
+    }
+
+    pub fn get_f32_bits(&self) -> Result<u32, PayloadError> {
+        self.read_u32(sys::fdb_payload_v1_view_get_f32_bits)
+    }
+
+    pub fn get_f32(&self) -> Result<f32, PayloadError> {
+        Ok(f32::from_bits(self.get_f32_bits()?))
+    }
+
+    pub fn get_f64_bits(&self) -> Result<u64, PayloadError> {
+        self.read_u64(sys::fdb_payload_v1_view_get_f64_bits)
+    }
+
+    pub fn get_f64(&self) -> Result<f64, PayloadError> {
+        Ok(f64::from_bits(self.get_f64_bits()?))
+    }
+
+    pub fn acquire(&self) -> Result<Access, PayloadError> {
+        let mut raw = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and the unique-handle/error outputs are valid.
+        let status =
+            unsafe { sys::fdb_payload_v1_view_acquire(self.raw.as_ptr(), &mut raw, &mut error) };
+        check_status(status, error)?;
+        Access::from_raw(raw)
+    }
+
+    /// Performs exactly one Core materialization call. The returned view owns
+    /// detached Core state and does not depend on this view's payload owner.
+    pub fn materialize(&self) -> Result<Self, PayloadError> {
+        let mut raw = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and the owned-handle/error outputs are valid.
+        let status = unsafe {
+            sys::fdb_payload_v1_view_materialize(self.raw.as_ptr(), &mut raw, &mut error)
+        };
+        check_status(status, error)?;
+        Self::from_raw(raw)
+    }
+
+    fn read_u8(&self, getter: ViewU8Getter) -> Result<u8, PayloadError> {
+        let mut value = 0_u8;
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and value/error outputs are valid.
+        let status = unsafe { getter(self.raw.as_ptr(), &mut value, &mut error) };
+        check_status(status, error)?;
+        Ok(value)
+    }
+
+    fn read_u16(&self, getter: ViewU16Getter) -> Result<u16, PayloadError> {
+        let mut value = 0_u16;
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and value/error outputs are valid.
+        let status = unsafe { getter(self.raw.as_ptr(), &mut value, &mut error) };
+        check_status(status, error)?;
+        Ok(value)
+    }
+
+    fn read_u32(&self, getter: ViewU32Getter) -> Result<u32, PayloadError> {
+        let mut value = 0_u32;
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and value/error outputs are valid.
+        let status = unsafe { getter(self.raw.as_ptr(), &mut value, &mut error) };
+        check_status(status, error)?;
+        Ok(value)
+    }
+
+    fn read_u64(&self, getter: ViewU64Getter) -> Result<u64, PayloadError> {
+        let mut value = 0_u64;
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and value/error outputs are valid.
+        let status = unsafe { getter(self.raw.as_ptr(), &mut value, &mut error) };
+        check_status(status, error)?;
+        Ok(value)
+    }
+}
+
+impl Clone for View {
+    fn clone(&self) -> Self {
+        // SAFETY: self owns a live atomically retainable view.
+        unsafe { sys::fdb_payload_v1_view_retain(self.raw.as_ptr()) };
+        Self { raw: self.raw }
+    }
+}
+
+impl Drop for View {
+    fn drop(&mut self) {
+        // SAFETY: this releases exactly the view reference owned by self.
+        unsafe { sys::fdb_payload_v1_view_release(self.raw.as_ptr()) };
+    }
+}
+
+impl fmt::Debug for View {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("View").finish_non_exhaustive()
+    }
+}
+
+unsafe impl Send for View {}
+
+/// Unique owner of one live Core access pin. Every returned borrow is tied to
+/// `&self`, so safe Rust cannot use it after this guard is dropped.
+pub struct Access {
+    raw: NonNull<sys::fdb_payload_v1_access_t>,
+}
+
+impl Access {
+    fn from_raw(raw: *mut sys::fdb_payload_v1_access_t) -> Result<Self, PayloadError> {
+        NonNull::new(raw).map(|raw| Self { raw }).ok_or_else(|| {
+            PayloadError::binding(
+                sys::FDB_PAYLOAD_E_INTERNAL,
+                "BINDING_CONTRACT",
+                "",
+                "FastDB Core returned success without an access pin",
+                r#"{"reason":"missing_access_handle"}"#,
+            )
+        })
+    }
+
+    /// The borrow cannot escape this unique access guard.
+    ///
+    /// ```compile_fail
+    /// use fastdb::Access;
+    ///
+    /// fn invalid_escape(access: Access) -> &'static [u8] {
+    ///     access.payload_bytes().unwrap()
+    /// }
+    /// ```
+    pub fn payload_bytes(&self) -> Result<&[u8], PayloadError> {
+        self.byte_span(sys::fdb_payload_v1_access_payload_bytes)
+    }
+
+    pub fn str(&self) -> Result<&str, PayloadError> {
+        let bytes = self.byte_span(sys::fdb_payload_v1_access_str)?;
+        std::str::from_utf8(bytes).map_err(|_| {
+            PayloadError::binding(
+                sys::FDB_PAYLOAD_E_INTERNAL,
+                "BINDING_CONTRACT",
+                "/access",
+                "FastDB Core returned invalid UTF-8 from a validated str view",
+                r#"{"reason":"invalid_core_utf8"}"#,
+            )
+        })
+    }
+
+    pub fn wstr(&self) -> Result<&[u16], PayloadError> {
+        let mut data = ptr::null();
+        let mut size = 0_u64;
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and pointer/count/error outputs are valid.
+        let status = unsafe {
+            sys::fdb_payload_v1_access_wstr(self.raw.as_ptr(), &mut data, &mut size, &mut error)
+        };
+        check_status(status, error)?;
+        let size = checked_span_len::<u16>(size, "/access/wstr")?;
+        if size == 0 {
+            return Ok(&[]);
+        }
+        if data.is_null() || !(data as usize).is_multiple_of(std::mem::align_of::<u16>()) {
+            return Err(PayloadError::binding(
+                sys::FDB_PAYLOAD_E_INTERNAL,
+                "BINDING_CONTRACT",
+                "/access/wstr",
+                "FastDB Core returned invalid aligned wstr storage",
+                r#"{"reason":"invalid_core_wstr_span"}"#,
+            ));
+        }
+        // SAFETY: Core owns aligned host-endian units for the lifetime of this
+        // unique access handle, and checked_span_len bounded the slice extent.
+        Ok(unsafe { std::slice::from_raw_parts(data, size) })
+    }
+
+    pub fn bytes(&self) -> Result<&[u8], PayloadError> {
+        self.byte_span(sys::fdb_payload_v1_access_bytes)
+    }
+
+    fn byte_span(&self, getter: AccessBytesGetter) -> Result<&[u8], PayloadError> {
+        let mut data = ptr::null();
+        let mut size = 0_u64;
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and pointer/count/error outputs are valid.
+        let status = unsafe { getter(self.raw.as_ptr(), &mut data, &mut size, &mut error) };
+        check_status(status, error)?;
+        let size = checked_span_len::<u8>(size, "/access")?;
+        if size == 0 {
+            return Ok(&[]);
+        }
+        if data.is_null() {
+            return Err(PayloadError::binding(
+                sys::FDB_PAYLOAD_E_INTERNAL,
+                "BINDING_CONTRACT",
+                "/access",
+                "FastDB Core returned non-empty access storage with a null pointer",
+                r#"{"reason":"invalid_core_byte_span"}"#,
+            ));
+        }
+        // SAFETY: Core keeps this byte span live until the unique access handle
+        // is released, and checked_span_len bounded the slice extent.
+        Ok(unsafe { std::slice::from_raw_parts(data, size) })
+    }
+}
+
+impl Drop for Access {
+    fn drop(&mut self) {
+        // SAFETY: this releases exactly the unique access handle owned by self.
+        unsafe { sys::fdb_payload_v1_access_release(self.raw.as_ptr()) };
+    }
+}
+
+impl fmt::Debug for Access {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_struct("Access").finish_non_exhaustive()
+    }
+}
+
+unsafe impl Send for Access {}
+
+fn checked_span_len<T>(size: u64, path: &'static str) -> Result<usize, PayloadError> {
+    let length = usize::try_from(size).map_err(|_| PayloadError::size_overflow(path))?;
+    let bytes = length
+        .checked_mul(std::mem::size_of::<T>())
+        .ok_or_else(|| PayloadError::size_overflow(path))?;
+    if bytes > isize::MAX as usize {
+        return Err(PayloadError::size_overflow(path));
+    }
+    Ok(length)
+}
+
 pub struct Payload {
     raw: NonNull<sys::fdb_payload_v1_payload_t>,
 }
@@ -676,6 +1084,42 @@ impl Payload {
 
     pub fn binary_bytes(&self) -> Result<Vec<u8>, PayloadError> {
         self.binary_blob()?.to_vec()
+    }
+
+    pub fn acquire(&self) -> Result<Access, PayloadError> {
+        let mut raw = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and the unique-handle/error outputs are valid.
+        let status =
+            unsafe { sys::fdb_payload_v1_payload_acquire(self.raw.as_ptr(), &mut raw, &mut error) };
+        check_status(status, error)?;
+        Access::from_raw(raw)
+    }
+
+    pub fn entry_view(&self, entry_index: u32) -> Result<View, PayloadError> {
+        let mut raw = ptr::null_mut();
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live and the owned-handle/error outputs are valid.
+        let status = unsafe {
+            sys::fdb_payload_v1_payload_entry_view(
+                self.raw.as_ptr(),
+                entry_index,
+                &mut raw,
+                &mut error,
+            )
+        };
+        check_status(status, error)?;
+        View::from_raw(raw)
+    }
+
+    /// Blocks until every active access pin is released. A caller must not
+    /// retain an `Access` on the same thread and then wait here for itself.
+    pub fn invalidate(&self) -> Result<(), PayloadError> {
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live; Core owns synchronization across retained aliases.
+        let status =
+            unsafe { sys::fdb_payload_v1_payload_invalidate(self.raw.as_ptr(), &mut error) };
+        check_status(status, error)
     }
 }
 

@@ -11,6 +11,7 @@ export type { BuilderOptions } from './builder.js';
 export { PayloadError } from './error.js';
 export { Capabilities, CompiledSpec, Profile } from './spec.js';
 export {
+  Access,
   BuildPolicy,
   BuildResult,
   ExecutionMode,
@@ -20,6 +21,8 @@ export {
   Payload,
   WasmMemoryBacking,
   WasmOwnedBytes,
+  View,
+  ViewKind,
 } from './runtime.js';
 export type {
   OpenOptionValues,

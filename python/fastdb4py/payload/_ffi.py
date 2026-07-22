@@ -22,6 +22,8 @@ Handle = ctypes.c_void_p
 HandlePointer = ctypes.POINTER(Handle)
 BytePointer = ctypes.POINTER(ctypes.c_uint8)
 BytePointerPointer = ctypes.POINTER(BytePointer)
+U16Pointer = ctypes.POINTER(ctypes.c_uint16)
+U16PointerPointer = ctypes.POINTER(U16Pointer)
 VoidPointerPointer = ctypes.POINTER(ctypes.c_void_p)
 
 BackingReserveCallback = ctypes.CFUNCTYPE(
@@ -506,6 +508,108 @@ def _declare(library: ctypes.CDLL) -> None:
         HandlePointer,
     ]
     library.fdb_payload_v1_payload_binary_blob.restype = ctypes.c_uint32
+    library.fdb_payload_v1_payload_acquire.argtypes = [
+        Handle,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_acquire.restype = ctypes.c_uint32
+    library.fdb_payload_v1_payload_entry_view.argtypes = [
+        Handle,
+        ctypes.c_uint32,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_entry_view.restype = ctypes.c_uint32
+    library.fdb_payload_v1_payload_invalidate.argtypes = [Handle, HandlePointer]
+    library.fdb_payload_v1_payload_invalidate.restype = ctypes.c_uint32
+
+    library.fdb_payload_v1_view_retain.argtypes = [Handle]
+    library.fdb_payload_v1_view_retain.restype = None
+    library.fdb_payload_v1_view_release.argtypes = [Handle]
+    library.fdb_payload_v1_view_release.restype = None
+    for name, value_type in (
+        ("fdb_payload_v1_view_kind", ctypes.c_uint32),
+        ("fdb_payload_v1_view_is_null", ctypes.c_uint8),
+        ("fdb_payload_v1_view_length", ctypes.c_uint64),
+        ("fdb_payload_v1_view_component_index", ctypes.c_uint32),
+        ("fdb_payload_v1_view_field_count", ctypes.c_uint32),
+        ("fdb_payload_v1_view_get_bool", ctypes.c_uint8),
+        ("fdb_payload_v1_view_get_u8", ctypes.c_uint8),
+        ("fdb_payload_v1_view_get_u16", ctypes.c_uint16),
+        ("fdb_payload_v1_view_get_u32", ctypes.c_uint32),
+        ("fdb_payload_v1_view_get_i32", ctypes.c_int32),
+        ("fdb_payload_v1_view_get_u8n_f64_bits", ctypes.c_uint64),
+        ("fdb_payload_v1_view_get_u16n_f64_bits", ctypes.c_uint64),
+        ("fdb_payload_v1_view_get_f32_bits", ctypes.c_uint32),
+        ("fdb_payload_v1_view_get_f64_bits", ctypes.c_uint64),
+    ):
+        function = getattr(library, name)
+        function.argtypes = [Handle, ctypes.POINTER(value_type), HandlePointer]
+        function.restype = ctypes.c_uint32
+
+    library.fdb_payload_v1_view_at.argtypes = [
+        Handle,
+        ctypes.c_uint64,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_view_at.restype = ctypes.c_uint32
+    library.fdb_payload_v1_view_field.argtypes = [
+        Handle,
+        ctypes.c_uint32,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_view_field.restype = ctypes.c_uint32
+    library.fdb_payload_v1_view_ref_target.argtypes = [
+        Handle,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_view_ref_target.restype = ctypes.c_uint32
+    library.fdb_payload_v1_view_graph_identity.argtypes = [
+        Handle,
+        ctypes.POINTER(ctypes.c_uint32),
+        ctypes.POINTER(ctypes.c_uint64),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_view_graph_identity.restype = ctypes.c_uint32
+    library.fdb_payload_v1_view_acquire.argtypes = [
+        Handle,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_view_acquire.restype = ctypes.c_uint32
+    library.fdb_payload_v1_view_materialize.argtypes = [
+        Handle,
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_view_materialize.restype = ctypes.c_uint32
+
+    library.fdb_payload_v1_access_release.argtypes = [Handle]
+    library.fdb_payload_v1_access_release.restype = None
+    for name in (
+        "fdb_payload_v1_access_payload_bytes",
+        "fdb_payload_v1_access_str",
+        "fdb_payload_v1_access_bytes",
+    ):
+        function = getattr(library, name)
+        function.argtypes = [
+            Handle,
+            BytePointerPointer,
+            ctypes.POINTER(ctypes.c_uint64),
+            HandlePointer,
+        ]
+        function.restype = ctypes.c_uint32
+    library.fdb_payload_v1_access_wstr.argtypes = [
+        Handle,
+        U16PointerPointer,
+        ctypes.POINTER(ctypes.c_uint64),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_access_wstr.restype = ctypes.c_uint32
 
     library.fdb_payload_v1_blob_release.argtypes = [Handle]
     library.fdb_payload_v1_blob_release.restype = None

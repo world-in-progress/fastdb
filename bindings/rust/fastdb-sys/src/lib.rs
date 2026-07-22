@@ -30,6 +30,23 @@ pub const FDB_PAYLOAD_FALLBACK_PLAN_REQUIRES_STAGING: u32 = 1;
 pub const FDB_PAYLOAD_FALLBACK_BACKING_DECLINED_DIRECT: u32 = 2;
 pub const FDB_PAYLOAD_OPEN_VALIDATE_TEXT_EAGER: u32 = 1;
 
+pub const FDB_PAYLOAD_VIEW_SEQUENCE: u32 = 1;
+pub const FDB_PAYLOAD_VIEW_BOOL: u32 = 2;
+pub const FDB_PAYLOAD_VIEW_U8: u32 = 3;
+pub const FDB_PAYLOAD_VIEW_U16: u32 = 4;
+pub const FDB_PAYLOAD_VIEW_U32: u32 = 5;
+pub const FDB_PAYLOAD_VIEW_I32: u32 = 6;
+pub const FDB_PAYLOAD_VIEW_U8N: u32 = 7;
+pub const FDB_PAYLOAD_VIEW_U16N: u32 = 8;
+pub const FDB_PAYLOAD_VIEW_F32: u32 = 9;
+pub const FDB_PAYLOAD_VIEW_F64: u32 = 10;
+pub const FDB_PAYLOAD_VIEW_STR: u32 = 11;
+pub const FDB_PAYLOAD_VIEW_WSTR: u32 = 12;
+pub const FDB_PAYLOAD_VIEW_BYTES: u32 = 13;
+pub const FDB_PAYLOAD_VIEW_COMPONENT: u32 = 14;
+pub const FDB_PAYLOAD_VIEW_LIST: u32 = 15;
+pub const FDB_PAYLOAD_VIEW_REF: u32 = 16;
+
 pub const FDB_PAYLOAD_E_DIRECT_UNAVAILABLE: u32 = 2007;
 pub const FDB_PAYLOAD_E_BACKING_CONTRACT: u32 = 5001;
 pub const FDB_PAYLOAD_E_ALLOCATION_FAILED: u32 = 5002;
@@ -73,6 +90,18 @@ pub struct fdb_payload_v1_plan_t {
 
 #[repr(C)]
 pub struct fdb_payload_v1_payload_t {
+    _private: [u8; 0],
+    _marker: std::marker::PhantomData<(*mut u8, std::marker::PhantomPinned)>,
+}
+
+#[repr(C)]
+pub struct fdb_payload_v1_view_t {
+    _private: [u8; 0],
+    _marker: std::marker::PhantomData<(*mut u8, std::marker::PhantomPinned)>,
+}
+
+#[repr(C)]
+pub struct fdb_payload_v1_access_t {
     _private: [u8; 0],
     _marker: std::marker::PhantomData<(*mut u8, std::marker::PhantomPinned)>,
 }
@@ -508,6 +537,153 @@ unsafe extern "C" {
     pub fn fdb_payload_v1_payload_binary_blob(
         payload: *const fdb_payload_v1_payload_t,
         out_blob: *mut *mut fdb_payload_v1_blob_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_payload_acquire(
+        payload: *const fdb_payload_v1_payload_t,
+        out_access: *mut *mut fdb_payload_v1_access_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_payload_entry_view(
+        payload: *const fdb_payload_v1_payload_t,
+        entry_index: u32,
+        out_view: *mut *mut fdb_payload_v1_view_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+
+    pub fn fdb_payload_v1_view_retain(view: *mut fdb_payload_v1_view_t);
+    pub fn fdb_payload_v1_view_release(view: *mut fdb_payload_v1_view_t);
+    pub fn fdb_payload_v1_view_kind(
+        view: *const fdb_payload_v1_view_t,
+        out_kind: *mut u32,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_is_null(
+        view: *const fdb_payload_v1_view_t,
+        out_is_null: *mut u8,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_length(
+        view: *const fdb_payload_v1_view_t,
+        out_length: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_at(
+        view: *const fdb_payload_v1_view_t,
+        index: u64,
+        out_child: *mut *mut fdb_payload_v1_view_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_component_index(
+        view: *const fdb_payload_v1_view_t,
+        out_component_index: *mut u32,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_field_count(
+        view: *const fdb_payload_v1_view_t,
+        out_field_count: *mut u32,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_field(
+        view: *const fdb_payload_v1_view_t,
+        field_index: u32,
+        out_field: *mut *mut fdb_payload_v1_view_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_ref_target(
+        view: *const fdb_payload_v1_view_t,
+        out_target: *mut *mut fdb_payload_v1_view_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_graph_identity(
+        view: *const fdb_payload_v1_view_t,
+        out_component_index: *mut u32,
+        out_object_id: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_bool(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut u8,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_u8(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut u8,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_u16(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut u16,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_u32(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut u32,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_i32(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut i32,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_u8n_f64_bits(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_u16n_f64_bits(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_f32_bits(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut u32,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_get_f64_bits(
+        view: *const fdb_payload_v1_view_t,
+        out_value: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_acquire(
+        view: *const fdb_payload_v1_view_t,
+        out_access: *mut *mut fdb_payload_v1_access_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_view_materialize(
+        view: *const fdb_payload_v1_view_t,
+        out_materialized: *mut *mut fdb_payload_v1_view_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+
+    pub fn fdb_payload_v1_access_release(access: *mut fdb_payload_v1_access_t);
+    pub fn fdb_payload_v1_access_payload_bytes(
+        access: *const fdb_payload_v1_access_t,
+        out_data: *mut *const u8,
+        out_size: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_access_str(
+        access: *const fdb_payload_v1_access_t,
+        out_data: *mut *const u8,
+        out_size: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_access_wstr(
+        access: *const fdb_payload_v1_access_t,
+        out_data: *mut *const u16,
+        out_size: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_access_bytes(
+        access: *const fdb_payload_v1_access_t,
+        out_data: *mut *const u8,
+        out_size: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_payload_invalidate(
+        payload: *mut fdb_payload_v1_payload_t,
         out_error: *mut *mut fdb_payload_v1_error_t,
     ) -> fdb_payload_v1_status_t;
 
