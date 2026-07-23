@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import errno
+import ntpath
 import os
 from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
@@ -30,6 +31,45 @@ TARGETS = {
 }
 
 
+def _windows_path_is_reserved(relative_path: str) -> bool:
+    checker = getattr(ntpath, "isreserved", None)
+    if checker is not None:
+        return bool(checker(relative_path))
+    return PureWindowsPath(relative_path).is_reserved()
+
+
+def _artifact_path_is_safe(
+    relative_path: str, *, windows: bool | None = None
+) -> bool:
+    if windows is None:
+        windows = os.name == "nt"
+    path = PurePosixPath(relative_path)
+    windows_path = PureWindowsPath(relative_path)
+    has_ascii_drive_prefix = (
+        len(relative_path) >= 2
+        and relative_path[0].isascii()
+        and relative_path[0].isalpha()
+        and relative_path[1] == ":"
+    )
+    return (
+        bool(relative_path)
+        and "\x00" not in relative_path
+        and "\\" not in relative_path
+        and not path.is_absolute()
+        and not has_ascii_drive_prefix
+        and ".." not in path.parts
+        and path.as_posix() == relative_path
+        and relative_path != "."
+        and (
+            not windows
+            or (
+                not windows_path.drive
+                and not _windows_path_is_reserved(relative_path)
+            )
+        )
+    )
+
+
 def _validated_artifacts(generated: ArtifactSet) -> tuple[Artifact, ...]:
     artifacts: list[Artifact] = []
     paths: set[str] = set()
@@ -38,19 +78,7 @@ def _validated_artifacts(generated: ArtifactSet) -> tuple[Artifact, ...]:
         relative_path = artifact.relative_path
         if not isinstance(relative_path, str):
             raise ValueError("Core artifact relative path is not text")
-        path = PurePosixPath(relative_path)
-        windows_path = PureWindowsPath(relative_path)
-        valid = (
-            bool(relative_path)
-            and "\x00" not in relative_path
-            and "\\" not in relative_path
-            and not path.is_absolute()
-            and not windows_path.drive
-            and ".." not in path.parts
-            and path.as_posix() == relative_path
-            and relative_path != "."
-        )
-        if not valid:
+        if not _artifact_path_is_safe(relative_path):
             raise ValueError(
                 f"Core artifact has an unsafe relative path: {relative_path!r}"
             )

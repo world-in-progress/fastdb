@@ -150,6 +150,27 @@ def test_validated_artifacts_rejects_non_source_kinds() -> None:
         cli._validated_artifacts(generated)
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "NUL",
+        "nested/COM1.txt",
+        "trailing.",
+        "trailing ",
+        "file:stream",
+        'bad"name.py',
+    ],
+)
+def test_windows_artifact_policy_rejects_non_file_paths(
+    relative_path: str,
+) -> None:
+    assert not cli._artifact_path_is_safe(relative_path, windows=True)
+
+
+def test_posix_artifact_policy_keeps_core_valid_colon_paths() -> None:
+    assert cli._artifact_path_is_safe("é:relative.hpp", windows=False)
+
+
 @pytest.mark.parametrize("existing_kind", ["file", "directory", "broken-symlink"])
 def test_write_new_tree_rejects_every_existing_output_root(
     tmp_path: Path, existing_kind: str
