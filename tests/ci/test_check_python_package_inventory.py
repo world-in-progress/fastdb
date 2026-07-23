@@ -18,51 +18,42 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-EXPECTED_MESSAGES = {
-    582: "Nested struct not currently supported (TileBox ignored)",
-    588: "Nested class not currently supported (HandleTileAction ignored)",
-    595: "Nested struct not currently supported (TakeResult ignored)",
-    622: "Nested struct not currently supported (TileDataHandle ignored)",
-    631: "Nested struct not currently supported (TileDbBox ignored)",
-    637: "Nested struct not currently supported (TakeResult ignored)",
-    206: "Setting a const char * variable may leak memory.",
-}
-
-
-def accepted_swig_lines() -> list[str]:
-    return [
-        f"/tmp/build/fastcarto/fastdb/include/fastdb.h:{line}: "
-        f"Warning {code}: {EXPECTED_MESSAGES[line]}"
-        for line, code in MODULE.EXPECTED_SWIG_DIAGNOSTICS
-    ]
+FORMER_SWIG_LINES = (
+    "/tmp/build/fastdb.h:582: Warning 325: "
+    "Nested struct not currently supported (TileBox ignored)",
+    "/tmp/build/fastdb.h:588: Warning 325: "
+    "Nested class not currently supported (HandleTileAction ignored)",
+    "/tmp/build/fastdb.h:595: Warning 325: "
+    "Nested struct not currently supported (TakeResult ignored)",
+    "/tmp/build/fastdb.h:622: Warning 325: "
+    "Nested struct not currently supported (TileDataHandle ignored)",
+    "/tmp/build/fastdb.h:631: Warning 325: "
+    "Nested struct not currently supported (TileDbBox ignored)",
+    "/tmp/build/fastdb.h:637: Warning 325: "
+    "Nested struct not currently supported (TakeResult ignored)",
+    "/tmp/build/fastdb.h:206: Warning 451: "
+    "Setting a const char * variable may leak memory.",
+)
 
 
 class SwigDiagnosticTests(unittest.TestCase):
-    def test_accepts_exact_legacy_diagnostic_set_with_arbitrary_build_paths(self) -> None:
-        MODULE.check_swig_diagnostics("\n".join(accepted_swig_lines()))
+    def test_accepts_only_zero_swig_diagnostics(self) -> None:
+        try:
+            MODULE.check_swig_diagnostics("")
+            MODULE.check_swig_diagnostics("ordinary compiler output\n")
+        except MODULE.CheckError as error:
+            self.fail(f"zero SWIG diagnostics must pass: {error}")
 
-    def test_rejects_a_new_diagnostic(self) -> None:
-        lines = accepted_swig_lines()
-        lines.append("other.i:17: Warning 999: unexpected diagnostic")
-        with self.assertRaises(MODULE.CheckError):
-            MODULE.check_swig_diagnostics("\n".join(lines))
+    def test_rejects_each_former_swig_diagnostic(self) -> None:
+        for line in FORMER_SWIG_LINES:
+            with self.subTest(line=line), self.assertRaises(MODULE.CheckError):
+                MODULE.check_swig_diagnostics(line)
 
-    def test_rejects_a_missing_diagnostic(self) -> None:
-        lines = accepted_swig_lines()[:-1]
+    def test_rejects_any_new_matched_swig_diagnostic(self) -> None:
         with self.assertRaises(MODULE.CheckError):
-            MODULE.check_swig_diagnostics("\n".join(lines))
-
-    def test_rejects_a_duplicate_diagnostic(self) -> None:
-        lines = accepted_swig_lines()
-        lines.append(lines[0])
-        with self.assertRaises(MODULE.CheckError):
-            MODULE.check_swig_diagnostics("\n".join(lines))
-
-    def test_rejects_changed_message_at_an_accepted_location(self) -> None:
-        lines = accepted_swig_lines()
-        lines[0] = lines[0].replace("TileBox ignored", "DifferentType ignored")
-        with self.assertRaises(MODULE.CheckError):
-            MODULE.check_swig_diagnostics("\n".join(lines))
+            MODULE.check_swig_diagnostics(
+                r"C:\build\other.i:17: Warning 999: unexpected diagnostic"
+            )
 
 
 class InventoryTests(unittest.TestCase):

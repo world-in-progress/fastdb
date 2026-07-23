@@ -53,6 +53,24 @@ function(add_fastdb_payload_test name)
     add_test(NAME payload.${name} COMMAND ${target_name})
 endfunction()
 
+add_executable(
+    fastdb_legacy_descriptor_determinism
+    test_legacy_descriptor_determinism.cpp
+)
+target_include_directories(
+    fastdb_legacy_descriptor_determinism
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload
+)
+target_link_libraries(fastdb_legacy_descriptor_determinism PRIVATE fastdb)
+fastdb_apply_sanitizers(fastdb_legacy_descriptor_determinism)
+add_test(
+    NAME legacy.descriptor_determinism
+    COMMAND fastdb_legacy_descriptor_determinism
+)
+
 set(FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC
     ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/component-list-composition.source.json
 )

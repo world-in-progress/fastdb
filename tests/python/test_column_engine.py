@@ -528,67 +528,22 @@ def test_regular_truncate_keeps_materialized_native_table_buffer():
     assert engine._fixed_build.table_buffer_bytes() > 0
 
 
-def test_native_build_posts_through_final_backing_resource():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2, name='return_0')])
-    tbl = engine.table(CEStringPoint, name='return_0')
-    tbl.fill(
-        row_id=np.array([1, 2], dtype=np.uint32),
-        x=np.array([1.5, 2.5], dtype=np.float64),
-        name=['left', 'right'],
+def test_removed_call_db_native_backing_surface_is_absent():
+    removed_names = (
+        'WxScratchAllocation',
+        'WxScratchAllocator',
+        'WxHeapScratchAllocation',
+        'WxHeapScratchAllocator',
+        'WxFinalBackingAllocation',
+        'WxFinalBackingResource',
+        'WxHeapFinalBackingAllocation',
+        'WxHeapFinalBackingResource',
     )
+    for name in removed_names:
+        assert not hasattr(core, name), name
 
-    build = engine._fixed_build
-    memory_stream = core.WxMemoryStream()
-    build.post(memory_stream)
-    reference = memory_stream.data().to_bytes()
-
-    resource = core.WxHeapFinalBackingResource()
-    allocation = build.post_to_final_backing(resource)
-
-    assert resource.allocation_count() == 1
-    assert resource.commit_count() == 1
-    assert resource.rollback_count() == 0
-    assert allocation.size() == build.byte_length()
-    assert allocation.used_size() == build.byte_length()
-    assert allocation.committed()
-    assert not allocation.rolled_back()
-    assert allocation.to_bytes() == reference
-
-
-def test_native_heap_scratch_allocator_exposes_separate_core_role():
-    allocator = core.WxHeapScratchAllocator()
-    allocation = allocator._allocate_for_context(16)
-    buffer = allocation._writable_buffer()
-
-    buffer[:4] = b'fdb!'
-
-    assert isinstance(allocation, core.WxScratchAllocation)
-    assert isinstance(allocator, core.WxScratchAllocator)
-    assert allocation.size() == 16
-    assert bytes(buffer[:4]) == b'fdb!'
-    assert allocator.allocation_count() == 1
-
-
-def test_native_final_backing_resource_does_not_expose_uncommitted_allocation_surface():
-    resource = core.WxHeapFinalBackingResource()
-    assert not hasattr(resource, 'allocate')
-
-    with pytest.raises(AttributeError):
-        core.WxHeapFinalBackingAllocation(8)
-
-
-def test_native_final_backing_allocation_cannot_be_read_before_commit():
-    resource = core.WxHeapFinalBackingResource()
-    allocation = resource._allocate_for_context(8)
-
-    with pytest.raises(RuntimeError, match='not committed'):
-        allocation._readonly_buffer()
-    with pytest.raises(RuntimeError, match='not committed'):
-        allocation.to_bytes()
-
-    allocation.rollback()
-    with pytest.raises(RuntimeError, match='rolled back|not committed'):
-        allocation.to_bytes()
+    build = core.WxDatabaseBuild()
+    assert not hasattr(build, 'post_to_final_backing')
 
 
 def test_table_fill_round_trips_empty_strings():

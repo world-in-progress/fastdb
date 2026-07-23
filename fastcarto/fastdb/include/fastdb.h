@@ -90,107 +90,6 @@ namespace wx
         bool m_overflowed;
     };
 
-    class fastdb_api ScratchAllocation
-    {
-    public:
-        virtual ~ScratchAllocation() = default;
-        virtual void* data() = 0;
-        virtual size_t size() const = 0;
-    };
-
-    class fastdb_api ScratchAllocator
-    {
-    public:
-        virtual ~ScratchAllocator() = default;
-        virtual ScratchAllocation* allocate(size_t size, size_t alignment) = 0;
-    };
-
-    class fastdb_api HeapScratchAllocator;
-
-    class fastdb_api HeapScratchAllocation final : public ScratchAllocation
-    {
-    public:
-        class Impl;
-    public:
-        HeapScratchAllocation(size_t size, HeapScratchAllocator* owner = nullptr);
-        ~HeapScratchAllocation() override;
-        void* data() override;
-        size_t size() const override;
-    private:
-        Impl* impl;
-    };
-
-    class fastdb_api HeapScratchAllocator final : public ScratchAllocator
-    {
-    public:
-        class Impl;
-    public:
-        HeapScratchAllocator();
-        ~HeapScratchAllocator() override;
-        ScratchAllocation* allocate(size_t size, size_t alignment) override;
-        size_t allocationCount() const;
-        size_t releaseCount() const;
-    private:
-        Impl* impl;
-        friend class HeapScratchAllocation;
-    };
-
-    class fastdb_api FinalBackingAllocation
-    {
-    public:
-        virtual ~FinalBackingAllocation() = default;
-        virtual void* data() = 0;
-        virtual size_t size() const = 0;
-        virtual size_t usedSize() const = 0;
-        virtual bool committed() const = 0;
-        virtual bool rolledBack() const = 0;
-        virtual bool commit(size_t used_size) = 0;
-        virtual void rollback() = 0;
-    };
-
-    class fastdb_api FinalBackingResource
-    {
-    public:
-        virtual ~FinalBackingResource() = default;
-        virtual FinalBackingAllocation* allocate(size_t size, size_t alignment) = 0;
-    };
-
-    class fastdb_api HeapFinalBackingResource;
-
-    class fastdb_api HeapFinalBackingAllocation final : public FinalBackingAllocation
-    {
-    public:
-        class Impl;
-    public:
-        HeapFinalBackingAllocation(size_t size, HeapFinalBackingResource* owner = nullptr);
-        ~HeapFinalBackingAllocation() override;
-        void* data() override;
-        size_t size() const override;
-        size_t usedSize() const override;
-        bool committed() const override;
-        bool rolledBack() const override;
-        bool commit(size_t used_size) override;
-        void rollback() override;
-    private:
-        Impl* impl;
-    };
-
-    class fastdb_api HeapFinalBackingResource final : public FinalBackingResource
-    {
-    public:
-        class Impl;
-    public:
-        HeapFinalBackingResource();
-        ~HeapFinalBackingResource() override;
-        FinalBackingAllocation* allocate(size_t size, size_t alignment) override;
-        size_t allocationCount() const;
-        size_t commitCount() const;
-        size_t rollbackCount() const;
-    private:
-        Impl* impl;
-        friend class HeapFinalBackingAllocation;
-    };
-
     struct point2_t
     {
         double x;
@@ -270,7 +169,6 @@ namespace wx
         size_t byteLength();
         size_t tableBufferBytes();
         size_t postToBuffer(void* pdata, size_t size);
-        FinalBackingAllocation* postToFinalBacking(FinalBackingResource* resource);
         void save(const char *filename);
 
     public:
@@ -562,6 +460,7 @@ namespace wx
         Impl*  impl;
         friend class FastVectorDbLayer::Impl;
     }; 
+#ifndef SWIG
     class fastdb_api TileBoxTake
     {
         class Impl;
@@ -647,7 +546,6 @@ namespace wx
     private:
         Impl* impl;
     };
-#ifndef SWIG
     using WxDatabase = FastVectorDb;
     using WxLayerTable = FastVectorDbLayer;
     using WxFeature = FastVectorDbFeature;

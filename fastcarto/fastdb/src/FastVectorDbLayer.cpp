@@ -1,11 +1,20 @@
 #include "fastdb.h"
 #include "FastVectorDbLayer_p.h"
 #include "FastVectorDbLayerBuild_p.h"
+#include <cstring>
 #include <limits>
 namespace wx
 {
     namespace
     {
+        template <typename T>
+        T load_unaligned(const void* source)
+        {
+            T value{};
+            std::memcpy(&value, source, sizeof(value));
+            return value;
+        }
+
         template <typename TStringFields>
         auto* find_string_field(TStringFields& string_fields, u32 field_id)
         {
@@ -48,10 +57,11 @@ namespace wx
         }
     }
 
-    size_t ustring_len(const uchar_t *str)
+    size_t ustring_len(const u8 *data)
     {
         size_t len = 0;
-        while (str[len] != 0)
+        while (load_unaligned<uchar_t>(
+                   data + len * sizeof(uchar_t)) != 0)
             len++;
         return len;
     }
@@ -67,58 +77,72 @@ namespace wx
         :m_data(pdata), m_size(size), m_ifeature(-1)
     {
         const u8* data_end = m_data + m_size;
-         m_header = (layer_header_t *)m_data;
-        m_field_descs = (field_desc_ex_t *)(m_data + sizeof(layer_header_t));
-        m_data_ptr0 = m_data + sizeof(layer_header_t) + m_header->field_count * sizeof(field_desc_ex_t);
-        auto last_fd = m_field_descs + m_header->field_count - 1;
-        m_table_line_size = last_fd->offset + last_fd->size;
-        m_table_data_ptr0 = m_data_ptr0 + m_header->offset_table;
+        std::memcpy(&m_header, m_data, sizeof(m_header));
+        m_field_descs.resize(m_header.field_count);
+        if (!m_field_descs.empty())
+        {
+            std::memcpy(m_field_descs.data(),
+                        m_data + sizeof(layer_header_t),
+                        m_field_descs.size() * sizeof(field_desc_ex_t));
+        }
+        m_data_ptr0 = m_data + sizeof(layer_header_t) +
+                      m_header.field_count * sizeof(field_desc_ex_t);
+        m_table_line_size = 0;
+        if (!m_field_descs.empty())
+        {
+            const auto& last_field = m_field_descs.back();
+            m_table_line_size = last_field.offset + last_field.size;
+        }
+        m_table_data_ptr0 = m_data_ptr0 + m_header.offset_table;
         m_geometry_ptr0=m_data_ptr0;
         // load string tables
-        const u8 *ptr = m_data_ptr0 + m_header->offset_strings;
-        u32 count = *(u32 *)ptr;
+        const u8 *ptr = m_data_ptr0 + m_header.offset_strings;
+        u32 count = load_unaligned<u32>(ptr);
         ptr += 4;
         for (int i = 0; i < count; i++)
         {
             m_string_table.push_back((const char *)ptr);
             ptr += strlen((const char *)ptr) + 1;
         }
-        ptr = m_data_ptr0 + m_header->offset_wstrings;
-        count = *(u32 *)ptr;
+        ptr = m_data_ptr0 + m_header.offset_wstrings;
+        count = load_unaligned<u32>(ptr);
         ptr += 4;
         for (int i = 0; i < count; i++)
         {
             m_wstring_table.push_back((const uchar_t *)ptr);
-            ptr += (ustring_len((const uchar_t *)ptr) + 1) * sizeof(uchar_t);
+            ptr += (ustring_len(ptr) + 1) * sizeof(uchar_t);
         }
         // parse list data section (n_list_fields > 0 only in databases built with list support)
-        if (m_header->n_list_fields > 0) {
-            for (u16 li = 0; li < m_header->n_list_fields; li++) {
+        if (m_header.n_list_fields > 0) {
+            for (u16 li = 0; li < m_header.n_list_fields; li++) {
                 ListFieldData lfd;
-                lfd.field_id       = *(u32*)ptr; ptr += 4;
-                lfd.elem_size      = *(u32*)ptr; ptr += 4;
-                lfd.total_elements = *(u64*)ptr; ptr += 8;
+                lfd.field_id       = load_unaligned<u32>(ptr); ptr += 4;
+                lfd.elem_size      = load_unaligned<u32>(ptr); ptr += 4;
+                lfd.total_elements = load_unaligned<u64>(ptr); ptr += 8;
                 lfd.data_ptr       = const_cast<u8*>(ptr);
                 ptr += lfd.total_elements * lfd.elem_size;
                 m_list_fields.push_back(lfd);
             }
         }
-        u16 string_field_count = count_varlen_string_fields(m_field_descs, m_header->field_count);
+        u16 string_field_count =
+            count_varlen_string_fields(m_field_descs.data(),
+                                       m_header.field_count);
         for (u16 si = 0; si < string_field_count; ++si)
         {
             StringFieldData sfd;
             if (!has_remaining_bytes(ptr, data_end, sizeof(u32) + sizeof(u32) + sizeof(u32) + sizeof(u64)))
                 break;
-            sfd.field_id = *(u32*)ptr; ptr += 4;
-            sfd.codec = *(u32*)ptr; ptr += 4;
-            sfd.offset_count = *(u32*)ptr; ptr += 4;
-            sfd.byte_count = *(u64*)ptr; ptr += 8;
+            sfd.field_id = load_unaligned<u32>(ptr); ptr += 4;
+            sfd.codec = load_unaligned<u32>(ptr); ptr += 4;
+            sfd.offset_count = load_unaligned<u32>(ptr); ptr += 4;
+            sfd.byte_count = load_unaligned<u64>(ptr); ptr += 8;
             size_t offset_bytes = 0;
             if (!try_multiply_size(size_t(sfd.offset_count), sizeof(u32), offset_bytes))
                 break;
             if (!has_remaining_bytes(ptr, data_end, offset_bytes))
                 break;
-            sfd.offsets_ptr = sfd.offset_count ? (u32*)ptr : nullptr;
+            sfd.offsets_data =
+                sfd.offset_count ? const_cast<u8*>(ptr) : nullptr;
             ptr += offset_bytes;
             if (!has_remaining_bytes_u64(ptr, data_end, sfd.byte_count))
                 break;
@@ -139,17 +163,17 @@ namespace wx
     }
     const char *FastVectorDbLayer::Impl::name()
     {
-        return m_header->name;
+        return m_header.name;
     }
     unsigned FastVectorDbLayer::Impl::getFieldCount()
     {
-        return m_header->field_count;
+        return m_header.field_count;
     }
     const char *FastVectorDbLayer::Impl::getFieldDefn(unsigned ix, FieldTypeEnum &ft, double &vmin, double &vmax)
     {
-        if (ix >= m_header->field_count)
+        if (ix >= m_header.field_count)
             return nullptr;
-        const field_desc_ex_t *fd = m_field_descs + ix;
+        const field_desc_ex_t *fd = m_field_descs.data() + ix;
         ft = (FieldTypeEnum)fd->type;
         vmin = fd->vmin;
         vmax = fd->vmax;
@@ -157,7 +181,7 @@ namespace wx
     }
     GeometryLikeEnum FastVectorDbLayer::Impl::getGeometryType()
     {
-        return (GeometryLikeEnum)m_header->geometry_type;
+        return (GeometryLikeEnum)m_header.geometry_type;
     }
     void FastVectorDbLayer::Impl::rewind()
     {
@@ -175,18 +199,18 @@ namespace wx
         }
         else
         {
-            if(m_header->aabbox_enable){
+            if(m_header.aabbox_enable){
                 geom_ptr+=sizeof(aabbox_x16_t);
                 move_bytes+=sizeof(aabbox_x16_t);
             }
-            u16 npart = *(u16 *)geom_ptr;
+            u16 npart = load_unaligned<u16>(geom_ptr);
             move_bytes+= sizeof(u16);
             geom_ptr += sizeof(u16);
             for (int i = 0; i < npart; i++)
             {
                 geom_ptr += sizeof(u8); // parttype
                 move_bytes += sizeof(u8);
-                u16 npoint = *(u16 *)geom_ptr;
+                u16 npoint = load_unaligned<u16>(geom_ptr);
                 move_bytes += sizeof(u16);
                 geom_ptr += sizeof(u16);
                 move_bytes += npoint * sizeof(coord_type_t);
@@ -203,29 +227,30 @@ namespace wx
     size_t FastVectorDbLayer::Impl::get_geometry_like_size(const u8* pdata)
     {
         size_t move_bytes = 0;
-        if(m_header->geometry_type==gtAny)
+        if(m_header.geometry_type==gtAny)
         {
-            move_bytes=*(u32*)m_geometry_ptr+sizeof(u32); 
+            move_bytes =
+                load_unaligned<u32>(m_geometry_ptr) + sizeof(u32);
         }
-        else if (m_header->coord_format == cfF64)
+        else if (m_header.coord_format == cfF64)
         {
-            move_bytes = get_geometry_byte_size<point2_t>(pdata, (wx::GeometryLikeEnum)m_header->geometry_type);
+            move_bytes = get_geometry_byte_size<point2_t>(pdata, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
-        else if (m_header->coord_format == cfF32)
+        else if (m_header.coord_format == cfF32)
         {
-            move_bytes = get_geometry_byte_size<point2_f32_t>(pdata, (wx::GeometryLikeEnum)m_header->geometry_type);
+            move_bytes = get_geometry_byte_size<point2_f32_t>(pdata, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
-        else if (m_header->coord_format == cfTx16)
+        else if (m_header.coord_format == cfTx16)
         {
-            move_bytes = get_geometry_byte_size<point2_x16_t>(pdata, (wx::GeometryLikeEnum)m_header->geometry_type);
+            move_bytes = get_geometry_byte_size<point2_x16_t>(pdata, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
-        else if (m_header->coord_format == cfTx24)
+        else if (m_header.coord_format == cfTx24)
         {
-            move_bytes = get_geometry_byte_size<point2_x24_t>(pdata, (wx::GeometryLikeEnum)m_header->geometry_type);
+            move_bytes = get_geometry_byte_size<point2_x24_t>(pdata, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
-        else if (m_header->coord_format == cfTx32)
+        else if (m_header.coord_format == cfTx32)
         {
-            move_bytes = get_geometry_byte_size<point2_x32_t>(pdata, (wx::GeometryLikeEnum)m_header->geometry_type);
+            move_bytes = get_geometry_byte_size<point2_x32_t>(pdata, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
         return move_bytes;
     }
@@ -236,14 +261,14 @@ namespace wx
     }
     u32 FastVectorDbLayer::Impl::getFeatureCount()
     {
-        return m_header->feature_count;
+        return m_header.feature_count;
     }
     void  FastVectorDbLayer::Impl::getExtent(double& minx,double& miny,double& maxx,double& maxy)
     {
-        minx = m_header->minx;
-        miny = m_header->miny;
-        maxx = m_header->maxx;
-        maxy = m_header->maxy;
+        minx = m_header.minx;
+        miny = m_header.miny;
+        maxx = m_header.maxx;
+        maxy = m_header.maxy;
     }
 
     bool FastVectorDbLayer::Impl::next()
@@ -253,7 +278,7 @@ namespace wx
         else
             m_ifeature++;
 
-        if (m_ifeature > ((int)m_header->feature_count)-1)
+        if (m_ifeature > ((int)m_header.feature_count)-1)
             return false;
     
         if (m_ifeature == 0)
@@ -278,7 +303,7 @@ namespace wx
             points.clear();
             if (geomType == gtPoint)
             {
-                coord_type_t c = *(coord_type_t *)geom_ptr;
+                coord_type_t c = load_unaligned<coord_type_t>(geom_ptr);
                 point2_t p;
                 impl.convert_coord_format(c, p);
                 points.push_back(p);
@@ -291,29 +316,30 @@ namespace wx
                 aabbox_t aabbox;
                 aabbox_x16_t aabbox16;
                 double* boxptr=NULL;
-                if(impl.m_header->aabbox_enable)
+                if(impl.m_header.aabbox_enable)
                 {
-                    aabbox16=*(aabbox_x16_t*)geom_ptr;
+                    aabbox16 = load_unaligned<aabbox_x16_t>(geom_ptr);
                     geom_ptr+=sizeof(aabbox_x16_t);
                     impl.convert_coord_format(aabbox16.minEdge,aabbox.minEdge);
                     impl.convert_coord_format(aabbox16.maxEdge,aabbox.maxEdge);
                     boxptr=&aabbox.minEdge.x;
                 }
 
-                u16 npart = *(u16 *)geom_ptr;
+                u16 npart = load_unaligned<u16>(geom_ptr);
                 geom_ptr += sizeof(u16);
                 if(cb->begin(boxptr))
                 {
                     for (int i = 0; i < npart; i++)
                     {
-    GeometryReturn::GeometryPartEnum partType = (GeometryReturn::GeometryPartEnum) * (u8 *)geom_ptr;
+    GeometryReturn::GeometryPartEnum partType =
+        (GeometryReturn::GeometryPartEnum)load_unaligned<u8>(geom_ptr);
     geom_ptr += sizeof(u8);
-    u16 npoint = *(u16 *)geom_ptr;
+    u16 npoint = load_unaligned<u16>(geom_ptr);
     geom_ptr += sizeof(u16);
     points.clear();
     for (int j = 0; j < npoint; j++)
     {
-        coord_type_t c = *(coord_type_t *)geom_ptr;
+        coord_type_t c = load_unaligned<coord_type_t>(geom_ptr);
         geom_ptr += sizeof(coord_type_t);
         point2_t p;
         impl.convert_coord_format(c, p);
@@ -333,14 +359,14 @@ namespace wx
     chunk_data_t FastVectorDbLayer::Impl::getGeometryLikeChunk()
     {
         chunk_data_t data;
-        if(m_header->geometry_type==(u16)gtNone)
+        if(m_header.geometry_type==(u16)gtNone)
         {
             data.pdata=NULL;
             data.size=0;
         }
-        else if(m_header->geometry_type==gtAny)
+        else if(m_header.geometry_type==gtAny)
         {
-            data.size=*(u32*)m_geometry_ptr;
+            data.size = load_unaligned<u32>(m_geometry_ptr);
             data.pdata=m_geometry_ptr+sizeof(u32);
         }
         else
@@ -356,14 +382,14 @@ namespace wx
     {
         chunk_data_t data;
         u8* geometry_ptr = m_geometry_ptr_map[ifeature];
-        if(m_header->geometry_type==(u16)gtNone)
+        if(m_header.geometry_type==(u16)gtNone)
         {
             data.pdata=NULL;
             data.size=0;
         }
-        else if(m_header->geometry_type==gtAny)
+        else if(m_header.geometry_type==gtAny)
         {
-            data.size=*(u32*)geometry_ptr;
+            data.size = load_unaligned<u32>(geometry_ptr);
             data.pdata=geometry_ptr+sizeof(u32);
         }
         else
@@ -379,31 +405,31 @@ namespace wx
     }
     void FastVectorDbLayer::Impl::fetchGeometry_internal(const u8* geometry_data_ptr,GeometryReturn *cb)
     {
-        // if (m_it < 0 || m_it >= (int)m_header->feature_count)
+        // if (m_it < 0 || m_it >= (int)m_header.feature_count)
         //     return;
-        if(m_header->geometry_type==gtAny)
+        if(m_header.geometry_type==gtAny)
         {
             //nothing todo for anyting data
         }
-        else if (m_header->coord_format == cfF64)
+        else if (m_header.coord_format == cfF64)
         {
-            return_geometry<point2_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header->geometry_type);
+            return_geometry<point2_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
-        else if (m_header->coord_format == cfF32)
+        else if (m_header.coord_format == cfF32)
         {
-            return_geometry<point2_f32_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header->geometry_type);
+            return_geometry<point2_f32_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
-        else if (m_header->coord_format == cfTx16)
+        else if (m_header.coord_format == cfTx16)
         {
-            return_geometry<point2_x16_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header->geometry_type);
+            return_geometry<point2_x16_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
-        else if (m_header->coord_format == cfTx24)
+        else if (m_header.coord_format == cfTx24)
         {
-            return_geometry<point2_x24_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header->geometry_type);
+            return_geometry<point2_x24_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
-        else if (m_header->coord_format == cfTx32)
+        else if (m_header.coord_format == cfTx32)
         {
-            return_geometry<point2_x32_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header->geometry_type);
+            return_geometry<point2_x32_t> rg(points,*this, cb, geometry_data_ptr, (wx::GeometryLikeEnum)m_header.geometry_type);
         }
     }
 
@@ -421,30 +447,31 @@ namespace wx
 
     double FastVectorDbLayer::Impl::getFieldAsFloat_internal(u32 ifeature,u32 ix)
     {
-        if (ix >= m_header->field_count||ifeature>=m_header->feature_count)
+        if (ix >= m_header.field_count||ifeature>=m_header.feature_count)
             return 0;
-        const field_desc_ex_t *fd = m_field_descs + ix;
+        const field_desc_ex_t *fd = m_field_descs.data() + ix;
         const u8 *ptr = m_table_data_ptr0 + m_table_line_size*ifeature+fd->offset;
         switch (fd->type)
         {
         case ftF32:
-            return *(f32 *)ptr;
+            return load_unaligned<f32>(ptr);
         case ftF64:
-            return *(f64 *)ptr;
+            return load_unaligned<f64>(ptr);
         case ftU8n:
         {
-            u8 v = *(u8 *)ptr;
+            u8 v = load_unaligned<u8>(ptr);
             return fd->vmin + (fd->vmax - fd->vmin) * v / 255.0;
         }
         case ftU16n:
         {
-            u16 v = *(u16 *)ptr;
+            u16 v = load_unaligned<u16>(ptr);
             return fd->vmin + (fd->vmax - fd->vmin) * v / 65535.0;
         }
-        case ftU8:  return *(u8  *)ptr;
-        case ftU16: return *(u16 *)ptr;
-        case ftU32: return *(u32 *)ptr;
-        case ftI32: return (int)*(i32 *)ptr;  // i32 is unsigned int; cast to int for signed reading
+        case ftU8:  return load_unaligned<u8>(ptr);
+        case ftU16: return load_unaligned<u16>(ptr);
+        case ftU32: return load_unaligned<u32>(ptr);
+        case ftI32:
+            return (int)load_unaligned<i32>(ptr);
         }
         return NAN;
     }
@@ -455,32 +482,34 @@ namespace wx
     }
     int FastVectorDbLayer::Impl::getFieldAsInt_internal(u32 ifeature,u32 ix)
     {
-        if (ix >= m_header->field_count||ifeature>=m_header->feature_count)
+        if (ix >= m_header.field_count||ifeature>=m_header.feature_count)
             return 0;
-        const field_desc_ex_t *fd = m_field_descs + ix;
+        const field_desc_ex_t *fd = m_field_descs.data() + ix;
         const u8 *ptr = m_table_data_ptr0 + m_table_line_size*ifeature+fd->offset;
         switch (fd->type)
         {
         case ftU8:
-            return *(u8 *)ptr;
+            return load_unaligned<u8>(ptr);
         case ftU16:
-            return *(u16 *)ptr;
+            return load_unaligned<u16>(ptr);
         case ftU32:
-            return *(u32 *)ptr;
+            return load_unaligned<u32>(ptr);
         case ftI32:
-            return *(i32 *)ptr;
+            return load_unaligned<i32>(ptr);
         }
         return 0x0baddaf0; // a bad data mask
     }
     const char *FastVectorDbLayer::Impl::getFieldAsString_internal(u32 ifeature,u32 ix)
     {
-        if (ix >= m_header->field_count)
+        if (ix >= m_header.field_count)
             return nullptr;
-        const field_desc_ex_t *fd = m_field_descs + ix;
+        const field_desc_ex_t *fd = m_field_descs.data() + ix;
         if (fd->type != ftSTR)
             return nullptr;
         const u8 *ptr = m_table_data_ptr0 + m_table_line_size*ifeature+fd->offset;
-        u32 id =m_header->string_table_u32?(*(u32 *)ptr):(u32(*(u16*)ptr));
+        u32 id = m_header.string_table_u32
+                     ? load_unaligned<u32>(ptr)
+                     : u32(load_unaligned<u16>(ptr));
         if (id >= m_string_table.size())
             return nullptr;
         return m_string_table[id];
@@ -491,13 +520,15 @@ namespace wx
     }
     const uchar_t *FastVectorDbLayer::Impl::getFieldAsWString_internal(u32 ifeature,u32 ix)
     {
-        if (ix >= m_header->field_count)
+        if (ix >= m_header.field_count)
             return nullptr;
-        const field_desc_ex_t *fd = m_field_descs + ix;
+        const field_desc_ex_t *fd = m_field_descs.data() + ix;
         if (fd->type != ftWSTR)
             return nullptr;
         const u8 *ptr = m_table_data_ptr0 +m_table_line_size*ifeature+fd->offset;
-        u32 id =m_header->string_table_u32?(*(u32 *)ptr):(u32(*(u16*)ptr));
+        u32 id = m_header.string_table_u32
+                     ? load_unaligned<u32>(ptr)
+                     : u32(load_unaligned<u16>(ptr));
         if (id >= m_wstring_table.size())
             return nullptr;
         return m_wstring_table[id];
@@ -509,9 +540,9 @@ namespace wx
 
     chunk_data_t FastVectorDbLayer::Impl::getFieldAsStringView_internal(u32 ifeature, u32 ix)
     {
-        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+        if (ix >= m_header.field_count || ifeature >= m_header.feature_count)
             return {0, nullptr};
-        const field_desc_ex_t* fd = m_field_descs + ix;
+        const field_desc_ex_t* fd = m_field_descs.data() + ix;
         if (fd->type != ftSTR)
             return {0, nullptr};
         if (fd->size == 0)
@@ -519,8 +550,10 @@ namespace wx
             auto* sfd = find_string_field(m_string_fields, ix);
             if (sfd == nullptr || ifeature + 1 >= sfd->offset_count)
                 return {0, nullptr};
-            u32 start = sfd->offsets_ptr[ifeature];
-            u32 end = sfd->offsets_ptr[ifeature + 1];
+            u32 start = load_unaligned<u32>(
+                sfd->offsets_data + ifeature * sizeof(u32));
+            u32 end = load_unaligned<u32>(
+                sfd->offsets_data + (ifeature + 1) * sizeof(u32));
             if (end < start || end > sfd->byte_count)
                 return {0, nullptr};
             u8* data_ptr = sfd->data_ptr;
@@ -537,22 +570,23 @@ namespace wx
 
     chunk_data_t FastVectorDbLayer::Impl::getStringColumnOffsets_internal(u32 ix)
     {
-        if (ix >= m_header->field_count)
+        if (ix >= m_header.field_count)
             return {0, nullptr};
-        const field_desc_ex_t* fd = m_field_descs + ix;
+        const field_desc_ex_t* fd = m_field_descs.data() + ix;
         if (fd->type != ftSTR || fd->size != 0)
             return {0, nullptr};
         auto* sfd = find_string_field(m_string_fields, ix);
         if (sfd == nullptr)
             return {0, nullptr};
-        return {size_t(sfd->offset_count) * sizeof(u32), (u8*)sfd->offsets_ptr};
+        return {size_t(sfd->offset_count) * sizeof(u32),
+                sfd->offsets_data};
     }
 
     chunk_data_t FastVectorDbLayer::Impl::getStringColumnData_internal(u32 ix)
     {
-        if (ix >= m_header->field_count)
+        if (ix >= m_header.field_count)
             return {0, nullptr};
-        const field_desc_ex_t* fd = m_field_descs + ix;
+        const field_desc_ex_t* fd = m_field_descs.data() + ix;
         if (fd->type != ftSTR || fd->size != 0)
             return {0, nullptr};
         auto* sfd = find_string_field(m_string_fields, ix);
@@ -563,7 +597,7 @@ namespace wx
 
     void* FastVectorDbLayer::Impl::setFeatureCookie_internal(u32 ifeature,void* cookie)
     {
-        u32 featureCount = m_header->feature_count;
+        u32 featureCount = m_header.feature_count;
         if(ifeature<0||ifeature>featureCount-1)
         {
             return (void*)size_t(-1);
@@ -585,7 +619,7 @@ namespace wx
     }   
     void* FastVectorDbLayer::Impl::getFeatureCookie_internal(u32 ifeature)
     {
-        u32 featureCount = m_header->feature_count;
+        u32 featureCount = m_header.feature_count;
         if(m_feature_cookie_map.size()==0)
         {
             m_feature_cookie_map.resize(featureCount);
@@ -603,7 +637,7 @@ namespace wx
     }
     FastVectorDbFeatureRef* FastVectorDbLayer::Impl::getFieldAsFeatureRef_internal(u32 ifeature,u32 ix)
     {
-        if (ix >= m_header->field_count||m_field_descs[ix].type != ftFeatureRef)
+        if (ix >= m_header.field_count||m_field_descs[ix].type != ftFeatureRef)
             return nullptr;
         auto* p = m_table_data_ptr0 +m_table_line_size*ifeature+m_field_descs[ix].offset;
 
@@ -616,14 +650,14 @@ namespace wx
 
     void    FastVectorDbLayer::Impl::setField_internal(u32 ifeature,u32 ix,double value)
     {
-        if(ix >= m_header->field_count||ifeature>=m_header->feature_count)
+        if(ix >= m_header.field_count||ifeature>=m_header.feature_count)
             return;
         u8* buffer = (u8*)getFeatureAddress(ifeature); 
         set_field_value_t(buffer,m_field_descs[ix],value);
     }
     void    FastVectorDbLayer::Impl::setField_internal(u32 ifeature,u32 ix,int    value)
     {
-        if(ix >= m_header->field_count||ifeature>=m_header->feature_count)
+        if(ix >= m_header.field_count||ifeature>=m_header.feature_count)
             return;
         u8* buffer = (u8*)getFeatureAddress(ifeature); 
         set_field_value_t(buffer,m_field_descs[ix],value);
@@ -631,7 +665,7 @@ namespace wx
 
     void FastVectorDbLayer::Impl::setFeatureRef_internal(u32 ifeature, u32 ix, FastVectorDbFeature* feature)
     {
-        if(ix >= m_header->field_count || ifeature >= m_header->feature_count)
+        if(ix >= m_header.field_count || ifeature >= m_header.feature_count)
             return;
         u8* buffer = (u8*)getFeatureAddress(ifeature);
 
@@ -651,13 +685,13 @@ namespace wx
 
     FastVectorDbFeature*    FastVectorDbLayer::Impl::tryGetFeatureAt(u32 ix)
     {
-        if(ix>=m_header->feature_count)
+        if(ix>=m_header.feature_count)
             return nullptr;
         if(m_feature_cache.size()==0)
         {   
             auto last_it = m_ifeature;
             auto geometry_ptr = m_geometry_ptr;
-            m_feature_cache.resize(m_header->feature_count,NULL);
+            m_feature_cache.resize(m_header.feature_count,NULL);
             rewind();
             while(next())
             {
@@ -679,7 +713,7 @@ namespace wx
 
     size_t  FastVectorDbLayer::Impl::getFieldOffset(unsigned ix)
     {
-        if(ix>=m_header->field_count)
+        if(ix>=m_header.field_count)
             return -1;
         return  m_field_descs[ix].offset;
     }
@@ -806,14 +840,14 @@ namespace wx
     // ---- List column read helpers ----
     chunk_data_t FastVectorDbLayer::Impl::getFieldAsListView_internal(u32 ifeature, u32 ix)
     {
-        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+        if (ix >= m_header.field_count || ifeature >= m_header.feature_count)
             return {0, nullptr};
-        const field_desc_ex_t* fd = m_field_descs + ix;
+        const field_desc_ex_t* fd = m_field_descs.data() + ix;
         if (fd->type != ftList)
             return {0, nullptr};
         const u8* row_ptr = m_table_data_ptr0 + m_table_line_size * ifeature + fd->offset;
-        u32 start = *(u32*)row_ptr;
-        u32 cnt   = *(u32*)(row_ptr + 4);
+        u32 start = load_unaligned<u32>(row_ptr);
+        u32 cnt = load_unaligned<u32>(row_ptr + sizeof(u32));
         if (cnt == 0)
             return {0, nullptr};
         // find matching list field data by field_id
@@ -827,25 +861,25 @@ namespace wx
 
     u32 FastVectorDbLayer::Impl::getFieldListSize_internal(u32 ifeature, u32 ix)
     {
-        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+        if (ix >= m_header.field_count || ifeature >= m_header.feature_count)
             return 0;
-        const field_desc_ex_t* fd = m_field_descs + ix;
+        const field_desc_ex_t* fd = m_field_descs.data() + ix;
         if (fd->type != ftList)
             return 0;
         const u8* row_ptr = m_table_data_ptr0 + m_table_line_size * ifeature + fd->offset;
-        return *(u32*)(row_ptr + 4);
+        return load_unaligned<u32>(row_ptr + sizeof(u32));
     }
 
     FastVectorDbFeatureRef* FastVectorDbLayer::Impl::getFieldListRefAt_internal(u32 ifeature, u32 ix, u32 list_idx)
     {
-        if (ix >= m_header->field_count || ifeature >= m_header->feature_count)
+        if (ix >= m_header.field_count || ifeature >= m_header.feature_count)
             return nullptr;
-        const field_desc_ex_t* fd = m_field_descs + ix;
+        const field_desc_ex_t* fd = m_field_descs.data() + ix;
         if (fd->type != ftList)
             return nullptr;
         const u8* row_ptr = m_table_data_ptr0 + m_table_line_size * ifeature + fd->offset;
-        u32 start = *(u32*)row_ptr;
-        u32 cnt   = *(u32*)(row_ptr + 4);
+        u32 start = load_unaligned<u32>(row_ptr);
+        u32 cnt = load_unaligned<u32>(row_ptr + sizeof(u32));
         if (list_idx >= cnt)
             return nullptr;
         for (auto& lfd : m_list_fields) {

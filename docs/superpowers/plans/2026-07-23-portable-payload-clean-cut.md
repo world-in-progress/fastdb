@@ -108,6 +108,9 @@ slice explicitly.
 - Modify: `fastcarto/fastdb/include/fastdb.h`
 - Modify: `fastcarto/fastdb/src/FastVectorDbBuild_p.h`
 - Modify: `fastcarto/fastdb/src/FastVectorDbBuild.cpp`
+- Modify: `fastcarto/fastdb/src/FastVectorDb.cpp`
+- Modify: `fastcarto/fastdb/src/FastVectorDbLayer_p.h`
+- Modify: `fastcarto/fastdb/src/FastVectorDbLayer.cpp`
 - Modify: `fastcarto/fastdb/src/FastVectorDbLayerBuild.cpp`
 - Modify: `fastcarto/fastdb/swig/fastdb4py.i`
 - Create: `tests/cpp/test_legacy_descriptor_determinism.cpp`
@@ -789,6 +792,14 @@ Change the descriptor declaration to:
 field_desc_ex_t fd{};
 ```
 
+The required sanitizer run exposed a second owner-layer defect: the legacy
+database starts its first layer at byte 20, while the reader dereferenced that
+address as naturally aligned native structs and scalars. Keep the exact
+legacy wire layout and zero-copy data spans, but copy fixed metadata into
+aligned owner storage and use `memcpy`-based unaligned scalar reads. Do not
+shift the test buffer, change the 20-byte database header, or redefine the
+portable payload format to hide the UB.
+
 Delete `ScratchAllocation`, `ScratchAllocator`, heap scratch implementations,
 `FinalBackingAllocation`, `FinalBackingResource`, heap final-backing
 implementations, and `FastVectorDbBuild::postToFinalBacking` from the public
@@ -848,6 +859,9 @@ git add -A -- \
   fastcarto/fastdb/include/fastdb.h \
   fastcarto/fastdb/src/FastVectorDbBuild_p.h \
   fastcarto/fastdb/src/FastVectorDbBuild.cpp \
+  fastcarto/fastdb/src/FastVectorDb.cpp \
+  fastcarto/fastdb/src/FastVectorDbLayer_p.h \
+  fastcarto/fastdb/src/FastVectorDbLayer.cpp \
   fastcarto/fastdb/src/FastVectorDbLayerBuild.cpp \
   fastcarto/fastdb/swig/fastdb4py.i \
   tests/cpp/test_legacy_descriptor_determinism.cpp \

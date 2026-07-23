@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path, PurePosixPath
@@ -91,24 +90,6 @@ FORBIDDEN_PARTS = {
     "runtime-corpus",
     "CMakeFiles",
 }
-EXPECTED_SWIG_DIAGNOSTICS = (
-    (582, 325),
-    (588, 325),
-    (595, 325),
-    (622, 325),
-    (631, 325),
-    (637, 325),
-    (206, 451),
-)
-EXPECTED_SWIG_MESSAGES = {
-    582: "Nested struct not currently supported (TileBox ignored)",
-    588: "Nested class not currently supported (HandleTileAction ignored)",
-    595: "Nested struct not currently supported (TakeResult ignored)",
-    622: "Nested struct not currently supported (TileDataHandle ignored)",
-    631: "Nested struct not currently supported (TileDbBox ignored)",
-    637: "Nested struct not currently supported (TakeResult ignored)",
-    206: "Setting a const char * variable may leak memory.",
-}
 SWIG_DIAGNOSTIC = re.compile(
     r"^\s*(?P<source>.+?):(?P<line>\d+): Warning (?P<code>\d+): "
     r"(?P<message>.*)$",
@@ -192,7 +173,7 @@ def check_wheel_native_artifacts(names: set[str]) -> None:
 
 
 def check_swig_diagnostics(build_log: str) -> None:
-    actual = Counter(
+    actual = [
         (
             Path(match.group("source").replace("\\", "/")).name,
             int(match.group("line")),
@@ -200,17 +181,11 @@ def check_swig_diagnostics(build_log: str) -> None:
             match.group("message"),
         )
         for match in SWIG_DIAGNOSTIC.finditer(build_log)
-    )
-    expected = Counter(
-        ("fastdb.h", line, code, EXPECTED_SWIG_MESSAGES[line])
-        for line, code in EXPECTED_SWIG_DIAGNOSTICS
-    )
-    if actual != expected:
-        missing = list((expected - actual).elements())
-        unexpected = list((actual - expected).elements())
+    ]
+    if actual:
         raise CheckError(
-            "SWIG diagnostics differ from Issue 0003; "
-            f"missing={missing}, unexpected={unexpected}"
+            "Python package build must contain zero SWIG diagnostics; "
+            f"found={actual}"
         )
 
 

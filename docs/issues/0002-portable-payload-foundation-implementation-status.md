@@ -43,8 +43,8 @@ four-shape hostile compiler/import matrix, package/workflow evidence, and the
 same-agent primary review. P5 Task 1 now removes the Python-owned
 feature-discovery generator and makes `fdb codegen` a creation-only filesystem
 facade over the same Core ArtifactSet. The remaining Python and TypeScript
-legacy authority removal, `RecordEngine` clean rename, native determinism,
-zero-warning packaging, package/version release readiness, and later
+legacy authority removal and native/SWIG debris are now cleanly removed.
+The `RecordEngine` clean rename, package/version release readiness, and later
 C-Two-owned composition remain open. The repository still ships the
 0.1.x call-db/`ColumnEngine` migration surface, so Issue 0002 remains open and
 no FastDB 0.2.0 release is claimed.
@@ -1596,9 +1596,10 @@ semantics.
 ### P5 clean cut and local release-readiness handoff
 
 **Current limit:** The Python and TypeScript call-db surfaces, Python schema,
-requirement, allocator, and feature-discovery codegen surfaces are removed.
-Legacy native/SWIG surfaces, `columnar.v1`, `ColumnEngine`, policy, and
-documentation clean-cut tasks remain open. Package metadata remains
+requirement, allocator, feature-discovery codegen surfaces, and orphaned
+native/SWIG backing surfaces are removed. Legacy `columnar.v1`,
+`ColumnEngine`, policy, and documentation clean-cut tasks remain open.
+Package metadata remains
 `fastdb4py==0.1.22` and
 `fastdb4ts==0.0.3`; no 0.2.0 release, tag, publication, or C-Two composition
 proof exists.
@@ -1846,11 +1847,78 @@ documentation and installs the exact clean-cut policy. Task 7 must then pass
 fresh local and installed-package matrices before any version, tag,
 publication, release, or C-Two composition claim.
 
-**Next owner slice:** P5 Task 4 removes orphaned native allocator/final-backing
+**Task 3 next owner slice:** P5 Task 4 removes orphaned native
+allocator/final-backing
 surfaces, repairs deterministic descriptor initialization, and closes the
 seven governed SWIG warnings. After all FastDB P5 tasks, stop design work at
 the frozen owner boundary and begin the separate C-Two-owned composition
 task.
+
+**P5 Task 4 local implementation evidence:** From exact start `74ab723`, the
+legacy owner now value-initializes every `field_desc_ex_t`, so a non-list
+descriptor persists `element_type == 0`. The genuine
+`-ftrivial-auto-var-init=pattern` RED passed repeated byte equality first and
+then failed the exact persisted member assertion. The corrected focused test
+passes and opens the same bytes through the native owner, reading `ftU8` value
+`7` and `ftF64` value `7.25`.
+
+The first required ASan+UBSan suite exposed a second real owner-layer defect:
+the fixed 20-byte legacy database header places the first `layer_header_t` at
+an address that is not naturally aligned for its 64-bit members. That run
+passed 39/40 tests and then aborted with a UBSan misaligned-member access in
+`FastVectorDb.cpp`; it is not counted as GREEN. Task 4 was explicitly expanded
+to fix that finding rather than shifting the test bytes or redesigning the
+portable Core. Fixed legacy metadata is copied into aligned owner storage,
+and legacy scalar/geometry/list/string-offset reads use `memcpy`-based
+unaligned loads. The serialized header, descriptors, table layout, and
+zero-copy data spans remain byte-compatible.
+
+The following orphaned call-db-only public/native/SWIG/Python surface is
+deleted with no alias or deprecated wrapper:
+
+- `ScratchAllocation`, `ScratchAllocator`, `HeapScratchAllocation`, and
+  `HeapScratchAllocator`;
+- `FinalBackingAllocation`, `FinalBackingResource`,
+  `HeapFinalBackingAllocation`, and `HeapFinalBackingResource`; and
+- `FastVectorDbBuild::postToFinalBacking` /
+  Python `post_to_final_backing`.
+
+`postToBuffer` and `FixedBufferWriteStream` remain. `TileBoxTake` and
+`FastVectorTileDb` remain compiled C++ APIs but are excluded from SWIG parsing.
+The internal `utf8_view_t` sequence bridge remains, while its borrowed
+`data` member intentionally has no Python setter.
+
+The first real package run under the inverted zero-warning gate emitted the
+historical seven diagnostics and failed inventory exactly as required. The
+fresh corrected build emits zero matched SWIG diagnostics, passes the real
+inventory gate, and contains exactly one Python extension, one FastDB
+library, and one binding library. Its local hashes are:
+
+```text
+d60df86e14f9514f9e6aaae666d6bac072fbbe459dfcedef026c04397a844f9a  fastdb4py-0.1.22-cp314-cp314t-macosx_26_0_arm64.whl
+de2a8f95376719017d18e75edf52adef7ab4c7c42a8902baf06c24fb3054e424  fastdb4py-0.1.22.tar.gz
+```
+
+The final native Debug suite passes 40/40 in 71.22 seconds and retains the
+exact ABI-117 symbol set. Its `libfastdb.dylib` hash is
+`ffaa73c59323d2d797521396fdf21589fe66878c0b2136d16c2c016a5b7c5bcd`.
+The hard-fail ASan+UBSan suite passes 40/40 in 230.99 seconds after the
+alignment repair, with no retained ASan/UBSan runtime diagnostic. Apple ASan
+uses `detect_leaks=0`, so this is explicitly not LeakSanitizer proof. The
+Python source suite passes 338 tests plus compileall; the package checker
+passes 16 tests; the removed-surface focused test passes; and Issue 0003 is
+closed by the warning-free build. The repository-required downstream rebuild
+also passes all 57 TypeScript/Wasm tests, and the fresh Wasm object retains
+exact ABI-117.
+
+This task changes no portable payload Core source, public payload ABI,
+schema, manifest, binary, backing, lifetime, codegen, package version,
+workflow, C-Two, or Toodle file. The next owner slice is P5 Task 5: replace
+`ColumnEngine`/`column_engine.py` with `RecordEngine`/`record_engine.py`
+atomically and without an alias. Public-documentation and clean-cut policy
+work remains Task 6; fresh local and installed-package release-readiness
+matrices remain Task 7. Hosted execution, package-version changes, tag,
+publication, release, and C-Two composition remain pending.
 
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
@@ -1860,19 +1928,20 @@ version-bump, tag, publication, and release facts as pending. C-Two's later
 proof must delegate the nested spec and compose artifacts without duplicating
 FastDB semantics, but that proof is not part of FastDB P5.
 
-## P1 observations that remain open
+## P1 implementation-gate observations
 
-These are implementation-gate observations, not post-0.2.0 deferrals.
+These are implementation-gate observations, not post-0.2.0 deferrals. Closed
+entries retain their historical cause and exact closure evidence.
 
 ### Legacy call-db uninitialized descriptor-member nondeterminism
 
-**Current limit:** Before P5 Task 2, two independent legacy
+**Closed by P5 Task 4:** Before P5 Task 2, two independent legacy
 `encode_call_db` / `encode_call_db_into` builds of the same scalar-array value
 could differ at byte 182 on CPython 3.13. The deleted byte-for-byte call-db
 test reproduces this at the pre-P2-Task-5 starting commit
 `0f08e9feeed09a7acba8d3639e0f0e3d2091a756`. P5 Task 2 removes that obsolete
 Python entry point and test, but the underlying native descriptor write
-remains open for the P5 Task 4 cleanup.
+remained open until the P5 Task 4 cleanup.
 
 **Reason:** `FastVectorDbLayerBuild::Impl::addField` declares
 `field_desc_ex_t fd` and does not initialize `element_type` for non-list
@@ -1887,15 +1956,17 @@ uninitialized member can also disclose process-local residual bytes. This is
 a legacy 0.1.x/P5 owner defect, not portable-record Task 5 behavior, and no
 new portable authority may depend on those bytes.
 
-**Closure criteria:** P5 Task 4 initializes the complete descriptor
-representation, including a defined non-list `element_type`, and pins
-deterministic descriptor bytes in the native owner. The repair must remain
-separately scoped and must not be folded into the portable-record Core.
+**Closure evidence:** P5 Task 4 value-initializes the complete descriptor
+representation, pins a zero non-list `element_type` under compiler poison,
+requires repeated byte equality, and opens/reads the resulting legacy image.
+The repair remains in the standalone legacy owner and does not change the
+portable-record Core.
 
 ### Pre-existing SWIG diagnostics
 
-**Current limit:** The Python wheel build succeeds with the exact seven legacy
-SWIG diagnostics enumerated in [Issue 0003](0003-legacy-swig-diagnostics.md).
+**Closed by P5 Task 4:** Earlier Python wheel builds succeeded with the exact
+seven legacy SWIG diagnostics enumerated in
+[Issue 0003](0003-legacy-swig-diagnostics.md).
 
 **Reason:** These diagnostics come from the legacy 0.1.x SWIG input surface;
 Task 9 classifies them but does not redesign that API.
@@ -1904,8 +1975,10 @@ Task 9 classifies them but does not redesign that API.
 new warning may be accepted implicitly. Issue 0003 is the exact owner for the
 residual cleanup and package-warning gate.
 
-**Closure criteria:** Close Issue 0003 through the legacy/P5 clean-cut criteria,
-or earlier if a listed warning blocks a required package build.
+**Closure evidence:** Issue 0003 records the fresh zero-warning sdist/wheel
+build, exact package inventory, negative any-warning checker, and local
+artifact hashes. Native tile APIs remain C++-available while intentionally
+outside SWIG, and the borrowed UTF-8 data pointer has no Python setter.
 
 ### Hosted workflow evidence
 
@@ -2024,7 +2097,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut and local release-readiness handoff | Open; Task 0 design/plan frozen from `9d86c17`; Task 1 Core-artifact CLI locally complete through `d6d284c`, with final primary-agent review 0 Critical / 0 Important / 0 unresolved material Minor; Linux/Windows runtime execution remains pending platform gates | Complete the remaining Python/TypeScript/native/SWIG cleanup, `RecordEngine` rename, deterministic descriptor repair, exact clean-cut policy, and fresh local gates without a version bump or publication; then hand the frozen FastDB boundary to C-Two |
+| P5. Clean cut and local release-readiness handoff | Open; Tasks 0-3 are frozen, and Task 4 has local implementation evidence for deterministic legacy descriptors, alignment-safe legacy reads, removed orphan backing APIs, zero SWIG diagnostics, ABI-117, and warning-free package inventory; frozen review plus Tasks 5-7 remain | Freeze the Task 4 same-agent review, then complete the `RecordEngine` rename, exact clean-cut policy, and fresh local gates without a version bump or publication; keep hosted platform results pending and then hand the frozen FastDB boundary to C-Two |
 
 ## Non-deferrable 0.2.0 work
 

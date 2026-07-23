@@ -77,16 +77,16 @@ namespace wx
             out.y = p.y;
         }
         inline void convert_coord_format(const point2_x16_t& p,point2_t& out){
-            out.x = m_header->minx + (m_header->maxx - m_header->minx)*p.x/0xFFFF;
-            out.y = m_header->miny + (m_header->maxy - m_header->miny)*p.y/0xFFFF;
+            out.x = m_header.minx + (m_header.maxx - m_header.minx)*p.x/0xFFFF;
+            out.y = m_header.miny + (m_header.maxy - m_header.miny)*p.y/0xFFFF;
         }
         inline void convert_coord_format(const point2_x24_t& p,point2_t& out){
-            out.x = m_header->minx + (m_header->maxx - m_header->minx)*double(p.x)/0xFFFFFF;
-            out.y = m_header->miny + (m_header->maxy - m_header->miny)*double(p.y)/0xFFFFFF;
+            out.x = m_header.minx + (m_header.maxx - m_header.minx)*double(p.x)/0xFFFFFF;
+            out.y = m_header.miny + (m_header.maxy - m_header.miny)*double(p.y)/0xFFFFFF;
         }
         inline void convert_coord_format(const point2_x32_t& p,point2_t& out){
-            out.x = m_header->minx + (m_header->maxx - m_header->minx)*p.x/0xFFFFFFFF;
-            out.y = m_header->miny + (m_header->maxy - m_header->miny)*p.y/0xFFFFFFFF;
+            out.x = m_header.minx + (m_header.maxx - m_header.minx)*p.x/0xFFFFFFFF;
+            out.y = m_header.miny + (m_header.maxy - m_header.miny)*p.y/0xFFFFFFFF;
         }
 
         template<class coord_type_t>
@@ -102,11 +102,11 @@ namespace wx
         u32                     m_layer_index;
         u8*                     m_data;
         size_t                  m_size;
-        layer_header_t*         m_header;
+        layer_header_t          m_header;
         u8*                     m_data_ptr0;
         size_t                  m_table_line_size;
         int                     m_ifeature;
-        const field_desc_ex_t*  m_field_descs;
+        vector<field_desc_ex_t> m_field_descs;
         //const u8*               m_table_data_ptr;
         u8*                     m_table_data_ptr0;
         u8*                     m_geometry_ptr0;
@@ -130,7 +130,7 @@ namespace wx
             u32 codec;
             u32 offset_count;
             u64 byte_count;
-            u32* offsets_ptr;
+            u8* offsets_data;
             u8*  data_ptr;
         };
         vector<StringFieldData> m_string_fields;
