@@ -455,6 +455,23 @@ class ProjectionMapTests(unittest.TestCase):
             with self.assertRaises(MODULE.QualityError):
                 MODULE.check_issue_truth(f"{accepted}\n{false_claim}")
 
+    def test_current_documentation_accepts_truthful_p5_closure(self) -> None:
+        sources = {
+            relative: "\n".join(markers)
+            for relative, markers in MODULE.DOCUMENTATION_MARKERS.items()
+        }
+        sources["README.md"] = sources["README.md"].replace(
+            "P5 clean cut remains open",
+            "P5 local clean cut is complete at exact ABI-117.",
+        )
+        self.assertNotIn("P5 clean cut remains open", sources["README.md"])
+        self.assertIn(
+            "P5 local clean cut is complete at exact ABI-117.",
+            sources["README.md"],
+        )
+
+        MODULE.check_documentation(sources.__getitem__)
+
     def test_rejects_abi_count_order_or_shape_drift(self) -> None:
         exact = [f"fdb_payload_v1_symbol_{index:03d}" for index in range(117)]
         MODULE.check_abi_allowlist("\n".join(exact))

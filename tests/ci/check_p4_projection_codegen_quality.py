@@ -138,7 +138,7 @@ DOCUMENTATION_MARKERS = {
         "P4 is locally complete",
         "exactly 117",
         "Core-owned four-language",
-        "P5 clean cut remains open",
+        "P5 local clean cut is complete at exact ABI-117.",
         "definitions until an authorized hosted run exists",
     ),
     "bindings/rust/fastdb-sys/README.md": (
