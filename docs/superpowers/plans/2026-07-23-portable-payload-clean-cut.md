@@ -210,6 +210,7 @@ surfaces. Run:
 rg -n 'T[O]DO|T[B]D|F[I]XME|place[h]older|to be deci[d]ed|open quest[i]on|later deci[d]e' \
   docs/superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md \
   docs/superpowers/plans/2026-07-23-portable-payload-clean-cut.md
+test $? -eq 1
 git diff --check
 ```
 
@@ -397,9 +398,12 @@ Record that CLI destination-tree ownership is intentionally narrow and that
 project composition remains downstream. Then:
 
 ```bash
-git add -A \
-  python/fastdb4py/cli.py python/fastdb4py/codegen \
-  tests/python/test_codegen.py tests/python/test_cli_codegen.py \
+git add -A -- \
+  python/fastdb4py/cli.py \
+  python/fastdb4py/codegen/__init__.py \
+  python/fastdb4py/codegen/ts_gen.py \
+  tests/python/test_codegen.py \
+  tests/python/test_cli_codegen.py \
   tests/python/test_import_boundary.py \
   docs/issues/0002-portable-payload-foundation-implementation-status.md
 git diff --cached --check
@@ -435,9 +439,10 @@ second. Rerun Step 4 after fixes.
 
 - Consumes: the frozen `fastdb4py.payload` projection and existing standalone
   registry/layout/object/table/view/serializer modules.
-- Produces: an exact top-level `__all__` containing only the retained
-  standalone names from the design; removed modules fail with
-  `ModuleNotFoundError`.
+- Produces: an exact standalone top-level `__all__`; at this ordered
+  intermediate commit the existing AoS engine is the sole scheduled old name,
+  and Task 5 replaces that class/module atomically with `RecordEngine`.
+  Removed authority modules fail with `ModuleNotFoundError`.
 
 - [ ] **Step 1: Write exact public-surface and package-inventory tests**
 
@@ -535,8 +540,19 @@ seven SWIG warnings remain governed until Task 4.
 - [ ] **Step 5: Record, commit, freeze, and review**
 
 ```bash
-git add -A \
-  python/fastdb4py tests/python tools/check_python_package_inventory.py \
+git add -A -- \
+  python/fastdb4py/call_db.py \
+  python/fastdb4py/schema.py \
+  python/fastdb4py/require.py \
+  python/fastdb4py/allocator.py \
+  python/fastdb4py/type.py \
+  python/fastdb4py/__init__.py \
+  tests/python/test_call_db_runtime.py \
+  tests/python/test_require_envelope.py \
+  tests/python/test_schema_unified.py \
+  tests/python/test_public_surface.py \
+  tests/python/test_import_boundary.py \
+  tools/check_python_package_inventory.py \
   tests/ci/test_check_python_package_inventory.py \
   docs/issues/0002-portable-payload-foundation-implementation-status.md
 git diff --cached --check
@@ -620,7 +636,7 @@ npm pack ./ts/fastdb4ts --pack-destination build/p5-task3-package
 python3 tests/ci/check_ts_payload_package.py \
   --package-dir build/p5-task3-package
 python3 tools/check_payload_abi_symbols.py \
-  --wasm-build-dir ts/fastdb4ts
+  --wasm-build-dir ts/build-wasm
 git diff --check
 ```
 
@@ -630,8 +646,11 @@ call-db files are absent, and Wasm ABI remains exactly 117.
 - [ ] **Step 5: Record, commit, freeze, and review**
 
 ```bash
-git add -A \
-  ts/fastdb4ts/src tests/ts \
+git add -A -- \
+  ts/fastdb4ts/src/call-db.ts \
+  ts/fastdb4ts/src/index.ts \
+  tests/ts/test_call_db_runtime.mjs \
+  tests/ts/test_public_exports.mjs \
   tests/ci/check_ts_payload_package.py \
   tests/ci/test_check_ts_payload_package.py \
   docs/issues/0002-portable-payload-foundation-implementation-status.md
@@ -696,6 +715,28 @@ build.addFeatureEnd();
 build.createLayerEnd();
 std::vector<unsigned char> bytes(build.byteLength());
 require(build.postToBuffer(bytes.data(), bytes.size()) == bytes.size());
+```
+
+Register the owner-layer test explicitly:
+
+```cmake
+add_executable(
+    fastdb_legacy_descriptor_determinism
+    test_legacy_descriptor_determinism.cpp
+)
+target_include_directories(
+    fastdb_legacy_descriptor_determinism
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload
+)
+target_link_libraries(fastdb_legacy_descriptor_determinism PRIVATE fastdb)
+fastdb_apply_sanitizers(fastdb_legacy_descriptor_determinism)
+add_test(
+    NAME legacy.descriptor_determinism
+    COMMAND fastdb_legacy_descriptor_determinism
+)
 ```
 
 Change `check_swig_diagnostics("")` to pass and make any matched SWIG warning,
@@ -793,13 +834,15 @@ build. Record that native tile APIs remain available and that
 `utf8_view_t::data` is intentionally not settable from Python.
 
 ```bash
-git add -A \
+git add -A -- \
   fastcarto/fastdb/include/fastdb.h \
   fastcarto/fastdb/src/FastVectorDbBuild_p.h \
   fastcarto/fastdb/src/FastVectorDbBuild.cpp \
   fastcarto/fastdb/src/FastVectorDbLayerBuild.cpp \
   fastcarto/fastdb/swig/fastdb4py.i \
-  tests/cpp tests/python/test_column_engine.py \
+  tests/cpp/test_legacy_descriptor_determinism.cpp \
+  tests/cpp/CMakeLists.txt \
+  tests/python/test_column_engine.py \
   tools/check_python_package_inventory.py \
   tests/ci/test_check_python_package_inventory.py \
   docs/issues/0002-portable-payload-foundation-implementation-status.md \
@@ -906,6 +949,7 @@ python3 tools/check_python_package_inventory.py \
 rg -n '\bColumnEngine\b|fastdb4py\.column_engine|column_engine\.py' \
   python/fastdb4py tests/python README.md python/README.md \
   AGENTS.md .github/copilot-instructions.md
+test $? -eq 1
 git diff --check
 ```
 
@@ -914,8 +958,24 @@ Expected: all tests/package checks pass; `rg` exits `1` with no match.
 - [ ] **Step 5: Record, commit, freeze, and review**
 
 ```bash
-git add -A \
-  python/fastdb4py tests/python README.md python/README.md AGENTS.md \
+git add -A -- \
+  python/fastdb4py/column_engine.py \
+  python/fastdb4py/record_engine.py \
+  python/fastdb4py/__init__.py \
+  python/fastdb4py/layout.py \
+  tests/python/test_column_engine.py \
+  tests/python/test_record_engine.py \
+  tests/python/test_public_surface.py \
+  tests/python/test_column_way.py \
+  tests/python/test_free_threading.py \
+  tests/python/test_materialize.py \
+  tests/python/test_string_column.py \
+  tests/python/test_view_owner_lifetime.py \
+  tests/python/benchmark_comprehensive.py \
+  tests/python/benchmark_kostya.py \
+  tests/python/benchmark_kostya_orm2.py \
+  tests/python/benchmark_native_list.py \
+  README.md python/README.md AGENTS.md \
   .github/copilot-instructions.md \
   docs/issues/0002-portable-payload-foundation-implementation-status.md
 git diff --cached --check
@@ -1022,7 +1082,6 @@ The policy document is populated with exact paths and literals:
     "docs/superpowers/plans/2026-07-16-portable-payload-core-contract.md",
     "docs/superpowers/plans/2026-07-17-portable-payload-record-runtime.md",
     "docs/superpowers/plans/2026-07-20-portable-payload-object-graph-runtime.md",
-    "docs/superpowers/plans/2026-07-21-portable-payload-language-projections-codegen.md",
     "docs/superpowers/plans/2026-07-23-portable-payload-clean-cut.md",
     "docs/superpowers/specs/2026-04-20-unified-feature-engine-design.md",
     "docs/superpowers/specs/2026-04-21-columnengine-string-column-design.md",
@@ -1037,6 +1096,20 @@ The policy document is populated with exact paths and literals:
   ],
   "literal_carrier_allowlist": [
     "tests/ci/p5_clean_cut_policy.json"
+  ],
+  "superseded_documents": [
+    "docs/opt/batch-array-call-db-fast-path-design.md",
+    "docs/vision/neutral-allocator-destructive-update.md",
+    "docs/superpowers/plans/2026-04-21-columnengine-string-column.md",
+    "docs/superpowers/plans/2026-05-18-c-two-call-db-codec.md",
+    "docs/superpowers/plans/2026-05-22-fdb-view-owner-lifetime.md",
+    "docs/superpowers/plans/2026-05-27-require-envelope-neutral-allocator.md",
+    "docs/superpowers/specs/2026-04-20-unified-feature-engine-design.md",
+    "docs/superpowers/specs/2026-04-21-columnengine-string-column-design.md",
+    "docs/superpowers/specs/2026-04-21-truncate-str-fill-unification-design.md",
+    "docs/superpowers/specs/2026-04-22-truncate-string-ingest-optimization-design.md",
+    "ts/README.md",
+    "ts/analysis/QUALITY_AUDIT.md"
   ],
   "authority_scan_roots": ["."],
   "domain_scan_roots": [
@@ -1117,14 +1190,18 @@ rejection of:
 4. old scratch/final-backing C++ or SWIG declarations;
 5. a new SWIG warning allowance;
 6. a broad historical allowlist;
-7. a current forbidden literal;
-8. missing standalone-boundary labels;
-9. a non-Core CLI generator/import or unsafe destination rule;
-10. package version drift;
-11. native/Wasm ABI drift;
-12. CRM/route/relay/transport/lease/policy/Toodle/GIS behavior in current
+7. a superseded document without an explicit historical/superseded status and
+   accepted-design link;
+8. a current forbidden literal;
+9. missing standalone-boundary labels;
+10. a non-Core CLI generator/import or unsafe destination rule;
+11. package version drift;
+12. native/Wasm ABI drift;
+13. CRM/route/relay/transport/lease/policy/Toodle/GIS behavior in current
     source/tests/examples/package docs; and
-13. an inaccurate Issue 0002/0003 state.
+14. an inaccurate Issue 0002/0003 state; and
+15. a missing relative Markdown link target or local heading anchor in any
+    governed current, historical, design, plan, ADR, or Issue document.
 
 - [ ] **Step 2: Run the genuine repository-policy RED**
 
@@ -1141,9 +1218,14 @@ standalone/current documentation and unclassified historical literals.
 
 Parse JSON with duplicate-key rejection, reject unknown policy keys, resolve
 every policy path beneath the repository root, and return stable sorted
-violations. Derive exact public ABI symbols from the checked allowlist/generator
-inputs already used by `tools/check_payload_abi_symbols.py`; do not maintain a
-second symbol list.
+violations. Obtain the scan inventory with
+`git ls-files -z --cached --others --exclude-standard` so an untracked,
+non-ignored resurrection cannot evade the gate while ignored build/venv
+outputs do not enter it. Search forbidden ASCII literals in raw file bytes;
+decode UTF-8 only for the documents whose markers or links are parsed. Derive
+exact public ABI symbols from the checked allowlist/generator inputs already
+used by `tools/check_payload_abi_symbols.py`; do not maintain a second symbol
+list.
 
 Require all removed paths absent, all required paths present, versions exact,
 no broad allowlist entry, and current literal scans clean. Accept Issue 0003
@@ -1235,12 +1317,41 @@ no forbidden terms, and historical exceptions are exact and visibly labeled.
 - [ ] **Step 6: Record, commit, freeze, and review**
 
 ```bash
-git add -A \
-  tools/check_p5_clean_cut.py tests/ci/p5_clean_cut_policy.json \
-  tests/ci/test_check_p5_clean_cut.py .github/workflows/tests.yml \
-  python/fastdb4py ts/fastdb4ts/src README.md python/README.md \
-  ts/fastdb4ts/README.md AGENTS.md .github/copilot-instructions.md \
-  CHANGELOG.md tests/cpp/payload docs ts/analysis/QUALITY_AUDIT.md
+git add -A -- \
+  tools/check_p5_clean_cut.py \
+  tests/ci/p5_clean_cut_policy.json \
+  tests/ci/test_check_p5_clean_cut.py \
+  tools/check_python_package_inventory.py \
+  tests/ci/test_check_python_package_inventory.py \
+  tests/ci/check_ts_payload_package.py \
+  tests/ci/test_check_ts_payload_package.py \
+  .github/workflows/tests.yml \
+  python/fastdb4py/object_engine.py \
+  python/fastdb4py/registry.py \
+  python/fastdb4py/serializer.py \
+  python/fastdb4py/materialize.py \
+  python/fastdb4py/view_owner.py \
+  ts/fastdb4ts/src/schema.ts \
+  ts/fastdb4ts/src/feature.ts \
+  ts/fastdb4ts/src/serializer.ts \
+  tests/python/test_public_surface.py \
+  tests/python/test_import_boundary.py \
+  tests/cpp/payload/test_spec_parse.cpp \
+  tests/cpp/payload/test_codegen.cpp \
+  README.md python/README.md ts/fastdb4ts/README.md \
+  AGENTS.md .github/copilot-instructions.md CHANGELOG.md \
+  docs/opt/batch-array-call-db-fast-path-design.md \
+  docs/vision/neutral-allocator-destructive-update.md \
+  docs/superpowers/plans/2026-04-21-columnengine-string-column.md \
+  docs/superpowers/plans/2026-05-18-c-two-call-db-codec.md \
+  docs/superpowers/plans/2026-05-22-fdb-view-owner-lifetime.md \
+  docs/superpowers/plans/2026-05-27-require-envelope-neutral-allocator.md \
+  docs/superpowers/specs/2026-04-20-unified-feature-engine-design.md \
+  docs/superpowers/specs/2026-04-21-columnengine-string-column-design.md \
+  docs/superpowers/specs/2026-04-21-truncate-str-fill-unification-design.md \
+  docs/superpowers/specs/2026-04-22-truncate-string-ingest-optimization-design.md \
+  ts/README.md ts/analysis/QUALITY_AUDIT.md \
+  docs/issues/0002-portable-payload-foundation-implementation-status.md
 git diff --cached --check
 git commit -m "test: enforce portable payload clean cut"
 ```
@@ -1259,9 +1370,6 @@ security/path handling/YAML/docs maintainability. Rerun Step 5 after fixes.
 - Modify: `docs/issues/0003-legacy-swig-diagnostics.md` only if final evidence
   corrects its Task 4 receipt
 - Modify: `CHANGELOG.md`
-- Modify: `tools/check_p5_clean_cut.py` only if the Task 7 adversarial RED
-  exposes a real closure-policy gap
-- Modify: `tests/ci/test_check_p5_clean_cut.py`
 - Create/update ignored:
   `.superpowers/sdd/p5-task-7-brief.md`,
   `.superpowers/sdd/p5-task-7-report.md`,
@@ -1274,20 +1382,18 @@ security/path handling/YAML/docs maintainability. Rerun Step 5 after fixes.
 - Produces: one locally frozen FastDB owner boundary ready for C-Two
   composition; no published artifact or release.
 
-- [ ] **Step 1: Prove the closure checker is still RED on an incomplete issue**
+- [ ] **Step 1: Retain a genuine closure-record RED**
 
-Before final evidence is recorded, require the Task 7 test to detect a false
-P5-complete statement. Add an in-memory mutation case to
-`tests/ci/test_check_p5_clean_cut.py` that changes hosted status from
-`pending` to `passed` without a receipt.
+Before any final evidence is recorded, run:
 
 ```bash
-python3 tests/ci/test_check_p5_clean_cut.py
+rg -n '^\*\*P5 local clean cut:\*\* Complete$' \
+  docs/issues/0002-portable-payload-foundation-implementation-status.md
 ```
 
-Expected before the mutation rejection is implemented: the adversarial case
-fails. Fix only the checker if this exposes an actual policy gap, commit that
-test/gate correction separately, and restart all affected final gates.
+Expected: exit `1` because the Issue truthfully says Task 0 is frozen and P5
+implementation has not started. Step 7 adds this exact marker only after all
+fresh gates pass.
 
 - [ ] **Step 2: Build fresh Debug, Release, and ASan+UBSan trees**
 
@@ -1318,10 +1424,26 @@ claim.
 
 - [ ] **Step 3: Run available TSan, corpus/fuzz, ABI, schema, and dependency gates**
 
-Use the repository's previously proven TSan compiler/runtime recipe and exact
-focused runtime/lifetime/codegen/descriptor test names. If the compiler cannot
-link the TSan runtime, record the exact command/error as unavailable rather
-than passing it.
+Build the no-competing-load TSan tree explicitly:
+
+```bash
+rm -rf build/p5-final-tsan
+cmake -S fastcarto -B build/p5-final-tsan \
+  -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_C_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+  -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer" \
+  -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread" \
+  -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+cmake --build build/p5-final-tsan --parallel
+TSAN_OPTIONS=halt_on_error=1:abort_on_error=1 \
+ctest --test-dir build/p5-final-tsan --output-on-failure \
+  -R '^payload\.(compiled_spec|codegen|runtime_abi|runtime_cpp_facade|payload_builder|record_binary|graph_binary|payload_backing|graph_backing|payload_open|checked_view|graph_view|graph_materialize)$|^legacy\.descriptor_determinism$'
+```
+
+If configuration, link, or process start proves the local compiler/runtime
+unavailable, retain that exact command/error and make no TSan claim. A test
+failure after the runtime starts is a product failure, not an unavailable
+gate.
 
 ```bash
 python3 tools/check_payload_abi_symbols.py --build-dir build/p5-final-debug
@@ -1334,6 +1456,23 @@ ruby tests/ci/check_p2_task11_quality.rb --check-repository
 ruby tests/ci/check_p3_runtime_quality.rb --check-repository
 python3 tests/ci/check_p4_projection_codegen_quality.py --check
 python3 tools/check_p5_clean_cut.py --check
+```
+
+Compile the pure C11 public header for each reviewed target:
+
+```bash
+clang -std=c11 -Wall -Wextra -Werror -arch arm64 \
+  -Ifastcarto/fastdb/include -c \
+  tests/cpp/payload/test_c_header_smoke.c \
+  -o build/p5-final-debug/c-header-arm64.o
+clang -std=c11 -Wall -Wextra -Werror -arch x86_64 \
+  -Ifastcarto/fastdb/include -c \
+  tests/cpp/payload/test_c_header_smoke.c \
+  -o build/p5-final-debug/c-header-x86_64.o
+emcc -std=c11 -Wall -Wextra -Werror \
+  -Ifastcarto/fastdb/include -c \
+  tests/cpp/payload/test_c_header_smoke.c \
+  -o build/p5-final-debug/c-header-wasm32.o
 ```
 
 If local libFuzzer linkage remains unavailable, run the deterministic reviewed
@@ -1349,25 +1488,74 @@ cargo clippy --manifest-path bindings/rust/Cargo.toml \
 cargo test --manifest-path bindings/rust/Cargo.toml \
   --workspace --all-features
 python3 tests/ci/test_check_rust_payload_package.py
+python3 tests/ci/check_rust_payload_package.py \
+  --build-dir build/p5-final-debug
 
 uv run pytest tests/python -q
 uv run python -m compileall -q python/fastdb4py tests/python
 python3 tests/ci/test_check_python_package_inventory.py
-rm -rf build/p5-final-dist
-uv build --out-dir build/p5-final-dist \
-  2>&1 | tee build/p5-final-package.log
+rm -rf build/p5-final-dist-current build/p5-final-dist-py310
+current_python="$(uv run python -c 'import sys; print(sys.executable)')"
+export current_python
+uv build --python "$current_python" \
+  --out-dir build/p5-final-dist-current \
+  2>&1 | tee build/p5-final-package-current.log
 python3 tools/check_python_package_inventory.py \
-  --dist-dir build/p5-final-dist \
-  --build-log build/p5-final-package.log
+  --dist-dir build/p5-final-dist-current \
+  --build-log build/p5-final-package-current.log
+uv build --python 3.10 \
+  --out-dir build/p5-final-dist-py310 \
+  2>&1 | tee build/p5-final-package-py310.log
+python3 tools/check_python_package_inventory.py \
+  --dist-dir build/p5-final-dist-py310 \
+  --build-log build/p5-final-package-py310.log
+
+bash -euo pipefail <<'BASH'
+repo="$PWD"
+current_wheels=("$repo"/build/p5-final-dist-current/*.whl)
+python310_wheels=("$repo"/build/p5-final-dist-py310/*.whl)
+test "${#current_wheels[@]}" -eq 1
+test "${#python310_wheels[@]}" -eq 1
+
+run_installed_tests() {
+  label="$1"
+  python="$2"
+  wheel="$3"
+  temporary="$(mktemp -d "${TMPDIR:-/tmp}/fastdb-p5-${label}.XXXXXX")"
+  (
+    cd "$temporary"
+    uv run --isolated --no-project --python "$python" \
+      --with "$wheel" --with pytest \
+      python -m pytest --rootdir="$temporary" -c /dev/null \
+      "$repo/tests/python/payload" \
+      "$repo/tests/python/test_cli_codegen.py" \
+      "$repo/tests/python/test_public_surface.py" \
+      "$repo/tests/python/test_record_engine.py" \
+      "$repo/tests/python/test_object_engine.py" \
+      "$repo/tests/python/test_view_owner_lifetime.py" \
+      "$repo/tests/python/test_materialize.py" \
+      "$repo/tests/python/test_fast_serializer.py" -q
+  )
+  rm -rf "$temporary"
+}
+
+run_installed_tests current "$current_python" "${current_wheels[0]}"
+run_installed_tests python310 3.10 "${python310_wheels[0]}"
+BASH
+
+shasum -a 256 \
+  build/p5-final-dist-current/* \
+  build/p5-final-dist-py310/*
 
 uv run python tests/ci/test_run_generated_payload_projections.py
 uv run python tests/ci/run_generated_payload_projections.py \
   --build-dir build/p5-final-debug
 ```
 
-Repeat installed-wheel payload, CLI, public-surface, and retained standalone
-tests in isolated environments for the current interpreter and Python 3.10.
-Record the exact interpreter versions and package SHA-256 values.
+Expected: both independently built wheel/sdist pairs pass exact inventory;
+the isolated current/Python-3.10 runs cannot import the source tree and pass
+payload, CLI, public-surface, and retained standalone behavior. Record the
+exact interpreter versions and printed package SHA-256 values.
 
 - [ ] **Step 5: Run TypeScript, package, and independent Core Wasm gates**
 
@@ -1381,7 +1569,7 @@ npm pack ./ts/fastdb4ts --pack-destination build/p5-final-ts-package
 python3 tests/ci/check_ts_payload_package.py \
   --package-dir build/p5-final-ts-package
 python3 tools/check_payload_abi_symbols.py \
-  --wasm-build-dir ts/fastdb4ts
+  --wasm-build-dir ts/build-wasm
 
 rm -rf build/p5-final-wasm
 emcmake cmake -S fastcarto -B build/p5-final-wasm \
@@ -1394,11 +1582,14 @@ node build/p5-final-wasm/tests/cpp/fastdb_payload_test_c_header_smoke.js
 node build/p5-final-wasm/tests/cpp/fastdb_payload_test_codegen_c_abi.js
 node build/p5-final-wasm/tests/cpp/fastdb_payload_test_cpp_facade.js
 node build/p5-final-wasm/tests/cpp/fastdb_payload_test_runtime_cpp_facade.js
+node build/p5-final-wasm/wasm-tests/payload_runtime_abi_single_thread.js \
+  --single-thread-injected-failure
+node build/p5-final-wasm/wasm-tests/payload_runtime_abi_single_thread.js \
+  --graph-runtime-proof
 ```
 
-Run the single-thread runtime ABI harness in both repository-defined
-injected-failure and graph modes. Expected: both Wasm surfaces expose exactly
-117 symbols and all Node receipts pass.
+Expected: both Wasm surfaces expose exactly 117 symbols and all Node receipts,
+including both single-thread modes, pass.
 
 - [ ] **Step 6: Audit documentation, scope, credentials, and clean state**
 
@@ -1410,6 +1601,7 @@ git status --short
 git diff --name-only 9d86c171eda1fe107c3519ce040ca2ec417167f9
 rg -n 'T[O]DO|T[B]D|F[I]XME|pan[i]c!|to[d]o!|unimplemente[d]!' \
   $(git diff --name-only 9d86c171eda1fe107c3519ce040ca2ec417167f9)
+test $? -eq 1
 ```
 
 Inspect changed files for credentials, signed URLs, private endpoints, build
@@ -1422,7 +1614,7 @@ planned paths changed.
 Issue 0002 must record:
 
 ```text
-P5 local clean cut = complete
+**P5 local clean cut:** Complete
 portable ABI = exactly 117
 package versions = 0.1.22 / 0.0.3 unchanged
 primary review = same-agent, not independent
@@ -1436,6 +1628,15 @@ package hashes, commits, and all intentionally retained limitations. Issue
 0002 stays open for hosted/release/downstream facts. Issue 0003 stays closed
 only if the final clean package log still has zero SWIG warnings.
 
+```bash
+python3 tests/ci/test_check_p5_clean_cut.py
+python3 tools/check_p5_clean_cut.py --check
+git diff --check
+```
+
+Expected: the checker accepts the exact locally-complete/externally-pending
+state and all three commands pass.
+
 - [ ] **Step 8: Commit closure and run the frozen two-pass review**
 
 ```bash
@@ -1446,8 +1647,8 @@ git add \
 git diff --cached --check
 git commit -m "docs: record portable payload P5 closure"
 git diff --binary \
-  9d86c171eda1fe107c3519ce040ca2ec417167f9..HEAD \
-  > .superpowers/sdd/p5-final-review.diff
+  --output=.superpowers/sdd/p5-final-review.diff \
+  9d86c171eda1fe107c3519ce040ca2ec417167f9..HEAD
 ```
 
 Pass 1 covers every design requirement, sole Core authority, ABI-117,
@@ -1473,9 +1674,14 @@ rm -rf \
   build/p5-task4-red build/p5-task4-red-dist \
   build/p5-task4-debug build/p5-task4-sanitize build/p5-task4-dist \
   build/p5-task5-dist build/p5-task6 \
+  build/p5-task2-build.log build/p5-task4-red-build.log \
+  build/p5-task4-build.log build/p5-task5-build.log \
   build/p5-final-debug build/p5-final-release build/p5-final-sanitize \
-  build/p5-final-dist build/p5-final-ts-package build/p5-final-wasm \
-  ts/fastdb4ts/dist bindings/rust/target
+  build/p5-final-tsan build/p5-final-dist-current \
+  build/p5-final-dist-py310 build/p5-final-ts-package \
+  build/p5-final-wasm build/p5-final-package-current.log \
+  build/p5-final-package-py310.log \
+  ts/build-wasm ts/fastdb4ts/dist bindings/rust/target
 git status --short
 ```
 
