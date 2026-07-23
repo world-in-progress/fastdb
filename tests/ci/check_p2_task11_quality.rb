@@ -52,6 +52,29 @@ def require_quality(condition, message)
   raise QualityError, message unless condition
 end
 
+def truthful_issue_index_row?(row)
+  !row.nil? &&
+    row.include?("Open") &&
+    row.include?("P2") &&
+    row.match?(/locally (?:complete\/)?frozen/) &&
+    row.match?(/hosted[^|]*evidence pending/)
+end
+
+def self_test_issue_index_row
+  legacy = "| [0002](issue.md) | Open | P2 locally frozen; hosted evidence pending |"
+  aggregated =
+    "| [0002](issue.md) | Open (P1-P5 locally frozen; " \
+    "hosted/release/downstream evidence pending) | P2 proof |"
+  require_quality(truthful_issue_index_row?(legacy),
+                  "legacy truthful issue-index row was rejected")
+  require_quality(truthful_issue_index_row?(aggregated),
+                  "aggregated truthful issue-index row was rejected")
+  require_quality(!truthful_issue_index_row?(
+                    "| [0002](issue.md) | Closed | P2 locally frozen; hosted passed |"
+                  ),
+                  "closed or hosted-complete issue-index row was accepted")
+end
+
 def reject_duplicate_yaml_keys(node, label, path = "$")
   case node
   when Psych::Nodes::Mapping
@@ -486,10 +509,7 @@ def check_documentation
   require_quality(compact.call(changelog).include?("P2 record binary/runtime/lifetime"),
                   "changelog lacks the P2 local implementation entry")
   issue_row = index.lines.find { |line| line.include?("[0002]") }
-  require_quality(!issue_row.nil? && issue_row.include?("Open") &&
-                  issue_row.include?("P2") &&
-                  issue_row.match?(/locally (?:complete\/)?frozen/) &&
-                  issue_row.include?("hosted evidence pending"),
+  require_quality(truthful_issue_index_row?(issue_row),
                   "issue index overstates or omits the frozen P2/local-hosted state")
 end
 
@@ -518,6 +538,7 @@ def check_malformed_class_map
 end
 
 def check_repository
+  self_test_issue_index_row
   check_workflow
   check_documentation
   check_malformed_class_map
