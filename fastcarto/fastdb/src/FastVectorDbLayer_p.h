@@ -112,7 +112,7 @@ namespace wx
         u8*                     m_geometry_ptr0;
         u8*                     m_geometry_ptr;
         vector<const char *>    m_string_table;
-        vector<const uchar_t *> m_wstring_table;
+        vector<vector<uchar_t>> m_wstring_table;
         vector<void*>           m_feature_cookie_map;
         vector<point2_t>        points;//a variant for return temp points
         vector<FastVectorDbFeature*>    m_feature_cache;

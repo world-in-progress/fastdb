@@ -426,6 +426,40 @@ def _git_inventory(root: Path) -> tuple[list[str], list[str]]:
     return sorted(set(inventory)), sorted(set(violations))
 
 
+def _check_git_cleanliness(root: Path) -> list[str]:
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                os.fspath(root),
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=all",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError as error:
+        return [f"cannot execute Git cleanliness check: {error}"]
+    if completed.returncode != 0:
+        diagnostic = completed.stderr.decode(
+            "utf-8", errors="replace"
+        ).strip()
+        return [
+            f"Git cleanliness check failed with exit {completed.returncode}: "
+            f"{diagnostic or 'no diagnostic'}"
+        ]
+    if completed.stdout:
+        return [
+            "repository worktree/index must be clean, including "
+            "non-ignored untracked files"
+        ]
+    return []
+
+
 def _path_is_within(relative: str, root: str) -> bool:
     if root == ".":
         return True
@@ -1203,10 +1237,11 @@ def _check_workflow(root: Path) -> list[str]:
         violations.append(
             f"{WORKFLOW_PATH}: clean_cut must be an unconditional standalone job"
         )
-    for command in (
+    required_commands = (
         "python3 tests/ci/test_check_p5_clean_cut.py",
         "python3 tools/check_p5_clean_cut.py --check",
-    ):
+    )
+    for command in required_commands:
         if re.search(
             rf"(?m)^[ \t]+(?:-[ \t]+run:[ \t]+)?"
             rf"{re.escape(command)}[ \t]*$",
@@ -1216,6 +1251,23 @@ def _check_workflow(root: Path) -> list[str]:
                 f"{WORKFLOW_PATH}: clean_cut job is missing command "
                 f"{command!r}"
             )
+    run_starts = [
+        index
+        for index, line in enumerate(body.splitlines())
+        if re.fullmatch(r"        run:[ \t]*\|[ \t]*", line) is not None
+    ]
+    script_lines: list[str] = []
+    if len(run_starts) == 1:
+        lines = body.splitlines()
+        for line in lines[run_starts[0] + 1 :]:
+            if line.strip() and len(line) - len(line.lstrip()) <= 8:
+                break
+            if line.strip():
+                script_lines.append(line.strip())
+    if len(run_starts) != 1 or tuple(script_lines) != required_commands:
+        violations.append(
+            f"{WORKFLOW_PATH}: clean_cut must use the exact fail-fast script"
+        )
     if "uses: actions/checkout@" not in body:
         violations.append(
             f"{WORKFLOW_PATH}: clean_cut job must check out the repository"
@@ -1239,6 +1291,7 @@ def check_repository(
 
     inventory, inventory_violations = _git_inventory(resolved_root)
     violations = list(inventory_violations)
+    violations.extend(_check_git_cleanliness(resolved_root))
     inventory_set = set(inventory)
     for relative in policy["required_paths"]:
         if relative not in inventory_set:

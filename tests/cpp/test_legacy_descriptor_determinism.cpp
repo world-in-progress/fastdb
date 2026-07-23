@@ -3,6 +3,7 @@
 #include "fastdb.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -15,9 +16,13 @@ std::vector<unsigned char> build_scalar_database() {
     build.createLayerBegin("values");
     build.addField("value", wx::ftU8);
     build.addField("floating", wx::ftF64);
+    build.addField("narrow", wx::ftSTR);
+    build.addField("wide", wx::ftWSTR);
     build.addFeatureBegin();
     build.setField(0, 7);
     build.setField(1, 7.25);
+    build.setField(2, "a");
+    build.setField(3, L"wide");
     build.addFeatureEnd();
     build.createLayerEnd();
 
@@ -65,10 +70,20 @@ int main() {
     require(database->getLayerCount() == 1);
     wx::FastVectorDbLayer* layer = database->getLayer(0);
     require(layer != nullptr);
+    require(layer->getFieldCount() == 4);
     require(layer->getFeatureCount() == 1);
     layer->rewind();
     require(layer->next());
     require(layer->getFieldAsInt(0) == 7);
     require(layer->getFieldAsFloat(1) == 7.25);
+    require(std::strcmp(layer->getFieldAsString(2), "a") == 0);
+    const wx::uchar_t* wide = layer->getFieldAsWString(3);
+    require(wide != nullptr);
+    require(reinterpret_cast<std::uintptr_t>(wide) % alignof(wx::uchar_t) == 0);
+    require(wide[0] == static_cast<wx::uchar_t>('w'));
+    require(wide[1] == static_cast<wx::uchar_t>('i'));
+    require(wide[2] == static_cast<wx::uchar_t>('d'));
+    require(wide[3] == static_cast<wx::uchar_t>('e'));
+    require(wide[4] == 0);
     return EXIT_SUCCESS;
 }

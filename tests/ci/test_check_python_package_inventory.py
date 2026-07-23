@@ -57,6 +57,39 @@ class SwigDiagnosticTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_requires_every_retained_standalone_python_module(self) -> None:
+        retained = {
+            "fastdb4py/__init__.py",
+            "fastdb4py/cli.py",
+            "fastdb4py/column_view.py",
+            "fastdb4py/decorator.py",
+            "fastdb4py/feature/__init__.py",
+            "fastdb4py/layout.py",
+            "fastdb4py/materialize.py",
+            "fastdb4py/object_engine.py",
+            "fastdb4py/orm/__init__.py",
+            "fastdb4py/orm/table.py",
+            "fastdb4py/push.py",
+            "fastdb4py/push_compiler.py",
+            "fastdb4py/reader.py",
+            "fastdb4py/record_engine.py",
+            "fastdb4py/registry.py",
+            "fastdb4py/serializer.py",
+            "fastdb4py/string_column.py",
+            "fastdb4py/type.py",
+            "fastdb4py/view_owner.py",
+        }
+        self.assertTrue(retained <= MODULE.WHEEL_REQUIRED)
+        self.assertTrue(
+            {f"python/{path}" for path in retained} <= MODULE.SDIST_REQUIRED
+        )
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.require_members(
+                set(MODULE.WHEEL_REQUIRED) - {"fastdb4py/record_engine.py"},
+                set(MODULE.WHEEL_REQUIRED),
+                "wheel",
+            )
+
     def test_forbids_removed_python_authority_in_sdist_and_wheel(self) -> None:
         wheel_forbidden = {
             "fastdb4py/" + "call" + "_db.py",

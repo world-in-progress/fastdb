@@ -16,6 +16,27 @@ class CheckError(RuntimeError):
     pass
 
 
+STANDALONE_WHEEL_REQUIRED = {
+    "fastdb4py/__init__.py",
+    "fastdb4py/cli.py",
+    "fastdb4py/column_view.py",
+    "fastdb4py/decorator.py",
+    "fastdb4py/feature/__init__.py",
+    "fastdb4py/layout.py",
+    "fastdb4py/materialize.py",
+    "fastdb4py/object_engine.py",
+    "fastdb4py/orm/__init__.py",
+    "fastdb4py/orm/table.py",
+    "fastdb4py/push.py",
+    "fastdb4py/push_compiler.py",
+    "fastdb4py/reader.py",
+    "fastdb4py/record_engine.py",
+    "fastdb4py/registry.py",
+    "fastdb4py/serializer.py",
+    "fastdb4py/string_column.py",
+    "fastdb4py/type.py",
+    "fastdb4py/view_owner.py",
+}
 SDIST_REQUIRED = {
     "fastcarto/fastdb/include/fastdb_payload.h",
     "fastcarto/fastdb/include/fastdb_payload.hpp",
@@ -63,7 +84,7 @@ SDIST_REQUIRED = {
     "python/fastdb4py/payload/_ffi.py",
     "python/fastdb4py/payload/_runtime.py",
     "python/fastdb4py/payload/_spec.py",
-}
+} | {f"python/{path}" for path in STANDALONE_WHEEL_REQUIRED}
 WHEEL_REQUIRED = {
     "fastdb4py/payload/__init__.py",
     "fastdb4py/payload/_builder.py",
@@ -72,7 +93,7 @@ WHEEL_REQUIRED = {
     "fastdb4py/payload/_ffi.py",
     "fastdb4py/payload/_runtime.py",
     "fastdb4py/payload/_spec.py",
-}
+} | STANDALONE_WHEEL_REQUIRED
 WHEEL_FORBIDDEN = {
     "fastdb4py/" + "call" + "_db.py",
     "fastdb4py/schema.py",

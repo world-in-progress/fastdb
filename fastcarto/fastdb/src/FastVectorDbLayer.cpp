@@ -3,6 +3,7 @@
 #include "FastVectorDbLayerBuild_p.h"
 #include <cstring>
 #include <limits>
+#include <utility>
 namespace wx
 {
     namespace
@@ -107,10 +108,15 @@ namespace wx
         ptr = m_data_ptr0 + m_header.offset_wstrings;
         count = load_unaligned<u32>(ptr);
         ptr += 4;
+        m_wstring_table.reserve(count);
         for (int i = 0; i < count; i++)
         {
-            m_wstring_table.push_back((const uchar_t *)ptr);
-            ptr += (ustring_len(ptr) + 1) * sizeof(uchar_t);
+            const size_t length = ustring_len(ptr);
+            vector<uchar_t> value(length + 1);
+            std::memcpy(value.data(), ptr,
+                        value.size() * sizeof(uchar_t));
+            m_wstring_table.push_back(std::move(value));
+            ptr += (length + 1) * sizeof(uchar_t);
         }
         // parse list data section (n_list_fields > 0 only in databases built with list support)
         if (m_header.n_list_fields > 0) {
@@ -531,7 +537,7 @@ namespace wx
                      : u32(load_unaligned<u16>(ptr));
         if (id >= m_wstring_table.size())
             return nullptr;
-        return m_wstring_table[id];
+        return m_wstring_table[id].data();
     }
     const uchar_t *FastVectorDbLayer::Impl::getFieldAsWString(u32 ix)
     {

@@ -38,6 +38,34 @@ def write(root: Path, relative: str, content: str | bytes = "") -> Path:
     return path
 
 
+def commit_repository(root: Path) -> None:
+    subprocess.run(
+        ["git", "-C", str(root), "add", "-A"],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "user.name=FastDB P5 Fixture",
+            "-c",
+            "user.email=fastdb-p5-fixture@example.invalid",
+            "commit",
+            "--no-gpg-sign",
+            "-q",
+            "-m",
+            "fixture state",
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
 def valid_policy() -> dict[str, object]:
     return {
         "schema": "fastdb.p5-clean-cut-policy.v1",
@@ -168,8 +196,10 @@ def create_repository(root: Path) -> dict[str, object]:
         "    runs-on: ubuntu-latest\n"
         "    steps:\n"
         "      - uses: actions/checkout@v6\n"
-        "      - run: python3 tests/ci/test_check_p5_clean_cut.py\n"
-        "      - run: python3 tools/check_p5_clean_cut.py --check\n",
+        "      - name: Enforce the clean cut\n"
+        "        run: |\n"
+        "          python3 tests/ci/test_check_p5_clean_cut.py\n"
+        "          python3 tools/check_p5_clean_cut.py --check\n",
     )
     write(
         root,
@@ -198,6 +228,7 @@ def create_repository(root: Path) -> dict[str, object]:
         write(root, f"bindings/rust/fastdb/src/{relative}", "// projection\n")
     for relative in RUST_SYS_MODULES:
         write(root, f"bindings/rust/fastdb-sys/src/{relative}", "// projection\n")
+    commit_repository(root)
     return policy
 
 
@@ -311,6 +342,22 @@ class PolicyTests(RepositoryFixture):
 
 
 class InventoryAndAuthorityTests(RepositoryFixture):
+    def test_rejects_dirty_worktree_index_and_untracked_files(self) -> None:
+        write(self.root, "README.md", "# Locally modified fixture\n")
+        self.assert_rejected("worktree/index")
+
+        subprocess.run(
+            ["git", "-C", str(self.root), "add", "README.md"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.assert_rejected("worktree/index")
+
+        commit_repository(self.root)
+        write(self.root, "untracked-clean-content.txt", "local only\n")
+        self.assert_rejected("worktree/index")
+
     def test_rejects_each_removed_path(self) -> None:
         for relative in self.policy["removed_paths"]:
             with self.subTest(relative=relative):
@@ -371,6 +418,7 @@ class InventoryAndAuthorityTests(RepositoryFixture):
             "config/policy.json",
             json.dumps(changed, indent=2) + "\n",
         )
+        commit_repository(self.root)
         self.assertEqual(self.violations(changed), [])
 
     def test_rejects_missing_standalone_marker(self) -> None:
@@ -544,6 +592,7 @@ class GovernanceSurfaceTests(RepositoryFixture):
             "Clean package evidence remains pending. "
             "Hosted execution remains pending.\n",
         )
+        commit_repository(self.root)
         self.assertEqual(self.violations(), [])
 
     def test_rejects_open_issue_0003_without_pending_evidence(self) -> None:
@@ -596,6 +645,7 @@ class GovernanceSurfaceTests(RepositoryFixture):
             "The expression `_builder[n](*items)` is code, not a link. "
             "See [accepted](accepted.md#accepted-design).\n",
         )
+        commit_repository(self.root)
         self.assertEqual(self.violations(), [])
 
     def test_rejects_missing_workflow_integration(self) -> None:
@@ -623,6 +673,17 @@ class GovernanceSurfaceTests(RepositoryFixture):
             encoding="utf-8",
         )
         self.assert_rejected("missing command")
+
+    def test_rejects_non_fail_fast_clean_cut_script(self) -> None:
+        workflow = self.root / ".github/workflows/tests.yml"
+        workflow.write_text(
+            workflow.read_text(encoding="utf-8").replace(
+                "        run: |\n",
+                "        run: |\n          set +e\n",
+            ),
+            encoding="utf-8",
+        )
+        self.assert_rejected("exact fail-fast script")
 
 
 if __name__ == "__main__":
