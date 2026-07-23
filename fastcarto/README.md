@@ -54,7 +54,11 @@ If one of these behaviors changes, all higher-level bindings must be revalidated
 
 ## Integration boundary
 
-The C++ core owns generic FastDB binary, storage, table, feature, buffer, and accepted portable-payload semantics. Binding layers and RPC systems build on these semantics, but CRM contracts, route identity, relay behavior, call envelopes, generated RPC helpers, and transport-specific lease policy do not belong in the core.
+The C++ core owns generic FastDB binary, storage, table, feature, buffer, and
+accepted portable-payload semantics. Binding layers and downstream systems
+build on these semantics, but consumer-specific contracts, communication,
+scheduling, generated application helpers, and lifecycle behavior do not
+belong in the core.
 
 ## Public API shape
 

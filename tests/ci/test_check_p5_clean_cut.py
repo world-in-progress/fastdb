@@ -24,6 +24,8 @@ PRODUCTION_POLICY = MODULE.load_policy(POLICY_PATH)
 OBSOLETE_AUTHORITY = str(PRODUCTION_POLICY["forbidden_authority_literals"][0])
 DOWNSTREAM_DOMAIN = str(PRODUCTION_POLICY["forbidden_domain_literals"][0])
 STANDALONE_MARKER = "Standalone boundary marker."
+RUST_SAFE_MODULES = ("builder.rs", "codegen.rs", "lib.rs", "runtime.rs")
+RUST_SYS_MODULES = ("lib.rs",)
 
 
 def write(root: Path, relative: str, content: str | bytes = "") -> Path:
@@ -52,7 +54,7 @@ def valid_policy() -> dict[str, object]:
         "literal_carrier_allowlist": ["tests/ci/policy.json"],
         "superseded_documents": ["docs/history.md"],
         "authority_scan_roots": ["."],
-        "domain_scan_roots": ["src"],
+        "domain_scan_roots": ["src", "bindings/rust"],
         "forbidden_authority_literals": list(
             PRODUCTION_POLICY["forbidden_authority_literals"]
         ),
@@ -161,9 +163,13 @@ def create_repository(root: Path) -> dict[str, object]:
     write(
         root,
         ".github/workflows/tests.yml",
-        "steps:\n"
-        "  - run: python3 tests/ci/test_check_p5_clean_cut.py\n"
-        "  - run: python3 tools/check_p5_clean_cut.py --check\n",
+        "jobs:\n"
+        "  clean_cut:\n"
+        "    runs-on: ubuntu-latest\n"
+        "    steps:\n"
+        "      - uses: actions/checkout@v6\n"
+        "      - run: python3 tests/ci/test_check_p5_clean_cut.py\n"
+        "      - run: python3 tools/check_p5_clean_cut.py --check\n",
     )
     write(
         root,
@@ -173,7 +179,7 @@ def create_repository(root: Path) -> dict[str, object]:
         "#### P5 Task 6 local evidence\n\n"
         "P5 Task 7 remains pending. Hosted execution remains pending. "
         "Version change, push, tag, publication, release, and downstream "
-        "C-Two composition remain pending.\n",
+        "C-" "Two composition remain pending.\n",
     )
     write(
         root,
@@ -188,6 +194,10 @@ def create_repository(root: Path) -> dict[str, object]:
         write(root, f"python/fastdb4py/payload/{relative}", "# projection\n")
     for relative in MODULE.TYPESCRIPT_PORTABLE_MODULES:
         write(root, f"ts/fastdb4ts/src/payload/{relative}", "// projection\n")
+    for relative in RUST_SAFE_MODULES:
+        write(root, f"bindings/rust/fastdb/src/{relative}", "// projection\n")
+    for relative in RUST_SYS_MODULES:
+        write(root, f"bindings/rust/fastdb-sys/src/{relative}", "// projection\n")
     return policy
 
 
@@ -278,12 +288,22 @@ class PolicyTests(RepositoryFixture):
         self.assertEqual(policy["typescript_version"], "0.0.3")
         self.assertEqual(len(policy["removed_paths"]), 14)
         self.assertEqual(len(policy["required_paths"]), 10)
-        self.assertEqual(len(policy["historical_allowlist"]), 25)
+        self.assertEqual(len(policy["historical_allowlist"]), 27)
         self.assertEqual(len(policy["literal_carrier_allowlist"]), 1)
-        self.assertEqual(len(policy["superseded_documents"]), 12)
+        self.assertEqual(len(policy["superseded_documents"]), 14)
         self.assertEqual(len(policy["forbidden_authority_literals"]), 26)
         self.assertEqual(len(policy["forbidden_domain_literals"]), 9)
         self.assertEqual(len(policy["standalone_markers"]), 8)
+        self.assertTrue(
+            {
+                "bindings",
+                "examples",
+                "go",
+                "schemas",
+                "tools",
+                "fastcarto/README.md",
+            }.issubset(set(policy["domain_scan_roots"]))
+        )
         self.assertEqual(
             MODULE.validate_policy(ROOT, policy),
             [],
@@ -340,6 +360,19 @@ class InventoryAndAuthorityTests(RepositoryFixture):
         ]
         self.assertTrue(MODULE.check_repository(self.root, changed))
 
+    def test_literal_carrier_path_is_policy_driven(self) -> None:
+        changed = copy.deepcopy(self.policy)
+        diagnostic = "Warning " + "325:"
+        changed["forbidden_authority_literals"][0] = diagnostic
+        changed["literal_carrier_allowlist"] = ["config/policy.json"]
+        (self.root / "tests/ci/policy.json").unlink()
+        write(
+            self.root,
+            "config/policy.json",
+            json.dumps(changed, indent=2) + "\n",
+        )
+        self.assertEqual(self.violations(changed), [])
+
     def test_rejects_missing_standalone_marker(self) -> None:
         write(self.root, "src/standalone.py", "# marker removed\n")
         self.assert_rejected("standalone marker")
@@ -358,6 +391,31 @@ class InventoryAndAuthorityTests(RepositoryFixture):
             "const parsed = JSON.parse(source);\n",
         )
         self.assert_rejected("binding-side semantic")
+
+    def test_rejects_binding_side_renderer(self) -> None:
+        write(
+            self.root,
+            "python/fastdb4py/payload/_codegen.py",
+            "def render_typescript(model):\n"
+            "    return str(model)\n",
+        )
+        self.assert_rejected("binding-side semantic")
+
+    def test_rejects_rust_binding_side_parser(self) -> None:
+        write(
+            self.root,
+            "bindings/rust/fastdb/src/lib.rs",
+            "use serde_json::Value;\n",
+        )
+        self.assert_rejected("binding-side semantic")
+
+    def test_rejects_downstream_domain_in_rust_binding(self) -> None:
+        write(
+            self.root,
+            "bindings/rust/fastdb/src/domain.rs",
+            DOWNSTREAM_DOMAIN,
+        )
+        self.assert_rejected("forbidden downstream-domain literal")
 
     def test_violations_are_stably_sorted(self) -> None:
         write(self.root, "z.txt", OBSOLETE_AUTHORITY)
@@ -498,6 +556,17 @@ class GovernanceSurfaceTests(RepositoryFixture):
         )
         self.assert_rejected("Issue 0003")
 
+    def test_rejects_open_issue_0003_with_completed_clean_package_claim(self) -> None:
+        write(
+            self.root,
+            "docs/issues/0003-legacy-swig-diagnostics.md",
+            "# Binding diagnostics\n\n"
+            "Status: Open\n\n"
+            "Clean package evidence is complete. "
+            "Hosted execution remains pending.\n",
+        )
+        self.assert_rejected("Issue 0003")
+
     def test_rejects_missing_markdown_target_or_anchor(self) -> None:
         current = self.root / "docs/current.md"
         current.write_text(
@@ -510,6 +579,14 @@ class GovernanceSurfaceTests(RepositoryFixture):
             encoding="utf-8",
         )
         self.assert_rejected("Markdown anchor")
+
+    def test_rejects_missing_link_outside_docs_and_package_readmes(self) -> None:
+        write(
+            self.root,
+            "bindings/rust/README.md",
+            "# Rust projection\n\n[missing](absent.md)\n",
+        )
+        self.assert_rejected("Markdown target")
 
     def test_markdown_link_scan_ignores_inline_code_calls(self) -> None:
         write(
@@ -524,6 +601,28 @@ class GovernanceSurfaceTests(RepositoryFixture):
     def test_rejects_missing_workflow_integration(self) -> None:
         write(self.root, ".github/workflows/tests.yml", "steps: []\n")
         self.assert_rejected("workflow")
+
+    def test_rejects_conditional_clean_cut_workflow_job(self) -> None:
+        workflow = self.root / ".github/workflows/tests.yml"
+        workflow.write_text(
+            workflow.read_text(encoding="utf-8").replace(
+                "    runs-on: ubuntu-latest",
+                "    if: false\n    runs-on: ubuntu-latest",
+            ),
+            encoding="utf-8",
+        )
+        self.assert_rejected("unconditional")
+
+    def test_rejects_non_failing_clean_cut_command(self) -> None:
+        workflow = self.root / ".github/workflows/tests.yml"
+        workflow.write_text(
+            workflow.read_text(encoding="utf-8").replace(
+                "python3 tools/check_p5_clean_cut.py --check",
+                "python3 tools/check_p5_clean_cut.py --check || true",
+            ),
+            encoding="utf-8",
+        )
+        self.assert_rejected("missing command")
 
 
 if __name__ == "__main__":

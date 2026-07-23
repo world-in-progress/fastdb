@@ -1,5 +1,11 @@
 # fastdb4py 优化全景计划
 
+> **Status: historical/superseded.** Retained as standalone-engine
+> optimization evidence only. Current authority is the
+> [accepted portable-payload foundation](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
+> and its
+> [P5 clean-cut design](../docs/superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md).
+>
 > 基线数据来源：[o0/benchmark.md](o0/benchmark.md)（macOS, Apple Silicon, Python 3.13.3, fastdb4py v0.1.12）
 > 代码分析来源：`plan.md`
 
@@ -233,7 +239,9 @@ return arr
 
 #### 问题
 
-db-mapped scalar read 的 `__getattr__` 在确定字段类型后，用最多 **8 个 if-elif 判断**路由到对应 SWIG getter（[feature.py:114–130](../python/fastdb4py/feature/feature.py)）。最常见的 F64 需要经过 4 个不匹配的分支才到达。
+db-mapped scalar read 的 `__getattr__` 在确定字段类型后，用最多 **8 个 if-elif 判断**路由到对应 SWIG getter（历史位置
+`python/fastdb4py/feature/feature.py:114–130`，该模块已被后续 clean cut
+移除）。最常见的 F64 需要经过 4 个不匹配的分支才到达。
 
 ```
 benchmark o0:  scalar_read_db_mapped (F64)  → 667 ns
@@ -293,7 +301,9 @@ if getter is not None:
 
 #### 问题
 
-`Feature.__init__` 第一行分配 `self._cache: dict = {}`（[feature.py:18](../python/fastdb4py/feature/feature.py)），无论该对象是否需要缓存。
+`Feature.__init__` 第一行分配 `self._cache: dict = {}`（历史位置
+`python/fastdb4py/feature/feature.py:18`，该模块已被后续 clean cut
+移除），无论该对象是否需要缓存。
 
 对于 db-mapped Feature（`table[i]`、`iter_table`、`map_from` 返回的对象），**_cache 永远不会被写入 scalar 值**——scalar 字段直接走 SWIG，只有 ref 字段首次访问后才会写缓存。大量迭代循环时，每帧都分配并很快丢弃一个空 dict，给 GC 造成不必要的压力。
 

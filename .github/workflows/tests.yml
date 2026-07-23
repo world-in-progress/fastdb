@@ -72,6 +72,17 @@ jobs:
               - 'docs/**'
               - 'docs/issues/0002-portable-payload-foundation-implementation-status.md'
 
+  clean_cut:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Enforce the P5 clean-cut repository policy
+        run: |
+          python3 tests/ci/test_check_p5_clean_cut.py
+          python3 tools/check_p5_clean_cut.py --check
+
   rust_payload:
     needs: detect_changes
     if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.rust == 'true' || needs.detect_changes.outputs.workflow == 'true'
@@ -186,11 +197,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-
-      - name: Enforce the P5 clean-cut repository policy
-        run: |
-          python3 tests/ci/test_check_p5_clean_cut.py
-          python3 tools/check_p5_clean_cut.py --check
 
       - name: Validate ordered projection and closed-codegen map
         run: |

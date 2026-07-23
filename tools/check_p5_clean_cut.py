@@ -53,9 +53,19 @@ TYPESCRIPT_PORTABLE_MODULES = (
     "runtime.ts",
     "spec.ts",
 )
+RUST_SAFE_MODULES = (
+    "builder.rs",
+    "codegen.rs",
+    "lib.rs",
+    "runtime.rs",
+)
+RUST_SYS_MODULES = ("lib.rs",)
 
 PYTHON_PORTABLE_ROOT = "python/fastdb4py/payload"
 TYPESCRIPT_PORTABLE_ROOT = "ts/fastdb4ts/src/payload"
+RUST_SAFE_ROOT = "bindings/rust/fastdb/src"
+RUST_SYS_ROOT = "bindings/rust/fastdb-sys/src"
+RUST_BINDINGS_ROOT = "bindings/rust"
 ABI_ALLOWLIST = "tests/abi/fastdb_payload_v1_symbols.txt"
 WASM_EXPORT_GENERATOR = "tools/generate_payload_wasm_exports.py"
 P4_PROOF_MAP = "tests/ci/p4_projection_codegen_map.json"
@@ -66,6 +76,7 @@ ISSUE_0002 = (
     "docs/issues/0002-portable-payload-foundation-implementation-status.md"
 )
 ISSUE_0003 = "docs/issues/0003-legacy-swig-diagnostics.md"
+MARKDOWN_EXCLUDED_ROOTS = ("fastcarto/lib/",)
 
 ABI_SYMBOL_PATTERN = re.compile(r"^fdb_payload_v1_[A-Za-z0-9_]+$")
 INLINE_LINK_PATTERN = re.compile(r"!?\[([^\]]*)\]\(([^)\n]+)\)")
@@ -676,12 +687,9 @@ def _check_markdown(
         relative
         for relative in inventory
         if relative.casefold().endswith(".md")
-        and (
-            relative == "README.md"
-            or relative.startswith("docs/")
-            or relative == "python/README.md"
-            or relative == "ts/README.md"
-            or relative == "ts/fastdb4ts/README.md"
+        and not any(
+            relative.startswith(prefix)
+            for prefix in MARKDOWN_EXCLUDED_ROOTS
         )
     ]
     sources: dict[str, str] = {}
@@ -900,18 +908,64 @@ def _check_binding_authority(
             f"missing={sorted(expected_typescript - actual_typescript)!r}, "
             f"unexpected={sorted(actual_typescript - expected_typescript)!r}"
         )
+    actual_rust_safe = _direct_module_inventory(inventory, RUST_SAFE_ROOT)
+    expected_rust_safe = set(RUST_SAFE_MODULES)
+    if actual_rust_safe != expected_rust_safe:
+        violations.append(
+            "Rust safe portable module inventory must remain exact; "
+            f"missing={sorted(expected_rust_safe - actual_rust_safe)!r}, "
+            f"unexpected={sorted(actual_rust_safe - expected_rust_safe)!r}"
+        )
+    actual_rust_sys = _direct_module_inventory(inventory, RUST_SYS_ROOT)
+    expected_rust_sys = set(RUST_SYS_MODULES)
+    if actual_rust_sys != expected_rust_sys:
+        violations.append(
+            "Rust raw portable module inventory must remain exact; "
+            f"missing={sorted(expected_rust_sys - actual_rust_sys)!r}, "
+            f"unexpected={sorted(actual_rust_sys - expected_rust_sys)!r}"
+        )
 
     python_patterns = (
         re.compile(rb"\bimport[ \t]+hashlib\b"),
         re.compile(rb"\bfrom[ \t]+hashlib\b"),
         re.compile(rb"\bjson[ \t]*\.[ \t]*(?:loads|dumps)[ \t]*\("),
         re.compile(rb"\borjson[ \t]*\.[ \t]*(?:loads|dumps)[ \t]*\("),
+        re.compile(
+            rb"\b(?:def|class)[ \t]+(?:"
+            rb"[A-Za-z0-9_]*(?:render|renderer)[A-Za-z0-9_]*|"
+            rb"(?:emit|generate)_(?:source|cpp|rust|python|typescript)"
+            rb")\b",
+            re.IGNORECASE,
+        ),
+        re.compile(rb"\b(?:jinja2|mako)\b"),
+        re.compile(rb"\bfrom[ \t]+string[ \t]+import[ \t]+Template\b"),
     )
     typescript_patterns = (
         re.compile(rb"\bJSON[ \t]*\.[ \t]*(?:parse|stringify)[ \t]*\("),
         re.compile(rb"\bcreateHash[ \t]*\("),
         re.compile(rb"\bcrypto[ \t]*\.[ \t]*subtle\b"),
         re.compile(rb"\bfrom[ \t]+[\"'](?:node:)?crypto[\"']"),
+        re.compile(
+            rb"\b(?:function|class|const|let)[ \t]+(?:"
+            rb"[A-Za-z0-9_$]*(?:render|renderer)[A-Za-z0-9_$]*|"
+            rb"(?:emit|generate)(?:Source|Cpp|Rust|Python|TypeScript)"
+            rb")\b",
+            re.IGNORECASE,
+        ),
+        re.compile(rb"\b(?:handlebars|mustache|ejs)\b", re.IGNORECASE),
+    )
+    rust_patterns = (
+        re.compile(
+            rb"\b(?:serde_json|sha2|jsonschema|minijinja|tera)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            rb"\b(?:fn|struct|enum)[ \t]+(?:"
+            rb"[A-Za-z0-9_]*(?:render|renderer)[A-Za-z0-9_]*|"
+            rb"(?:emit|generate)_(?:source|cpp|rust|python|typescript)"
+            rb")\b",
+            re.IGNORECASE,
+        ),
     )
     for relative in sorted(
         path
@@ -924,7 +978,7 @@ def _check_binding_authority(
         elif any(pattern.search(data) for pattern in python_patterns):
             violations.append(
                 f"{relative}: binding-side semantic parser or digest "
-                "implementation is forbidden"
+                "or renderer implementation is forbidden"
             )
     for relative in sorted(
         path
@@ -937,7 +991,20 @@ def _check_binding_authority(
         elif any(pattern.search(data) for pattern in typescript_patterns):
             violations.append(
                 f"{relative}: binding-side semantic parser or digest "
-                "implementation is forbidden"
+                "or renderer implementation is forbidden"
+            )
+    for relative in sorted(
+        path
+        for path in inventory
+        if path.startswith(RUST_BINDINGS_ROOT + "/")
+    ):
+        data, error = _read_bytes(root, relative)
+        if error is not None or data is None:
+            violations.append(error or f"cannot read {relative}")
+        elif any(pattern.search(data) for pattern in rust_patterns):
+            violations.append(
+                f"{relative}: binding-side semantic parser or digest "
+                "or renderer implementation is forbidden"
             )
     return violations
 
@@ -977,7 +1044,11 @@ def _check_cli(root: Path) -> list[str]:
     return violations
 
 
-def _check_swig_boundary(root: Path, inventory: list[str]) -> list[str]:
+def _check_swig_boundary(
+    root: Path,
+    inventory: list[str],
+    policy: dict[str, object],
+) -> list[str]:
     violations: list[str] = []
     source, error = _read_text(root, PYTHON_PACKAGE_CHECKER)
     if error is not None or source is None:
@@ -1003,11 +1074,7 @@ def _check_swig_boundary(root: Path, inventory: list[str]) -> list[str]:
         "Warning " + "325:",
         "Warning " + "451:",
     )
-    excluded = {
-        POLICY_PATH.relative_to(ROOT).as_posix()
-        if root == ROOT
-        else "tests/ci/policy.json"
-    }
+    excluded = set(policy["literal_carrier_allowlist"])
     for relative in inventory:
         if relative in excluded:
             continue
@@ -1045,7 +1112,7 @@ def _check_issues(root: Path) -> list[str]:
             "tag",
             "publication",
             "release",
-            "C-Two",
+            "C-" + "Two",
         )
         for marker in required:
             if marker.casefold() not in issue2.casefold():
@@ -1073,10 +1140,20 @@ def _check_issues(root: Path) -> list[str]:
             )
         elif statuses == ["Open"]:
             required = (
-                "clean package evidence",
                 "Hosted",
                 "pending",
             )
+            if re.search(
+                r"(?is)(?:"
+                r"pending[^.\n]{0,120}clean[- ]package evidence|"
+                r"clean[- ]package evidence[^.\n]{0,120}pending"
+                r")",
+                issue3,
+            ) is None:
+                violations.append(
+                    "Issue 0003 Open state must explicitly mark clean-package "
+                    "evidence pending"
+                )
         else:
             required = ()
             violations.append(
@@ -1091,20 +1168,58 @@ def _check_issues(root: Path) -> list[str]:
     return violations
 
 
+def _workflow_job_body(source: str, name: str) -> str | None:
+    lines = source.splitlines()
+    starts = [
+        index
+        for index, line in enumerate(lines)
+        if re.fullmatch(rf"  {re.escape(name)}:[ \t]*", line) is not None
+    ]
+    if len(starts) != 1:
+        return None
+    start = starts[0]
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if re.fullmatch(r"  [A-Za-z0-9_-]+:[ \t]*", lines[index]) is not None:
+            end = index
+            break
+    return "\n".join(lines[start + 1 : end])
+
+
 def _check_workflow(root: Path) -> list[str]:
     source, error = _read_text(root, WORKFLOW_PATH)
     if error is not None or source is None:
         return [error or f"cannot read {WORKFLOW_PATH}"]
     violations: list[str] = []
+    body = _workflow_job_body(source, "clean_cut")
+    if body is None:
+        return [
+            f"{WORKFLOW_PATH}: workflow must contain exactly one clean_cut job"
+        ]
+    if re.search(
+        r"(?m)^[ \t]+(?:if|needs|continue-on-error):",
+        body,
+    ) is not None:
+        violations.append(
+            f"{WORKFLOW_PATH}: clean_cut must be an unconditional standalone job"
+        )
     for command in (
         "python3 tests/ci/test_check_p5_clean_cut.py",
         "python3 tools/check_p5_clean_cut.py --check",
     ):
-        if command not in source:
+        if re.search(
+            rf"(?m)^[ \t]+(?:-[ \t]+run:[ \t]+)?"
+            rf"{re.escape(command)}[ \t]*$",
+            body,
+        ) is None:
             violations.append(
-                f"{WORKFLOW_PATH}: workflow is missing clean-cut command "
+                f"{WORKFLOW_PATH}: clean_cut job is missing command "
                 f"{command!r}"
             )
+    if "uses: actions/checkout@" not in body:
+        violations.append(
+            f"{WORKFLOW_PATH}: clean_cut job must check out the repository"
+        )
     return violations
 
 
@@ -1147,7 +1262,9 @@ def check_repository(
         _check_binding_authority(resolved_root, inventory)
     )
     violations.extend(_check_cli(resolved_root))
-    violations.extend(_check_swig_boundary(resolved_root, inventory))
+    violations.extend(
+        _check_swig_boundary(resolved_root, inventory, policy)
+    )
     violations.extend(_check_issues(resolved_root))
     violations.extend(_check_workflow(resolved_root))
     return sorted(set(violations))
