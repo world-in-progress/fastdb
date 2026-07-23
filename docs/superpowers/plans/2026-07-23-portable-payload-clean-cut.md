@@ -1522,7 +1522,7 @@ run_installed_tests() {
   python="$2"
   wheel="$3"
   temporary="$(mktemp -d "${TMPDIR:-/tmp}/fastdb-p5-${label}.XXXXXX")"
-  (
+  if (
     cd "$temporary"
     uv run --isolated --no-project --python "$python" \
       --with "$wheel" --with pytest \
@@ -1535,8 +1535,13 @@ run_installed_tests() {
       "$repo/tests/python/test_view_owner_lifetime.py" \
       "$repo/tests/python/test_materialize.py" \
       "$repo/tests/python/test_fast_serializer.py" -q
-  )
+  ); then
+    status=0
+  else
+    status=$?
+  fi
   rm -rf "$temporary"
+  return "$status"
 }
 
 run_installed_tests current "$current_python" "${current_wheels[0]}"
