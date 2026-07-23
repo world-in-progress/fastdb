@@ -1651,9 +1651,16 @@ Windows fidelity defect: device names, trailing-dot/space aliases, forbidden
 characters, and NTFS alternate-stream paths could succeed without creating
 the requested ordinary artifact. Runtime validation now uses the supported
 Windows reserved-path predicate, with a Python 3.10-3.12 fallback, while
-retaining Core-valid colon paths on POSIX. The corrected extended-range review
-remains pending until the correction commit exists; no independent review is
-claimed.
+retaining Core-valid colon paths on POSIX.
+
+The final mechanically frozen same-agent re-review covers exact range
+`c94aa85fa39566e8e48f5a6c711fe099a47cd848..d6d284c`. Its separate
+specification/authority and five-axis code-quality passes report 0 Critical,
+0 Important, and 0 unresolved material Minor findings after the corrections.
+This is primary-agent review, not independent or subagent evidence. The
+exclusive macOS path and platform-independent Windows-name policy are locally
+executed; Linux `renameat2` and Windows `rename` runtime branches remain
+pending their platform package gates and are not represented as local passes.
 
 **Task 1 intentional destination-tree limit:** The FastDB CLI accepts only a
 nonexistent output root. It never merges, updates, or overwrites a project
@@ -1868,7 +1875,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut and local release-readiness handoff | Open; Task 0 design/plan frozen from `9d86c17`; Task 1 Core-artifact CLI implemented locally from `c94aa85`; frozen review findings corrected through the Windows filesystem policy, final extended-range review pending | Complete the remaining Python/TypeScript/native/SWIG cleanup, `RecordEngine` rename, deterministic descriptor repair, exact clean-cut policy, and fresh local gates without a version bump or publication; then hand the frozen FastDB boundary to C-Two |
+| P5. Clean cut and local release-readiness handoff | Open; Task 0 design/plan frozen from `9d86c17`; Task 1 Core-artifact CLI locally complete through `d6d284c`, with final primary-agent review 0 Critical / 0 Important / 0 unresolved material Minor; Linux/Windows runtime execution remains pending platform gates | Complete the remaining Python/TypeScript/native/SWIG cleanup, `RecordEngine` rename, deterministic descriptor repair, exact clean-cut policy, and fresh local gates without a version bump or publication; then hand the frozen FastDB boundary to C-Two |
 
 ## Non-deferrable 0.2.0 work
 
