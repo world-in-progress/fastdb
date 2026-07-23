@@ -9,6 +9,8 @@
 - **P2 implementation plan:** [Portable Payload Record Runtime Implementation Plan](../superpowers/plans/2026-07-17-portable-payload-record-runtime.md)
 - **P3 implementation plan:** [Portable Payload Object-Graph Runtime Implementation Plan](../superpowers/plans/2026-07-20-portable-payload-object-graph-runtime.md)
 - **P4 implementation plan:** [Portable Payload Language Projections and Codegen Implementation Plan](../superpowers/plans/2026-07-21-portable-payload-language-projections-codegen.md)
+- **P5 design:** [Portable Payload P5 Clean-Cut Design](../superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md)
+- **P5 implementation plan:** [Portable Payload P5 Clean-Cut Implementation Plan](../superpowers/plans/2026-07-23-portable-payload-clean-cut.md)
 - **Post-0.2 deferrals:** [Issue 0001](0001-portable-payload-deferred-capabilities.md)
 
 ## Purpose
@@ -1585,27 +1587,41 @@ direct/staged parity; Core-owned four-target in-memory artifact generation is
 deterministic and generated outputs compile or import without downstream
 semantics.
 
-### P5 clean cut, release, and downstream composition
+### P5 clean cut and local release-readiness handoff
 
 **Current limit:** Public call-db, `fastdb.schema.v1`, `columnar.v1`, and
 `ColumnEngine` remain in the 0.1.x package surface. Package metadata remains
-0.1.x; no 0.2.0 release, tag, publication, or C-Two composition proof exists.
+`fastdb4py==0.1.22` and `fastdb4ts==0.0.3`; no 0.2.0 release, tag,
+publication, or C-Two composition proof exists.
 
-**Reason:** The obsolete surfaces cannot be removed until P1-P4 provide the
-complete replacement and parity evidence. Downstream composition belongs in
-C-Two only after FastDB freezes its owner boundary.
+**Reason:** P1-P4 now provide the complete replacement and parity evidence, so
+the P5 clean cut can proceed without a compatibility parser or binding-owned
+fallback. Downstream composition still belongs in C-Two only after FastDB
+freezes its owner boundary.
 
 **Impact:** Users must treat those old APIs as migration inputs and must not
-extend them as portable authority. FastDB cannot claim 0.2.0 readiness, and
-C-Two cannot fill the missing FastDB slices in its own repository.
+extend them as portable authority. FastDB cannot yet claim a clean local
+target or published 0.2.0 release, and C-Two cannot fill the missing FastDB
+slices in its own repository.
 
-**Next owner slice:** FastDB P5, followed by a separate C-Two-owned composition
+**P5 Task 0 handoff:** The design and executable plan are frozen from exact
+start `9d86c171eda1fe107c3519ce040ca2ec417167f9`. The portable ABI remains
+exactly 117 sorted symbols. P5 implementation has not started; the old
+Python, TypeScript, native/SWIG, engine-name, package, and documentation
+surfaces remain live. Package versions are unchanged. Hosted CI, push, tag,
+publication, release, and C-Two composition all remain pending.
+
+**Next owner slice:** Execute the FastDB P5 plan, then stop FastDB design work
+at the frozen owner boundary and begin a separate C-Two-owned composition
 task.
 
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
-clean-cut, parity, and release gates at 0.2.0; then prove C-Two delegates the
-nested spec and composes artifacts without duplicating FastDB semantics.
+clean-cut, parity, warning-free package, and local release-readiness gates
+without changing the current package versions or publishing. Record hosted,
+version-bump, tag, publication, and release facts as pending. C-Two's later
+proof must delegate the nested spec and compose artifacts without duplicating
+FastDB semantics, but that proof is not part of FastDB P5.
 
 ## P1 observations that remain open
 
@@ -1771,7 +1787,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut, release, downstream composition | Open; next owner slice | Remove public call-db/schema/columnar authority, complete the `RecordEngine` rename, prove local package/release readiness without publishing, then let downstream composition delegate the nested FastDB sub-spec without semantic duplication |
+| P5. Clean cut and local release-readiness handoff | Open; Task 0 design/plan frozen at `9d86c17`, implementation not started | Execute the clean removal, `RecordEngine` rename, deterministic descriptor repair, zero-warning packages, exact clean-cut policy, and fresh local gates without a version bump or publication; then hand the frozen FastDB boundary to C-Two |
 
 ## Non-deferrable 0.2.0 work
 

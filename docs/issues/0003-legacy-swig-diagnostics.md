@@ -49,9 +49,29 @@ SWIG interface and does not depend on these ignored declarations.
 
 FastDB owns the cleanup. It belongs with the legacy Python binding and the P5
 clean-cut work unless one of the listed warnings begins blocking a required
-package build earlier. Resolution depends on deciding whether each legacy
-declaration is removed with the obsolete surface or retained through an
-explicit, ownership-correct SWIG typemap/API shape.
+package build earlier.
+
+## P5 Task 0 selected resolution
+
+The accepted
+[P5 clean-cut design](../superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md)
+and
+[implementation plan](../superpowers/plans/2026-07-23-portable-payload-clean-cut.md)
+choose the following owner-correct cleanup:
+
+- remove the scratch/final-backing classes and SWIG wrappers that exist only
+  for the obsolete call-db path;
+- keep the native tile APIs available to C++ while excluding their already
+  unsupported nested declarations from SWIG parsing;
+- keep the internal `utf8_view_t` sequence bridge while preventing SWIG from
+  generating a writable setter for its borrowed `const char *` member; and
+- replace the exact-seven-warning allowance with a zero-warning package gate
+  that rejects any matched SWIG diagnostic.
+
+This is a design decision, not closure evidence. The source is unchanged at
+the Task 0 starting commit
+`9d86c171eda1fe107c3519ce040ca2ec417167f9`, and this issue remains open until
+the clean package proof below passes.
 
 ## Closure criteria
 
