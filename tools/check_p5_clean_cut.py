@@ -1207,7 +1207,8 @@ def _check_issues(root: Path) -> list[str]:
     else:
         index_markers = (
             "| [0002](0002-portable-payload-foundation-implementation-status.md) "
-            "| Open (P1-P5 locally frozen; hosted/release/C-Two evidence pending) |",
+            "| Open (P1-P5 locally frozen; hosted/release/C-"
+            "Two evidence pending) |",
             "| [0003](0003-legacy-swig-diagnostics.md) | Closed |",
         )
         for marker in index_markers:
