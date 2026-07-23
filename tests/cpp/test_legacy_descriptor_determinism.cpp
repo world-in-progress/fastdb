@@ -2,6 +2,7 @@
 #include "TestSupport.hpp"
 #include "fastdb.h"
 
+#include <cstddef>
 #include <cstring>
 #include <memory>
 #include <vector>
@@ -47,6 +48,15 @@ int main() {
                 sizeof(descriptor));
     require(descriptor.type == wx::ftU8);
     require(descriptor.element_type == 0);
+    const std::size_t padding_begin =
+        offsetof(wx::field_desc_ex_t, element_type) +
+        sizeof(descriptor.element_type);
+    const std::size_t padding_end =
+        offsetof(wx::field_desc_ex_t, vmin);
+    require(padding_begin <= padding_end);
+    for (std::size_t offset = padding_begin; offset < padding_end; ++offset) {
+        require(expected[descriptor_offset + offset] == 0);
+    }
 
     std::unique_ptr<wx::FastVectorDb> database(
         wx::FastVectorDb::load(expected.data(), expected.size(), nullptr,
