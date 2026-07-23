@@ -843,6 +843,12 @@
           {
             "file": "tests/cpp/payload/test_codegen.cpp",
             "language": "cpp",
+            "test": "test_checked_output_empty_append_is_an_exact_no_op",
+            "markers": ["std::string_view{}", "finish_trimming_blank_line", "!rejected"]
+          },
+          {
+            "file": "tests/cpp/payload/test_codegen.cpp",
+            "language": "cpp",
             "test": "test_rich_specs_emit_only_official_runtime_ergonomics",
             "markers": ["generated-by: fastdb.payload.codegen.v1", "payload-sha256:", "generator-version: fastdb.payload.codegen.v1"]
           }

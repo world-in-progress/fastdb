@@ -71,8 +71,11 @@ public:
 
 private:
     void append(std::string_view value) {
+        if (value.empty()) {
+            return;
+        }
         flush_pending_newline();
-        if (!value.empty() && value.back() == '\n') {
+        if (value.back() == '\n') {
             append_immediate(value.substr(0U, value.size() - 1U));
             pending_newline_ = true;
             return;

@@ -1489,6 +1489,15 @@ compare path, bytes, and SHA-256 for every target; ordinary single-thread
 Emscripten keeps the non-concurrent assertions, and native ThreadSanitizer is
 the concurrency authority.
 
+The frozen primary review then found that an empty `CheckedOutput` append
+still flushed the pending newline. At an exact ceiling, a true no-op could
+therefore report a false overflow and could alter final blank-line trimming.
+The retained RED fails on that empty append before the fix. `append()` now
+returns immediately for empty input, and the same exact-limit case passes
+under Debug, Release, ASan+UBSan, and ThreadSanitizer. All Core/Wasm and
+package artifacts were rebuilt from that corrected source before the final
+hashes below were recorded.
+
 The first combined TypeScript hostile run also exposed a harness defect:
 generated `compileSpec()` calls ran before the official Wasm projection was
 initialized. The smoke now awaits `initPayload()` before executing any
@@ -1504,10 +1513,10 @@ Node 25.8.1, Rust 1.91.0, uv 0.10.12, free-threaded Python 3.14.3, and
 Python 3.10.17 is:
 
 ```text
-Native Debug: 39/39 in 74.03s
-Native Release: 39/39 in 50.16s
-ASan+UBSan hard-fail: 39/39 in 266.89s
-Focused ThreadSanitizer runtime/codegen set: 13/13 in 455.71s
+Native Debug: 39/39 in 97.37s
+Native Release: 39/39 in 74.08s
+ASan+UBSan hard-fail: 39/39 in 301.04s
+Focused ThreadSanitizer runtime/codegen set: 13/13 in 499.98s
 Native ABI: exactly 117
 Official TypeScript/Wasm ABI: exactly 117
 Independent Core Wasm ABI: exactly 117
@@ -1533,19 +1542,19 @@ The Task 9 package artifact SHA-256 values are:
 
 ```text
 free-threaded 3.14 wheel
-  87c5d09df5f6599d718195a21e98a1f7026cf0c6439ee0817f0b2f2a4132924b
+  4ce9d9e442a564c286e56dec51239b8842208bd67ee84bf22f3e937e6c66b5ba
 free-threaded 3.14 sdist
-  e5952c08aef16f9521ef9fd7bbd9c2da1b5c7a2886c2497cd2bbe616284b3647
+  11aa69ee143635a8d211aa4abd3cc0de2c5615da9dbf511f921d00fe894f51f9
 Python 3.10 wheel
-  d4169b274af3ed0f1857cdc6b8256ef2edb5684b0f369115e118b2a6935f8b9a
+  b9fa3ebdf373206d860d1b9bea2ccfe6a91e7fe3bbd985ba10b41ef07a2897bb
 Python 3.10 sdist
-  f213f9ebab93f60db6965fd335eeb07cbcfd45cafa6f8ab9c4c5a13a7db51bd9
+  2e8a0b2b0513f22c5e6637cb45c640cdec68b51050769ecdce9669ab0e00dd35
 fastdb4ts-0.0.3.tgz
-  0a9c5dc4063c2bf93e698306a37400d5fe5d49a8d7f89a717920e15a4dbbadc3
+  f1f7564954c096975956008596b3ee1e2e38668e3936b5f2d13cda88d03d6f6d
 official fastdb4ts.js
   ed28d53b23c336abc5dd4c94bc4472a7c323c9fa8029d049758bdafc33a7dc54
 official fastdb4ts.wasm
-  5e41515a394db078c54d27d5ef9cd773b77d030428d4d20096583cf1a28582d7
+  d2dbbbc4588d618ec4e3f5da5ab4063da28e0249f0c3cfaef272b325b2c5aba7
 ```
 
 The context-owning agent performed the Task 9 specification/authority and code

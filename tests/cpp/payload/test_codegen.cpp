@@ -3,6 +3,7 @@
 #include "payload/codegen/Artifact.hpp"
 #include "payload/codegen/Generator.hpp"
 #include "payload/codegen/Identifier.hpp"
+#include "payload/codegen/Renderer.hpp"
 #include "payload/identity/Sha256.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 #include "payload/spec/RuntimeTopology.hpp"
@@ -87,7 +88,9 @@ namespace {
 using fastdb::payload::codegen::ArtifactDraft;
 using fastdb::payload::codegen::ArtifactKind;
 using fastdb::payload::codegen::ArtifactSet;
+using fastdb::payload::codegen::CheckedOutput;
 using fastdb::payload::codegen::GenerationLimits;
+using fastdb::payload::codegen::OutputLimitExceeded;
 using fastdb::payload::codegen::Target;
 using fastdb::payload::codegen::generate;
 using fastdb::payload::codegen::generator_core_abi_version;
@@ -734,6 +737,22 @@ int test_generation_rejects_unknown_target_and_literal_limits() {
     return EXIT_SUCCESS;
 }
 
+int test_checked_output_empty_append_is_an_exact_no_op() {
+    CheckedOutput output(UINT64_C(1));
+    output += '\n';
+    output += '\n';
+
+    bool rejected = false;
+    try {
+        output += std::string_view{};
+    } catch (const OutputLimitExceeded&) {
+        rejected = true;
+    }
+    require(!rejected);
+    require(std::move(output).finish_trimming_blank_line() == "\n");
+    return EXIT_SUCCESS;
+}
+
 int test_all_targets_enforce_exact_output_limits_and_concurrent_determinism() {
     const std::string source =
         read_file(std::string(FASTDB_PAYLOAD_SPEC_FIXTURE_DIR) +
@@ -999,6 +1018,9 @@ int main(int argc, char** argv) {
     }
     if (test_generation_rejects_unknown_target_and_literal_limits() !=
         EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_checked_output_empty_append_is_an_exact_no_op() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     if (test_all_targets_enforce_exact_output_limits_and_concurrent_determinism() !=
