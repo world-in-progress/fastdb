@@ -225,9 +225,11 @@ def create_repository(root: Path) -> dict[str, object]:
         "# Portable payload implementation status\n\n"
         "Status: Open\n\n"
         "#### P5 Task 6 local evidence\n\n"
-        "P5 Task 7 remains pending. Hosted execution remains pending. "
-        "Version change, push, tag, publication, release, and downstream "
-        "C-" "Two composition remain pending.\n",
+        "P5 Task 7 is locally complete.\n\n"
+        "**P5 local clean cut:** Complete\n\n"
+        "Hosted execution remains pending. Version change, push, tag, "
+        "publication, release, and downstream C-" "Two composition remain "
+        "pending.\n",
     )
     write(
         root,
@@ -610,6 +612,20 @@ class GovernanceSurfaceTests(RepositoryFixture):
             encoding="utf-8",
         )
         self.assert_rejected("Task 6")
+
+    def test_rejects_missing_local_closure_marker(self) -> None:
+        issue = self.root / (
+            "docs/issues/0002-portable-payload-foundation-"
+            "implementation-status.md"
+        )
+        issue.write_text(
+            issue.read_text(encoding="utf-8").replace(
+                "**P5 local clean cut:** Complete",
+                "P5 local closure remains pending",
+            ),
+            encoding="utf-8",
+        )
+        self.assert_rejected("local clean cut")
 
     def test_rejects_stale_issue_index_status(self) -> None:
         index = self.root / "docs/issues/README.md"

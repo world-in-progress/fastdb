@@ -1140,14 +1140,18 @@ def _check_issues(root: Path) -> list[str]:
         violations.append(error or f"cannot read {ISSUE_0002}")
     else:
         issue2_plain = issue2.replace("*", "")
-        if re.search(
-            r"(?im)^[ \t]*(?:-[ \t]*)?Status:[ \t]*Open[ \t]*$",
+        issue2_statuses = re.findall(
+            r"(?im)^[ \t]*(?:-[ \t]*)?Status:[ \t]*(Open|Closed)[ \t]*$",
             issue2_plain,
-        ) is None:
-            violations.append("Issue 0002 must remain Open")
+        )
+        if issue2_statuses != ["Open"]:
+            violations.append(
+                "Issue 0002 must contain exactly one truthful Open state"
+            )
         required = (
             "#### P5 Task 6 local evidence",
             "P5 Task 7",
+            "**P5 local clean cut:** Complete",
             "pending",
             "Hosted",
             "version",
@@ -1160,7 +1164,7 @@ def _check_issues(root: Path) -> list[str]:
         for marker in required:
             if marker.casefold() not in issue2.casefold():
                 violations.append(
-                    f"Issue 0002 is missing required Task 6 truth marker "
+                    f"Issue 0002 is missing required local clean cut truth marker "
                     f"{marker!r}"
                 )
 
@@ -1220,10 +1224,16 @@ def _check_issues(root: Path) -> list[str]:
             "| [0003](0003-legacy-swig-diagnostics.md) | Closed |",
         )
         for marker in index_markers:
-            if marker not in issue_index:
+            if issue_index.count(marker) != 1:
                 violations.append(
                     f"{ISSUE_INDEX}: Issue index is missing exact current "
                     f"status {marker!r}"
+                )
+        for issue_number in ("0002", "0003"):
+            if issue_index.count(f"[{issue_number}](") != 1:
+                violations.append(
+                    f"{ISSUE_INDEX}: Issue index must contain exactly one "
+                    f"{issue_number} row"
                 )
     return violations
 
