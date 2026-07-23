@@ -1779,7 +1779,7 @@ official Wasm projection.
 The genuine RED built the old source successfully, then failed the inverted
 root export test and package-checker test because the five values and two
 generated members still existed. The corrected focused gate passes two root
-export tests and six package-checker unit tests. One standalone bulk table
+export tests and seven package-checker unit tests. One standalone bulk table
 fill case and four Wasm-owned database-buffer lifetime cases were migrated
 out of the deleted authority test; the complete TypeScript/Wasm suite
 therefore passes 57/57 without discarding retained storage coverage.
@@ -1805,6 +1805,13 @@ official fastdb4ts.wasm
 Execution also corrected the P5 plan's stale `ts/build-wasm` ABI-check and
 cleanup paths to the real repository-root `build-wasm` directory produced by
 `ts/build-wasm.sh`. No duplicate build tree or compatibility path was added.
+
+The frozen specification pass found that runtime smoke and forbidden package
+members proved value/runtime removal but did not inspect the packed root
+declaration file for the ten removed call-db types. The retained review RED
+failed one of seven checker tests. The package gate now reads the actual
+`dist/index.d.ts` member and rejects all five removed values, all ten removed
+types, and a `call-db` re-export marker.
 
 **Task 3 ordered intermediate limit:** Legacy native allocator/final-backing
 and SWIG debris remain until P5 Task 4, `ColumnEngine` remains until Task 5,

@@ -43,6 +43,24 @@ FORBIDDEN = {
     "dist/call-db.d.ts",
     "dist/call-db.js",
 }
+REMOVED_ROOT_DECLARATION_MARKERS = {
+    "call-db",
+    "decodeFastdbCallDb",
+    "decodeFastdbFeature",
+    "encodeFastdbCallDb",
+    "encodeFastdbFeature",
+    "FastdbCallDbArrayItem",
+    "FastdbCallDbArrayView",
+    "FastdbCallDbBinding",
+    "FastdbCallDbColumnView",
+    "FastdbCallDbFeatureDependency",
+    "FastdbCallDbScalarField",
+    "FastdbCallDbTable",
+    "FastdbCallDbTableView",
+    "FastdbCallDbView",
+    "FastdbFeatureCodecBinding",
+    "viewFastdbCallDb",
+}
 FORBIDDEN_PARTS = {
     "node_modules",
     "src",
@@ -144,6 +162,17 @@ def check_inventory(names: set[str]) -> None:
             debris.append(name)
     if debris:
         raise CheckError(f"npm package contains forbidden debris: {debris}")
+
+
+def check_root_declarations(source: str) -> None:
+    removed = sorted(
+        marker for marker in REMOVED_ROOT_DECLARATION_MARKERS if marker in source
+    )
+    if removed:
+        raise CheckError(
+            "root declarations contain removed call-db markers: "
+            f"{removed}"
+        )
 
 
 def reject_special_members(members: list[tarfile.TarInfo]) -> None:
@@ -290,6 +319,12 @@ def main() -> int:
                 load_json_no_duplicates(
                     package_json.read().decode("utf-8"), "package.json"
                 )
+            )
+            root_declarations = archive.extractfile("package/dist/index.d.ts")
+            if root_declarations is None:
+                raise CheckError("npm package is missing root declaration contents")
+            check_root_declarations(
+                root_declarations.read().decode("utf-8")
             )
         run_smoke(package)
     except (

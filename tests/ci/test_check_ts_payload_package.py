@@ -18,6 +18,35 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TypeScriptPayloadPackageTests(unittest.TestCase):
+    def test_rejects_every_removed_root_declaration_marker(self) -> None:
+        removed = {
+            "call-db",
+            "decodeFastdbCallDb",
+            "decodeFastdbFeature",
+            "encodeFastdbCallDb",
+            "encodeFastdbFeature",
+            "FastdbCallDbArrayItem",
+            "FastdbCallDbArrayView",
+            "FastdbCallDbBinding",
+            "FastdbCallDbColumnView",
+            "FastdbCallDbFeatureDependency",
+            "FastdbCallDbScalarField",
+            "FastdbCallDbTable",
+            "FastdbCallDbTableView",
+            "FastdbCallDbView",
+            "FastdbFeatureCodecBinding",
+            "viewFastdbCallDb",
+        }
+        self.assertEqual(
+            getattr(MODULE, "REMOVED_ROOT_DECLARATION_MARKERS", set()),
+            removed,
+        )
+        check = getattr(MODULE, "check_root_declarations", lambda _source: None)
+        check("export { Feature, ORM, FastSerializer };")
+        for marker in removed:
+            with self.subTest(marker=marker), self.assertRaises(MODULE.CheckError):
+                check(f"export type {{ {marker} }};")
+
     def test_forbids_generated_call_db_runtime_and_declarations(self) -> None:
         forbidden = {"dist/call-db.js", "dist/call-db.d.ts"}
         self.assertEqual(MODULE.FORBIDDEN, forbidden)
