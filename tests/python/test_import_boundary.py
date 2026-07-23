@@ -85,17 +85,18 @@ print(json.dumps(results, sort_keys=True))
     )
 
 
-def test_fastdb4py_codegen_import_does_not_expose_c_two_codegen():
+def test_fastdb4py_codegen_package_is_not_a_package_surface():
     script = """
 import json
-import fastdb4py.codegen as codegen
+import importlib
 
-forbidden_attrs = [
-    'CTwoCodegenError',
-    'generate_c_two_typescript_helpers',
-    'run_codegen_c_two_ts',
-]
-print(json.dumps([name for name in forbidden_attrs if hasattr(codegen, name)]))
+try:
+    importlib.import_module('fastdb4py.codegen')
+except ModuleNotFoundError:
+    result = 'missing'
+else:
+    result = 'present'
+print(json.dumps(result))
 """
     completed = subprocess.run(
         [sys.executable, '-c', script],
@@ -106,10 +107,10 @@ print(json.dumps([name for name in forbidden_attrs if hasattr(codegen, name)]))
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == '[]'
+    assert completed.stdout.strip() == '"missing"'
 
 
-def test_fdb_codegen_help_does_not_advertise_c_two_typescript_target():
+def test_fdb_codegen_help_advertises_only_core_artifact_targets():
     completed = subprocess.run(
         [sys.executable, '-m', 'fastdb4py.cli', 'codegen', '--help'],
         check=False,
@@ -119,5 +120,9 @@ def test_fdb_codegen_help_does_not_advertise_c_two_typescript_target():
     )
 
     assert completed.returncode == 0, completed.stderr
+    assert '--target {cpp,rust,python,typescript}' in completed.stdout
+    assert '--output OUTPUT' in completed.stdout
+    assert '--ts' not in completed.stdout
     assert '--c-two-ts' not in completed.stdout
     assert 'C-Two' not in completed.stdout
+    assert 'feature' not in completed.stdout.lower()

@@ -40,9 +40,12 @@ materialization/invalidation, and the immutable four-target ArtifactSet from
 the same C++ Core. Task 8 published exact ABI-117 and executed simple generated
 outputs; Task 9 closes exact output ceilings, concurrent determinism, the
 four-shape hostile compiler/import matrix, package/workflow evidence, and the
-same-agent primary review. P5 legacy authority removal, `RecordEngine` clean
-rename, package/version release readiness, and later C-Two-owned composition
-remain open. The repository still ships the
+same-agent primary review. P5 Task 1 now removes the Python-owned
+feature-discovery generator and makes `fdb codegen` a creation-only filesystem
+facade over the same Core ArtifactSet. The remaining Python and TypeScript
+legacy authority removal, `RecordEngine` clean rename, native determinism,
+zero-warning packaging, package/version release readiness, and later
+C-Two-owned composition remain open. The repository still ships the
 0.1.x call-db/`ColumnEngine` migration surface, so Issue 0002 remains open and
 no FastDB 0.2.0 release is claimed.
 
@@ -147,7 +150,10 @@ Current repository state:
   and four deterministic renderers; Task 8 publishes exact ABI-117 and all
   generated targets; and Task 9 closes hostile generation, exact ceilings,
   concurrent determinism, packages/workflow, documentation, and local review.
-  All P5 work remains open;
+  P5 Task 1 then removes `fastdb4py.codegen` and its Python feature discovery,
+  while the replacement CLI reads exact specification bytes and writes exact
+  Core artifacts for C++, Rust, Python, or TypeScript into a new tree. All
+  remaining P5 work remains open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
 P1, P2, P3, and P4 are locally implemented and frozen. P1/P2 retain their recorded
@@ -1590,9 +1596,12 @@ semantics.
 ### P5 clean cut and local release-readiness handoff
 
 **Current limit:** Public call-db, `fastdb.schema.v1`, `columnar.v1`, and
-`ColumnEngine` remain in the 0.1.x package surface. Package metadata remains
-`fastdb4py==0.1.22` and `fastdb4ts==0.0.3`; no 0.2.0 release, tag,
-publication, or C-Two composition proof exists.
+`ColumnEngine` remain in the 0.1.x package surface. The old Python
+feature-discovery generator is removed, but the remaining Python,
+TypeScript/Wasm, native/SWIG, engine-name, policy, and documentation clean-cut
+tasks are still open. Package metadata remains `fastdb4py==0.1.22` and
+`fastdb4ts==0.0.3`; no 0.2.0 release, tag, publication, or C-Two composition
+proof exists.
 
 **Reason:** P1-P4 now provide the complete replacement and parity evidence, so
 the P5 clean cut can proceed without a compatibility parser or binding-owned
@@ -1606,14 +1615,64 @@ slices in its own repository.
 
 **P5 Task 0 handoff:** The design and executable plan are frozen from exact
 start `9d86c171eda1fe107c3519ce040ca2ec417167f9`. The portable ABI remains
-exactly 117 sorted symbols. P5 implementation has not started; the old
-Python, TypeScript, native/SWIG, engine-name, package, and documentation
-surfaces remain live. Package versions are unchanged. Hosted CI, push, tag,
-publication, release, and C-Two composition all remain pending.
+exactly 117 sorted symbols.
 
-**Next owner slice:** Execute the FastDB P5 plan, then stop FastDB design work
-at the frozen owner boundary and begin a separate C-Two-owned composition
-task.
+**P5 Task 1 local implementation evidence:** From exact start
+`c94aa85fa39566e8e48f5a6c711fe099a47cd848`, the old
+`fastdb4py.codegen` package, Python feature-module discovery/rendering, and
+`fdb codegen --ts INPUT_DIR OUTPUT_DIR` contract are removed. The replacement
+command is exactly
+`fdb codegen SPEC.json --target cpp|rust|python|typescript --output DIR`.
+It reads the source as bytes, compiles and generates once through
+`fastdb4py.payload`, copies the complete immutable Core ArtifactSet before
+filesystem mutation, rejects unsafe/duplicate/non-source paths, and publishes
+exact artifact bytes into a new tree.
+
+The genuine RED was 23 replacement failures against the old CLI with three
+unrelated boundary tests passing. The implemented focused gate passes 34/34;
+the complete Python suite passes 384/384; compileall succeeds; and a fresh
+0.1.22 sdist/wheel pair builds. Neither distribution contains a
+`fastdb4py/codegen` package. A fresh native build retains exactly 117 sorted
+payload ABI symbols. The package build still reports the seven governed
+legacy SWIG diagnostics; Issue 0003 and P5 Task 4 own their removal, so this
+Task 1 evidence does not claim warning-free packaging. The mechanically
+frozen same-agent Task 1 review remains pending until the scoped implementation
+commit exists; no independent review is claimed.
+
+**Task 1 intentional destination-tree limit:** The FastDB CLI accepts only a
+nonexistent output root. It never merges, updates, or overwrites a project
+tree. It stages privately and uses an exclusive final rename:
+`renamex_np(RENAME_EXCL)` on macOS,
+`renameat2(RENAME_NOREPLACE)` on Linux, and non-replacing `rename` on Windows.
+An unsupported platform or Linux libc without the exclusive primitive fails
+closed with `ENOTSUP`; it does not fall back to POSIX replacement semantics.
+
+**Reason:** Project conflict policy and multi-owner artifact composition are
+not FastDB semantics. Standard POSIX replacement can also overwrite an empty
+directory created after an existence check, so a check-then-`replace` fallback
+would violate caller ownership under a race.
+
+**Impact:** A caller must choose a new destination and explicitly dispose of a
+previous caller-owned tree before regeneration. C-Two must compose its own and
+FastDB artifacts at the downstream boundary instead of asking this CLI to
+merge them. A currently unsupported operating system cannot use the
+filesystem facade until it supplies an exclusive directory-rename proof, but
+can still consume the in-memory Core ArtifactSet through a supported
+projection.
+
+**Dependencies and closure criteria:** FastDB does not plan a merge mode.
+Linux, macOS, and Windows package gates must retain a race regression proving
+an existing empty directory is not replaced. Support for another platform
+requires its own no-replace primitive plus the same regression; it must not
+weaken to check-then-replace. C-Two's later composition task closes the
+downstream multi-artifact concern without moving conflict rules into FastDB.
+These owner boundaries are intentional and do not close the remaining P5
+tasks.
+
+**Next owner slice:** P5 Task 2 removes the remaining Python call-db/schema
+authority and proves the clean package surface. After all FastDB P5 tasks,
+stop design work at the frozen owner boundary and begin the separate
+C-Two-owned composition task.
 
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
@@ -1787,7 +1846,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut and local release-readiness handoff | Open; Task 0 design/plan frozen at `9d86c17`, implementation not started | Execute the clean removal, `RecordEngine` rename, deterministic descriptor repair, zero-warning packages, exact clean-cut policy, and fresh local gates without a version bump or publication; then hand the frozen FastDB boundary to C-Two |
+| P5. Clean cut and local release-readiness handoff | Open; Task 0 design/plan frozen from `9d86c17`; Task 1 Core-artifact CLI implemented locally from `c94aa85`, with frozen review still pending | Complete the remaining Python/TypeScript/native/SWIG cleanup, `RecordEngine` rename, deterministic descriptor repair, exact clean-cut policy, and fresh local gates without a version bump or publication; then hand the frozen FastDB boundary to C-Two |
 
 ## Non-deferrable 0.2.0 work
 
