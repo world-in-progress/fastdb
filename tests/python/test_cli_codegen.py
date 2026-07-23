@@ -115,6 +115,9 @@ def test_codegen_target_map_is_the_direct_core_target_map() -> None:
         "nested/../escape.py",
         "./noncanonical.py",
         "nested//noncanonical.py",
+        "C:/windows-absolute.py",
+        "C:windows-drive-relative.py",
+        "nul\x00byte.py",
     ],
 )
 def test_validated_artifacts_rejects_unsafe_paths(relative_path: str) -> None:
@@ -126,6 +129,15 @@ def test_validated_artifacts_rejects_unsafe_paths(relative_path: str) -> None:
 
 def test_validated_artifacts_rejects_duplicate_paths() -> None:
     generated = _ArtifactSet((_artifact("same.py"), _artifact("same.py")))
+
+    with pytest.raises(ValueError):
+        cli._validated_artifacts(generated)
+
+
+def test_validated_artifacts_rejects_file_directory_prefix_conflicts() -> None:
+    generated = _ArtifactSet(
+        (_artifact("collision"), _artifact("collision/nested.py"))
+    )
 
     with pytest.raises(ValueError):
         cli._validated_artifacts(generated)
@@ -171,6 +183,27 @@ def test_write_new_tree_removes_its_staging_tree_after_a_real_write_failure(
     before = tuple(tmp_path.iterdir())
 
     with pytest.raises(OSError):
+        cli._write_new_tree(output, artifacts)
+
+    assert tuple(tmp_path.iterdir()) == before
+    assert not os.path.lexists(output)
+
+
+def test_write_new_tree_never_collapses_distinct_paths_on_a_casefolding_fs(
+    tmp_path: Path,
+) -> None:
+    probe = tmp_path / "CaseProbe"
+    probe.write_bytes(b"probe")
+    casefolding = (tmp_path / "caseprobe").exists()
+    probe.unlink()
+    if not casefolding:
+        pytest.skip("temporary filesystem is case-sensitive")
+
+    output = tmp_path / "generated"
+    artifacts = (_artifact("Case.py"), _artifact("case.py"))
+    before = tuple(tmp_path.iterdir())
+
+    with pytest.raises(FileExistsError):
         cli._write_new_tree(output, artifacts)
 
     assert tuple(tmp_path.iterdir()) == before

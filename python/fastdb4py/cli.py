@@ -6,7 +6,7 @@ import argparse
 import ctypes
 import errno
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import shutil
 import sys
 import tempfile
@@ -39,10 +39,13 @@ def _validated_artifacts(generated: ArtifactSet) -> tuple[Artifact, ...]:
         if not isinstance(relative_path, str):
             raise ValueError("Core artifact relative path is not text")
         path = PurePosixPath(relative_path)
+        windows_path = PureWindowsPath(relative_path)
         valid = (
             bool(relative_path)
+            and "\x00" not in relative_path
             and "\\" not in relative_path
             and not path.is_absolute()
+            and not windows_path.drive
             and ".." not in path.parts
             and path.as_posix() == relative_path
             and relative_path != "."
@@ -69,6 +72,15 @@ def _validated_artifacts(generated: ArtifactSet) -> tuple[Artifact, ...]:
                 sha256=bytes(artifact.sha256),
             )
         )
+    for artifact in artifacts:
+        path = PurePosixPath(artifact.relative_path)
+        for parent in path.parents:
+            parent_path = parent.as_posix()
+            if parent_path != "." and parent_path in paths:
+                raise ValueError(
+                    "Core artifact paths have a file/directory conflict: "
+                    f"{parent_path!r} and {artifact.relative_path!r}"
+                )
     return tuple(artifacts)
 
 
@@ -146,7 +158,13 @@ def _write_new_tree(output: Path, artifacts: tuple[Artifact, ...]) -> None:
         for artifact in artifacts:
             destination = staging / PurePosixPath(artifact.relative_path)
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(artifact.bytes)
+            with destination.open("xb") as stream:
+                written = stream.write(artifact.bytes)
+                if written != len(artifact.bytes):
+                    raise OSError(
+                        f"short artifact write for {artifact.relative_path!r}: "
+                        f"{written} of {len(artifact.bytes)} bytes"
+                    )
         _publish_new_tree(staging, output)
         published = True
     finally:

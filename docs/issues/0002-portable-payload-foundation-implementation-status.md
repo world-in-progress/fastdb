@@ -1629,15 +1629,25 @@ filesystem mutation, rejects unsafe/duplicate/non-source paths, and publishes
 exact artifact bytes into a new tree.
 
 The genuine RED was 23 replacement failures against the old CLI with three
-unrelated boundary tests passing. The implemented focused gate passes 34/34;
-the complete Python suite passes 384/384; compileall succeeds; and a fresh
+unrelated boundary tests passing. The corrected focused gate passes 39/39;
+the complete Python suite passes 389/389; compileall succeeds; and a fresh
 0.1.22 sdist/wheel pair builds. Neither distribution contains a
 `fastdb4py/codegen` package. A fresh native build retains exactly 117 sorted
 payload ABI symbols. The package build still reports the seven governed
 legacy SWIG diagnostics; Issue 0003 and P5 Task 4 own their removal, so this
-Task 1 evidence does not claim warning-free packaging. The mechanically
-frozen same-agent Task 1 review remains pending until the scoped implementation
-commit exists; no independent review is claimed.
+Task 1 evidence does not claim warning-free packaging.
+
+The first mechanically frozen same-agent specification pass found one
+Important cross-platform containment defect: `C:/...` was a relative
+`PurePosixPath` but an absolute Windows drive path when joined to staging. It
+also found the adjacent NUL/file-directory conflict validation gap. The code
+quality pass found one material Minor filesystem-alias defect: `"wb"` could
+silently collapse two byte-distinct artifact paths on a case-folding or
+normalizing filesystem. Retained REDs reproduce both classes. The correction
+rejects Windows drives, NUL, and file/directory prefix conflicts before
+filesystem mutation and creates every staged file with exclusive `"xb"`
+semantics. The corrected extended-range review remains pending until the
+correction commit exists; no independent review is claimed.
 
 **Task 1 intentional destination-tree limit:** The FastDB CLI accepts only a
 nonexistent output root. It never merges, updates, or overwrites a project
@@ -1646,6 +1656,9 @@ tree. It stages privately and uses an exclusive final rename:
 `renameat2(RENAME_NOREPLACE)` on Linux, and non-replacing `rename` on Windows.
 An unsupported platform or Linux libc without the exclusive primitive fails
 closed with `ENOTSUP`; it does not fall back to POSIX replacement semantics.
+Every staged file is also created exclusively, so case folding, Unicode
+normalization, or another filesystem alias fails and cleans the private tree
+instead of collapsing two Core artifact paths.
 
 **Reason:** Project conflict policy and multi-owner artifact composition are
 not FastDB semantics. Standard POSIX replacement can also overwrite an empty
@@ -1846,7 +1859,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut and local release-readiness handoff | Open; Task 0 design/plan frozen from `9d86c17`; Task 1 Core-artifact CLI implemented locally from `c94aa85`, with frozen review still pending | Complete the remaining Python/TypeScript/native/SWIG cleanup, `RecordEngine` rename, deterministic descriptor repair, exact clean-cut policy, and fresh local gates without a version bump or publication; then hand the frozen FastDB boundary to C-Two |
+| P5. Clean cut and local release-readiness handoff | Open; Task 0 design/plan frozen from `9d86c17`; Task 1 Core-artifact CLI implemented locally from `c94aa85`; first frozen review findings corrected, extended-range review pending | Complete the remaining Python/TypeScript/native/SWIG cleanup, `RecordEngine` rename, deterministic descriptor repair, exact clean-cut policy, and fresh local gates without a version bump or publication; then hand the frozen FastDB boundary to C-Two |
 
 ## Non-deferrable 0.2.0 work
 
