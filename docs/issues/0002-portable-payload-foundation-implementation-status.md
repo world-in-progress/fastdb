@@ -1813,6 +1813,18 @@ failed one of seven checker tests. The package gate now reads the actual
 `dist/index.d.ts` member and rejects all five removed values, all ten removed
 types, and a `call-db` re-export marker.
 
+**Task 3 frozen review:** The implementation commit is `c0bcb69`
+(`refactor(ts): remove duplicate payload authority`) and the retained
+declaration-proof correction is `6473159`
+(`fix(ci): verify removed TypeScript declarations`). The context-owning
+primary agent reviewed exact range
+`0ff6640dc40b73abe2e0b14353d8aa247de34c5e..6473159` in separate
+specification/authority and code-quality passes. The first pass found the one
+material Minor package-proof gap above; after its retained RED, correction,
+and complete affected-gate rerun, the final classification is 0 Critical,
+0 Important, and 0 unresolved material Minor findings. This is same-agent
+primary review, not independent or subagent evidence.
+
 **Task 3 ordered intermediate limit:** Legacy native allocator/final-backing
 and SWIG debris remain until P5 Task 4, `ColumnEngine` remains until Task 5,
 and the root/Python historical README sections still describe removed 0.1.x
