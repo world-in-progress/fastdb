@@ -31,6 +31,8 @@ The current ABI version remains 1 and the reviewed allowlist contains exactly
 117 symbols. The historical P3 runtime sub-boundary is ABI-105; the twelve P4
 additions are only three Core provenance guards and nine immutable
 ArtifactSet/codegen functions.
+P4 is locally complete at ABI-117. Hosted execution and the P5 legacy clean
+cut remain separate, pending evidence.
 
 Only one of these link modes selects where the same Core comes from. Neither
 mode creates a Rust implementation of FastDB semantics.

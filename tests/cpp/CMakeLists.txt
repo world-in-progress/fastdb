@@ -321,7 +321,9 @@ set_tests_properties(payload.compiled_spec PROPERTIES TIMEOUT 60)
 add_fastdb_payload_test(
     codegen
     SOURCES payload/test_codegen.cpp
-    EXTRA_LIBRARIES fastdb_payload_core
+    EXTRA_LIBRARIES
+        fastdb_payload_core
+        Threads::Threads
 )
 target_include_directories(
     fastdb_payload_test_codegen

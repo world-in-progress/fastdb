@@ -31,17 +31,16 @@ independent/subagent review and this issue does not claim otherwise. Local
 macOS sanitizer/fuzzer constraints and all exact Task 10 gate results are
 recorded below. Hosted CI remains pending because no push was authorized.
 
-P4 Rust/Python/official TypeScript-Wasm portable projections now include the
-locally complete Tasks 1-6 compile/query, author/freeze/plan,
-execution/backing/open, complete checked `record.v1` views, and safe
-`object_graph.v1` ref/identity/sharing/cycle observation with Core-owned
-materialization/invalidation. Their ordered four-language runtime parity and
-package/link boundaries are locally frozen over unchanged ABI-105. Task 7 now
-adds the private Core-owned immutable ArtifactSet and deterministic four-target
-renderer without exposing a public target. Public codegen publication,
-generated-output execution, and P4 closure remain open in Tasks 8-9. P5 legacy authority removal,
-`RecordEngine` clean rename, package/version release readiness, and later
-C-Two-owned composition also remain open. The repository still ships the
+P4 is locally complete through Tasks 1-9. Rust, Python, and official
+TypeScript/Wasm project compile/query, author/freeze/plan,
+execution/backing/open, checked record and graph views, Core-owned
+materialization/invalidation, and the immutable four-target ArtifactSet from
+the same C++ Core. Task 8 published exact ABI-117 and executed simple generated
+outputs; Task 9 closes exact output ceilings, concurrent determinism, the
+four-shape hostile compiler/import matrix, package/workflow evidence, and the
+same-agent primary review. P5 legacy authority removal, `RecordEngine` clean
+rename, package/version release readiness, and later C-Two-owned composition
+remain open. The repository still ships the
 0.1.x call-db/`ColumnEngine` migration surface, so Issue 0002 remains open and
 no FastDB 0.2.0 release is claimed.
 
@@ -126,7 +125,7 @@ Current repository state:
   P3 locally at ABI-105. The P4 live delta audit is now complete and its
   [language-projection/codegen design](../superpowers/specs/2026-07-21-portable-payload-language-projections-codegen-design.md)
   plus [executable implementation plan](../superpowers/plans/2026-07-21-portable-payload-language-projections-codegen.md)
-  are frozen as P4 delta authority. P4 Tasks 1-7 now add real compile/query,
+  are frozen as P4 delta authority. P4 Tasks 1-9 add real compile/query,
   author/freeze/plan, execution/backing/open, and checked-record-view
   projection slices over the unchanged ABI-105: a
   payload-only native archive
@@ -142,18 +141,19 @@ Current repository state:
   Task 4 adds scoped access, exact scalar bits, `str`/`wstr`/bytes, detached
   Core materialization, and synchronous drain-before-release invalidation;
   Task 5 adds safe graph ref/identity observation; Task 6 freezes ordered
-  parity and package/link proof; and Task 7 adds one private Core-owned
-  ArtifactSet and four deterministic renderers. Public codegen ABI/projections,
-  executable generated-output gates, truthful target advertisement, and final
-  P4 robustness remain later tasks. All P5 work remains open;
+  parity and package/link proof; Task 7 adds one private Core-owned ArtifactSet
+  and four deterministic renderers; Task 8 publishes exact ABI-117 and all
+  generated targets; and Task 9 closes hostile generation, exact ceilings,
+  concurrent determinism, packages/workflow, documentation, and local review.
+  All P5 work remains open;
 - current public call-db, `fastdb.schema.v1`, `columnar.v1`, and `ColumnEngine` surfaces remain 0.1.x migration inputs, not the accepted 0.2.0 authority.
 
-P1, P2, and P3 are locally implemented and frozen. P1/P2 retain their recorded
+P1, P2, P3, and P4 are locally implemented and frozen. P1/P2 retain their recorded
 independent-review evidence; P3 uses the user-authorized context-owning
-primary-agent review and does not claim independence. Their first hosted CI
-execution remains pending. The repository must not claim that the complete
-portable payload foundation or FastDB 0.2.0 is implemented because P4 and P5
-remain non-deferrable.
+primary-agent review and does not claim independence; P4 uses the same explicit
+review classification. Their first hosted CI execution remains pending. The
+repository must not claim FastDB 0.2.0 readiness or release because P5 remains
+non-deferrable.
 
 ## Current limit
 
@@ -165,27 +165,27 @@ identity, direct/staged backing, and the shared checked owner/access lifetime
 are executable. P2 is independently reviewed and locally frozen; P3 is locally
 frozen at the exact 105-symbol boundary with D1 closed, complete Core Wasm
 graph execution, and the explicitly non-independent primary-agent review
-described below. Rust, Python, and official TypeScript/WASM now compile/query
-the shared `record-all-types` and invalid `bad-kind` fixtures and author/freeze
-the same fixed, nested-list, cyclic/shared graph, and disconnected-root
-fixtures through the ABI-105 Core. Their projections preserve canonical bytes,
+described below. Rust, Python, and official TypeScript/WASM compile/query,
+author/freeze/plan, execute/open, navigate, materialize, invalidate, and
+generate through exact ABI-117. Their projections preserve canonical bytes,
 digest, manifest, capabilities, stable indexes, every V1 authoring kind,
-Core-owned limit/errors, exact immutable plan facts, retained clones, and
-explicit disposal. They also execute/open payloads and expose the complete
-read-only `record.v1` view algebra, safe graph ref-target and payload-scoped
-identity observation, safe access copies/borrows, detached materialization,
-and exact stale-generation errors from Core. Their runtime parity and source/
-system/wheel/npm boundaries are locally frozen. A private Core-owned
-ArtifactSet can now render deterministic payload-only C++, Rust, Python, and
-TypeScript source, but no public C ABI, C++ facade, binding projection,
-manifest operation, or advertised codegen target exposes it yet. The codegen
-proof-map rows therefore remain open, and the diagnostic local compiler/import
-checks do not claim the Task 8 generated-runtime gate. Hosted outcomes remain
-pending.
+Core-owned limits/errors, exact immutable plan facts, retained clones, and
+explicit disposal without private semantic paths.
+
+The public Core-owned ArtifactSet renders deterministic payload-only C++, Rust,
+Python, and TypeScript source. Simple generated outputs prove successful value
+roundtrips and cross-spec rejection; the closing hostile matrix compiles,
+imports, or type-checks all-values records, recursive lists,
+keyword/generated-prefix collisions, and shared cyclic graphs through the
+official runtimes. Native and ThreadSanitizer receipts additionally pin
+per-target exact byte ceilings and concurrent path/bytes/SHA-256 equality. The
+versioned proof map closes every runtime/codegen/closure row while explicitly
+recording same-agent review, hosted-pending status, and P5-open status. Hosted
+outcomes remain pending.
 Downstream consumers may use
 only reviewed public FastDB contracts
 and must not depend on private headers or recreate FastDB semantics. The full
-structured-payload foundation remains incomplete because P4 and P5 are open.
+structured-payload foundation remains incomplete because P5 is open.
 
 Raw-file/object bytes remain correctly outside FastDB in file/object storage. This implementation gap does not change that owner boundary and is not a reason to route raw files through the existing call-db path.
 
@@ -914,9 +914,11 @@ generation behind one private Core-owned immutable ArtifactSet. Task 8 adds
 exactly twelve public exports, projects that ArtifactSet equally through C++,
 Rust, Python, and TypeScript/Wasm, executes every generated target, and changes
 the manifest operation/target facts atomically. The current public boundary is
-therefore exact ABI-117. P4 Task 9 robustness, package/workflow closure, full
-fresh gates, and final primary-agent review remain open. Existing hand-written
-0.1.x call-db layers are migration inputs, not portable-payload projections.
+therefore exact ABI-117. Task 9 closes hostile-codegen robustness, exact output
+ceilings, concurrent determinism, package/workflow/documentation evidence,
+fresh local gates, and the same-agent primary review. P4 is locally complete;
+existing hand-written 0.1.x call-db layers remain P5 migration inputs, not
+portable-payload projections.
 
 **Design state:** The complete live delta audit and docs-first design are
 recorded in
@@ -1428,9 +1430,8 @@ The generated-output harness, package inventories, schema regeneration,
 retained P2/P3 quality gates all pass locally.
 
 This is same-agent primary evidence, not independent/subagent review, and no
-hosted result is claimed. P4 Task 9 still owns the final hostile-codegen,
-workflow/documentation, and full-range closure freeze before P4 itself is
-declared complete.
+hosted result is claimed. At the Task 8 boundary, Task 9 still owned final
+hostile-codegen, workflow/documentation, and full-range closure.
 
 **Recorded platform limit:** Windows generated-C++ linking is not implemented
 or locally tested by the Task 8 harness. A reliable Windows receipt needs an
@@ -1444,6 +1445,116 @@ a later compatibility alias or binding-owned workaround.
 Task 8 changes no package version, legacy 0.1.x authority surface, P5 clean-cut
 decision, C-Two file, Toodle file, tag, publication, or hosted status.
 
+#### P4 Task 9 local closure evidence
+
+Task 9 starts from exact Task 8 commit
+`38d40188d041b9dd0b8ffba04900626c98fb1a25`
+(`feat(core): publish portable payload artifact codegen`) and records its
+closure under the scoped commit subject
+`docs: record portable payload P4 closure`. Task 7's frozen predecessor is
+`dbcca51347f9bc16cc80d57d9a7acc7bcb961c2d`. The versioned
+`fastdb.payload.p4-projection-codegen-map.v2` proof map is committed with the
+closure and freezes exact ABI-117, all four `closed-p4` targets, eight ordered
+closure requirements, same-agent review, hosted-pending status, and
+`open-clean-cut` P5 handoff. The exact Task 9 Git object ID is recorded after
+commit in the local Task 9 report because a commit cannot contain its own
+hash.
+
+The genuine Task 9 REDs first proved that the prior map had no closure object
+and the generated-output runner had no hostile matrix. The new four-shape hostile
+matrix invokes
+Core through the public Python projection, then compiles, imports, type-checks,
+and executes generated artifacts for four ordered accepted shapes:
+
+1. all declared V1 values;
+2. recursive lists;
+3. keyword plus generated-prefix identifier collisions; and
+4. a shared cyclic object graph.
+
+Each shape runs through generated C++17, relocated safe Rust plus system Core,
+Python, and the official TypeScript/Wasm projection. The matrix uses only
+official runtimes; it neither reparses FastDB semantics nor writes a consumer
+tree.
+
+The exact all-target limit RED exposed one Core owner-layer defect. Rust,
+Python, and TypeScript renderers constructed a second terminal newline, checked
+that temporary byte against `max_total_bytes`, and removed it afterward.
+Consequently, a ceiling equal to the published artifact size failed by one
+byte even though the returned artifact would fit. `CheckedOutput` now defers at
+most one trailing newline and discards it only when reproducing the prior
+double-newline trim. Published bytes and ABI-117 are unchanged, while exact
+final-size ceilings pass and one-byte-short limits fail with the exact
+Core-owned `actual`, `limit`, and reason. Eight native threads repeatedly
+compare path, bytes, and SHA-256 for every target; ordinary single-thread
+Emscripten keeps the non-concurrent assertions, and native ThreadSanitizer is
+the concurrency authority.
+
+The first combined TypeScript hostile run also exposed a harness defect:
+generated `compileSpec()` calls ran before the official Wasm projection was
+initialized. The smoke now awaits `initPayload()` before executing any
+generated function. This is a test-harness repair, not a second runtime path.
+A stale ignored `python/fastdb4py/core/libfastdb.dylib` with only ABI-105 also
+caused the first local source-suite invocation to fail uniformly on the new
+codegen symbol. Binding that suite to the freshly scanned ABI-117 Core passes
+all tests; both final wheels independently rebuild and package their own
+ABI-117 Core, so no stale binary is part of release evidence.
+
+The complete fresh local gate on AppleClang 21.0.0, Emscripten 5.0.2,
+Node 25.8.1, Rust 1.91.0, uv 0.10.12, free-threaded Python 3.14.3, and
+Python 3.10.17 is:
+
+```text
+Native Debug: 39/39 in 74.03s
+Native Release: 39/39 in 50.16s
+ASan+UBSan hard-fail: 39/39 in 266.89s
+Focused ThreadSanitizer runtime/codegen set: 13/13 in 455.71s
+Native ABI: exactly 117
+Official TypeScript/Wasm ABI: exactly 117
+Independent Core Wasm ABI: exactly 117
+Rust: fmt and warning-denying clippy pass; 21 non-doc tests + 1 doctest
+Python source: 447/447 plus compileall
+Installed free-threaded 3.14 and Python 3.10 wheels: 34/34 each
+TypeScript/Wasm: 98/98
+TypeScript package checker: 5/5 plus packed-package Wasm smoke
+Generated harness checker: 6/6 plus simple and four-shape runtime matrix
+P4 closure checker: 17/17 plus repository check
+P3 retained quality: 12 runs / 48 assertions plus repository check
+Binary corpus: 4/4 plus exactly 16 reviewed seeds
+Strict C11 header objects: arm64, x86_64, and wasm32 pass
+```
+
+The six independent Core Wasm artifacts pass their Node receipts, with the
+runtime-ABI artifact executing both injected-failure and graph-runtime modes.
+The Emscripten exception contract, generated export inventory, embedded
+schemas, vendored dependencies, Rust relocated system consumer, Python package
+inventories, and P2 retained quality checker also pass.
+
+The Task 9 package artifact SHA-256 values are:
+
+```text
+free-threaded 3.14 wheel
+  87c5d09df5f6599d718195a21e98a1f7026cf0c6439ee0817f0b2f2a4132924b
+free-threaded 3.14 sdist
+  e5952c08aef16f9521ef9fd7bbd9c2da1b5c7a2886c2497cd2bbe616284b3647
+Python 3.10 wheel
+  d4169b274af3ed0f1857cdc6b8256ef2edb5684b0f369115e118b2a6935f8b9a
+Python 3.10 sdist
+  f213f9ebab93f60db6965fd335eeb07cbcfd45cafa6f8ab9c4c5a13a7db51bd9
+fastdb4ts-0.0.3.tgz
+  0a9c5dc4063c2bf93e698306a37400d5fe5d49a8d7f89a717920e15a4dbbadc3
+official fastdb4ts.js
+  ed28d53b23c336abc5dd4c94bc4472a7c323c9fa8029d049758bdafc33a7dc54
+official fastdb4ts.wasm
+  5e41515a394db078c54d27d5ef9cd773b77d030428d4d20096583cf1a28582d7
+```
+
+The context-owning agent performed the Task 9 specification/authority and code
+quality review personally, as required. The recorded classification is
+**same-agent primary review**, not independent or subagent evidence. P4 is
+locally complete at exact ABI-117 with no package version change. Hosted P4 execution remains pending;
+committed workflow definitions are not hosted results.
+P5 clean cut remains open.
+
 **Impact:** Portable compile/query/build/open/view/materialize remains available
 to C and C++ through the locally frozen P3 boundary. Rust, Python, and official
 TypeScript/Wasm now share compile/query, complete author/freeze/plan semantics,
@@ -1455,11 +1566,9 @@ source/system/wheel/npm boundaries are locally executable. All four languages
 can now consume the same Core-owned generated artifact set without gaining
 binding-owned semantics.
 
-**Next owner slice:** P4 Task 9 completes hostile codegen robustness, executable
-quality-map/workflow/package inventories, fresh full local gates, exact
-limitations, and the context-owning primary-agent spec/code-quality review. It
-must not reopen the now-proven ABI-117 or create binding-side semantics merely
-to satisfy a gate.
+**Next owner slice:** P5 removes legacy authority, performs the clean
+`RecordEngine` rename, and establishes local release readiness without
+reopening the now-proven ABI-117 or creating binding-side semantics.
 
 **Closure criteria:** C++/Rust/Python/TypeScript-WASM obtain all semantics from
 the same Core ABI and pass canonical, binary, value, error, lifetime, and
@@ -1652,8 +1761,8 @@ result.
 | P1. Core contract compiler/query ABI | Locally complete and frozen; first hosted execution pending | Independent Task 9 review is accepted; obtain first hosted native/sanitizer results without rewriting them as local evidence |
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P4. Language projections and payload codegen | Docs-first design and Tasks 1-8 are locally implemented: equal projections, Core-owned deterministic four-target generation, exact ABI-117, truthful manifests, and real generated-output execution are green; Task 9 full robustness/gate/review closure remains open, with no independent or hosted claim | Preserve ABI-105 runtime meaning and ABI-117 public truth while completing fresh full gates, package/workflow evidence, explicit limitations, and primary-agent review |
-| P5. Clean cut, release, downstream composition | Blocked on P4 Task 9 | Public call-db/schema/columnar authority removed, `RecordEngine` rename complete, packages at 0.2.0 pass release gates, then downstream composition delegates the nested FastDB sub-spec without semantic duplication |
+| P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
+| P5. Clean cut, release, downstream composition | Open; next owner slice | Remove public call-db/schema/columnar authority, complete the `RecordEngine` rename, prove local package/release readiness without publishing, then let downstream composition delegate the nested FastDB sub-spec without semantic duplication |
 
 ## Non-deferrable 0.2.0 work
 

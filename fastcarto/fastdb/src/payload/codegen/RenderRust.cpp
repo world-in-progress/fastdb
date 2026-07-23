@@ -336,11 +336,7 @@ std::string render_rust(const spec::CompiledSpec& compiled,
         append_component(output, resolved.components()[index],
                          topology.identity_components[index] != UINT8_C(0));
     }
-    if (output.size() >= 2U &&
-        output.compare(output.size() - 2U, 2U, "\n\n") == 0) {
-        output.pop_back();
-    }
-    return std::move(output).finish();
+    return std::move(output).finish_trimming_blank_line();
 }
 
 }  // namespace fastdb::payload::codegen

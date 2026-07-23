@@ -23,8 +23,10 @@ and the 17-class executable proof map. P4 preserves that runtime meaning and
 adds exactly twelve provenance/codegen exports, producing the current exact
 ABI-117. Its four manifest codegen targets are advertised only after generated
 C++/Rust/Python/TypeScript outputs execute against the official projections.
-These are local facts only; hosted results, P4 Task 9 robustness closure, P5
-clean cut, and release remain open.
+P4 is locally complete after the closing four-shape hostile matrix, exact
+output-ceiling checks, and concurrent artifact determinism proof. These are
+local exact ABI-117 facts only; hosted results, P5 clean cut, and release
+remain open.
 The reviewed binary-open seed inventory and exact byte recipes live in
 [`tests/fuzz/payload/binary-corpus.json`](../tests/fuzz/payload/binary-corpus.json);
 the deterministic runner and coverage-guided target both consume those bytes

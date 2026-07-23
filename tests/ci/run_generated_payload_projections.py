@@ -49,6 +49,25 @@ TARGETS = (
     (CodegenTarget.PYTHON, ".py"),
     (CodegenTarget.TYPESCRIPT, ".ts"),
 )
+HOSTILE_SPEC_NAMES = (
+    "record-all-types",
+    "recursive-lists",
+    "keyword-prefix-collisions",
+    "shared-cyclic-graph",
+)
+KEYWORD_PREFIX_COLLISION_SPEC = (
+    b'{"schema":"fastdb.payload.v1","profile":"object_graph.v1",'
+    b'"entries":[{"id":"class","cardinality":"one",'
+    b'"type":{"kind":"component","id":"type"}},'
+    b'{"id":"fdb_cpp_id_636c617373","cardinality":"many",'
+    b'"type":{"kind":"ref","target":"type","nullable":true}}],'
+    b'"components":[{"id":"type","kind":"record","fields":['
+    b'{"id":"match","type":{"kind":"u32"}},'
+    b'{"id":"interface","type":{"kind":"ref","target":"type",'
+    b'"nullable":true}},'
+    b'{"id":"fdb_ts_id_696e74657266616365","type":{"kind":"list",'
+    b'"nullable":true,"items":{"kind":"ref","target":"type"}}}]}]}'
+)
 
 
 class HarnessError(RuntimeError):
@@ -148,9 +167,11 @@ def runtime_environment(library: Path) -> dict[str, str]:
     return environment
 
 
-def generate_artifacts(directory: Path) -> tuple[str, dict[str, Path]]:
+def generate_artifacts_for_source(
+    directory: Path, source: bytes
+) -> tuple[str, dict[str, Path]]:
     artifacts: dict[str, Path] = {}
-    with CompiledSpec.compile(SPEC_A) as spec:
+    with CompiledSpec.compile(source) as spec:
         digest = spec.sha256().hex()
         for target, suffix in TARGETS:
             generated = spec.generate(target)
@@ -179,6 +200,36 @@ def generate_artifacts(directory: Path) -> tuple[str, dict[str, Path]]:
     if set(artifacts) != {suffix for _, suffix in TARGETS}:
         raise HarnessError("Core did not publish the exact four-target artifact set")
     return digest, artifacts
+
+
+def generate_artifacts(directory: Path) -> tuple[str, dict[str, Path]]:
+    return generate_artifacts_for_source(directory, SPEC_A)
+
+
+def hostile_spec_sources() -> tuple[tuple[str, bytes], ...]:
+    sources = (
+        (
+            "record-all-types",
+            ROOT
+            / "tests/golden/payload/v1/spec/valid/"
+            "record-all-types.source.json",
+        ),
+        (
+            "recursive-lists",
+            ROOT
+            / "tests/golden/payload/v1/binary/spec/"
+            "nested-lists.source.json",
+        ),
+        (
+            "shared-cyclic-graph",
+            ROOT
+            / "tests/golden/payload/v1/binary/spec/"
+            "graph-shared-cycle.source.json",
+        ),
+    )
+    loaded = {name: path.read_bytes() for name, path in sources}
+    loaded["keyword-prefix-collisions"] = KEYWORD_PREFIX_COLLISION_SPEC
+    return tuple((name, loaded[name]) for name in HOSTILE_SPEC_NAMES)
 
 
 def expect_digest_mismatch(callback: Callable[[], object], path: str) -> None:
@@ -485,6 +536,228 @@ def run_typescript_projection(
     )
 
 
+def run_hostile_cpp_matrix(
+    directory: Path,
+    cases: tuple[tuple[str, str, dict[str, Path]], ...],
+    library: Path,
+    environment: dict[str, str],
+) -> None:
+    if sys.platform == "win32":
+        raise HarnessError("Windows generated-C++ linking is not implemented")
+    compiler_name = os.environ.get("CXX", "c++")
+    compiler = shutil.which(compiler_name)
+    if compiler is None:
+        raise HarnessError(f"C++ compiler is unavailable: {compiler_name}")
+    source = directory / "hostile-cpp.cpp"
+    executable = directory / "hostile-cpp"
+    lines = [f'#include "{artifacts[".hpp"].name}"' for _, _, artifacts in cases]
+    lines.extend(("", "int main() {"))
+    for index, (_, digest, _) in enumerate(cases):
+        lines.append(
+            f"    auto spec_{index} = "
+            f"fastdb_payload_{digest}::compile_spec();"
+        )
+        lines.append(f"    static_cast<void>(spec_{index});")
+    lines.extend(("    return 0;", "}", ""))
+    source.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    run(
+        [
+            compiler,
+            "-std=c++17",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-pthread",
+            "-I",
+            os.fspath(ROOT / "fastcarto/fastdb/include"),
+            "-I",
+            os.fspath(directory / "artifacts"),
+            os.fspath(source),
+            "-L",
+            os.fspath(library.parent),
+            "-lfastdb",
+            f"-Wl,-rpath,{library.parent}",
+            "-o",
+            os.fspath(executable),
+        ],
+        cwd=directory,
+        environment=environment,
+    )
+    run([os.fspath(executable)], cwd=directory, environment=environment)
+
+
+def run_hostile_rust_matrix(
+    directory: Path,
+    cases: tuple[tuple[str, str, dict[str, Path]], ...],
+    library: Path,
+    environment: dict[str, str],
+) -> None:
+    cargo = shutil.which("cargo")
+    if cargo is None:
+        raise HarnessError("cargo is unavailable")
+    project = directory / "hostile-rust"
+    source_dir = project / "src"
+    source_dir.mkdir(parents=True)
+    main_lines: list[str] = []
+    for index, (_, _, artifacts) in enumerate(cases):
+        generated_name = f"generated_{index}.rs"
+        shutil.copy2(artifacts[".rs"], source_dir / generated_name)
+        main_lines.append(f'#[path = "{generated_name}"]')
+        main_lines.append(f"mod generated_{index};")
+    main_lines.extend(("", "fn main() -> Result<(), fastdb::PayloadError> {"))
+    for index, _ in enumerate(cases):
+        main_lines.append(
+            f"    let spec_{index} = generated_{index}::compile_spec()?;"
+        )
+        main_lines.append(f"    drop(spec_{index});")
+    main_lines.extend(("    Ok(())", "}", ""))
+    (source_dir / "main.rs").write_text(
+        "\n".join(main_lines), encoding="utf-8", newline="\n"
+    )
+    crate_path = os.fspath(ROOT / "bindings/rust/fastdb").replace("\\", "\\\\")
+    (project / "Cargo.toml").write_text(
+        textwrap.dedent(
+            f"""
+            [package]
+            name = "fastdb-hostile-generated-projection-smoke"
+            version = "0.0.0"
+            edition = "2024"
+            publish = false
+
+            [dependencies]
+            fastdb = {{ path = {crate_path!r} }}
+            """
+        ).lstrip(),
+        encoding="utf-8",
+        newline="\n",
+    )
+    rust_environment = dict(environment)
+    rust_environment["FASTDB_PAYLOAD_LINK_MODE"] = "system"
+    rust_environment["FASTDB_PAYLOAD_SYSTEM_LIB_DIR"] = os.fspath(library.parent)
+    run(
+        [
+            cargo,
+            "run",
+            "--quiet",
+            "--offline",
+            "--manifest-path",
+            os.fspath(project / "Cargo.toml"),
+            "--target-dir",
+            os.fspath(project / "target"),
+        ],
+        cwd=project,
+        environment=rust_environment,
+    )
+
+
+def run_hostile_python_matrix(
+    cases: tuple[tuple[str, str, dict[str, Path]], ...],
+) -> None:
+    for name, digest, artifacts in cases:
+        generated = load_generated_python(artifacts[".py"])
+        spec = generated.compile_spec()
+        try:
+            if spec.sha256().hex() != digest:
+                raise HarnessError(
+                    f"{name} generated Python compiled the wrong specification"
+                )
+        finally:
+            spec.close()
+
+
+def run_hostile_typescript_matrix(
+    directory: Path,
+    cases: tuple[tuple[str, str, dict[str, Path]], ...],
+    environment: dict[str, str],
+) -> None:
+    node = shutil.which("node")
+    tsc_name = "tsc.cmd" if sys.platform == "win32" else "tsc"
+    tsc = ROOT / "ts/fastdb4ts/node_modules/.bin" / tsc_name
+    package = ROOT / "ts/fastdb4ts"
+    if node is None:
+        raise HarnessError("node is unavailable")
+    if not tsc.is_file():
+        raise HarnessError(f"TypeScript compiler is unavailable: {tsc}")
+    if not (package / "dist/payload/index.js").is_file():
+        raise HarnessError("fastdb4ts must be built before this harness")
+
+    project = directory / "hostile-typescript"
+    project.mkdir()
+    smoke_lines: list[str] = [
+        "import { initPayload } from 'fastdb4ts/payload';"
+    ]
+    for index, (_, _, artifacts) in enumerate(cases):
+        generated_name = f"generated_{index}.ts"
+        shutil.copy2(artifacts[".ts"], project / generated_name)
+        smoke_lines.append(
+            f"import * as generated{index} from './generated_{index}.js';"
+        )
+    smoke_lines.extend(("", "await initPayload();"))
+    for index, (_, digest, _) in enumerate(cases):
+        smoke_lines.append(
+            f"if (generated{index}.PAYLOAD_SHA256 !== '{digest}') "
+            "{ throw new Error('generated digest mismatch'); }"
+        )
+        smoke_lines.append(f"const spec{index} = generated{index}.compileSpec();")
+        smoke_lines.append(f"spec{index}.dispose();")
+    smoke_lines.append("")
+    (project / "smoke.ts").write_text(
+        "\n".join(smoke_lines), encoding="utf-8", newline="\n"
+    )
+    (project / "package.json").write_text(
+        '{"name":"fastdb-hostile-generated-projection-smoke",'
+        '"private":true,"type":"module"}\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    (project / "tsconfig.json").write_text(
+        template("payload_codegen_tsconfig.json"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    installed = project / "node_modules/fastdb4ts"
+    installed.mkdir(parents=True)
+    shutil.copy2(package / "package.json", installed / "package.json")
+    shutil.copytree(package / "dist", installed / "dist")
+    run(
+        [os.fspath(tsc), "-p", os.fspath(project / "tsconfig.json")],
+        cwd=project,
+        environment=environment,
+    )
+    run(
+        [node, os.fspath(project / "dist/smoke.js")],
+        cwd=project,
+        environment=environment,
+    )
+
+
+def run_hostile_codegen_matrix(
+    directory: Path,
+    library: Path,
+    environment: dict[str, str],
+) -> None:
+    matrix = directory / "hostile-matrix"
+    artifacts_directory = matrix / "artifacts"
+    artifacts_directory.mkdir(parents=True)
+    cases: list[tuple[str, str, dict[str, Path]]] = []
+    digests: set[str] = set()
+    for name, source in hostile_spec_sources():
+        digest, artifacts = generate_artifacts_for_source(
+            artifacts_directory, source
+        )
+        if digest in digests:
+            raise HarnessError(f"hostile specification digest is duplicated: {name}")
+        digests.add(digest)
+        cases.append((name, digest, artifacts))
+    frozen_cases = tuple(cases)
+    if tuple(name for name, _, _ in frozen_cases) != HOSTILE_SPEC_NAMES:
+        raise HarnessError("hostile specification matrix is incomplete or reordered")
+    run_hostile_cpp_matrix(matrix, frozen_cases, library, environment)
+    run_hostile_rust_matrix(matrix, frozen_cases, library, environment)
+    run_hostile_python_matrix(frozen_cases)
+    run_hostile_typescript_matrix(matrix, frozen_cases, environment)
+
+
 def main() -> int:
     arguments = parse_arguments()
     try:
@@ -504,12 +777,14 @@ def main() -> int:
                 directory, artifacts[".rs"], library, environment
             )
             run_typescript_projection(directory, artifacts[".ts"], environment)
+            run_hostile_codegen_matrix(directory, library, environment)
     except (HarnessError, OSError, PayloadError) as error:
         print(f"generated payload projection harness failed: {error}", file=sys.stderr)
         return 1
     print(
         "generated payload projection harness passed: "
-        "Core ABI -> C++/Rust/Python/TypeScript compile/import/runtime"
+        "Core ABI -> C++/Rust/Python/TypeScript compile/import/runtime plus "
+        "four-shape hostile matrix"
     )
     return 0
 

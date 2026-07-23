@@ -17,7 +17,7 @@ PROOF_MAP = ROOT / "tests/ci/p4_projection_codegen_map.json"
 ABI_ALLOWLIST = ROOT / "tests/abi/fastdb_payload_v1_symbols.txt"
 ISSUE = ROOT / "docs/issues/0002-portable-payload-foundation-implementation-status.md"
 
-SCHEMA = "fastdb.payload.p4-projection-codegen-map.v1"
+SCHEMA = "fastdb.payload.p4-projection-codegen-map.v2"
 LANGUAGES = ("cpp", "rust", "python", "typescript")
 RUNTIME_IDS = (
     "canonical",
@@ -81,6 +81,17 @@ CODEGEN_PROOF_IDS = (
     "core-artifact",
     "public-projection",
     "generated-execution",
+    "hostile-execution",
+)
+CLOSURE_REQUIREMENT_IDS = (
+    "core-authority",
+    "runtime-projection-parity",
+    "generated-target-execution",
+    "artifact-determinism-provenance-hash",
+    "abi-manifest-truth",
+    "package-workflow",
+    "hostile-codegen-robustness",
+    "documentation-handoff",
 )
 
 TOP_LEVEL_KEYS = (
@@ -91,6 +102,7 @@ TOP_LEVEL_KEYS = (
     "package_boundaries",
     "workflow",
     "codegen",
+    "closure",
 )
 RUNTIME_KEYS = ("id", "status", "fixtures", "observations", "proofs")
 PROOF_KEYS = ("language", "cases")
@@ -98,44 +110,72 @@ PROOF_CASE_KEYS = ("file", "test", "markers")
 PACKAGE_KEYS = ("id", "status", "proofs", "workflow_markers")
 PACKAGE_PROOF_KEYS = ("file", "marker")
 CODEGEN_PROOF_KEYS = ("id", "file", "language", "test", "markers")
+CLOSURE_KEYS = (
+    "status",
+    "requirements",
+    "review",
+    "hosted_status",
+    "p5_status",
+)
+CLOSURE_REQUIREMENT_KEYS = ("id", "status", "proofs")
+CLOSURE_PROOF_KEYS = ("file", "language", "test", "markers")
 
 ISSUE_MARKERS = (
     "#### P4 Task 6 local evidence",
     "exactly six ordered runtime",
     "Hosted Task 6 execution remains pending",
-    "P4 Task 7",
-    "#### P4 Task 8 local evidence",
-    "exactly 117",
+    "#### P4 Task 9 local closure evidence",
+    "P4 is locally complete",
+    "exact ABI-117",
+    "four-shape hostile",
+    "same-agent primary review",
+    "Hosted P4 execution remains pending",
+    "P5 clean cut remains open",
     "Windows generated-C++ linking",
-    "same-agent",
 )
 DOCUMENTATION_MARKERS = {
     "README.md": (
-        "P4 Tasks 1-8",
+        "P4 is locally complete",
         "exactly 117",
         "Core-owned four-language",
+        "P5 clean cut remains open",
         "definitions until an authorized hosted run exists",
     ),
     "bindings/rust/fastdb-sys/README.md": (
         "C++ Core",
         "FASTDB_PAYLOAD_LINK_MODE",
         "system",
+        "ABI-117",
+        "P4",
     ),
     "bindings/rust/fastdb/README.md": (
         "C++ Core",
         "projection",
         "CompiledSpec::generate",
+        "P4",
     ),
     "python/README.md": (
         "fastdb4py.payload",
         "Python 3.10",
         "C++ Core",
         "CompiledSpec.generate",
+        "P4",
     ),
     "ts/fastdb4ts/README.md": (
         "fastdb4ts/payload",
         "WebAssembly",
         "CompiledSpec.generate",
+        "P4",
+    ),
+    "schemas/README.md": (
+        "exact ABI-117",
+        "P4 is locally complete",
+        "P5",
+    ),
+    "fastcarto/README.md": (
+        "exact ABI-117",
+        "P4 is locally complete",
+        "P5",
     ),
 }
 
@@ -217,7 +257,7 @@ def check_map(document: dict[str, Any]) -> None:
             "version": 1,
             "symbol_count": 117,
             "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
-            "status": "frozen-p4-task-8",
+            "status": "frozen-p4",
         },
         "P4 map must freeze the reviewed ABI-117",
     )
@@ -339,8 +379,8 @@ def check_map(document: dict[str, Any]) -> None:
         )
         target = row["target"]
         require(
-            row["status"] == "closed-task-8",
-            f"codegen target {target} must be closed by Task 8",
+            row["status"] == "closed-p4",
+            f"codegen target {target} must be closed by P4",
         )
         proofs = row["proofs"]
         require(isinstance(proofs, list), f"{target} codegen proofs must be an array")
@@ -374,6 +414,76 @@ def check_map(document: dict[str, Any]) -> None:
             require(
                 identity not in seen,
                 f"{target} codegen proof source is duplicated",
+            )
+            seen.add(identity)
+
+    closure = document["closure"]
+    exact_keys(closure, CLOSURE_KEYS, "P4 closure")
+    require(
+        closure["status"] == "local-complete-task-9",
+        "P4 closure must be locally complete at Task 9",
+    )
+    require(
+        closure["review"] == "primary-agent-not-independent",
+        "P4 closure review must be accurately classified",
+    )
+    require(
+        closure["hosted_status"] == "pending",
+        "P4 closure cannot claim hosted execution",
+    )
+    require(
+        closure["p5_status"] == "open-clean-cut",
+        "P4 closure must leave the P5 clean cut open",
+    )
+    requirements = closure["requirements"]
+    require(isinstance(requirements, list), "P4 closure requirements must be an array")
+    require(
+        tuple(row.get("id") for row in requirements) == CLOSURE_REQUIREMENT_IDS,
+        "P4 closure requirements must be exact, unique, and ordered",
+    )
+    for row in requirements:
+        requirement_id = row["id"]
+        exact_keys(
+            row,
+            CLOSURE_REQUIREMENT_KEYS,
+            f"P4 closure requirement {requirement_id}",
+        )
+        require(
+            row["status"] == "closed",
+            f"P4 closure requirement {requirement_id} must be closed",
+        )
+        proofs = row["proofs"]
+        require(
+            isinstance(proofs, list) and bool(proofs),
+            f"P4 closure requirement {requirement_id} needs proof",
+        )
+        seen = set()
+        for proof in proofs:
+            exact_keys(
+                proof,
+                CLOSURE_PROOF_KEYS,
+                f"P4 closure requirement {requirement_id} proof",
+            )
+            check_repository_relative_path(
+                proof["file"],
+                f"P4 closure requirement {requirement_id} proof file",
+            )
+            require(
+                proof["language"] in LANGUAGES,
+                f"P4 closure requirement {requirement_id} language is invalid",
+            )
+            require(
+                isinstance(proof["test"], str) and bool(proof["test"]),
+                f"P4 closure requirement {requirement_id} test must be non-empty",
+            )
+            non_empty_strings(
+                proof["markers"],
+                f"P4 closure requirement {requirement_id} markers",
+            )
+            identity = (proof["file"], proof["test"])
+            require(
+                identity not in seen,
+                f"P4 closure requirement {requirement_id} proof is duplicated",
             )
             seen.add(identity)
 
@@ -471,10 +581,34 @@ def check_codegen_sources(
                     marker in region,
                     f"{target}/{proof_id} marker is absent from {name}: {marker}",
                 )
-            if proof_id == "generated-execution":
+            if proof_id in {"generated-execution", "hostile-execution"}:
                 require(
                     len(re.findall(rf"\b{re.escape(name)}\s*\(", source)) >= 2,
                     f"{target} generated execution is defined but not invoked: {name}",
+                )
+
+
+def check_closure_sources(
+    document: dict[str, Any], reader: Callable[[str], str] = default_reader
+) -> None:
+    for requirement in document["closure"]["requirements"]:
+        requirement_id = requirement["id"]
+        for proof in requirement["proofs"]:
+            source = reader(proof["file"])
+            language = proof["language"]
+            name = proof["test"]
+            region = proof_region(source, language, name)
+            for marker in proof["markers"]:
+                require(
+                    marker in region,
+                    f"{requirement_id} closure marker is absent from "
+                    f"{name}: {marker}",
+                )
+            if language in {"cpp", "python"}:
+                require(
+                    len(re.findall(rf"\b{re.escape(name)}\s*\(", source)) >= 2,
+                    f"{requirement_id} closure proof is defined but not invoked: "
+                    f"{name}",
                 )
 
 
@@ -516,6 +650,7 @@ def check_workflow(document: dict[str, Any], source: str) -> None:
         "npm --prefix ts/fastdb4ts run build:wasm",
         "fastdb_payload_test_codegen_c_abi.js",
         "fastdb_payload_test_cpp_facade.js",
+        "simple and hostile generated projections",
     ):
         require(marker in source, f"generated projection workflow marker is absent: {marker}")
 
@@ -537,6 +672,10 @@ def check_issue_truth(source: str) -> None:
         "Hosted Task 6 execution passed",
         "Hosted projection parity passed",
         "Task 6 independent review",
+        "Hosted P4 execution passed",
+        "P4 independent review",
+        "P5 is complete",
+        "FastDB 0.2.0 is released",
     )
     for claim in false_claims:
         require(claim not in source, f"Issue 0002 makes a false claim: {claim}")
@@ -583,6 +722,7 @@ def check_repository() -> None:
     check_proof_sources(document)
     check_package_sources(document)
     check_codegen_sources(document)
+    check_closure_sources(document)
     workflow_source = default_reader(document["workflow"]["file"])
     check_workflow(document, workflow_source)
     check_abi_allowlist(ABI_ALLOWLIST.read_text(encoding="utf-8"))

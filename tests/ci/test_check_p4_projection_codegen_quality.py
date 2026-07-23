@@ -49,6 +49,24 @@ def codegen_proofs(target: str) -> list[dict[str, object]]:
     ]
 
 
+def closure_requirements() -> list[dict[str, object]]:
+    return [
+        {
+            "id": requirement_id,
+            "status": "closed",
+            "proofs": [
+                {
+                    "file": f"closure-{requirement_id}.source",
+                    "language": "python",
+                    "test": f"check_{requirement_id.replace('-', '_')}",
+                    "markers": [f"{requirement_id}-marker"],
+                }
+            ],
+        }
+        for requirement_id in MODULE.CLOSURE_REQUIREMENT_IDS
+    ]
+
+
 def valid_document() -> dict[str, object]:
     return {
         "schema": MODULE.SCHEMA,
@@ -60,7 +78,7 @@ def valid_document() -> dict[str, object]:
             "version": 1,
             "symbol_count": 117,
             "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
-            "status": "frozen-p4-task-8",
+            "status": "frozen-p4",
         },
         "runtime_receipts": [
             {
@@ -94,15 +112,42 @@ def valid_document() -> dict[str, object]:
         "codegen": [
             {
                 "target": target,
-                "status": "closed-task-8",
+                "status": "closed-p4",
                 "proofs": codegen_proofs(target),
             }
             for target in MODULE.CODEGEN_TARGETS
         ],
+        "closure": {
+            "status": "local-complete-task-9",
+            "requirements": closure_requirements(),
+            "review": "primary-agent-not-independent",
+            "hosted_status": "pending",
+            "p5_status": "open-clean-cut",
+        },
     }
 
 
 class ProjectionMapTests(unittest.TestCase):
+    def test_requires_final_p4_closure_contract(self) -> None:
+        self.assertEqual(
+            MODULE.SCHEMA,
+            "fastdb.payload.p4-projection-codegen-map.v2",
+        )
+        self.assertEqual(
+            MODULE.CLOSURE_REQUIREMENT_IDS,
+            (
+                "core-authority",
+                "runtime-projection-parity",
+                "generated-target-execution",
+                "artifact-determinism-provenance-hash",
+                "abi-manifest-truth",
+                "package-workflow",
+                "hostile-codegen-robustness",
+                "documentation-handoff",
+            ),
+        )
+        self.assertIn("closure", MODULE.TOP_LEVEL_KEYS)
+
     def test_rejects_duplicate_json_keys(self) -> None:
         self.assertEqual(
             MODULE.load_json_no_duplicates('{"first":1,"second":2}', "fixture"),
@@ -251,7 +296,7 @@ class ProjectionMapTests(unittest.TestCase):
                 marker = proof["markers"][0]
                 invocation = (
                     f"\n{name}()\n"
-                    if proof["id"] == "generated-execution"
+                    if proof["id"] in {"generated-execution", "hostile-execution"}
                     else ""
                 )
                 sources[proof["file"]] = (
@@ -263,6 +308,45 @@ class ProjectionMapTests(unittest.TestCase):
         sources[first["file"]] = f"def {first['test']}():\n    pass"
         with self.assertRaises(MODULE.QualityError):
             MODULE.check_codegen_sources(document, sources.__getitem__)
+
+    def test_closure_sources_are_scoped_and_invoked(self) -> None:
+        document = valid_document()
+        sources: dict[str, str] = {}
+        for requirement in document["closure"]["requirements"]:
+            proof = requirement["proofs"][0]
+            name = proof["test"]
+            marker = proof["markers"][0]
+            sources[proof["file"]] = (
+                f"def {name}():\n    pass  # {marker}\n\n{name}()\n"
+            )
+        MODULE.check_closure_sources(document, sources.__getitem__)
+
+        first = document["closure"]["requirements"][0]["proofs"][0]
+        sources[first["file"]] = f"def {first['test']}():\n    pass\n"
+        with self.assertRaises(MODULE.QualityError):
+            MODULE.check_closure_sources(document, sources.__getitem__)
+
+        sources[first["file"]] = (
+            f"def {first['test']}():\n    pass  # {first['markers'][0]}\n"
+        )
+        with self.assertRaises(MODULE.QualityError):
+            MODULE.check_closure_sources(document, sources.__getitem__)
+
+    def test_rejects_incomplete_reordered_or_false_closure(self) -> None:
+        for mutate in (
+            lambda closure: closure["requirements"].pop(),
+            lambda closure: closure["requirements"].__setitem__(
+                slice(0, 2),
+                list(reversed(closure["requirements"][:2])),
+            ),
+            lambda closure: closure.__setitem__("review", "independent"),
+            lambda closure: closure.__setitem__("hosted_status", "passed"),
+            lambda closure: closure.__setitem__("p5_status", "complete"),
+        ):
+            document = valid_document()
+            mutate(document["closure"])
+            with self.assertRaises(MODULE.QualityError):
+                MODULE.check_map(document)
 
     def test_rejects_incomplete_package_or_workflow_inventory(self) -> None:
         document = valid_document()
@@ -294,6 +378,7 @@ class ProjectionMapTests(unittest.TestCase):
                 "npm --prefix ts/fastdb4ts run build:wasm",
                 "fastdb_payload_test_codegen_c_abi.js",
                 "fastdb_payload_test_cpp_facade.js",
+                "simple and hostile generated projections",
             ]
         )
         MODULE.check_workflow(document, workflow)

@@ -14,8 +14,11 @@ This directory contains the native implementation that the higher-level bindings
 > C++17 facade projects that ABI.
 > D1 is closed by executable no-full-image evidence and the complete local P3
 > gate is green. The user-authorized final review was performed by the
-> context-owning primary agent and is not claimed as independent. P4 Task 9,
-> P5, hosted CI, and the 0.2.0 release remain open. See the [current status
+> context-owning primary agent and is not claimed as independent.
+> P4 is locally complete at exact ABI-117, including exact output ceilings,
+> concurrent deterministic generation, and the four-shape hostile
+> cross-toolchain matrix. P5, hosted CI, and the 0.2.0 release remain open.
+> See the [current status
 > issue](../docs/issues/0002-portable-payload-foundation-implementation-status.md)
 > and [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
 

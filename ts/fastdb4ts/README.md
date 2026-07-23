@@ -76,6 +76,11 @@ limits, provenance, and errors come through the Wasm C ABI; TypeScript does not
 render source. Existing `fdb codegen --ts` behavior below is legacy 0.1.x
 migration input and is not extended by this projection.
 
+P4 is locally complete. The official WebAssembly projection type-checks and
+executes the four-shape hostile generated-artifact matrix through the same
+ABI-117 Core; TypeScript gains no private parser or renderer. Hosted execution
+and P5 remain open.
+
 ## Installation
 
 ```bash

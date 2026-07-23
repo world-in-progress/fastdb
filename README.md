@@ -44,9 +44,10 @@ inferred from the single-thread proof; native tests plus ThreadSanitizer remain
 the concurrency authority. Hosted Linux/macOS results remain pending because
 this branch has not been pushed.
 
-P4 Tasks 1-8 now provide safe Rust, Python 3.10+, and official
-TypeScript/WASM portable projections over the unchanged C ABI alongside the
-existing C++ facade. Their shared executable map covers canonical identity,
+P4 is locally complete through Tasks 1-9. Those tasks provide safe Rust,
+Python 3.10+, and official TypeScript/WASM portable projections over the
+unchanged C ABI alongside the existing C++ facade. Their shared executable map
+covers canonical identity,
 record and graph binary bytes, complete logical values, five-field errors,
 ownership/invalidation/materialization, and truthful direct/staged execution.
 Rust source/system link seams, installed Python wheels, and the packed
@@ -54,13 +55,17 @@ browser-capable `fastdb4ts/payload` subpath are locally exercised. Core-owned fo
 code generation returns deterministic in-memory C++/Rust/Python/
 TypeScript artifacts through every projection; a clean-tree harness compiles,
 imports, type-checks, and executes all four against their official runtimes.
+The closing four-shape hostile matrix covers all values, recursive lists,
+keyword/generated-prefix collisions, and shared cyclic graphs. Native tests
+also freeze exact per-target output ceilings and concurrent byte/path/SHA-256
+determinism.
 The C++ Core remains the only semantic authority; none of the bindings or
 generated outputs contains a second parser, canonicalizer, digest, layout,
 binary, graph, or materialization model.
 
-P4 Task 9 robustness/documentation closure remains open. P5 legacy authority
-removal, `RecordEngine` clean rename, release readiness, and later downstream
-composition also remain open. Those non-deferrable gaps are
+P5 clean cut remains open: legacy authority removal, the `RecordEngine` clean
+rename, release readiness, and later downstream composition are not P4
+results. Those non-deferrable gaps are
 tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 No local result or workflow definition is represented as a hosted pass; the
@@ -92,7 +97,7 @@ This repository now contains three closely related layers:
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — the 0.2.0 target makes the C++ Core, rather than a language binding, the semantic authority
 - **Schema-driven codegen** — the target Core returns deterministic C++/Rust/Python/TypeScript payload artifacts in memory
-- **Portable record, object-graph runtime, and codegen** — P1 provides canonical identity, P2 provides the frozen record path, P3 provides the frozen C/C++ graph build/open/view/materialize/invalidate path at the historical 105-symbol boundary, and P4 adds equal language projections plus Core-owned four-target codegen at the exact 117-symbol boundary; P4 robustness closure and P5 remain open
+- **Portable record, object-graph runtime, and codegen** — P1 provides canonical identity, P2 provides the frozen record path, P3 provides the frozen C/C++ graph build/open/view/materialize/invalidate path at the historical 105-symbol boundary, and P4 is locally complete with equal language projections plus Core-owned four-target codegen at the exact 117-symbol boundary; P5 remains open
 
 ## Documentation map
 

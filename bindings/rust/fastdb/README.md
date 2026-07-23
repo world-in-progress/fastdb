@@ -20,3 +20,7 @@ publishing a safe handle.
 TypeScript artifacts as an immutable `ArtifactSet`. Artifact paths, bytes,
 SHA-256 receipts, limits, provenance, and errors all come from the stable C
 ABI. Rust contains no generator or privileged private-Core route.
+
+P4 is locally complete: this projection participates in the same four-shape
+generated-artifact execution matrix as C++, Python, and TypeScript/Wasm while
+the C++ Core remains the sole authority. P5 and hosted execution remain open.

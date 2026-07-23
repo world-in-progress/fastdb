@@ -78,6 +78,24 @@ class PythonLibrarySelectionTests(unittest.TestCase):
         self.assertNotIn("wrongPayload.entryView(0).at(0n)", typescript)
         self.assertIn("wrongEntry.dispose();", typescript)
 
+    def test_requires_public_hostile_codegen_matrix(self) -> None:
+        self.assertEqual(
+            tuple(MODULE.HOSTILE_SPEC_NAMES),
+            (
+                "record-all-types",
+                "recursive-lists",
+                "keyword-prefix-collisions",
+                "shared-cyclic-graph",
+            ),
+        )
+        self.assertTrue(callable(MODULE.run_hostile_codegen_matrix))
+        harness = MODULE_PATH.read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            harness.count("run_hostile_codegen_matrix("),
+            2,
+            "hostile matrix must be defined and invoked",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

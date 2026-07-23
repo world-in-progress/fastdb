@@ -49,21 +49,49 @@ public:
     }
 
     void push_back(char value) {
-        require_growth(UINT64_C(1));
-        bytes_.push_back(value);
+        flush_pending_newline();
+        if (value == '\n') {
+            pending_newline_ = true;
+            return;
+        }
+        append_immediate(std::string_view{&value, 1U});
     }
-    void pop_back() { bytes_.pop_back(); }
-    std::size_t size() const noexcept { return bytes_.size(); }
-    int compare(std::size_t position, std::size_t count,
-                const char* value) const {
-        return bytes_.compare(position, count, value);
+    std::string finish() && {
+        flush_pending_newline();
+        return std::move(bytes_);
     }
-    std::string finish() && { return std::move(bytes_); }
+    std::string finish_trimming_blank_line() && {
+        if (!pending_newline_ || bytes_.empty() || bytes_.back() != '\n') {
+            flush_pending_newline();
+        } else {
+            pending_newline_ = false;
+        }
+        return std::move(bytes_);
+    }
 
 private:
     void append(std::string_view value) {
+        flush_pending_newline();
+        if (!value.empty() && value.back() == '\n') {
+            append_immediate(value.substr(0U, value.size() - 1U));
+            pending_newline_ = true;
+            return;
+        }
+        append_immediate(value);
+    }
+
+    void append_immediate(std::string_view value) {
         require_growth(static_cast<std::uint64_t>(value.size()));
         bytes_.append(value.data(), value.size());
+    }
+
+    void flush_pending_newline() {
+        if (!pending_newline_) {
+            return;
+        }
+        require_growth(UINT64_C(1));
+        bytes_.push_back('\n');
+        pending_newline_ = false;
     }
 
     void require_growth(std::uint64_t additional) const {
@@ -79,6 +107,7 @@ private:
 
     std::uint64_t max_bytes_;
     std::string bytes_;
+    bool pending_newline_{false};
 };
 
 std::string render_cpp(const spec::CompiledSpec& compiled,

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -22,6 +23,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -732,6 +734,101 @@ int test_generation_rejects_unknown_target_and_literal_limits() {
     return EXIT_SUCCESS;
 }
 
+int test_all_targets_enforce_exact_output_limits_and_concurrent_determinism() {
+    const std::string source =
+        read_file(std::string(FASTDB_PAYLOAD_SPEC_FIXTURE_DIR) +
+                  "/valid/record-all-types.source.json");
+    require(!source.empty());
+    const CompiledSpec spec = compile(source);
+    std::array<std::string, kTargets.size()> baseline_paths;
+    std::array<std::string, kTargets.size()> baseline_bytes;
+    std::array<std::array<std::uint8_t, 32>, kTargets.size()>
+        baseline_digests{};
+
+    for (std::size_t index = 0U; index < kTargets.size(); ++index) {
+        const auto target = kTargets[index].target;
+        auto baseline = generate(spec, target);
+        require(baseline.has_value());
+        require(baseline.value().artifacts().size() == 1U);
+        const auto& artifact = baseline.value().artifacts().front();
+        baseline_paths[index] = artifact.relative_path();
+        baseline_bytes[index] = artifact.bytes();
+        baseline_digests[index] = artifact.sha256();
+        const std::uint64_t exact_size =
+            static_cast<std::uint64_t>(artifact.bytes().size());
+        require(exact_size > UINT64_C(0));
+
+        GenerationLimits exact;
+        exact.max_total_bytes = exact_size;
+        auto exact_result = generate(spec, target, exact);
+        require(exact_result.has_value());
+        const auto& exact_artifact =
+            exact_result.value().artifacts().front();
+        require(exact_artifact.relative_path() == artifact.relative_path());
+        require(exact_artifact.bytes() == artifact.bytes());
+        require(exact_artifact.sha256() == artifact.sha256());
+
+        GenerationLimits one_short;
+        one_short.max_total_bytes = exact_size - UINT64_C(1);
+        auto rejected = generate(spec, target, one_short);
+        require(!rejected.has_value());
+        require(rejected.error().code() == FDB_PAYLOAD_E_GENERATOR_FAILED);
+        require(rejected.error().path() ==
+                "/codegen/limits/max_total_bytes");
+        require(rejected.error().details_json().find(
+                    "\"reason\":\"total_bytes_exceeded\"") !=
+                std::string_view::npos);
+        require(rejected.error().details_json().find(
+                    "\"limit\":\"" +
+                    std::to_string(one_short.max_total_bytes) + "\"") !=
+                std::string_view::npos);
+        require(rejected.error().details_json().find(
+                    "\"actual\":\"" + std::to_string(exact_size) + "\"") !=
+                std::string_view::npos);
+    }
+
+    // Native and pthread-enabled builds are the concurrency authority. The
+    // ordinary Core Wasm receipt remains deliberately single-threaded.
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    {
+        std::atomic<std::uint32_t> failures{UINT32_C(0)};
+        std::vector<std::thread> workers;
+        for (std::uint32_t worker = UINT32_C(0); worker < UINT32_C(8);
+             ++worker) {
+            workers.emplace_back([&]() {
+                for (std::uint32_t iteration = UINT32_C(0);
+                     iteration < UINT32_C(16); ++iteration) {
+                    for (std::size_t index = 0U; index < kTargets.size();
+                         ++index) {
+                        auto generated =
+                            generate(spec, kTargets[index].target);
+                        if (!generated.has_value() ||
+                            generated.value().artifacts().size() != 1U) {
+                            failures.fetch_add(UINT32_C(1),
+                                               std::memory_order_relaxed);
+                            continue;
+                        }
+                        const auto& artifact =
+                            generated.value().artifacts().front();
+                        if (artifact.relative_path() != baseline_paths[index] ||
+                            artifact.bytes() != baseline_bytes[index] ||
+                            artifact.sha256() != baseline_digests[index]) {
+                            failures.fetch_add(UINT32_C(1),
+                                               std::memory_order_relaxed);
+                        }
+                    }
+                }
+            });
+        }
+        for (std::thread& worker : workers) {
+            worker.join();
+        }
+        require(failures.load(std::memory_order_relaxed) == UINT32_C(0));
+    }
+#endif
+    return EXIT_SUCCESS;
+}
+
 int test_allocation_failures_publish_no_partial_artifact_set() {
     const CompiledSpec spec = compile(kEmptyRecordSource);
 
@@ -901,6 +998,10 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     if (test_generation_rejects_unknown_target_and_literal_limits() !=
+        EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_all_targets_enforce_exact_output_limits_and_concurrent_determinism() !=
         EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }

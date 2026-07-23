@@ -80,6 +80,11 @@ official projections. It never writes a destination tree. The historical
 Python-to-TypeScript generator described later in this document is a 0.1.x
 migration input, not portable-payload authority.
 
+P4 is locally complete. Python participates in the same hostile all-values,
+recursive-list, identifier-collision, and shared-cycle generation matrix as
+the other official projections, while all parsing, identity, topology, and
+rendering remain in the C++ Core. Hosted execution and P5 remain open.
+
 ## Installation
 
 From PyPI:

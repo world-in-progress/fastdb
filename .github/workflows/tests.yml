@@ -235,7 +235,7 @@ jobs:
           npm --prefix ts/fastdb4ts run build:wasm
           npm --prefix ts/fastdb4ts run build
 
-      - name: Compile, import, and execute all generated projections
+      - name: Compile, import, and execute simple and hostile generated projections
         env:
           FASTDB_PAYLOAD_LIBRARY: ${{ github.workspace }}/build/generated-projections/fastdb/libfastdb.so
           PYTHONPATH: ${{ github.workspace }}/python

@@ -1,5 +1,5 @@
 {
-  "schema": "fastdb.payload.p4-projection-codegen-map.v1",
+  "schema": "fastdb.payload.p4-projection-codegen-map.v2",
   "authority": {
     "semantic_authority": "cpp-core",
     "projection_rule": "abi-only-no-binding-semantics"
@@ -8,7 +8,7 @@
     "version": 1,
     "symbol_count": 117,
     "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
-    "status": "frozen-p4-task-8"
+    "status": "frozen-p4"
   },
   "runtime_receipts": [
     {
@@ -656,7 +656,7 @@
   "codegen": [
     {
       "target": "cpp",
-      "status": "closed-task-8",
+      "status": "closed-p4",
       "proofs": [
         {
           "id": "core-artifact",
@@ -678,12 +678,19 @@
           "language": "python",
           "test": "run_cpp_projection",
           "markers": ["\"-std=c++17\"", "\"-lfastdb\"", "run([os.fspath(executable)]"]
+        },
+        {
+          "id": "hostile-execution",
+          "file": "tests/ci/run_generated_payload_projections.py",
+          "language": "python",
+          "test": "run_hostile_cpp_matrix",
+          "markers": ["\"-std=c++17\"", "\"-Werror\"", "run([os.fspath(executable)]"]
         }
       ]
     },
     {
       "target": "rust",
-      "status": "closed-task-8",
+      "status": "closed-p4",
       "proofs": [
         {
           "id": "core-artifact",
@@ -705,12 +712,19 @@
           "language": "python",
           "test": "run_rust_projection",
           "markers": ["FASTDB_PAYLOAD_LINK_MODE", "\"system\"", "\"cargo\""]
+        },
+        {
+          "id": "hostile-execution",
+          "file": "tests/ci/run_generated_payload_projections.py",
+          "language": "python",
+          "test": "run_hostile_rust_matrix",
+          "markers": ["generated_{index}.rs", "FASTDB_PAYLOAD_LINK_MODE", "\"cargo\""]
         }
       ]
     },
     {
       "target": "python",
-      "status": "closed-task-8",
+      "status": "closed-p4",
       "proofs": [
         {
           "id": "core-artifact",
@@ -732,12 +746,19 @@
           "language": "python",
           "test": "run_python_projection",
           "markers": ["generated.compile_spec()", "expect_digest_mismatch", "returned the wrong value"]
+        },
+        {
+          "id": "hostile-execution",
+          "file": "tests/ci/run_generated_payload_projections.py",
+          "language": "python",
+          "test": "run_hostile_python_matrix",
+          "markers": ["load_generated_python", "spec.sha256().hex()", "spec.close()"]
         }
       ]
     },
     {
       "target": "typescript",
-      "status": "closed-task-8",
+      "status": "closed-p4",
       "proofs": [
         {
           "id": "core-artifact",
@@ -759,8 +780,131 @@
           "language": "python",
           "test": "run_typescript_projection",
           "markers": ["tsconfig.json", "dist/smoke.js", "node"]
+        },
+        {
+          "id": "hostile-execution",
+          "file": "tests/ci/run_generated_payload_projections.py",
+          "language": "python",
+          "test": "run_hostile_typescript_matrix",
+          "markers": ["initPayload", "tsconfig.json", "dist/smoke.js"]
         }
       ]
     }
-  ]
+  ],
+  "closure": {
+    "status": "local-complete-task-9",
+    "requirements": [
+      {
+        "id": "core-authority",
+        "status": "closed",
+        "proofs": [
+          {
+            "file": "tests/cpp/payload/test_codegen.cpp",
+            "language": "cpp",
+            "test": "test_rich_specs_emit_only_official_runtime_ergonomics",
+            "markers": ["CompiledSpec spec", "derive_runtime_topology", "contains_forbidden_content"]
+          }
+        ]
+      },
+      {
+        "id": "runtime-projection-parity",
+        "status": "closed",
+        "proofs": [
+          {
+            "file": "tests/ci/check_p4_projection_codegen_quality.py",
+            "language": "python",
+            "test": "check_map",
+            "markers": ["RUNTIME_IDS", "LANGUAGES", "closed-task-6"]
+          }
+        ]
+      },
+      {
+        "id": "generated-target-execution",
+        "status": "closed",
+        "proofs": [
+          {
+            "file": "tests/ci/run_generated_payload_projections.py",
+            "language": "python",
+            "test": "run_hostile_codegen_matrix",
+            "markers": ["run_hostile_cpp_matrix", "run_hostile_rust_matrix", "run_hostile_python_matrix", "run_hostile_typescript_matrix"]
+          }
+        ]
+      },
+      {
+        "id": "artifact-determinism-provenance-hash",
+        "status": "closed",
+        "proofs": [
+          {
+            "file": "tests/cpp/payload/test_codegen.cpp",
+            "language": "cpp",
+            "test": "test_all_targets_enforce_exact_output_limits_and_concurrent_determinism",
+            "markers": ["exact.max_total_bytes", "baseline_digests", "std::thread"]
+          },
+          {
+            "file": "tests/cpp/payload/test_codegen.cpp",
+            "language": "cpp",
+            "test": "test_rich_specs_emit_only_official_runtime_ergonomics",
+            "markers": ["generated-by: fastdb.payload.codegen.v1", "payload-sha256:", "generator-version: fastdb.payload.codegen.v1"]
+          }
+        ]
+      },
+      {
+        "id": "abi-manifest-truth",
+        "status": "closed",
+        "proofs": [
+          {
+            "file": "tests/cpp/payload/test_spec_abi.cpp",
+            "language": "cpp",
+            "test": "test_compile_and_every_query_round_trip",
+            "markers": ["FDB_PAYLOAD_OPERATION_CODEGEN", "FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT", "codegen_targets"]
+          },
+          {
+            "file": "tests/ci/check_p4_projection_codegen_quality.py",
+            "language": "python",
+            "test": "check_abi_allowlist",
+            "markers": ["len(symbols) == 117", "sorted(set(symbols))", "fdb_payload_v1_"]
+          }
+        ]
+      },
+      {
+        "id": "package-workflow",
+        "status": "closed",
+        "proofs": [
+          {
+            "file": "tests/ci/check_p4_projection_codegen_quality.py",
+            "language": "python",
+            "test": "check_workflow",
+            "markers": ["WORKFLOW_JOBS", "package_boundaries", "run_generated_payload_projections.py"]
+          }
+        ]
+      },
+      {
+        "id": "hostile-codegen-robustness",
+        "status": "closed",
+        "proofs": [
+          {
+            "file": "tests/ci/run_generated_payload_projections.py",
+            "language": "python",
+            "test": "hostile_spec_sources",
+            "markers": ["record-all-types.source.json", "nested-lists.source.json", "graph-shared-cycle.source.json", "KEYWORD_PREFIX_COLLISION_SPEC"]
+          }
+        ]
+      },
+      {
+        "id": "documentation-handoff",
+        "status": "closed",
+        "proofs": [
+          {
+            "file": "tests/ci/check_p4_projection_codegen_quality.py",
+            "language": "python",
+            "test": "check_documentation",
+            "markers": ["DOCUMENTATION_MARKERS", "omits package truth"]
+          }
+        ]
+      }
+    ],
+    "review": "primary-agent-not-independent",
+    "hosted_status": "pending",
+    "p5_status": "open-clean-cut"
+  }
 }
