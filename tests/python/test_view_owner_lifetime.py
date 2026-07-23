@@ -17,7 +17,7 @@ class LifetimeBlob:
 
 
 def _point_table(*, owner=None, writeable=True):
-    engine = fdb.ColumnEngine.create()
+    engine = fdb.RecordEngine.create()
     engine.push_many([
         LifetimePoint(row_id=1, x=1.5, name='alpha'),
         LifetimePoint(row_id=2, x=2.5, name='beta'),
@@ -27,7 +27,7 @@ def _point_table(*, owner=None, writeable=True):
 
 
 def _blob_table(*, owner=None, writeable=False):
-    engine = fdb.ColumnEngine.create()
+    engine = fdb.RecordEngine.create()
     engine.push_many([
         LifetimeBlob(data=b'left'),
         LifetimeBlob(data=b'right'),

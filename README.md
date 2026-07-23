@@ -63,20 +63,21 @@ The C++ Core remains the only semantic authority; none of the bindings or
 generated outputs contains a second parser, canonicalizer, digest, layout,
 binary, graph, or materialization model.
 
-P5 clean cut remains open: legacy authority removal, the `RecordEngine` clean
-rename, release readiness, and later downstream composition are not P4
-results. Those non-deferrable gaps are
+P5 clean cut remains open: the source tree now uses the final
+`RecordEngine` name directly, while standalone-boundary policy, public
+documentation cleanup, release readiness, and later downstream composition
+are not P4 results. Those non-deferrable gaps are
 tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 No local result or workflow definition is represented as a hosted pass; the
 new projection jobs are definitions until an authorized hosted run exists.
 
-The current package version and published packages remain 0.1.x and still
-contain legacy `fastdb.schema.v1`, call-db, `columnar.v1`, and `ColumnEngine`
-surfaces. They are migration inputs to be removed or renamed during the planned
-0.2.0 clean cut, not APIs to extend. There will be no compatibility parser or
-alias in the target release. Capabilities deliberately deferred beyond 0.2.0
-are tracked separately in [Issue
+The source package version remains 0.1.x while the clean cut is in progress;
+already published 0.1.x packages still contain the legacy schema, call-db,
+profile, and pre-0.2 engine-name surfaces. They are migration inputs, not APIs
+to extend. This source tree exposes `RecordEngine` without a compatibility
+alias. Capabilities deliberately deferred beyond 0.2.0 are tracked separately
+in [Issue
 0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
 
 - [Accepted portable payload design](docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
@@ -145,11 +146,12 @@ If you are working on native internals or storage layout, start with:
 
 For safety-sensitive integrations, pass `writeable=False` to expose read-only backed rows and checked numeric columns. This blocks row field writes and column writes even when the owner itself is an unchecked trusted owner.
 
-## Legacy 0.1.x Python `ColumnEngine.truncate()` with `STR`
+## Standalone Python `RecordEngine.truncate()` with `STR`
 
-> This section documents current 0.1.x behavior. The accepted 0.2.0 name is `RecordEngine`, with no `ColumnEngine` alias.
+> This source tree uses the final `RecordEngine` name directly and provides no
+> alias for the pre-0.2 engine name.
 
-`fastdb4py` `ColumnEngine.truncate()` now supports UTF-8 `STR` fields in two usage tiers:
+`fastdb4py` `RecordEngine.truncate()` now supports UTF-8 `STR` fields in two usage tiers:
 
 - **Default high-level path** — `tbl.fill(..., name=[...])` now routes raw strings through the native batch string-column API
 - **Advanced prepacked path** — `pack_utf8_column([...]) + tbl.column.name.fill_utf8(...)`
@@ -158,7 +160,7 @@ For fixed tables, the high-level `Table.fill(...)` path batches numeric columns 
 
 ```python
 import numpy as np
-from fastdb4py import ColumnEngine, Layout, F64, STR, feature, pack_utf8_column
+from fastdb4py import RecordEngine, Layout, F64, STR, feature, pack_utf8_column
 
 @feature
 class Point:
@@ -166,7 +168,7 @@ class Point:
     y: F64
     name: STR
 
-orm = ColumnEngine.truncate([Layout(Point, 3)])
+orm = RecordEngine.truncate([Layout(Point, 3)])
 tbl = orm.table(Point)
 
 tbl.fill(
@@ -184,7 +186,7 @@ tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 
 > This section documents a current migration source. Public call-db runtime and binding surfaces are removed by the accepted 0.2.0 clean cut.
 
-For integrations that already own a generic call-db binding, `try_export_call_db(binding, value)` returns an existing buffer-protocol view when a value is already backed by an exact call-db-compatible single fixed `Batch[Feature]` table. Build such tables with the target table name up front, for example `ColumnEngine.truncate([Layout(Point, n, name="return_0")])`, then call `encode_call_db(...)` only when `try_export_call_db(...)` returns `None`. FastDB owns the exact-export decision; integrations such as C-Two should pass the generic binding and logical value rather than inspecting FastDB table internals.
+For integrations that already own a generic call-db binding, `try_export_call_db(binding, value)` returns an existing buffer-protocol view when a value is already backed by an exact call-db-compatible single fixed `Batch[Feature]` table. Build such tables with the target table name up front, for example `RecordEngine.truncate([Layout(Point, n, name="return_0")])`, then call `encode_call_db(...)` only when `try_export_call_db(...)` returns `None`. FastDB owns the exact-export decision; integrations such as C-Two should pass the generic binding and logical value rather than inspecting FastDB table internals.
 
 ## Legacy 0.1.x Experimental Call-DB Final-Backing Builds
 
@@ -284,7 +286,7 @@ In the accepted target, FastDB owns `fastdb.payload.v1`, canonical identity, nat
 **Recommended patterns by use case:**
 
 - **Bulk read/write of one field across all rows** → `table.column.x` (columnar, zero-copy)
-- **Bulk fill fixed-size tables** → `ColumnEngine.truncate` + `table.fill(...)`
+- **Bulk fill fixed-size tables** → `RecordEngine.truncate` + `table.fill(...)`
 - **Bulk fill pre-encoded UTF-8 buffers** → `table.column.name.fill_utf8(...)`
 - **Iterate and process all fields per row** → `table.iter_reuse()` + `feat.read_all_scalars()`
 - **Sparse random access** → `table[i].field`
@@ -301,7 +303,7 @@ In the accepted target, FastDB owns `fastdb.payload.v1`, canonical identity, nat
 | `ColumnAccessor` column cache (`table.column.x`) | ✅ Yes | Cold path (first access) is lock-protected; hot path (cache hit) is lock-free |
 | `Table` row reads (`table[i]`, iteration, `iter_reuse()`, fallback string lookup) | ✅ Yes | Per-table row materialization uses a read lock around native `tryGetFeature(...)` calls |
 | `Feature` instances | ❌ No | Instance-level `_cache` dict is not synchronized — use external locking or one instance per thread |
-| `ColumnEngine` / `ObjectEngine` / `Table` mutation | ❌ No | Not designed for concurrent mutation — create separate engine instances per thread, or synchronize externally |
+| `RecordEngine` / `ObjectEngine` / `Table` mutation | ❌ No | Not designed for concurrent mutation — create separate engine instances per thread, or synchronize externally |
 | SWIG C++ calls | ✅ Yes | Long-running pure C++ operations release the GIL via `%feature("threadallow")` |
 
 ### Recommended patterns for multi-threaded code
@@ -309,7 +311,7 @@ In the accepted target, FastDB owns `fastdb.payload.v1`, canonical identity, nat
 ```python
 import threading
 import numpy as np
-from fastdb4py import ColumnEngine, Layout, feature, F64
+from fastdb4py import RecordEngine, Layout, feature, F64
 
 
 @feature
@@ -318,12 +320,12 @@ class Point:
 
 # ✅ Good: each thread owns its own truncate view
 def worker():
-    orm = ColumnEngine.truncate([Layout(Point, 1000)])
+    orm = RecordEngine.truncate([Layout(Point, 1000)])
     tbl = orm.table(Point)
     tbl.fill(x=np.arange(1000, dtype=np.float64))
 
 # ✅ Good: shared truncate engine with read-only access after publication
-shared_orm = ColumnEngine.truncate([Layout(Point, N)])
+shared_orm = RecordEngine.truncate([Layout(Point, N)])
 # ... fill data ...
 # Multiple threads can safely read table.column.x concurrently
 

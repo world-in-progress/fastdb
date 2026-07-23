@@ -2,7 +2,8 @@
 
 ## Overview
 
-fastdb is a high-performance columnar storage library with two language bindings that sit on top of a shared C++ core:
+fastdb is a compact AoS record and object-graph storage library with strided
+field access and two language bindings over one shared C++ core:
 
 ```
 ┌─────────────────────┐  ┌───────────────────────────┐
@@ -69,7 +70,7 @@ The C++ core is never built standalone — it is always built as part of one of 
 python/fastdb4py/
 ├── type.py           Field aliases (`U32`, `F64`, `STR`, ...)
 ├── decorator.py      `@feature` schema decorator
-├── column_engine.py  Fixed-size columnar tables via `ColumnEngine.truncate`
+├── record_engine.py  AoS records with strided fields via `RecordEngine.truncate`
 ├── object_engine.py  Dynamic/object-graph tables via `ObjectEngine.create`
 ├── string_column.py  UTF-8 `StringColumn`, `pack_utf8_column`, `fill_utf8`
 ├── orm/
@@ -94,7 +95,7 @@ uv run pytest -q
 
 # Single test file / function
 uv run pytest tests/python/test_string_column.py -q
-uv run pytest tests/python/test_column_engine.py -q
+uv run pytest tests/python/test_record_engine.py -q
 
 # Build codegen CLI (no rebuild needed — pure Python)
 uv run fdb codegen --ts <input_dir> <output_dir>
@@ -122,7 +123,7 @@ class Point:
 **Engine split**:
 ```python
 # Fixed-size bulk ingest (fastest path for known row count)
-db = ColumnEngine.truncate([Layout(Point, 1000)])
+db = RecordEngine.truncate([Layout(Point, 1000)])
 tbl = db.table(Point)
 tbl.fill(row_id=np.arange(1000, dtype=np.uint32), x=xs, y=ys)
 
@@ -138,7 +139,7 @@ xs = tbl.column.x           # NumPy-backed numeric column
 labels = tbl.column.label   # StringColumn wrapper for STR fields
 ```
 
-**UTF-8 string ingest tiers for `ColumnEngine.truncate`**:
+**UTF-8 string ingest tiers for `RecordEngine.truncate`**:
 ```python
 # Preferred default when you start from Python strings
 tbl.fill(row_id=ids, x=xs, y=ys, label=["a", "bb", "ccc"])
@@ -166,7 +167,7 @@ result = FastSerializer.loads_shm("shm_name", length, offset, RootType)
 ### Testing
 
 Key test files in `tests/python/`:
-- `test_column_engine.py` — `ColumnEngine.truncate` paths and fixed-table behavior
+- `test_record_engine.py` — `RecordEngine.truncate` paths and fixed-table behavior
 - `test_string_column.py` — `StringColumn`, native raw-string batch writes, `fill_utf8(...)`
 - `test_object_engine.py` — dynamic push/combine/load flows
 - `test_shared_memory.py` — publish/load/unlink across processes

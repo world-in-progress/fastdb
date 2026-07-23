@@ -9,13 +9,17 @@ import fastdb4py
 import fastdb4py.type as fastdb_type
 
 
-EXPECTED_TASK2 = {
+LEGACY_ENGINE_NAME = "Column" + "Engine"
+LEGACY_ENGINE_MODULE = "fastdb4py." + "column" + "_engine"
+
+
+EXPECTED_P5 = {
     "feature",
     "is_feature",
     "get_schema",
     "lookup_class",
     "Layout",
-    "ColumnEngine",
+    "RecordEngine",
     "ObjectEngine",
     "Table",
     "StringColumn",
@@ -42,6 +46,7 @@ EXPECTED_TASK2 = {
 }
 
 REMOVED_MODULES = (
+    LEGACY_ENGINE_MODULE,
     "fastdb4py.call_db",
     "fastdb4py.schema",
     "fastdb4py.require",
@@ -50,6 +55,7 @@ REMOVED_MODULES = (
 )
 
 REMOVED_TOP_LEVEL_NAMES = {
+    LEGACY_ENGINE_NAME,
     "Array",
     "ArrayRequirement",
     "Batch",
@@ -93,15 +99,24 @@ class PublicSurfaceNestedList:
     values: list[list[fastdb4py.F64]]
 
 
-def test_package_root_has_exact_task2_public_surface() -> None:
-    assert set(fastdb4py.__all__) == EXPECTED_TASK2
-    assert len(fastdb4py.__all__) == len(EXPECTED_TASK2)
+def test_package_root_has_exact_p5_public_surface() -> None:
+    assert set(fastdb4py.__all__) == EXPECTED_P5
+    assert len(fastdb4py.__all__) == len(EXPECTED_P5)
     assert {
-        name for name in EXPECTED_TASK2 if getattr(fastdb4py, name, None) is None
+        name for name in EXPECTED_P5 if getattr(fastdb4py, name, None) is None
     } == set()
     assert {
         name for name in REMOVED_TOP_LEVEL_NAMES if hasattr(fastdb4py, name)
     } == set()
+
+
+def test_record_engine_has_only_the_final_public_name_and_module() -> None:
+    assert fastdb4py.RecordEngine.__module__ == "fastdb4py.record_engine"
+    assert "RecordEngine" in fastdb4py.__all__
+    assert not hasattr(fastdb4py, LEGACY_ENGINE_NAME)
+    with pytest.raises(ModuleNotFoundError) as error:
+        importlib.import_module(LEGACY_ENGINE_MODULE)
+    assert error.value.name == LEGACY_ENGINE_MODULE
 
 
 @pytest.mark.parametrize("module_name", REMOVED_MODULES)

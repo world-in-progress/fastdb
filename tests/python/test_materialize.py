@@ -19,7 +19,7 @@ class MaterializeCustomSetattr:
 
 
 def _table():
-    engine = fdb.ColumnEngine.create()
+    engine = fdb.RecordEngine.create()
     engine.push_many([
         MaterializePoint(row_id=1, x=1.5, name='alpha'),
         MaterializePoint(row_id=2, x=2.5, name='beta'),
@@ -29,7 +29,7 @@ def _table():
 
 
 def _custom_table():
-    engine = fdb.ColumnEngine.create()
+    engine = fdb.RecordEngine.create()
     obj = MaterializeCustomSetattr()
     obj.__dict__['x'] = 1.5
     engine.push(obj)

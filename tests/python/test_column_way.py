@@ -1,7 +1,7 @@
 import pytest
 
 from fastdb4py.decorator import feature
-from fastdb4py.column_engine import ColumnEngine
+from fastdb4py.record_engine import RecordEngine
 from fastdb4py.layout import Layout
 from fastdb4py.type import F64
 
@@ -14,7 +14,7 @@ class Point:
 
 def test_column_way():
     import numpy as np
-    db = ColumnEngine.truncate([Layout(Point, 5)])
+    db = RecordEngine.truncate([Layout(Point, 5)])
 
     ps = db.table(Point)
 

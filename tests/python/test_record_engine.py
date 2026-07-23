@@ -2,7 +2,7 @@ import secrets
 
 import fastdb4py as fdb
 from fastdb4py.decorator import feature
-from fastdb4py.column_engine import ColumnEngine
+from fastdb4py.record_engine import RecordEngine
 from fastdb4py import core
 from fastdb4py.layout import Layout
 from fastdb4py.type import BOOL, BYTES, F64, U8, U32, STR
@@ -71,8 +71,8 @@ class CEBoolListPoint:
     flags: list[BOOL]
 
 
-def test_column_engine_truncate():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 100)])
+def test_record_engine_truncate():
+    engine = RecordEngine.truncate([Layout(CEPoint, 100)])
     tbl = engine.table(CEPoint)
     assert len(tbl) == 100
     tbl.column.x[:] = np.arange(100, dtype=np.float64)
@@ -81,7 +81,7 @@ def test_column_engine_truncate():
 
 
 def test_layout_names_a_physical_table() -> None:
-    engine = ColumnEngine.truncate([Layout(CEPoint, 2, name="points")])
+    engine = RecordEngine.truncate([Layout(CEPoint, 2, name="points")])
     table = engine.table(CEPoint, name="points")
 
     assert table.name == "points"
@@ -98,8 +98,8 @@ def test_layout_rejects_a_non_string_table_name() -> None:
         Layout(CEPoint, 1, name=123)
 
 
-def test_column_engine_truncate_keeps_other_tables_after_string_layer():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2), Layout(CEOtherPoint, 3)])
+def test_record_engine_truncate_keeps_other_tables_after_string_layer():
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2), Layout(CEOtherPoint, 3)])
 
     assert len(engine.table(CEStringPoint)) == 2
     assert len(engine.table(CEOtherPoint)) == 3
@@ -111,23 +111,23 @@ class CENode:
     child: 'CENode'
 
 
-def test_column_engine_rejects_ref_in_truncate():
+def test_record_engine_rejects_ref_in_truncate():
     with pytest.raises(TypeError, match="REF"):
-        ColumnEngine.truncate([Layout(CENode, 10)])
+        RecordEngine.truncate([Layout(CENode, 10)])
 
 
-def test_column_engine_rejects_non_native_scalar_list_in_truncate():
+def test_record_engine_rejects_non_native_scalar_list_in_truncate():
     with pytest.raises(TypeError, match='names: list\\[str\\].*native fixed-width list storage'):
-        ColumnEngine.truncate([Layout(CEStringListPoint, 2)])
+        RecordEngine.truncate([Layout(CEStringListPoint, 2)])
 
 
-def test_column_engine_rejects_nested_list_in_truncate():
+def test_record_engine_rejects_nested_list_in_truncate():
     with pytest.raises(TypeError, match='values: list\\[list\\].*native fixed-width list storage'):
-        ColumnEngine.truncate([Layout(CENestedListPoint, 2)])
+        RecordEngine.truncate([Layout(CENestedListPoint, 2)])
 
 
-def test_column_engine_create_push_combine():
-    engine = ColumnEngine.create()
+def test_record_engine_create_push_combine():
+    engine = RecordEngine.create()
     engine.push(CEPoint(x=1.0, y=2.0))
     engine.push(CEPoint(x=3.0, y=4.0))
     engine.combine()
@@ -137,45 +137,45 @@ def test_column_engine_create_push_combine():
     assert tbl.column.x[1] == pytest.approx(3.0)
 
 
-def test_column_engine_rejects_non_native_scalar_list_in_push():
-    engine = ColumnEngine.create()
+def test_record_engine_rejects_non_native_scalar_list_in_push():
+    engine = RecordEngine.create()
 
     with pytest.raises(TypeError, match='names: list\\[str\\].*native fixed-width list storage'):
         engine.push(CEStringListPoint(names=["a", "b"]))
 
 
-def test_column_engine_rejects_non_native_scalar_list_in_push_many():
-    engine = ColumnEngine.create()
+def test_record_engine_rejects_non_native_scalar_list_in_push_many():
+    engine = RecordEngine.create()
 
     with pytest.raises(TypeError, match='names: list\\[str\\].*native fixed-width list storage'):
         engine.push_many([CEStringListPoint(names=["a"])])
 
 
-def test_column_engine_rejects_nested_list_in_push_many():
-    engine = ColumnEngine.create()
+def test_record_engine_rejects_nested_list_in_push_many():
+    engine = RecordEngine.create()
 
     with pytest.raises(TypeError, match='values: list\\[list\\].*native fixed-width list storage'):
         engine.push_many([CENestedListPoint(values=[[1.0, 2.0]])])
 
 
-def test_column_engine_rejects_multiple_bytes_fields_in_push():
-    engine = ColumnEngine.create()
+def test_record_engine_rejects_multiple_bytes_fields_in_push():
+    engine = RecordEngine.create()
 
     with pytest.raises(TypeError, match='multiple bytes fields share the feature raw payload'):
         engine.push(CEDoubleBytesPoint(left=b'a', right=b'b'))
 
 
-def test_column_engine_rejects_multiple_bytes_fields_in_push_many():
-    engine = ColumnEngine.create()
+def test_record_engine_rejects_multiple_bytes_fields_in_push_many():
+    engine = RecordEngine.create()
 
     with pytest.raises(TypeError, match='multiple bytes fields share the feature raw payload'):
         engine.push_many([CEDoubleBytesPoint(left=b'a', right=b'b')])
 
 
-def test_column_engine_dynamic_single_bytes_field_round_trips():
+def test_record_engine_dynamic_single_bytes_field_round_trips():
     from fastdb4py.reader import copy_feature
 
-    engine = ColumnEngine.create()
+    engine = RecordEngine.create()
     engine.push(CEBytesPoint(data=b'payload'))
     engine.push(CEBytesPoint(data=b'second'))
     engine.combine()
@@ -187,8 +187,8 @@ def test_column_engine_dynamic_single_bytes_field_round_trips():
     assert restored_second.data == b'second'
 
 
-def test_column_engine_bool_fields_parse_strings_without_truthiness():
-    engine = ColumnEngine.create()
+def test_record_engine_bool_fields_parse_strings_without_truthiness():
+    engine = RecordEngine.create()
     engine.push(CEBoolPoint(active='false'))
     engine.push(CEBoolPoint(active='true'))
     engine.combine()
@@ -198,8 +198,8 @@ def test_column_engine_bool_fields_parse_strings_without_truthiness():
     assert tbl.column.active[1] == 1
 
 
-def test_column_engine_push_many_bool_fields_parse_strings_without_truthiness():
-    engine = ColumnEngine.create()
+def test_record_engine_push_many_bool_fields_parse_strings_without_truthiness():
+    engine = RecordEngine.create()
     engine.push_many([
         CEBoolPoint(active='false'),
         CEBoolPoint(active='true'),
@@ -211,15 +211,15 @@ def test_column_engine_push_many_bool_fields_parse_strings_without_truthiness():
     assert tbl.column.active[1] == 1
 
 
-def test_column_engine_bool_fields_reject_ambiguous_strings():
-    engine = ColumnEngine.create()
+def test_record_engine_bool_fields_reject_ambiguous_strings():
+    engine = RecordEngine.create()
 
     with pytest.raises(ValueError, match='fastdb bool scalar'):
         engine.push(CEBoolPoint(active='maybe'))
 
 
-def test_column_engine_bool_list_fields_parse_strings_without_truthiness():
-    engine = ColumnEngine.create()
+def test_record_engine_bool_list_fields_parse_strings_without_truthiness():
+    engine = RecordEngine.create()
     engine.push(CEBoolListPoint(flags=['false', 'true', 0, 1]))
     engine.combine()
 
@@ -227,15 +227,15 @@ def test_column_engine_bool_list_fields_parse_strings_without_truthiness():
     assert restored.flags.tolist() == [0, 1, 0, 1]
 
 
-def test_column_engine_bool_list_fields_reject_ambiguous_strings():
-    engine = ColumnEngine.create()
+def test_record_engine_bool_list_fields_reject_ambiguous_strings():
+    engine = RecordEngine.create()
 
     with pytest.raises(ValueError, match='fastdb bool scalar'):
         engine.push(CEBoolListPoint(flags=['false', 'maybe']))
 
 
-def test_column_engine_push_many_bool_fields_reject_before_partial_write():
-    engine = ColumnEngine.create()
+def test_record_engine_push_many_bool_fields_reject_before_partial_write():
+    engine = RecordEngine.create()
 
     with pytest.raises(ValueError, match='fastdb bool scalar'):
         engine.push_many([
@@ -251,8 +251,8 @@ def test_column_engine_push_many_bool_fields_reject_before_partial_write():
     assert tbl.column.active[0] == 0
 
 
-def test_column_engine_push_many_bool_fields_reject_before_table_creation():
-    engine = ColumnEngine.create()
+def test_record_engine_push_many_bool_fields_reject_before_table_creation():
+    engine = RecordEngine.create()
 
     with pytest.raises(ValueError, match='fastdb bool scalar'):
         engine.push_many([
@@ -264,8 +264,8 @@ def test_column_engine_push_many_bool_fields_reject_before_table_creation():
     assert CEBoolPoint.__name__ not in engine._table_feature_types
 
 
-def test_column_engine_fixed_fill_bool_fields_parse_strings_without_truthiness():
-    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+def test_record_engine_fixed_fill_bool_fields_parse_strings_without_truthiness():
+    engine = RecordEngine.truncate([Layout(CEBoolPoint, 2)])
     tbl = engine.table(CEBoolPoint)
 
     tbl.fill(active=['false', 'true'])
@@ -274,16 +274,16 @@ def test_column_engine_fixed_fill_bool_fields_parse_strings_without_truthiness()
     assert tbl.column.active[1] == 1
 
 
-def test_column_engine_fixed_fill_bool_fields_reject_ambiguous_strings():
-    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+def test_record_engine_fixed_fill_bool_fields_reject_ambiguous_strings():
+    engine = RecordEngine.truncate([Layout(CEBoolPoint, 2)])
     tbl = engine.table(CEBoolPoint)
 
     with pytest.raises(ValueError, match='fastdb bool scalar'):
         tbl.fill(active=['true', 'maybe'])
 
 
-def test_column_engine_fixed_fill_bool_fields_treat_none_as_false():
-    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+def test_record_engine_fixed_fill_bool_fields_treat_none_as_false():
+    engine = RecordEngine.truncate([Layout(CEBoolPoint, 2)])
     tbl = engine.table(CEBoolPoint)
 
     tbl.fill(active=[None, True])
@@ -292,24 +292,24 @@ def test_column_engine_fixed_fill_bool_fields_treat_none_as_false():
     assert tbl.column.active[1] == 1
 
 
-def test_column_engine_fixed_fill_bool_fields_reject_scalar_string_column():
-    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+def test_record_engine_fixed_fill_bool_fields_reject_scalar_string_column():
+    engine = RecordEngine.truncate([Layout(CEBoolPoint, 2)])
     tbl = engine.table(CEBoolPoint)
 
     with pytest.raises(TypeError, match='iterable of bool items'):
         tbl.fill(active='false')
 
 
-def test_column_engine_fixed_fill_bool_fields_reject_multidimensional_column():
-    engine = ColumnEngine.truncate([Layout(CEBoolPoint, 2)])
+def test_record_engine_fixed_fill_bool_fields_reject_multidimensional_column():
+    engine = RecordEngine.truncate([Layout(CEBoolPoint, 2)])
     tbl = engine.table(CEBoolPoint)
 
     with pytest.raises(ValueError, match='1-D column'):
         tbl.fill(active=np.array([[True], [False]], dtype=np.bool_))
 
 
-def test_column_engine_fixed_fill_u8_fields_keep_numeric_cast_path():
-    engine = ColumnEngine.truncate([Layout(CEU8Point, 2)])
+def test_record_engine_fixed_fill_u8_fields_keep_numeric_cast_path():
+    engine = RecordEngine.truncate([Layout(CEU8Point, 2)])
     tbl = engine.table(CEU8Point)
 
     tbl.fill(value=['1', '2'])
@@ -335,8 +335,8 @@ def test_low_level_list_push_rejects_unknown_element_type():
         _set_list_field(object(), field, [1])
 
 
-def test_column_engine_push_many():
-    engine = ColumnEngine.create()
+def test_record_engine_push_many():
+    engine = RecordEngine.create()
     points = [CEPoint(x=float(i), y=float(i * 2)) for i in range(50)]
     engine.push_many(points)
     engine.combine()
@@ -344,8 +344,8 @@ def test_column_engine_push_many():
     assert len(tbl) == 50
 
 
-def test_column_engine_iter_reuse():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 10)])
+def test_record_engine_iter_reuse():
+    engine = RecordEngine.truncate([Layout(CEPoint, 10)])
     tbl = engine.table(CEPoint)
     tbl.column.x[:] = np.arange(10, dtype=np.float64)
     tbl.column.y[:] = np.arange(10, dtype=np.float64) * 2
@@ -356,7 +356,7 @@ def test_column_engine_iter_reuse():
 
 
 def test_table_getitem_rejects_negative_index_underflow():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEPoint, 2)])
     tbl = engine.table(CEPoint)
 
     with pytest.raises(IndexError, match='out of range'):
@@ -414,8 +414,8 @@ def test_table_iter_reuse_locks_row_materialization(monkeypatch):
     assert lock.unlocked_reads == 0
 
 
-def test_column_engine_fill():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 5)])
+def test_record_engine_fill():
+    engine = RecordEngine.truncate([Layout(CEPoint, 5)])
     tbl = engine.table(CEPoint)
     tbl.fill(
         x=np.array([1, 2, 3, 4, 5], dtype=np.float64),
@@ -426,7 +426,7 @@ def test_column_engine_fill():
 
 
 def test_table_fill_coerces_float32_into_f64_columns():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 3)])
+    engine = RecordEngine.truncate([Layout(CEPoint, 3)])
     tbl = engine.table(CEPoint)
 
     tbl.fill(
@@ -445,7 +445,7 @@ def test_table_fill_coerces_float32_into_f64_columns():
 
 
 def test_table_fill_rejects_non_fixed_tables():
-    engine = ColumnEngine.create()
+    engine = RecordEngine.create()
     engine.push(CEPoint(x=1.0, y=2.0))
     tbl = engine._table_map[CEPoint.__name__]
 
@@ -454,7 +454,7 @@ def test_table_fill_rejects_non_fixed_tables():
 
 
 def test_table_fill_rejects_empty_call():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEPoint, 2)])
     tbl = engine.table(CEPoint)
 
     with pytest.raises(ValueError, match='at least one column'):
@@ -462,7 +462,7 @@ def test_table_fill_rejects_empty_call():
 
 
 def test_table_fill_accepts_mixed_numeric_and_string_columns():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 3)])
     tbl = engine.table(CEStringPoint)
 
     tbl.fill(
@@ -479,7 +479,7 @@ def test_table_fill_accepts_mixed_numeric_and_string_columns():
 
 
 def test_owner_bound_truncated_table_preserves_direct_fill_and_lifetime():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEPoint, 2)])
     owner = FdbViewOwner(checked=True, writeable=True)
     tbl = engine.table(CEPoint, owner=owner, writeable=True)
 
@@ -492,7 +492,7 @@ def test_owner_bound_truncated_table_preserves_direct_fill_and_lifetime():
 
 
 def test_table_fill_accepts_string_only_columns():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
 
     tbl.fill(name=["left", "right"])
@@ -501,7 +501,7 @@ def test_table_fill_accepts_string_only_columns():
 
 
 def test_native_build_post_into_buffer_matches_memory_stream():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2, name='return_0')])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2, name='return_0')])
     tbl = engine.table(CEStringPoint, name='return_0')
     tbl.fill(
         row_id=np.array([1, 2], dtype=np.uint32),
@@ -523,7 +523,7 @@ def test_native_build_post_into_buffer_matches_memory_stream():
 
 
 def test_regular_truncate_keeps_materialized_native_table_buffer():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 2, name='return_0')])
+    engine = RecordEngine.truncate([Layout(CEPoint, 2, name='return_0')])
 
     assert engine._fixed_build.table_buffer_bytes() > 0
 
@@ -547,7 +547,7 @@ def test_removed_call_db_native_backing_surface_is_absent():
 
 
 def test_table_fill_round_trips_empty_strings():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 3)])
     tbl = engine.table(CEStringPoint)
 
     tbl.fill(name=["", "mid", ""])
@@ -556,7 +556,7 @@ def test_table_fill_round_trips_empty_strings():
 
 
 def test_table_fill_rejects_mismatched_lengths():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
 
     with pytest.raises(ValueError, match='name.*expected 2.*got 1'):
@@ -567,7 +567,7 @@ def test_table_fill_rejects_mismatched_lengths():
 
 
 def test_table_fill_rejects_unknown_field_name():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
 
     with pytest.raises(AttributeError, match='missing'):
@@ -575,7 +575,7 @@ def test_table_fill_rejects_unknown_field_name():
 
 
 def test_table_fill_rejects_list_field_with_clear_error():
-    engine = ColumnEngine.truncate([Layout(CEListPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEListPoint, 2)])
     tbl = engine.table(CEListPoint)
 
     with pytest.raises(TypeError, match='values.*does not support'):
@@ -583,7 +583,7 @@ def test_table_fill_rejects_list_field_with_clear_error():
 
 
 def test_table_fill_validation_failure_does_not_mutate_existing_values():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
 
     tbl.fill(
@@ -606,7 +606,7 @@ def test_table_fill_validation_failure_does_not_mutate_existing_values():
 
 
 def test_table_fill_invalidates_fixed_writer_after_bulk_setter_failure():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEPoint, 2)])
     tbl = engine.table(CEPoint)
 
     class FailingLayerBuild:
@@ -639,7 +639,7 @@ def test_table_fill_invalidates_fixed_writer_after_bulk_setter_failure():
 
 
 def test_loaded_fixed_table_rejects_fill():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
     tbl.fill(
         row_id=np.array([1, 2], dtype=np.uint32),
@@ -651,7 +651,7 @@ def test_loaded_fixed_table_rejects_fill():
     loaded = None
     try:
         engine.share(shm_name)
-        loaded = ColumnEngine.load(shm_name)
+        loaded = RecordEngine.load(shm_name)
         with pytest.raises(RuntimeError, match="read-only"):
             loaded.table(CEStringPoint).fill(name=["x", "y"])
     finally:
@@ -663,7 +663,7 @@ def test_loaded_fixed_table_rejects_fill():
 
 
 def test_shared_writer_fixed_table_rejects_fill():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
     tbl.fill(
         row_id=np.array([1, 2], dtype=np.uint32),
@@ -681,7 +681,7 @@ def test_shared_writer_fixed_table_rejects_fill():
 
 
 def test_table_fill_overwrites_prior_values_on_repeated_success():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
 
     tbl.fill(
@@ -707,7 +707,7 @@ def test_table_fill_overwrites_prior_values_on_repeated_success():
 
 
 def test_table_fill_preserves_other_tables_across_snapshot_publish():
-    engine = ColumnEngine.truncate([Layout(CEPoint, 2), Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEPoint, 2), Layout(CEStringPoint, 2)])
     point_tbl = engine.table(CEPoint)
     string_tbl = engine.table(CEStringPoint)
 
@@ -731,15 +731,15 @@ def test_table_fill_preserves_other_tables_across_snapshot_publish():
     )
 
 
-def test_column_engine_rejects_ref_in_push():
-    engine = ColumnEngine.create()
+def test_record_engine_rejects_ref_in_push():
+    engine = RecordEngine.create()
     node = CENode(x=1.0, child=None)
     with pytest.raises(TypeError, match="REF"):
         engine.push(node)
 
 
-def test_column_engine_rejects_ref_in_push_many():
-    engine = ColumnEngine.create()
+def test_record_engine_rejects_ref_in_push_many():
+    engine = RecordEngine.create()
     nodes = [CENode(x=float(i), child=None) for i in range(5)]
     with pytest.raises(TypeError, match="REF"):
         engine.push_many(nodes)

@@ -13,7 +13,7 @@ class Layout:
         feature_type: A @feature-decorated class.
         capacity: Number of rows to pre-allocate.
         name: Optional physical table/layer name. Defaults to the feature class
-            name for compatibility with existing ColumnEngine usage.
+            name.
     """
     feature_type: Type
     capacity: int

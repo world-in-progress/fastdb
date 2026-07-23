@@ -2,7 +2,14 @@
 
 Python bindings for `fastdb`, built on top of the C++ core in `fastcarto/fastdb/` and exposed through SWIG.
 
-> **0.2.0 direction:** This document primarily describes the current 0.1.x binding. The accepted portable payload target makes the C++ Core the sole `fastdb.payload.v1` authority, removes public call-db APIs, and renames `ColumnEngine` to `RecordEngine` without an alias. Python annotations may remain an authoring frontend, but Python will not own canonicalization, digest, profile validation, layout, or binary decoding. See the [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
+> **0.2.0 direction:** This document describes the standalone Python binding
+> while the package version remains 0.1.x. The source tree now exposes
+> `RecordEngine` directly without an alias for the pre-0.2 engine name. The
+> accepted portable payload target makes the C++ Core the sole
+> `fastdb.payload.v1` authority; Python annotations may remain an authoring
+> frontend, but Python does not own canonicalization, digest, profile
+> validation, layout, or binary decoding. See the
+> [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
 
 This README is the binding-specific companion to the repository root `README.md`. The root document introduces the project as a whole; this document focuses on the Python-facing API, its architecture, and common usage patterns.
 
@@ -32,7 +39,7 @@ The Python stack is layered:
 2. **SWIG/native bridge** — `python/fastdb4py/core/`
    - generated wrappers and compiled native extension
 3. **High-level Python API** — `python/fastdb4py/`
-   - current 0.1.x ergonomic `@feature`, `ColumnEngine`, `ObjectEngine`, `Table`, and `FastSerializer` abstractions; the 0.2.0 portable projection is defined by the accepted design
+   - current 0.1.x ergonomic `@feature`, `RecordEngine`, `ObjectEngine`, `Table`, and `FastSerializer` abstractions; the 0.2.0 portable projection is defined by the accepted design
 
 Important directories:
 
@@ -104,7 +111,7 @@ Prebuilt wheels are expected for the main supported platforms. Source builds req
 ## Quick start
 
 ```python
-from fastdb4py import feature, ColumnEngine, Layout, F64
+from fastdb4py import feature, RecordEngine, Layout, F64
 import numpy as np
 
 
@@ -115,7 +122,7 @@ class Point:
     z: F64
 
 
-db = ColumnEngine.truncate([Layout(Point, 5)])
+db = RecordEngine.truncate([Layout(Point, 5)])
 table = db.table(Point)
 
 table.fill(
@@ -217,7 +224,7 @@ The field order is part of the schema contract. It affects table layout, seriali
 
 ## Database creation patterns
 
-### Fixed-size tables with `ColumnEngine.truncate`
+### Fixed-size tables with `RecordEngine.truncate`
 
 Use `truncate` when the row count is known ahead of time. For fixed-size tables, there are two UTF-8 string-ingest tiers:
 
@@ -227,7 +234,7 @@ Use `truncate` when the row count is known ahead of time. For fixed-size tables,
 If your pipeline starts from Python `str` values, prefer the default raw path. Reach for the prepacked path only when you already have UTF-8 offsets/data buffers from an upstream step.
 
 ```python
-from fastdb4py import feature, ColumnEngine, Layout, F64, F32
+from fastdb4py import feature, RecordEngine, Layout, F64, F32
 import numpy as np
 
 
@@ -241,7 +248,7 @@ class Particle:
 
 
 N = 100_000
-db = ColumnEngine.truncate([Layout(Particle, N)])
+db = RecordEngine.truncate([Layout(Particle, N)])
 tbl = db.table(Particle)
 
 tbl.fill(
@@ -304,7 +311,7 @@ class Cell:
     temperature: F64
 
 
-db = ColumnEngine.truncate([
+db = RecordEngine.truncate([
     Layout(Particle, 50_000),
     Layout(Cell, 1_000),
 ])
@@ -313,7 +320,7 @@ db = ColumnEngine.truncate([
 For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric data and raw Python `STR` values together, the raw-string path routes through the native batch string-column API with upfront length validation, scalar `BOOL` columns use the same explicit bool parser as mutable engine writes before bulk numeric storage, and ordinary `U8` columns remain numeric casts:
 
 ```python
-from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR, pack_utf8_column
+from fastdb4py import feature, RecordEngine, Layout, U32, F64, STR, pack_utf8_column
 import numpy as np
 
 
@@ -324,7 +331,7 @@ class Sample:
     name: STR
 
 
-db = ColumnEngine.truncate([Layout(Sample, 3)])
+db = RecordEngine.truncate([Layout(Sample, 3)])
 tbl = db.table(Sample)
 tbl.fill(
     row_id=np.array([1, 2, 3], dtype=np.uint32),
@@ -403,7 +410,7 @@ for feat in tbl.iter_reuse():
 
 ## Feature references
 
-Reference fields let one feature point at another feature, possibly in a different table. This is handled by `ObjectEngine`, not `ColumnEngine`.
+Reference fields let one feature point at another feature, possibly in a different table. This is handled by `ObjectEngine`, not `RecordEngine`.
 
 ```python
 from fastdb4py import feature, ObjectEngine, F64
@@ -441,7 +448,7 @@ print(loaded.a.x, loaded.b.x, loaded.c.x)
 ```python
 db.save("simulation_state")
 
-db2 = ColumnEngine.load("simulation_state", from_file=True)
+db2 = RecordEngine.load("simulation_state", from_file=True)
 tbl2 = db2.table(Particle)
 print(tbl2.column.x[:5])
 ```
@@ -637,7 +644,7 @@ shm.unlink()
 
 All returned objects are fully detached from the shared memory segment (pure Python `_cache` mode). Numpy arrays are copied. The shared memory is closed immediately after deserialization.
 
-For large homogeneous numerical datasets, `ColumnEngine.truncate` plus columnar writes is still the preferred path. `FastSerializer` is aimed at trees, graphs, mesh-like structures, and mixed payloads.
+For large homogeneous numerical datasets, `RecordEngine.truncate` plus columnar writes is still the preferred path. `FastSerializer` is aimed at trees, graphs, mesh-like structures, and mixed payloads.
 
 ## Running tests
 

@@ -1945,6 +1945,75 @@ implementations still compile, and the zero-warning package gate fails closed.
 This is same-agent primary review by explicit user direction, not independent
 or subagent evidence.
 
+**P5 Task 5 local implementation evidence:** From exact start `2e99f30`, the
+standalone Python AoS record implementation is exposed only as
+`fastdb4py.RecordEngine` and
+`fastdb4py.record_engine.RecordEngine`. The source module and primary test
+module are renamed to `record_engine.py` and `test_record_engine.py`.
+`RecordEngine.__module__` is exactly `fastdb4py.record_engine`; the old root
+name and module are absent. There is no class alias, deprecated wrapper,
+`sys.modules` entry, dynamic `__getattr__`, pickle registration, compatibility
+parser, or silent profile conversion. `ObjectEngine` remains the independent
+standalone object-graph engine, while legitimate `Table.column`,
+`StringColumn`, `BytesColumn`, `StridedColumn`, and field-oriented column
+operations retain their names.
+
+The genuine public-surface RED changed only the exact package-surface test and
+failed `3` tests while `15` passed: the root still exported the old name, the
+new name was absent, and the old module remained importable. The corrected
+focused engine/string/materialize/shared-memory/lifetime suite passes
+`111` tests in `0.38s`; the complete Python suite passes `340` tests in
+`2.77s`; compileall passes; and all `16` package-checker unit tests pass in
+`0.043s`.
+
+The final fresh CPython 3.14t package build contains `record_engine.py` in both
+sdist and wheel and contains no old engine module. The real package inventory
+gate passes with zero governed SWIG diagnostics and exactly
+`_fastdb4py.so`, `libfastdb.dylib`, and `libfastdb4py.dylib`. The local
+artifacts are:
+
+```text
+f4f0b64c9c1873bc070ce92809f5265db5112a534812cf5dbc3c716c5e65c5b8  fastdb4py-0.1.22-cp314-cp314t-macosx_26_0_arm64.whl
+bbca84d66fff8eda24fd5d247ebadbde827ba4500c71f75f81230b14c3fdc665  fastdb4py-0.1.22.tar.gz
+```
+
+An isolated environment installed that wheel and proved the exact final
+export/module boundary plus a two-row
+`@feature`/`RecordEngine.truncate`/`Table.fill` round trip. The required
+active-source/instruction scan for the old class/module/file name exits `1`
+with no match, as does the broader case-insensitive
+`column[_ -]?engine` scan. This evidence is local macOS `26.5.2` arm64 with
+AppleClang `21.0.0`, CMake `4.3.2`, SWIG `4.4.1`, uv `0.10.12`,
+free-threaded CPython `3.14.3`, NumPy `2.3.5`, and pytest `9.0.1`.
+
+**Task 5 current documentation limit:** The root and Python READMEs still
+contain historical call-db instructions for APIs already removed by Tasks 1-3,
+and current contributor instructions still advertise
+`./py_utils.sh --build` even though the helper implements `--setup`, not
+`--build`. The latter was reproduced after intentional artifact cleanup:
+`uv sync` restores the editable dependency environment but does not run the
+CMake/SWIG extension build; `uv pip install --reinstall -e .` regenerates the
+native binding, after which `uv sync` restores locked dependencies.
+
+**Reason:** Task 5 is the atomic engine class/module/export rename. Task 6 is
+the separately frozen owner for rewriting current public instructions and
+installing an executable historical-document allowlist rather than mixing
+policy decisions into the rename.
+
+**Impact:** The package surface and archives are correct, but a source-tree
+reader can still be directed to removed call-db APIs or a nonexistent helper
+mode. FastDB is therefore not yet documentation-clean or locally
+release-ready, and downstream composition must not start from those
+instructions.
+
+**Owner, dependencies, and closure criteria:** FastDB P5 Task 6 must rewrite
+current README/AGENTS/copilot/examples/schema-index/CHANGELOG surfaces, make
+the actual native-binding rebuild command truthful, and add exact forbidden
+term/package policy that permits only named historical ADR/Issue/migration
+records. Task 7 must then execute the fresh source and installed-package
+release-readiness matrix. Hosted runs, version changes, push, tag,
+publication, release, and C-Two composition remain pending and unauthorized.
+
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
 clean-cut, parity, warning-free package, and local release-readiness gates
@@ -2122,7 +2191,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut and local release-readiness handoff | Open; Tasks 0-3 are frozen, and Task 4 has local implementation evidence for deterministic legacy descriptors, alignment-safe legacy reads, removed orphan backing APIs, zero SWIG diagnostics, ABI-117, and warning-free package inventory; frozen review plus Tasks 5-7 remain | Freeze the Task 4 same-agent review, then complete the `RecordEngine` rename, exact clean-cut policy, and fresh local gates without a version bump or publication; keep hosted platform results pending and then hand the frozen FastDB boundary to C-Two |
+| P5. Clean cut and local release-readiness handoff | Open; Tasks 0-4 are frozen, and Task 5 has local implementation evidence for the no-alias `RecordEngine` class/module/export rename, 340 Python tests, clean archives, zero SWIG diagnostics, and an installed-wheel round trip; the Task 5 frozen review plus Tasks 6-7 remain | Freeze the Task 5 same-agent review, then complete exact clean-cut documentation/policy and fresh local gates without a version bump or publication; keep hosted platform results pending and then hand the frozen FastDB boundary to C-Two |
 
 ## Non-deferrable 0.2.0 work
 

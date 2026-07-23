@@ -1,5 +1,5 @@
-# python/fastdb4py/column_engine.py
-"""ColumnEngine: OLAP/batch columnar workloads (no REF field support)."""
+# python/fastdb4py/record_engine.py
+"""RecordEngine: AoS record storage with strided field access and no REF support."""
 import platform
 import warnings
 import numpy as np
@@ -65,7 +65,7 @@ def _reject_ref(schema: LayerSchema, cls_name: str) -> None:
     if schema.has_ref_fields:
         ref_names = [fd.name for fd in schema.ref_fields + schema.list_ref_fields]
         raise TypeError(
-            f"ColumnEngine does not support REF fields. "
+            f"RecordEngine does not support REF fields. "
             f"{cls_name} has REF fields: {ref_names}. "
             f"Use ObjectEngine for classes with references."
         )
@@ -75,7 +75,7 @@ def _reject_non_native_lists(schema: LayerSchema, cls_name: str) -> None:
     diagnostics = non_native_list_storage_diagnostics(schema)
     if diagnostics:
         raise TypeError(
-            f"ColumnEngine cannot store non-native list fields for "
+            f"RecordEngine cannot store non-native list fields for "
             f"{cls_name}: {'; '.join(diagnostics)}"
         )
 
@@ -84,7 +84,7 @@ def _reject_raw_payload_collisions(schema: LayerSchema, cls_name: str) -> None:
     diagnostics = raw_payload_storage_diagnostics(schema)
     if diagnostics:
         raise TypeError(
-            f"ColumnEngine cannot store raw payload fields for "
+            f"RecordEngine cannot store raw payload fields for "
             f"{cls_name}: {'; '.join(diagnostics)}"
         )
 
@@ -95,7 +95,7 @@ def _reject_unsupported_schema(schema: LayerSchema, cls_name: str) -> None:
     _reject_non_native_lists(schema, cls_name)
 
 
-class ColumnEngine:
+class RecordEngine:
     def __init__(self):
         self._shm: shared_memory.SharedMemory | None = None
         self._table_map: dict[str, Table] = {}
@@ -121,8 +121,8 @@ class ColumnEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def create() -> 'ColumnEngine':
-        engine = ColumnEngine()
+    def create() -> 'RecordEngine':
+        engine = RecordEngine()
         engine._origin = core.WxDatabaseBuild()
         engine._is_mutable = True
         return engine
@@ -132,8 +132,8 @@ class ColumnEngine:
         layouts: List[Layout],
         *,
         materialize_table_buffer: bool = True,
-    ) -> 'ColumnEngine':
-        engine = ColumnEngine()
+    ) -> 'RecordEngine':
+        engine = RecordEngine()
         engine._fixed_build = core.WxDatabaseBuild()
         engine._origin = engine._fixed_build
 
@@ -186,13 +186,13 @@ class ColumnEngine:
         return engine
 
     @staticmethod
-    def truncate(layouts: List[Layout]) -> 'ColumnEngine':
-        """Create a ColumnEngine with fixed-size pre-allocated tables.
+    def truncate(layouts: List[Layout]) -> 'RecordEngine':
+        """Create a RecordEngine with fixed-size pre-allocated tables.
 
         Supports UTF-8 ``STR`` columns. ``WSTR`` and ``BYTES`` remain unsupported.
         Rejects any class with REF fields.
         """
-        engine = ColumnEngine._prepare_truncate(layouts)
+        engine = RecordEngine._prepare_truncate(layouts)
         engine._publish_fixed_snapshot()
         return engine
 
@@ -547,9 +547,9 @@ class ColumnEngine:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def load(name: str, from_file: bool = False) -> 'ColumnEngine':
-        """Load a ColumnEngine from file or shared memory."""
-        engine = ColumnEngine()
+    def load(name: str, from_file: bool = False) -> 'RecordEngine':
+        """Load a RecordEngine from file or shared memory."""
+        engine = RecordEngine()
         if from_file:
             path = Path(name)
             if path.exists():

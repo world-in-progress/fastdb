@@ -10,7 +10,9 @@ FastDB is a compact binary data layer for scientific-computing and RPC payload w
 2. `docs/decisions/0001-portable-payload-core-authority.md`
 3. `docs/issues/0001-portable-payload-deferred-capabilities.md`
 
-Read those documents before portable-payload architecture or implementation work. They are normative even while the worktree still contains 0.1.x call-db and `ColumnEngine` code awaiting the clean-cut migration.
+Read those documents before portable-payload architecture or implementation
+work. They remain normative while the remaining 0.1.x documentation and
+standalone-policy surfaces await the rest of the clean-cut migration.
 
 The target repository layers are:
 
@@ -58,7 +60,12 @@ Import the package as `fastdb4py` or `import fastdb4py as fdb` in examples and t
 
 `python/fastdb4py/core/` is generated/native binding output. Prefer changes in `python/fastdb4py/` unless the SWIG bridge or C++ API itself must change.
 
-The existing `ColumnEngine` is a 0.1.x AoS record path with strided field access, not true columnar storage. The accepted 0.2.0 public name is `RecordEngine`, with no compatibility alias. `ObjectEngine` remains the object-graph engine name. Do not extend `ColumnEngine` or add new `columnar.v1` surfaces while migrating. Shared standalone table behavior currently belongs in `python/fastdb4py/orm/table.py`.
+`RecordEngine` is the standalone AoS record path with strided field access,
+not true columnar storage. It is exposed under that final name without a
+compatibility alias for the pre-0.2 name. `ObjectEngine` remains the
+object-graph engine name. Do not add new `columnar.v1` surfaces while
+migrating. Shared standalone table behavior currently belongs in
+`python/fastdb4py/orm/table.py`.
 
 ## Backed View Lifetime Model
 
