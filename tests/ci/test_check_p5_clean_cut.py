@@ -139,7 +139,24 @@ def create_repository(root: Path) -> dict[str, object]:
     write(
         root,
         "README.md",
-        "# Fixture\n\nSee [the current guide](docs/current.md#current-guide).\n",
+        "# Fixture\n\n"
+        "P5 local clean cut is complete at exact ABI-117.\n\n"
+        "See [the current guide](docs/current.md#current-guide).\n",
+    )
+    write(
+        root,
+        "python/README.md",
+        "# Python binding\n\nP5 local clean cut is complete.\n",
+    )
+    write(
+        root,
+        "fastcarto/README.md",
+        "# Native core\n\nP5 local clean cut is complete at exact ABI-117.\n",
+    )
+    write(
+        root,
+        "ts/fastdb4ts/README.md",
+        "# TypeScript binding\n\nP5 local clean cut is complete.\n",
     )
 
     write(
@@ -604,6 +621,17 @@ class GovernanceSurfaceTests(RepositoryFixture):
             encoding="utf-8",
         )
         self.assert_rejected("Issue index")
+
+    def test_rejects_stale_current_readiness_document(self) -> None:
+        readme = self.root / "README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "P5 local clean cut is complete at exact ABI-117.",
+                "P5 remains open.",
+            ),
+            encoding="utf-8",
+        )
+        self.assert_rejected("current readiness marker")
 
     def test_accepts_truthful_open_issue_0003(self) -> None:
         write(

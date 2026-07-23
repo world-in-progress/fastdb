@@ -90,7 +90,8 @@ migration input, not portable-payload authority.
 P4 is locally complete. Python participates in the same hostile all-values,
 recursive-list, identifier-collision, and shared-cycle generation matrix as
 the other official projections, while all parsing, identity, topology, and
-rendering remain in the C++ Core. Hosted execution and P5 remain open.
+rendering remain in the C++ Core. P5 local clean cut is complete. Hosted
+execution, versioning, publication, and release evidence remain open.
 
 ## Installation
 

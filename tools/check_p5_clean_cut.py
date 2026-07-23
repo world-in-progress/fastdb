@@ -77,6 +77,14 @@ ISSUE_0002 = (
 )
 ISSUE_0003 = "docs/issues/0003-legacy-swig-diagnostics.md"
 ISSUE_INDEX = "docs/issues/README.md"
+CURRENT_READINESS_MARKERS = {
+    "README.md": "P5 local clean cut is complete at exact ABI-117.",
+    "python/README.md": "P5 local clean cut is complete.",
+    "fastcarto/README.md": (
+        "P5 local clean cut is complete at exact ABI-117."
+    ),
+    "ts/fastdb4ts/README.md": "P5 local clean cut is complete.",
+}
 MARKDOWN_EXCLUDED_ROOTS = ("fastcarto/lib/",)
 
 ABI_SYMBOL_PATTERN = re.compile(r"^fdb_payload_v1_[A-Za-z0-9_]+$")
@@ -1220,6 +1228,19 @@ def _check_issues(root: Path) -> list[str]:
     return violations
 
 
+def _check_current_readiness_docs(root: Path) -> list[str]:
+    violations: list[str] = []
+    for relative, marker in CURRENT_READINESS_MARKERS.items():
+        source, error = _read_text(root, relative)
+        if error is not None or source is None:
+            violations.append(error or f"cannot read {relative}")
+        elif marker not in source:
+            violations.append(
+                f"{relative}: current readiness marker is missing: {marker!r}"
+            )
+    return violations
+
+
 def _workflow_job_body(source: str, name: str) -> str | None:
     lines = source.splitlines()
     starts = [
@@ -1346,6 +1367,7 @@ def check_repository(
         _check_swig_boundary(resolved_root, inventory, policy)
     )
     violations.extend(_check_issues(resolved_root))
+    violations.extend(_check_current_readiness_docs(resolved_root))
     violations.extend(_check_workflow(resolved_root))
     return sorted(set(violations))
 

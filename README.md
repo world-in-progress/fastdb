@@ -63,22 +63,21 @@ The C++ Core remains the only semantic authority; none of the bindings or
 generated outputs contains a second parser, canonicalizer, digest, layout,
 binary, graph, or materialization model.
 
-P5 clean cut remains open at Task 7. Tasks 1-6 are locally frozen: the source
-tree uses the final `RecordEngine` name directly, removed authority surfaces
-are absent, retained standalone helpers state their non-portable boundary,
-and the exact clean-cut policy is executable over tracked plus
-untracked/non-ignored files. Task 7 fresh release-readiness gates and later
-downstream composition remain open. Those non-deferrable gaps are
-tracked in [Issue
+P5 local clean cut is complete at exact ABI-117. Tasks 1-7 remove the duplicate
+authority without aliases, expose the final `RecordEngine` name directly,
+state the retained standalone boundaries, enforce the exact clean-cut policy
+over tracked plus untracked/non-ignored files, and pass the fresh local
+release-readiness matrix. Hosted execution, versioning, publication, and
+downstream owner composition remain open. Those external facts are tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 No local result or workflow definition is represented as a hosted pass; the
 new projection jobs are definitions until an authorized hosted run exists.
 
-The source package version remains 0.1.x while local release readiness is in
-progress. Previously published 0.1.x artifacts are migration inputs, not APIs
-to extend. This source tree exposes `RecordEngine` without a compatibility
-alias. Capabilities deliberately deferred beyond 0.2.0 are tracked separately
-in [Issue
+The source package version remains 0.1.x after local release readiness.
+Previously published 0.1.x artifacts are migration inputs, not APIs to extend,
+and no version change, tag, publication, or release is implied. This source
+tree exposes `RecordEngine` without a compatibility alias. Capabilities
+deliberately deferred beyond 0.2.0 are tracked separately in [Issue
 0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
 
 - [Accepted portable payload design](docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
@@ -99,7 +98,7 @@ This repository now contains three closely related layers:
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — the 0.2.0 target makes the C++ Core, rather than a language binding, the semantic authority
 - **Schema-driven codegen** — the target Core returns deterministic C++/Rust/Python/TypeScript payload artifacts in memory
-- **Portable record, object-graph runtime, and codegen** — P1 provides canonical identity, P2 provides the frozen record path, P3 provides the frozen C/C++ graph build/open/view/materialize/invalidate path at the historical 105-symbol boundary, and P4 is locally complete with equal language projections plus Core-owned four-target codegen at the exact 117-symbol boundary; P5 remains open
+- **Portable record, object-graph runtime, codegen, and clean cut** — P1 provides canonical identity, P2 provides the frozen record path, P3 provides the frozen C/C++ graph build/open/view/materialize/invalidate path at the historical 105-symbol boundary, P4 provides equal language projections plus Core-owned four-target codegen at the exact 117-symbol boundary, and P5 is locally complete without a version or release claim
 
 ## Documentation map
 
