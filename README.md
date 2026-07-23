@@ -63,18 +63,20 @@ The C++ Core remains the only semantic authority; none of the bindings or
 generated outputs contains a second parser, canonicalizer, digest, layout,
 binary, graph, or materialization model.
 
-P5 clean cut remains open: the source tree now uses the final
-`RecordEngine` name directly, while standalone-boundary policy, public
-documentation cleanup, release readiness, and later downstream composition
-are not P4 results. Those non-deferrable gaps are
+P5 clean cut remains open. Tasks 1-5 are frozen, and the Task 6 implementation
+and broad local gates are complete while its formal review freeze is pending:
+the source tree uses the final `RecordEngine` name directly, removed authority
+surfaces are absent, retained standalone helpers state their non-portable
+boundary, and the exact clean-cut policy is executable over tracked plus
+untracked/non-ignored files. Task 7 release-readiness gates and later
+downstream composition also remain open. Those non-deferrable gaps are
 tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 No local result or workflow definition is represented as a hosted pass; the
 new projection jobs are definitions until an authorized hosted run exists.
 
-The source package version remains 0.1.x while the clean cut is in progress;
-already published 0.1.x packages still contain the legacy schema, call-db,
-profile, and pre-0.2 engine-name surfaces. They are migration inputs, not APIs
+The source package version remains 0.1.x while local release readiness is in
+progress. Previously published 0.1.x artifacts are migration inputs, not APIs
 to extend. This source tree exposes `RecordEngine` without a compatibility
 alias. Capabilities deliberately deferred beyond 0.2.0 are tracked separately
 in [Issue
@@ -109,7 +111,7 @@ This repository now contains three closely related layers:
 - **Architecture decisions**: see [`docs/decisions/`](docs/decisions/)
 - **Known intentional limitations**: see [`docs/issues/`](docs/issues/)
 - **TypeScript/WASM analysis docs**: see [`ts/analysis/`](ts/analysis/)
-- **Current codegen CLI (`fdb codegen`)**: see [current CLI tools](#current-01x-cli-tools) below, or the full 0.1.x reference in [`python/README.md`](python/README.md)
+- **Core-owned codegen CLI (`fdb codegen`)**: see [Core-owned codegen CLI](#core-owned-codegen-cli) below
 
 ## Changelog
 
@@ -182,93 +184,23 @@ offsets_u32, utf8_bytes_u8 = pack_utf8_column(["a", "bb", "ccc"])
 tbl.column.name.fill_utf8(offsets_u32, utf8_bytes_u8)
 ```
 
-## Legacy 0.1.x Python Call-DB Exact Export
+## Core-owned codegen CLI
 
-> This section documents a current migration source. Public call-db runtime and binding surfaces are removed by the accepted 0.2.0 clean cut.
-
-For integrations that already own a generic call-db binding, `try_export_call_db(binding, value)` returns an existing buffer-protocol view when a value is already backed by an exact call-db-compatible single fixed `Batch[Feature]` table. Build such tables with the target table name up front, for example `RecordEngine.truncate([Layout(Point, n, name="return_0")])`, then call `encode_call_db(...)` only when `try_export_call_db(...)` returns `None`. FastDB owns the exact-export decision; integrations such as C-Two should pass the generic binding and logical value rather than inspecting FastDB table internals.
-
-## Legacy 0.1.x Experimental Call-DB Final-Backing Builds
-
-> These mechanics are implementation inputs for the generic 0.2.0 `BuildPlan` and final-backing contract. The call-db API names do not survive the clean cut.
-
-`build_call_db(binding, value, allocator, direct_required=True)` is the experimental final-backing path for generic call-db payloads. FastDB computes one final DB byte length, asks the supplied allocator for one writable allocation, and writes the final backing without first publishing through `WxMemoryStream().data().tobytes()`. Fixed numeric call-db values use a mapped final-backing path that writes the initial C++ layout directly into the caller backing and fills columns there; prepacked string feature columns still use the C++ final writer. The allocator may be a native `fdb.HeapFinalBackingResource`, which returns a committed `FinalBackingAllocation`, or a Python allocator object that returns an allocation with `.buffer`, `.commit(used_size)`, and `.rollback()`. Native final backing resources also work for fallback prepared plans, so callers can preserve fallback semantics when `direct_required=False`. `prepare_call_db(..., direct_required=True)` is stricter: it only accepts already-backed/importable layers and will not stage temporary call-db layers under a direct label.
-
-Committed native `FinalBackingAllocation` objects can be passed directly to `decode_call_db(...)` or `view_call_db(...)`. `view_call_db(...)` keeps the allocation owner alive while checked FastDB views are active; uncommitted or rolled-back allocations cannot be read.
-
-FastDB also exposes experimental `ScratchAllocator` / `HeapScratchAllocator` names as the separate build-time scratch role. V1 keeps this role FastDB-owned and heap-backed; C-Two-style integrations should provide final backing first and should not assume dynamic builder scratch is transport memory.
-
-For resource functions that author fixed-size columnar outputs with `fdb.require(...)`, use `call_db_build_context(binding, allocator)` around the call. Inside the context, eligible fixed numeric `Batch`/`Array` slots are mapped directly over the caller allocation, and the later `build_call_db(..., direct_required=True)` commits that same allocation instead of allocating a second call-db buffer. The C++ fixed-layer builder writes the initial zero table section directly to the caller backing without retaining an equal-size table scratch vector. The allocator may be either a Python allocation protocol object or a native `fdb.HeapFinalBackingResource`; FastDB exposes only a context-scoped writable view for the native resource, while direct `resource.allocate(...)` remains hidden from Python.
-
-```python
-allocator = fdb.HeapFinalBackingResource()
-with fdb.call_db_build_context(binding, allocator):
-    cells, residual = fdb.require(
-        fdb.batch(Cell, rows=n),
-        fdb.array(fdb.F32, rows=n),
-    )
-    cells.fill(row_id=ids, x=xs, y=ys)
-    residual.fill(rs)
-    payload = fdb.build_call_db(binding, (cells, residual), allocator, direct_required=True)
-```
-
-V1 direct builds are intentionally narrow. The `build_call_db` final-writer path supports fixed columnar scalar payloads and backed `Batch[Feature]` values whose `STR` columns already have prepacked UTF-8 offsets/data. The `call_db_build_context` path is stricter and currently supports fixed numeric columnar slots only, because its final byte length must be known before user code fills the returned views. Object graph payloads, non-columnar `BatchRequirement` profiles, REF/list/bytes fields, dynamic push, scalar string arrays, and unknown-size string values use fallback, or raise `FastdbUnsupportedDirectBuildError` when `direct_required=True`.
-
-## Current 0.1.x CLI tools
-
-`fastdb4py` ships a CLI named `fdb` for cross-language tooling. Currently it provides the `codegen` subcommand.
-
-### `fdb codegen` — Python → TypeScript schema generator
-
-Generate TypeScript `Feature` classes from a directory of Python feature definitions:
+`fastdb4py` ships `fdb codegen` as a thin filesystem facade over the
+in-memory ArtifactSet returned by the C++ Core. The CLI accepts a portable
+specification and one of the four official targets:
 
 ```bash
-fdb codegen --ts ./python_features/ ./ts_features/
+fdb codegen specification.json \
+  --target rust \
+  --output ./generated-fastdb
 ```
 
-This mirrors the input directory structure, generating one `.ts` file per `.py` file. Each Python `Feature` subclass becomes a TypeScript class with `defineSchema(...)` and `declare` fields.
-
-Features:
-- All scalar types (`U8`–`F64`, `STR`, `WSTR`, `BYTES`, `BOOL`) and native Python types (`int`, `float`, `str`, `bool`) are mapped automatically
-- Feature references → `ref(ClassName)`, lists of Features → `listOf(ref(ClassName))`
-- Circular/self-referential types → lazy refs `ref(() => ClassName)` detected automatically
-- Cross-file dependencies → relative `import` statements in the generated TypeScript
-- Topological ordering ensures dependency classes are emitted before dependents
-- Same class name in different files is legal — each file is an independent module, all are generated
-
-Example input (`geometry.py`):
-
-```python
-from fastdb4py import feature, F64, STR
-
-
-@feature
-class Point:
-    x: F64
-    y: F64
-    label: STR
-```
-
-Generated output (`geometry.ts`):
-
-```typescript
-import { F64, Feature, STR, defineSchema } from 'fastdb4ts';
-
-export class Point extends Feature {
-  static schema = defineSchema({
-    x: F64,
-    y: F64,
-    label: STR,
-  });
-  declare x: number;
-  declare y: number;
-  declare label: string;
-}
-```
-
-## C-Two Integration Boundary
-
-In the accepted target, FastDB owns `fastdb.payload.v1`, canonical identity, native types/profiles, binary payloads, backing/view lifetimes, the stable C ABI, all language projections, and payload-only artifact generation. C-Two owns `c-two.contract.v2` as a super-schema, CRM method/binding planning, contract identity, routes, relay behavior, transport and lease semantics, and final artifact composition through `c3`. C-Two passes the nested FastDB value to the FastDB library rather than reimplementing it. The current call-db integration is legacy 0.1.x behavior and is removed for 0.2.0.
+The output directory must not already exist. The CLI validates every
+Core-returned relative path, writes a private staging tree with exclusive
+file creation, and publishes the complete tree without replacement. It does
+not discover Python classes, parse or normalize the specification, calculate
+identity, render target source, or add downstream-domain artifacts.
 
 ## Current 0.1.x Performance Notes
 
@@ -349,13 +281,15 @@ Common development commands from the repository root:
 
 ```bash
 ./py_utils.sh --clean   # remove C++ build artifacts and SWIG-generated bindings
-./py_utils.sh --build   # build C++ core + Python bindings
+./py_utils.sh --setup   # initial Python environment and editable native binding
+uv pip install --reinstall -e .  # force a fresh editable native binding
+uv sync                 # restore locked dependency versions after the rebuild
 ./py_utils.sh --test    # run Python unit tests
 uv run pytest tests/python -q  # run the Python test suite directly
 uv build             # build the fastdb4py sdist + local wheel
 bash ts/build-wasm.sh   # build the WebAssembly module for fastdb4ts
 npm run test:ts         # run root TypeScript tests
-fdb codegen --ts <input_dir> <output_dir>  # generate TypeScript schemas from Python features
+fdb codegen specification.json --target typescript --output generated-fastdb
 ```
 
 Build requirements depend on the layer you are working on:

@@ -9,6 +9,24 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb4py -->
 ## fastdb4py (Python binding)
 
+### Unreleased P5 clean cut
+
+- **BREAKING:** the duplicate Python payload authority, feature-discovery
+  generator, requirement/allocator facade, and pre-0.2 engine spelling are
+  removed without aliases. `RecordEngine` is the final standalone AoS record
+  name; `ObjectEngine`, feature metadata, `FastSerializer`, view ownership, and
+  materialization remain explicitly standalone helpers.
+- `fastdb4py.payload` is the official Python projection of the C++ Core-owned
+  portable compiler/runtime and four-target ArtifactSet generator.
+- `fdb codegen SPEC.json --target cpp|rust|python|typescript --output DIR`
+  writes only Core-returned artifacts into a new destination tree.
+- The source remains version `0.1.22`. These entries are local, unreleased
+  clean-cut work and do not claim a version bump, tag, publication, hosted
+  pass, or 0.2.0 release.
+- Older entries below are retained as historical 0.1.x evidence. Where their
+  public surfaces conflict with this section, they are superseded rather than
+  current instructions.
+
 ### Removed
 - **BREAKING**: Deleted `Feature` base class, `ORM`, `ORM2`, `TableDefn`, `ClassSchema`, `FeatureRefList`, `BaseFeature`, `parse_defns`, `get_all_defns`, `get_class_schema`, `make_inlined_dispatch`, `make_batch_inlined_dispatch`, and the `orm._graph` module. Use `@feature` decorator with `ColumnEngine` (columnar/truncate workloads) or `ObjectEngine` (object-graph/serializer workloads) instead. The `feature` and `orm` subpackages now expose only the new minimal surface.
 
@@ -76,6 +94,17 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb4ts -->
 ## fastdb4ts (TypeScript/WASM binding)
 
+### Unreleased P5 clean cut
+
+- The duplicate TypeScript RPC payload authority and its root/package exports
+  are removed without aliases. `fastdb4ts/payload` remains the official
+  WebAssembly projection of the same C++ Core ABI.
+- Standalone schema/feature metadata and `FastSerializer` retain explicit
+  non-portable boundaries.
+- The source remains version `0.0.3`; no tag, publication, hosted pass, or
+  release is claimed. Older entries below are retained as historical 0.1.x
+  evidence.
+
 ### Performance
 - `FastSerializer` dumps: TypedArray bulk write for numeric lists replaces per-element DataView calls (~15% speedup).
 - `FastSerializer` dumps: pre-allocated `ByteWriter` with `ArrayBuffer` + `DataView` replaces chunked `Uint8Array[]` concatenation.
@@ -94,6 +123,18 @@ When a binding is released (tagged), its section is automatically copied to the 
 
 <!-- BEGIN:fastdb-core -->
 ## fastdb C++ core
+
+### Unreleased portable-payload foundation
+
+- P4 is locally frozen at the exact 117-symbol portable C ABI with equal
+  C++/Rust/Python/TypeScript-Wasm projections and deterministic Core-owned
+  four-target in-memory code generation.
+- P5 Tasks 1-6 remove duplicate authority and install the exact executable
+  clean-cut policy. P5 Task 7 fresh local release-readiness and downstream
+  composition remain pending. Package versions are unchanged; no hosted pass,
+  tag, publication, or 0.2.0 release is claimed.
+- Older entries below remain historical implementation evidence and are not a
+  current public-surface inventory.
 
 ### Added
 - Locally completed and froze the P3 ordinary `object_graph.v1` C++ Core and

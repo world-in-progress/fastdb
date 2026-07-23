@@ -1,4 +1,6 @@
 # python/fastdb4py/registry.py
+"""Process-local standalone feature metadata; not portable canonical identity."""
+
 from __future__ import annotations
 from dataclasses import dataclass
 from threading import Lock

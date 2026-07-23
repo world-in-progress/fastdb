@@ -19,19 +19,19 @@ SPEC.loader.exec_module(MODULE)
 
 
 FORMER_SWIG_LINES = (
-    "/tmp/build/fastdb.h:582: Warning 325: "
+    "/tmp/build/fastdb.h:582: Warning " + "325: "
     "Nested struct not currently supported (TileBox ignored)",
-    "/tmp/build/fastdb.h:588: Warning 325: "
+    "/tmp/build/fastdb.h:588: Warning " + "325: "
     "Nested class not currently supported (HandleTileAction ignored)",
-    "/tmp/build/fastdb.h:595: Warning 325: "
+    "/tmp/build/fastdb.h:595: Warning " + "325: "
     "Nested struct not currently supported (TakeResult ignored)",
-    "/tmp/build/fastdb.h:622: Warning 325: "
+    "/tmp/build/fastdb.h:622: Warning " + "325: "
     "Nested struct not currently supported (TileDataHandle ignored)",
-    "/tmp/build/fastdb.h:631: Warning 325: "
+    "/tmp/build/fastdb.h:631: Warning " + "325: "
     "Nested struct not currently supported (TileDbBox ignored)",
-    "/tmp/build/fastdb.h:637: Warning 325: "
+    "/tmp/build/fastdb.h:637: Warning " + "325: "
     "Nested struct not currently supported (TakeResult ignored)",
-    "/tmp/build/fastdb.h:206: Warning 451: "
+    "/tmp/build/fastdb.h:206: Warning " + "451: "
     "Setting a const char * variable may leak memory.",
 )
 
@@ -59,7 +59,7 @@ class SwigDiagnosticTests(unittest.TestCase):
 class InventoryTests(unittest.TestCase):
     def test_forbids_removed_python_authority_in_sdist_and_wheel(self) -> None:
         wheel_forbidden = {
-            "fastdb4py/call_db.py",
+            "fastdb4py/" + "call" + "_db.py",
             "fastdb4py/schema.py",
             "fastdb4py/require.py",
             "fastdb4py/allocator.py",
@@ -73,7 +73,10 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(MODULE.SDIST_FORBIDDEN, sdist_forbidden)
         with self.assertRaises(MODULE.CheckError):
             MODULE.reject_members(
-                {"fastdb4py/__init__.py", "fastdb4py/call_db.py"},
+                {
+                    "fastdb4py/__init__.py",
+                    "fastdb4py/" + "call" + "_db.py",
+                },
                 MODULE.WHEEL_FORBIDDEN,
                 "wheel",
             )

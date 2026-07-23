@@ -77,9 +77,7 @@ python/fastdb4py/
 │   └── table.py      `Table`, `ColumnAccessor`, and numeric/string column views
 ├── serializer.py     FastSerializer (binary object graph serialization + shared memory loads)
 ├── cli.py            `fdb` CLI entry point
-├── codegen/
-│   ├── __init__.py   Exports run_codegen_ts
-│   └── ts_gen.py     Python→TypeScript code generator
+├── payload/          Stable-C-ABI portable projection and Core artifacts
 ├── feature/          Runtime schema/cache helpers used by the decorator/engines
 └── core/             SWIG-generated native bindings — DO NOT EDIT MANUALLY
 ```
@@ -97,8 +95,8 @@ uv run pytest -q
 uv run pytest tests/python/test_string_column.py -q
 uv run pytest tests/python/test_record_engine.py -q
 
-# Build codegen CLI (no rebuild needed — pure Python)
-uv run fdb codegen --ts <input_dir> <output_dir>
+# Generate one Core-owned target into a new destination tree
+uv run fdb codegen <specification.json> --target rust --output <output_dir>
 
 # Benchmark the truncate/string ingest paths
 uv run python tests/python/benchmark_kostya_orm2.py --reps 3
@@ -173,31 +171,25 @@ Key test files in `tests/python/`:
 - `test_shared_memory.py` — publish/load/unlink across processes
 - `test_fast_serializer.py` — FastSerializer graphs and nested structures
 - `test_fastser_buffer_layers.py` / `test_fastser_loads_shm.py` — buffer-layer and shared-memory serializer coverage
-- `test_codegen.py` — Python→TypeScript codegen CLI
+- `payload/test_payload_codegen.py` — Core-owned ArtifactSet projection
+- `test_cli_codegen.py` — Core-owned ArtifactSet filesystem CLI
 - `test_free_threading.py` — cache/thread-safety coverage
 
-### Codegen CLI (`fdb codegen --ts`)
+### Core-owned codegen CLI (`fdb codegen`)
 
-`python/fastdb4py/cli.py` is the `fdb` entry point (registered via `[project.scripts]` in `pyproject.toml`). The `codegen` subcommand generates TypeScript Feature classes from Python:
+`python/fastdb4py/cli.py` is the `fdb` entry point (registered via
+`[project.scripts]` in `pyproject.toml`). The `codegen` subcommand writes one
+of the four Core-owned artifact targets:
 
 ```bash
-fdb codegen --ts <input_dir> <output_dir>
+fdb codegen <specification.json> --target typescript --output <output_dir>
 ```
 
-**Pipeline** (all in `python/fastdb4py/codegen/ts_gen.py`):
-1. **Discovery** — `scan_py_files` → `load_module` → `discover_features` → `discover_all` returns `(file_to_classes, class_to_file, errors)`
-2. **Analysis** — `build_dep_graph` + `topological_sort` (cycle detection → lazy refs)
-3. **Generation** — `generate_class` + `generate_file` → one `.ts` per `.py`
-
-**`CodegenContext`** is the central state object (replaces the old flat `class_registry`):
-- `file_to_classes: Dict[Path, List[Type]]` — classes per source file
-- `class_to_file: Dict[Type, Path]` — reverse mapping
-- `resolve_ctx_for(cls)` — builds a name→class dict scoped to what `cls` can see (same-file siblings first, then module globals, then globally unique names)
-- `canonicalize(cls)` — maps imported class objects to their canonical counterparts via `inspect.getfile()` path matching; handles the module identity problem caused by dynamic loading under `_fdb_codegen.*` prefix
-
-**Duplicate-name semantics**:
-- Same class name in **different files** → both generated independently; no warning (each file is its own module)
-- Same class name **twice in one file** → last definition wins (Python semantics; `discover_features` naturally returns only the last one)
+The CLI compiles the specification and requests an in-memory ArtifactSet from
+the C++ Core. Python validates relative paths and artifact kinds, writes a
+private staging tree with exclusive file creation, and publishes the complete
+tree without replacement. It does not discover Python classes, parse the
+portable schema, calculate identity, or render target code.
 
 **Do not modify** `python/fastdb4py/core/` — it is SWIG-generated output.
 

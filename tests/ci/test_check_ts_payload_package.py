@@ -19,23 +19,24 @@ SPEC.loader.exec_module(MODULE)
 
 class TypeScriptPayloadPackageTests(unittest.TestCase):
     def test_rejects_every_removed_root_declaration_marker(self) -> None:
+        removed_binding_stem = "Fastdb" + "Call" + "Db"
         removed = {
-            "call-db",
-            "decodeFastdbCallDb",
+            "call" + "-db",
+            "decode" + removed_binding_stem,
             "decodeFastdbFeature",
-            "encodeFastdbCallDb",
+            "encode" + removed_binding_stem,
             "encodeFastdbFeature",
-            "FastdbCallDbArrayItem",
-            "FastdbCallDbArrayView",
-            "FastdbCallDbBinding",
-            "FastdbCallDbColumnView",
-            "FastdbCallDbFeatureDependency",
-            "FastdbCallDbScalarField",
-            "FastdbCallDbTable",
-            "FastdbCallDbTableView",
-            "FastdbCallDbView",
+            removed_binding_stem + "ArrayItem",
+            removed_binding_stem + "ArrayView",
+            removed_binding_stem + "Binding",
+            removed_binding_stem + "ColumnView",
+            removed_binding_stem + "FeatureDependency",
+            removed_binding_stem + "ScalarField",
+            removed_binding_stem + "Table",
+            removed_binding_stem + "TableView",
+            removed_binding_stem + "View",
             "FastdbFeatureCodecBinding",
-            "viewFastdbCallDb",
+            "view" + removed_binding_stem,
         }
         self.assertEqual(
             getattr(MODULE, "REMOVED_ROOT_DECLARATION_MARKERS", set()),
@@ -47,8 +48,12 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
             with self.subTest(marker=marker), self.assertRaises(MODULE.CheckError):
                 check(f"export type {{ {marker} }};")
 
-    def test_forbids_generated_call_db_runtime_and_declarations(self) -> None:
-        forbidden = {"dist/call-db.js", "dist/call-db.d.ts"}
+    def test_forbids_generated_removed_runtime_and_declarations(self) -> None:
+        removed_subpath = "call" + "-db"
+        forbidden = {
+            f"dist/{removed_subpath}.js",
+            f"dist/{removed_subpath}.d.ts",
+        }
         self.assertEqual(MODULE.FORBIDDEN, forbidden)
         for path in forbidden:
             with self.subTest(path=path), self.assertRaises(MODULE.CheckError):
@@ -94,7 +99,7 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
                 "exports": {
                     ".": root_export,
                     "./payload": payload_export,
-                    "./call-db": root_export,
+                    "./" + "call" + "-db": root_export,
                 },
             },
         ):

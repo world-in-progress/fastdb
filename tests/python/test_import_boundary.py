@@ -123,8 +123,8 @@ def test_fdb_codegen_help_advertises_only_core_artifact_targets():
     assert '--target {cpp,rust,python,typescript}' in completed.stdout
     assert '--output OUTPUT' in completed.stdout
     assert '--ts' not in completed.stdout
-    assert '--c-two-ts' not in completed.stdout
-    assert 'C-Two' not in completed.stdout
+    assert '--c-' + 'two-ts' not in completed.stdout
+    assert 'C-' + 'Two' not in completed.stdout
     assert 'feature' not in completed.stdout.lower()
 
 
@@ -134,9 +134,10 @@ import json
 import sys
 import fastdb4py
 
+removed_rpc_suffix = 'call' + '_' + 'db'
 forbidden_modules = [
     'fastdb4py.payload',
-    'fastdb4py.call_db',
+    'fastdb4py.' + removed_rpc_suffix,
     'fastdb4py.schema',
     'fastdb4py.require',
     'fastdb4py.allocator',

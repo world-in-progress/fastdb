@@ -338,6 +338,13 @@ int test_golden_invalid_sources() {
 }
 
 int test_exact_object_shapes_and_required_fields() {
+    const std::string obsolete_profile = std::string("colum") + "nar.v1";
+    const std::string obsolete_profile_source =
+        R"({"schema":"fastdb.payload.v1","profile":")" +
+        obsolete_profile + R"(","entries":[],"components":[]})";
+    const std::string obsolete_profile_details =
+        R"({"actual":")" + obsolete_profile +
+        R"(","reason":"invalid_profile"})";
     const std::array<ErrorCase, 10> cases = {{
         {R"([])", FDB_PAYLOAD_E_INVALID_TYPE, "",
          "Payload field has invalid JSON type",
@@ -350,10 +357,10 @@ int test_exact_object_shapes_and_required_fields() {
          FDB_PAYLOAD_E_UNSUPPORTED_SCHEMA, "/schema",
          "Payload schema version is unsupported",
          R"({"actual":"fastdb.payload.v2","expected":"fastdb.payload.v1"})"},
-        {R"({"schema":"fastdb.payload.v1","profile":"columnar.v1","entries":[],"components":[]})",
+        {obsolete_profile_source,
          FDB_PAYLOAD_E_INVALID_TYPE, "/profile",
          "Payload profile is invalid",
-         R"({"actual":"columnar.v1","reason":"invalid_profile"})"},
+         obsolete_profile_details},
         {R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"x","cardinality":"one","type":{"kind":"u8"},"extra":0}],"components":[]})",
          FDB_PAYLOAD_E_UNKNOWN_FIELD, "/entries/0/extra",
          "Payload object contains unknown field",

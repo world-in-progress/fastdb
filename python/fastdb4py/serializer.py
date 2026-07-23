@@ -1,3 +1,5 @@
+"""Legacy standalone serializer; not fastdb.payload.v1 or an external RPC format."""
+
 import struct
 import numpy as np
 import ctypes

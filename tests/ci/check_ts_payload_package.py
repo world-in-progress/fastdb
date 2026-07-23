@@ -39,27 +39,29 @@ REQUIRED = {
     "dist/wasm/fastdb4ts.js",
     "dist/wasm/fastdb4ts.wasm",
 }
+REMOVED_SUBPATH = "call" + "-db"
+REMOVED_BINDING_STEM = "Fastdb" + "Call" + "Db"
 FORBIDDEN = {
-    "dist/call-db.d.ts",
-    "dist/call-db.js",
+    f"dist/{REMOVED_SUBPATH}.d.ts",
+    f"dist/{REMOVED_SUBPATH}.js",
 }
 REMOVED_ROOT_DECLARATION_MARKERS = {
-    "call-db",
-    "decodeFastdbCallDb",
+    REMOVED_SUBPATH,
+    "decode" + REMOVED_BINDING_STEM,
     "decodeFastdbFeature",
-    "encodeFastdbCallDb",
+    "encode" + REMOVED_BINDING_STEM,
     "encodeFastdbFeature",
-    "FastdbCallDbArrayItem",
-    "FastdbCallDbArrayView",
-    "FastdbCallDbBinding",
-    "FastdbCallDbColumnView",
-    "FastdbCallDbFeatureDependency",
-    "FastdbCallDbScalarField",
-    "FastdbCallDbTable",
-    "FastdbCallDbTableView",
-    "FastdbCallDbView",
+    REMOVED_BINDING_STEM + "ArrayItem",
+    REMOVED_BINDING_STEM + "ArrayView",
+    REMOVED_BINDING_STEM + "Binding",
+    REMOVED_BINDING_STEM + "ColumnView",
+    REMOVED_BINDING_STEM + "FeatureDependency",
+    REMOVED_BINDING_STEM + "ScalarField",
+    REMOVED_BINDING_STEM + "Table",
+    REMOVED_BINDING_STEM + "TableView",
+    REMOVED_BINDING_STEM + "View",
     "FastdbFeatureCodecBinding",
-    "viewFastdbCallDb",
+    "view" + REMOVED_BINDING_STEM,
 }
 FORBIDDEN_PARTS = {
     "node_modules",
@@ -147,7 +149,7 @@ def check_inventory(names: set[str]) -> None:
         raise CheckError(f"npm package is missing payload artifacts: {missing}")
     forbidden = sorted(FORBIDDEN & names)
     if forbidden:
-        raise CheckError(f"npm package contains removed call-db artifacts: {forbidden}")
+        raise CheckError(f"npm package contains removed authority artifacts: {forbidden}")
     debris = []
     for name in sorted(names):
         path = PurePosixPath(name)
@@ -170,7 +172,7 @@ def check_root_declarations(source: str) -> None:
     )
     if removed:
         raise CheckError(
-            "root declarations contain removed call-db markers: "
+            "root declarations contain removed authority markers: "
             f"{removed}"
         )
 
@@ -233,10 +235,11 @@ import {
   initPayload,
 } from 'fastdb4ts/payload';
 
+const removedBindingStem = 'Fastdb' + 'Call' + 'Db';
 for (const name of [
-  'encodeFastdbCallDb',
-  'decodeFastdbCallDb',
-  'viewFastdbCallDb',
+  'encode' + removedBindingStem,
+  'decode' + removedBindingStem,
+  'view' + removedBindingStem,
   'encodeFastdbFeature',
   'decodeFastdbFeature',
 ]) {

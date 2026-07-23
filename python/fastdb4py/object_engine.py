@@ -1,5 +1,8 @@
 # python/fastdb4py/object_engine.py
-"""ObjectEngine: OLTP/graph workloads with REF field support."""
+"""ObjectEngine: OLTP/graph workloads with REF field support.
+
+Standalone object-graph storage engine; not fastdb.payload.v1 authority.
+"""
 from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass

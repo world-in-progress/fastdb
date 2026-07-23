@@ -1,5 +1,10 @@
 # fastdb4ts Quality Audit
 
+> **Status: historical/superseded.** Retained as audit evidence only. Current
+> authority is the
+> [accepted portable-payload foundation](../../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](../../docs/superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md).
+
 Audit performed after v0.0.1 release. Tracks identified issues, their severity, the fix applied, and test coverage.
 
 ---

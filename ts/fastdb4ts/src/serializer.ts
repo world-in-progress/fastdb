@@ -1,3 +1,5 @@
+// Legacy standalone serializer; not fastdb.payload.v1 or an external RPC format.
+
 import { createFeature, Feature, type FeatureClass } from './feature.js';
 import {
   getClassSchema,

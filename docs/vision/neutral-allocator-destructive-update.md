@@ -1,5 +1,10 @@
 # Neutral Allocator Destructive Update Vision
 
+> **Status: historical/superseded.** Retained as migration evidence only.
+> Current authority is the
+> [accepted portable-payload foundation](../superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](../superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md).
+
 **Date:** 2026-05-28
 **Status:** P0 architectural direction
 **Weight:** This document is higher priority than incremental optimization plans. If an implementation plan conflicts with this document, update the plan or explicitly document why this vision is being superseded.

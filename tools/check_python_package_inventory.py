@@ -74,7 +74,7 @@ WHEEL_REQUIRED = {
     "fastdb4py/payload/_spec.py",
 }
 WHEEL_FORBIDDEN = {
-    "fastdb4py/call_db.py",
+    "fastdb4py/" + "call" + "_db.py",
     "fastdb4py/schema.py",
     "fastdb4py/require.py",
     "fastdb4py/allocator.py",

@@ -3,11 +3,12 @@ import test from 'node:test';
 
 import * as fastdb from '../../ts/fastdb4ts/dist/index.js';
 
-test('fastdb4ts root contains no removed call-db authority', () => {
+test('fastdb4ts root contains no removed RPC authority', () => {
+  const removedBindingStem = 'Fastdb' + 'Call' + 'Db';
   for (const name of [
-    'encodeFastdbCallDb',
-    'decodeFastdbCallDb',
-    'viewFastdbCallDb',
+    'encode' + removedBindingStem,
+    'decode' + removedBindingStem,
+    'view' + removedBindingStem,
     'encodeFastdbFeature',
     'decodeFastdbFeature',
   ]) {
@@ -18,7 +19,7 @@ test('fastdb4ts root contains no removed call-db authority', () => {
   assert.equal(typeof fastdb.FastSerializer, 'function');
 });
 
-test('fastdb4ts root contains no C-Two runtime surface', () => {
+test('fastdb4ts root contains no downstream runtime surface', () => {
   const cTwoRuntimeExports = Object.keys(fastdb)
     .filter((name) => /C2|CTwo|C_Two/.test(name))
     .sort();

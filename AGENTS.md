@@ -40,8 +40,12 @@ uv run python -m compileall -q python/fastdb4py tests/python
 # Build Python sdist and local wheel
 uv build
 
-# Existing helper script path
-./py_utils.sh --build
+# Initial environment setup helper (not a forced native rebuild)
+./py_utils.sh --setup
+
+# Force a fresh editable native binding, then restore locked dependencies
+uv pip install --reinstall -e .
+uv sync
 ./py_utils.sh --test
 
 # TypeScript/WASM
@@ -63,8 +67,8 @@ Import the package as `fastdb4py` or `import fastdb4py as fdb` in examples and t
 `RecordEngine` is the standalone AoS record path with strided field access,
 not true columnar storage. It is exposed under that final name without a
 compatibility alias for the pre-0.2 name. `ObjectEngine` remains the
-object-graph engine name. Do not add new `columnar.v1` surfaces while
-migrating. Shared standalone table behavior currently belongs in
+object-graph engine name. Do not restore a removed pre-clean-cut profile.
+Shared standalone table behavior currently belongs in
 `python/fastdb4py/orm/table.py`.
 
 ## Backed View Lifetime Model
@@ -90,7 +94,9 @@ C-Two owns the outer `c-two.contract.v2`, CRM binding derivation, route fingerpr
 
 The FastDB `fdb` CLI remains a generic diagnostic/payload tool. If a feature needs C-Two semantics, put it in C-Two and consume FastDB through the stable library boundary.
 
-The existing public call-db schemas/modules and Python/TypeScript semantic duplication are migration sources only. Do not add compatibility aliases or new users; remove them before 0.2.0 as required by ADR-0001.
+The pre-clean-cut public schemas/modules and binding-side semantic
+duplication are removed. Do not restore them through compatibility aliases,
+fallbacks, or new users; ADR-0001 requires the single Core authority.
 
 ## Release Process
 

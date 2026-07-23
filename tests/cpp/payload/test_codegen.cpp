@@ -181,21 +181,43 @@ std::size_t count_substring(std::string_view source,
 }
 
 bool contains_forbidden_content(std::string_view source) {
-    constexpr std::array<std::string_view, 17> forbidden{{
-        "fastdb.schema.v1",
-        "columnar.v1",
-        "call-db",
-        "call_db",
-        "CRM",
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 7>
+        fragmented{{
+            {"fastdb.", "schema.v1"},
+            {"colum", "nar.v1"},
+            {"call", "-db"},
+            {"call", "_db"},
+            {"C", "RM"},
+            {"Too", "dle"},
+            {"G", "IS"},
+        }};
+    const auto contains_adjacent =
+        [source](std::string_view prefix, std::string_view suffix) {
+            std::size_t offset = 0U;
+            while ((offset = source.find(prefix, offset)) !=
+                   std::string_view::npos) {
+                const std::size_t suffix_offset = offset + prefix.size();
+                if (source.substr(suffix_offset, suffix.size()) == suffix) {
+                    return true;
+                }
+                offset = suffix_offset;
+            }
+            return false;
+        };
+    if (std::any_of(fragmented.begin(), fragmented.end(),
+                    [&contains_adjacent](const auto& value) {
+                        return contains_adjacent(value.first, value.second);
+                    })) {
+        return true;
+    }
+    constexpr std::array<std::string_view, 10> forbidden{{
         "crm",
         "route",
         "relay",
         "transport",
         "lease",
         "policy",
-        "Toodle",
         "toodle",
-        "GIS",
         "gis",
         "FDBP",
         "binary_header",

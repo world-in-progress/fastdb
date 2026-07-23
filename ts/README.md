@@ -1,5 +1,10 @@
 # fastdb4ts
 
+> **Status: historical/superseded.** This 0.1.x binding guide is retained as
+> migration evidence. Current authority is the
+> [accepted portable-payload foundation](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](../docs/superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md).
+
 TypeScript and WebAssembly bindings for `fastdb`, intended primarily for browser-side use.
 
 > **0.2.0 direction:** This document primarily describes the current 0.1.x binding. The accepted portable payload target removes the hand-written call-db semantic path and makes the same C++ Core, compiled to WebAssembly, authoritative for `fastdb.payload.v1`, canonical identity, binary validation, checked views, and materialization. See the [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).

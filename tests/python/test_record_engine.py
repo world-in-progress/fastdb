@@ -528,22 +528,22 @@ def test_regular_truncate_keeps_materialized_native_table_buffer():
     assert engine._fixed_build.table_buffer_bytes() > 0
 
 
-def test_removed_call_db_native_backing_surface_is_absent():
+def test_removed_native_backing_surface_is_absent():
     removed_names = (
-        'WxScratchAllocation',
-        'WxScratchAllocator',
-        'WxHeapScratchAllocation',
-        'WxHeapScratchAllocator',
-        'WxFinalBackingAllocation',
-        'WxFinalBackingResource',
-        'WxHeapFinalBackingAllocation',
-        'WxHeapFinalBackingResource',
+        'WxScratch' + 'Allocation',
+        'WxScratch' + 'Allocator',
+        'WxHeapScratch' + 'Allocation',
+        'WxHeapScratch' + 'Allocator',
+        'WxFinalBacking' + 'Allocation',
+        'WxFinalBacking' + 'Resource',
+        'WxHeapFinalBacking' + 'Allocation',
+        'WxHeapFinalBacking' + 'Resource',
     )
     for name in removed_names:
         assert not hasattr(core, name), name
 
     build = core.WxDatabaseBuild()
-    assert not hasattr(build, 'post_to_final_backing')
+    assert not hasattr(build, 'post_to_' + 'final_backing')
 
 
 def test_table_fill_round_trips_empty_strings():

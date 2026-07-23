@@ -11,6 +11,8 @@ import fastdb4py.type as fastdb_type
 
 LEGACY_ENGINE_NAME = "Column" + "Engine"
 LEGACY_ENGINE_MODULE = "fastdb4py." + "column" + "_engine"
+REMOVED_RPC_SUFFIX = "call" + "_" + "db"
+REQUIREMENT_SUFFIX = "Require" + "ment"
 
 
 EXPECTED_P5 = {
@@ -47,7 +49,7 @@ EXPECTED_P5 = {
 
 REMOVED_MODULES = (
     LEGACY_ENGINE_MODULE,
-    "fastdb4py.call_db",
+    "fastdb4py." + REMOVED_RPC_SUFFIX,
     "fastdb4py.schema",
     "fastdb4py.require",
     "fastdb4py.allocator",
@@ -57,24 +59,24 @@ REMOVED_MODULES = (
 REMOVED_TOP_LEVEL_NAMES = {
     LEGACY_ENGINE_NAME,
     "Array",
-    "ArrayRequirement",
+    "Array" + REQUIREMENT_SUFFIX,
     "Batch",
-    "BatchRequirement",
+    "Batch" + REQUIREMENT_SUFFIX,
     "array",
     "batch",
     "require",
-    "build_call_db",
-    "encode_call_db",
-    "decode_call_db",
+    "build_" + REMOVED_RPC_SUFFIX,
+    "encode_" + REMOVED_RPC_SUFFIX,
+    "decode_" + REMOVED_RPC_SUFFIX,
     "export_schema",
     "schema_sha256",
 }
 
 REMOVED_TYPE_NAMES = {
     "Array",
-    "ArrayRequirement",
+    "Array" + REQUIREMENT_SUFFIX,
     "Batch",
-    "BatchRequirement",
+    "Batch" + REQUIREMENT_SUFFIX,
     "array",
     "batch",
     "_validate_requirement_rows",

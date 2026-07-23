@@ -1,5 +1,10 @@
 # ColumnEngine String Column Design
 
+> **Status: historical/superseded.** Retained as migration evidence only.
+> Current authority is the
+> [accepted portable-payload foundation](2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](2026-07-23-portable-payload-clean-cut-design.md).
+
 ## Problem
 
 `ColumnEngine.truncate()` rejects `STR`, `WSTR`, and `BYTES`, even though dynamic push already supports `STR`. The current C++ layout stores string-table IDs in fixed-width row slots, which works for per-row writes but does not provide a real columnar string representation or a good bulk API.
