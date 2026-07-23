@@ -20,6 +20,13 @@ When a binding is released (tagged), its section is automatically copied to the 
   portable compiler/runtime and four-target ArtifactSet generator.
 - `fdb codegen SPEC.json --target cpp|rust|python|typescript --output DIR`
   writes only Core-returned artifacts into a new destination tree.
+- The destination-path safety check now preserves the same Windows
+  reserved-name, trailing-dot/space, alternate-stream, and forbidden-character
+  rejection on Python 3.10-3.12, where `ntpath.isreserved` is unavailable.
+- Fresh local P5 readiness passes the current and minimum-Python source suites,
+  independently built sdist/wheel inventories, and isolated installed-wheel
+  suites. The exact results and non-SWIG Python 3.10 build warnings are recorded
+  in Issue 0002.
 - The source remains version `0.1.22`. These entries are local, unreleased
   clean-cut work and do not claim a version bump, tag, publication, hosted
   pass, or 0.2.0 release.
@@ -101,6 +108,9 @@ When a binding is released (tagged), its section is automatically copied to the 
   WebAssembly projection of the same C++ Core ABI.
 - Standalone schema/feature metadata and `FastSerializer` retain explicit
   non-portable boundaries.
+- Fresh local P5 readiness passes 57 TypeScript/Wasm tests, the exact 41-file
+  packed-package inventory and smoke, exact ABI-117, and the independent Core
+  Wasm runtime receipts.
 - The source remains version `0.0.3`; no tag, publication, hosted pass, or
   release is claimed. Older entries below are retained as historical 0.1.x
   evidence.
@@ -129,10 +139,13 @@ When a binding is released (tagged), its section is automatically copied to the 
 - P4 is locally frozen at the exact 117-symbol portable C ABI with equal
   C++/Rust/Python/TypeScript-Wasm projections and deterministic Core-owned
   four-target in-memory code generation.
-- P5 Tasks 1-6 remove duplicate authority and install the exact executable
-  clean-cut policy. P5 Task 7 fresh local release-readiness and downstream
-  composition remain pending. Package versions are unchanged; no hosted pass,
-  tag, publication, or 0.2.0 release is claimed.
+- P5 Tasks 1-7 remove duplicate authority, install the exact executable
+  clean-cut policy, and pass the fresh local native, sanitizer/TSan, Rust,
+  Python 3.10/current package, generated-output, TypeScript/Wasm, package, and
+  documentation readiness matrix. The P5 local clean cut is complete; C-Two
+  downstream composition is the next owner slice. Package versions are
+  unchanged, and no hosted pass, push, tag, publication, or 0.2.0 release is
+  claimed.
 - Older entries below remain historical implementation evidence and are not a
   current public-surface inventory.
 

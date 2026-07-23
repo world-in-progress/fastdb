@@ -44,10 +44,14 @@ same-agent primary review. P5 Task 1 now removes the Python-owned
 feature-discovery generator and makes `fdb codegen` a creation-only filesystem
 facade over the same Core ArtifactSet. The Python and TypeScript duplicate
 authority, native/SWIG debris, no-alias `RecordEngine` rename, and executable
-clean-cut policy are locally frozen through P5 Task 6. Fresh Task 7
-release-readiness gates and later C-Two-owned composition remain open. Package
-metadata is still 0.1.x, so Issue 0002 remains open and no FastDB 0.2.0 release
-is claimed.
+clean-cut policy are locally frozen through P5 Task 6. P5 Task 7 now completes
+the fresh local native, sanitizer, language, generated-output, installed
+package, and Wasm release-readiness matrix; it also closes a real Python 3.10
+Windows-artifact-path fallback defect found by the minimum-version installed
+wheel. The **P5 local clean cut is complete** at exact ABI-117. Hosted results,
+versioning, push/tag/publication/release, and C-Two-owned composition remain
+open. Package metadata is still 0.1.x, so Issue 0002 remains open and no
+FastDB 0.2.0 release is claimed.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -1598,22 +1602,20 @@ semantics.
 **Current limit:** The duplicate Python/TypeScript authority, orphaned
 native/SWIG backing surfaces, old engine name, stale current instructions, and
 unclassified current/historical literals are removed or governed through P5
-Task 6. Its implementation and same-agent review are frozen; the fresh Task 7
-source/package/platform readiness matrix remains open. Package metadata remains
-`fastdb4py==0.1.22` and
-`fastdb4ts==0.0.3`; no 0.2.0 release, tag, publication, or C-Two composition
-proof exists.
+Task 6. Task 7 completes the fresh local source/package/platform-applicable
+readiness matrix. Package metadata remains `fastdb4py==0.1.22` and
+`fastdb4ts==0.0.3`; hosted Linux/Windows evidence, a 0.2.0 version change,
+push, tag, publication, release, and C-Two composition proof do not exist.
 
 **Reason:** P1-P4 now provide the complete replacement and parity evidence, so
 the P5 clean cut can proceed without a compatibility parser or binding-owned
 fallback. Downstream composition still belongs in C-Two only after FastDB
 freezes its owner boundary.
 
-**Impact:** The repository now has one locally executable clean-cut
-classification, but it cannot claim release readiness or a published 0.2.0
-artifact until Task 7 reruns the fresh source, installed-package, sanitizer,
-Wasm, and platform-applicable gates. C-Two cannot fill any missing FastDB
-slice in its own repository.
+**Impact:** The FastDB owner boundary is locally release-ready and may now be
+consumed by the separate C-Two owner slice. That local result is not a hosted
+platform matrix, a versioned package release, or a published 0.2.0 artifact.
+C-Two cannot fill a missing generic FastDB slice in its own repository.
 
 **P5 Task 0 handoff:** The design and executable plan are frozen from exact
 start `9d86c171eda1fe107c3519ce040ca2ec417167f9`. The portable ABI remains
@@ -1651,9 +1653,12 @@ filesystem mutation and creates every staged file with exclusive `"xb"`
 semantics. The continued security pass found and closed a second Important
 Windows fidelity defect: device names, trailing-dot/space aliases, forbidden
 characters, and NTFS alternate-stream paths could succeed without creating
-the requested ordinary artifact. Runtime validation now uses the supported
-Windows reserved-path predicate, with a Python 3.10-3.12 fallback, while
-retaining Core-valid colon paths on POSIX.
+the requested ordinary artifact. Runtime validation uses the supported
+Windows reserved-path predicate while retaining Core-valid colon paths on
+POSIX. The initial Python 3.10-3.12 fallback delegated to
+`PureWindowsPath.is_reserved()` and was later proven incomplete by the P5 Task
+7 minimum-version installed-wheel gate; Task 7 records the retained regression
+and corrected fallback rather than preserving the earlier overclaim.
 
 The final mechanically frozen same-agent re-review covers exact range
 `c94aa85fa39566e8e48f5a6c711fe099a47cd848..d6d284c`. Its separate
@@ -2197,9 +2202,143 @@ the documented forced reinstall.
 helper. A later change may make its setup mode idempotently force the editable
 native rebuild, but must retain locked dependency parity and a regression that
 starts without generated output. Until then, the documented direct rebuild is
-the supported clean-tree command. P5 Task 7 remains pending for the complete
-fresh readiness matrix. Hosted execution, version change, push, tag,
-publication, release, and C-Two composition remain pending and unauthorized.
+the supported clean-tree command. P5 Task 7 proves the complete fresh local
+readiness matrix without changing this helper. Hosted execution, version
+change, push, tag, publication, release, and C-Two composition remain pending
+and unauthorized.
+
+#### P5 Task 7 local evidence
+
+**P5 local clean cut:** Complete
+
+```text
+portable ABI = exactly 117
+package versions = 0.1.22 / 0.0.3 unchanged
+primary review = same-agent, not independent
+hosted CI = pending
+push/tag/publication/release = not performed
+C-Two composition = next downstream owner slice
+```
+
+Task 7 started from exact commit
+`47ab2eeb0ba161563942e8b4098fbc828aa1be98`. Its first closure-marker check
+was a genuine RED: the exact
+`**P5 local clean cut:** Complete` line was absent and `rg` exited `1`. No
+release record was written before the complete readiness matrix passed.
+
+The fresh native results on macOS `26.5.2` / Darwin `25.5.0` arm64 with
+AppleClang `21.0.0` and CMake `4.3.2` are:
+
+| Configuration | Result | Portable static SHA-256 | `libfastdb` SHA-256 |
+|---|---:|---|---|
+| Debug | 40/40 in 69.80s | `156743f9263b74813d4c7dacade1a397fbf75224d91ad7fdaa6bb4db6a2c9570` | `e7594cf2daf9f6a770c3603e57066cfbc2a2b45367375f89fccf02ea65539252` |
+| Release | 40/40 in 48.33s | `3b4ad2ac3c2b6eecce678838ef2ceb8f6191641be6803e6d1c2ff4bde11d1eda` | `41e86fa6e18c08f3d9cadb46ab2f051dc82baaddd936d3df351964ddb59336d2` |
+| ASan+UBSan Debug | 40/40 in 232.30s | `8161c0ff4a9a342229debc154975949563e8bed5484c91efe5113003916c92d0` | `588f6b3a39eb30953300a08a5b4b33a65779fb876a4c6f3b08b46c4d7b0ac277` |
+| focused TSan Debug | 14/14 in 353.18s | `bfb9ab0997454b2ac22f89520591a456ea06d2d658a77c9d18afe77e59678638` | `d6d59f31c5bcc04102bec30133122ec2068b675e37c85c8ea0cc8ba1e46496e8` |
+
+ASan+UBSan ran with
+`ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:detect_leaks=0` and
+`UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`. This is explicitly not a
+LeakSanitizer claim. The deterministic binary-open robustness runner passed
+the exact 16-seed repository corpus again under those sanitizers. The local
+AppleClang installation advertised a bare libFuzzer runtime path but the
+archive did not exist, so no local coverage-guided fuzz result is claimed;
+the deterministic sanitizer corpus is the available local proof and hosted
+Linux remains the owner of the standard libFuzzer run.
+
+The exact ABI, schema, dependency, package, and portability gates also pass:
+
+- native and both Wasm inventories contain exactly 117 sorted
+  `fdb_payload_v1_*` symbols;
+- the 16-seed corpus checker, embedded-schema regeneration, vendored
+  dependency check, P2/P3/P4/P5 repository gates, and Wasm-export generator
+  checks pass;
+- the public C11 header compiles warning-clean for arm64, x86_64, and wasm32;
+  the object hashes are respectively
+  `78ca66e27ff3fd67e5c4c5a304f717f31e26ea75be6113f5f71b38bb5a044ba8`,
+  `79a5e766ac7f8da29a6c7fab8644d1e5a349b2011dd343450d94036e076a5023`,
+  and
+  `5a76e9415c473353ba05939be9f92281d6ce16cb21765edb63270e5e431ca0b7`;
+- Rust `fmt` and all-feature `clippy -D warnings` pass; the safe/raw crates
+  pass 21 unit/integration tests plus the compile-fail lifetime doctest, and
+  the relocated system-link package proof passes under Rust/Cargo `1.91.0`;
+  and
+- Core-generated C++, Rust, Python, and TypeScript artifacts compile/import
+  and execute through the same ABI, including the four-shape hostile matrix.
+
+The first Python run after disk cleanup stopped during collection with 24
+missing-`fastdb4py.core` imports because generated native binding output had
+been deliberately removed. The documented
+`uv pip install --reinstall -e .` followed by `uv sync` regenerated the
+binding and restored locked dependencies; no source defect was hidden by that
+environment recovery.
+
+The first independently built Python 3.10 wheel then exposed a real product
+RED: 187 installed-wheel tests passed and four Windows artifact paths
+(`trailing.`, `trailing `, `file:stream`, and `bad"name.py`) were incorrectly
+accepted. Python 3.13+ has `ntpath.isreserved`; Python 3.10 does not, and the
+old `PureWindowsPath.is_reserved()` fallback covered device names but not the
+remaining Windows filename rules. Commit `9bef0f1` retains a regression that
+removes `ntpath.isreserved`, then adds the conservative standard-library rules
+for ASCII controls/forbidden characters, trailing dot/space, and DOS device
+names including superscript aliases. It changes only the CLI destination-path
+safety boundary, not Core parsing, canonicalization, digest, layout, binary,
+codegen, or artifact identity.
+
+Post-fix source results are 344/344 on both free-threaded CPython `3.14.3` and
+minimum supported CPython `3.10.17`. Both fresh package inventories pass, and
+both isolated no-project installed-wheel suites pass 195/195:
+
+| Python artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `fastdb4py-0.1.22-cp314-cp314t-macosx_26_0_arm64.whl` | 1,135,239 | `b89a929b122bd3f9a56b29515873207c6a3cea7a13d08760f1240e576674e40e` |
+| current-interpreter `fastdb4py-0.1.22.tar.gz` | 1,067,851 | `94d2ce3910dd565f991687bcd13980d469c532b2f0954d71e11039c1715212ae` |
+| `fastdb4py-0.1.22-cp310-cp310-macosx_26_0_arm64.whl` | 1,132,015 | `9947f9ceb9d51cff8e07198f3ba604c9c857ee64c0cd31ccdde42d4b580a405c` |
+| Python-3.10 `fastdb4py-0.1.22.tar.gz` | 1,067,841 | `691e97c59e4d7721972ee87862699e5a62f2a2b7540df510cab3f13f3c617e06` |
+
+Both final logs contain zero matched SWIG `Warning NNN` diagnostics, so Issue
+0003 remains closed. The Python 3.10 log does contain one C++ compiler warning
+from NumPy's `import_array()` macro returning `NULL` from an `int` wrapper and
+wheel-tag warnings because the local interpreter targets macOS 11 while the
+built native libraries inherit the macOS 26 host target. Those are not SWIG
+parser diagnostics, are not concealed as a warning-free whole log, and remain
+local packaging/toolchain observations. Hosted lower-macOS, Linux, and Windows
+package execution is still pending.
+
+The official Emscripten `5.0.2` / Node `25.8.1` TypeScript/Wasm path passes
+57/57 source tests, seven package-checker tests, the exact 41-file packed
+inventory, package smoke, and ABI-117. Its artifacts are:
+
+| TypeScript artifact | Bytes | SHA-256 |
+|---|---:|---|
+| `fastdb4ts-0.0.3.tgz` | 639,277 | `37414ab1dbd7d96f367651ce9f8c0638559cae3a19db43ed18def55e67d0f0b9` |
+| `dist/wasm/fastdb4ts.wasm` | 1,975,482 | `a4c85a21d18aa40862a22013098e3441ea66d7f8ddd301564a352bdb2da59093` |
+| `dist/wasm/fastdb4ts.js` | 122,622 | `2e551575ffb880ee8863b6b29b09e5c685a59d0ddca9824a9df263e50dfaad53` |
+
+A separate fresh Core Wasm tree also exposes exact ABI-117 and passes all
+seven explicit Node receipts: runtime harness, pure-C header, generated C ABI,
+C++ facade, runtime C++ facade, injected-failure rollback, and graph-runtime
+proof. The generated projection checker passes 6/6 before the complete
+four-language execution harness.
+
+The final pre-record documentation/scope gate passes P5 clean-cut 35/35 plus
+the real repository check, `git diff --check`, schema/JSON/package
+inventories, first-party Markdown link/anchor checks, and an added-line
+credentials/private-endpoint scan. The plan's whole-changed-file drafting
+token scan reports two baseline facts: a 2026-04 plan sentence that literally
+spells the token it says is absent and a 2025 native geometry-size comment.
+`git blame` at the frozen P5 start proves both predate P5; neither is a new
+production placeholder or Task 7 limitation, and Task 7 does not expand into
+the unrelated legacy geometry algorithm merely to force an unqualified text
+scan to exit `1`.
+
+All disposable Task 7 native, sanitizer, Rust target, Python distribution,
+TypeScript distribution/package, and Wasm build trees were deleted after
+their hashes and results were recorded. Source virtual environments are
+retained as required by the plan. The primary-agent closure review is
+performed personally in separate specification-compliance and code-quality
+passes after freezing the closure commit; by user direction it is same-agent
+evidence and is not represented as independent or subagent review.
 
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
@@ -2378,7 +2517,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut and local release-readiness handoff | Open; Tasks 0-6 are frozen: Task 6 has an executable exact clean-cut policy with 35 focused tests, complete affected gates, and same-agent review APPROVE 0/0/0; Task 7 fresh readiness remains | Run Task 7 without a version bump or publication; keep hosted platform results pending and hand only the frozen FastDB boundary to C-Two |
+| P5. Clean cut and local release-readiness handoff | Locally complete at exact ABI-117: Tasks 0-6 are frozen and Task 7 passes fresh native Debug/Release, sanitizer/TSan, Rust, Python 3.10/current installed-package, generated-output, TypeScript/Wasm, package, documentation, and scope gates; package versions remain 0.1.22/0.0.3 | Keep hosted platform results, version change, push, tag, publication, and release pending; hand only the frozen FastDB boundary to the C-Two-owned composition slice |
 
 ## Non-deferrable 0.2.0 work
 
