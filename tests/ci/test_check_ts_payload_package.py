@@ -18,7 +18,16 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TypeScriptPayloadPackageTests(unittest.TestCase):
+    def test_forbids_generated_call_db_runtime_and_declarations(self) -> None:
+        forbidden = {"dist/call-db.js", "dist/call-db.d.ts"}
+        self.assertEqual(MODULE.FORBIDDEN, forbidden)
+        for path in forbidden:
+            with self.subTest(path=path), self.assertRaises(MODULE.CheckError):
+                MODULE.check_inventory(set(MODULE.REQUIRED) | {path})
+
     def test_requires_payload_inventory_and_rejects_debris(self) -> None:
+        self.assertIn("dist/index.js", MODULE.REQUIRED)
+        self.assertIn("dist/index.d.ts", MODULE.REQUIRED)
         MODULE.check_inventory(set(MODULE.REQUIRED))
         with self.assertRaises(MODULE.CheckError):
             MODULE.check_inventory(set(MODULE.REQUIRED) - {"dist/payload/index.js"})
@@ -28,14 +37,20 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
             MODULE.check_inventory(set(MODULE.REQUIRED) | {"../escape"})
 
     def test_requires_exact_payload_subpath_and_module_package(self) -> None:
+        root_export = {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+        }
+        payload_export = {
+            "types": "./dist/payload/index.d.ts",
+            "import": "./dist/payload/index.js",
+        }
         accepted = {
             "type": "module",
             "files": ["dist", "README.md"],
             "exports": {
-                "./payload": {
-                    "types": "./dist/payload/index.d.ts",
-                    "import": "./dist/payload/index.js",
-                }
+                ".": root_export,
+                "./payload": payload_export,
             },
         }
         MODULE.check_package_json(accepted)
@@ -43,6 +58,16 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
             {**accepted, "type": "commonjs"},
             {**accepted, "files": ["dist"]},
             {**accepted, "exports": {}},
+            {**accepted, "exports": {"./payload": payload_export}},
+            {**accepted, "exports": {".": root_export}},
+            {
+                **accepted,
+                "exports": {
+                    ".": root_export,
+                    "./payload": payload_export,
+                    "./call-db": root_export,
+                },
+            },
         ):
             with self.assertRaises(MODULE.CheckError):
                 MODULE.check_package_json(changed)

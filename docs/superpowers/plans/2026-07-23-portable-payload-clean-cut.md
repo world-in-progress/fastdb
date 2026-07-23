@@ -572,8 +572,12 @@ then import/package/Python-3.10 correctness. Rerun Step 4 after fixes.
 - Delete: `tests/ts/test_call_db_runtime.mjs`
 - Modify: `ts/fastdb4ts/src/index.ts`
 - Modify: `tests/ts/test_public_exports.mjs`
+- Modify: `tests/ts/test_column_way.mjs`
+- Create: `tests/ts/test_database_buffer.mjs`
 - Modify: `tests/ci/check_ts_payload_package.py`
 - Modify: `tests/ci/test_check_ts_payload_package.py`
+- Modify:
+  `docs/superpowers/plans/2026-07-23-portable-payload-clean-cut.md`
 - Modify:
   `docs/issues/0002-portable-payload-foundation-implementation-status.md`
 
@@ -620,8 +624,11 @@ Expected: call-db exports and packed files still exist.
 
 - [ ] **Step 3: Delete the runtime and root exports**
 
-Delete `call-db.ts` and its runtime test. Remove every value and type re-export
-from `src/index.ts`. Do not move call-db logic into `schema.ts`, `feature.ts`,
+Delete `call-db.ts` and its runtime test. Before deleting the mixed-owner test
+file, move its standalone `Table.fill` case into `test_column_way.mjs` and its
+four Wasm-owned database-buffer lifetime cases into
+`test_database_buffer.mjs`. Remove every value and type re-export from
+`src/index.ts`. Do not move call-db logic into `schema.ts`, `feature.ts`,
 `orm.ts`, or `serializer.ts`; those remain standalone-only.
 
 - [ ] **Step 4: Run TypeScript/Wasm and package gates**
@@ -636,7 +643,7 @@ npm pack ./ts/fastdb4ts --pack-destination build/p5-task3-package
 python3 tests/ci/check_ts_payload_package.py \
   --package-dir build/p5-task3-package
 python3 tools/check_payload_abi_symbols.py \
-  --wasm-build-dir ts/build-wasm
+  --wasm-build-dir build-wasm
 git diff --check
 ```
 
@@ -651,8 +658,11 @@ git add -A -- \
   ts/fastdb4ts/src/index.ts \
   tests/ts/test_call_db_runtime.mjs \
   tests/ts/test_public_exports.mjs \
+  tests/ts/test_column_way.mjs \
+  tests/ts/test_database_buffer.mjs \
   tests/ci/check_ts_payload_package.py \
   tests/ci/test_check_ts_payload_package.py \
+  docs/superpowers/plans/2026-07-23-portable-payload-clean-cut.md \
   docs/issues/0002-portable-payload-foundation-implementation-status.md
 git diff --cached --check
 git commit -m "refactor(ts): remove duplicate payload authority"
@@ -1574,7 +1584,7 @@ npm pack ./ts/fastdb4ts --pack-destination build/p5-final-ts-package
 python3 tests/ci/check_ts_payload_package.py \
   --package-dir build/p5-final-ts-package
 python3 tools/check_payload_abi_symbols.py \
-  --wasm-build-dir ts/build-wasm
+  --wasm-build-dir build-wasm
 
 rm -rf build/p5-final-wasm
 emcmake cmake -S fastcarto -B build/p5-final-wasm \
@@ -1686,7 +1696,7 @@ rm -rf \
   build/p5-final-dist-py310 build/p5-final-ts-package \
   build/p5-final-wasm build/p5-final-package-current.log \
   build/p5-final-package-py310.log \
-  ts/build-wasm ts/fastdb4ts/dist bindings/rust/target
+  build-wasm ts/fastdb4ts/dist bindings/rust/target
 git status --short
 ```
 

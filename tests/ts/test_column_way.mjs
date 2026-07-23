@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  BOOL,
   F64,
   Feature,
   ORM,
+  StridedColumn,
   TableDefn,
   defineSchema,
   initFastdb,
@@ -14,6 +16,10 @@ await initFastdb();
 
 class Point extends Feature {
   static schema = defineSchema({ x: F64, y: F64, z: F64 });
+}
+
+class NumericPoint extends Feature {
+  static schema = defineSchema({ x: F64, y: F64, active: BOOL });
 }
 
 test('column way supports row writes and column updates', () => {
@@ -86,5 +92,30 @@ test('orm buffer roundtrip preserves multi-layer fixed table data after column f
   } finally {
     copy.close();
     db.close();
+  }
+});
+
+test('bulk table fill writes through strided memory without per-cell setters', () => {
+  const orm = ORM.truncate([new TableDefn(NumericPoint, 3)]);
+  const table = orm.table(NumericPoint);
+  const originalSet = StridedColumn.prototype.set;
+  StridedColumn.prototype.set = function setShouldNotRun() {
+    throw new Error('per-cell StridedColumn.set fallback used');
+  };
+  try {
+    table.fill({
+      active: [1, 0, 1],
+      x: new Float64Array([1.25, 2.5, 3.75]),
+      y: [4.5, 5.5, 6.5],
+    });
+
+    assert.deepEqual(Array.from(table.column.x.toArray()), [1.25, 2.5, 3.75]);
+    assert.deepEqual(Array.from(table.column.y.toArray()), [4.5, 5.5, 6.5]);
+    assert.equal(table.get(0).active, true);
+    assert.equal(table.get(1).active, false);
+    assert.equal(table.get(2).active, true);
+  } finally {
+    StridedColumn.prototype.set = originalSet;
+    orm.close();
   }
 });

@@ -1595,9 +1595,9 @@ semantics.
 
 ### P5 clean cut and local release-readiness handoff
 
-**Current limit:** The Python call-db, schema, requirement, allocator, and
-feature-discovery codegen surfaces are removed. TypeScript/Wasm call-db,
-legacy native/SWIG surfaces, `columnar.v1`, `ColumnEngine`, policy, and
+**Current limit:** The Python and TypeScript call-db surfaces, Python schema,
+requirement, allocator, and feature-discovery codegen surfaces are removed.
+Legacy native/SWIG surfaces, `columnar.v1`, `ColumnEngine`, policy, and
 documentation clean-cut tasks remain open. Package metadata remains
 `fastdb4py==0.1.22` and
 `fastdb4ts==0.0.3`; no 0.2.0 release, tag, publication, or C-Two composition
@@ -1766,9 +1766,72 @@ Linux, and Windows package matrices remain explicitly pending P5 Task 7 and
 hosted execution. No cross-platform or hosted result is inferred from the
 local archive inventory.
 
-**Next owner slice:** P5 Task 3 removes the TypeScript call-db runtime and
-package surface. After all FastDB P5 tasks, stop design work at the frozen
-owner boundary and begin the separate C-Two-owned composition task.
+**P5 Task 3 local implementation evidence:** From exact start `0ff6640`, the
+TypeScript `call-db.ts` runtime and its authority test are deleted. The root
+entry removes all value and type re-exports for
+`encodeFastdbCallDb`, `decodeFastdbCallDb`, `viewFastdbCallDb`,
+`encodeFastdbFeature`, `decodeFastdbFeature`, and the associated call-db
+types. No call-db logic moved into the retained feature, schema, ORM, table,
+serializer, or database-buffer modules. `Feature`, `ORM`, and
+`FastSerializer` remain root exports, while `fastdb4ts/payload` remains the
+official Wasm projection.
+
+The genuine RED built the old source successfully, then failed the inverted
+root export test and package-checker test because the five values and two
+generated members still existed. The corrected focused gate passes two root
+export tests and six package-checker unit tests. One standalone bulk table
+fill case and four Wasm-owned database-buffer lifetime cases were migrated
+out of the deleted authority test; the complete TypeScript/Wasm suite
+therefore passes 57/57 without discarding retained storage coverage.
+
+A fresh `fastdb4ts==0.0.3` tarball contains 41 files, retains every required
+`dist/payload/*` JavaScript/declaration artifact and the official Wasm files,
+contains neither `dist/call-db.js` nor `dist/call-db.d.ts`, and passes the
+isolated packed-package root and payload smoke. The package gate requires the
+root JavaScript/declaration indexes and exact root/payload export map in
+addition to forbidding the removed artifacts. The rebuilt official Wasm object
+retains exactly 117 sorted payload ABI symbols. Current artifact SHA-256
+values are:
+
+```text
+fastdb4ts-0.0.3.tgz
+  d3f695b65555ff47c9211f2a1dd4a8094274341523e2ec94c39c4b2a5cf9805f
+official fastdb4ts.js
+  ed28d53b23c336abc5dd4c94bc4472a7c323c9fa8029d049758bdafc33a7dc54
+official fastdb4ts.wasm
+  d2dbbbc4588d618ec4e3f5da5ab4063da28e0249f0c3cfaef272b325b2c5aba7
+```
+
+Execution also corrected the P5 plan's stale `ts/build-wasm` ABI-check and
+cleanup paths to the real repository-root `build-wasm` directory produced by
+`ts/build-wasm.sh`. No duplicate build tree or compatibility path was added.
+
+**Task 3 ordered intermediate limit:** Legacy native allocator/final-backing
+and SWIG debris remain until P5 Task 4, `ColumnEngine` remains until Task 5,
+and the root/Python historical README sections still describe removed 0.1.x
+surfaces until Task 6.
+
+**Reason:** Task 3 proves one clean TypeScript source/package boundary. Native
+header/SWIG changes require their own deterministic byte and package-warning
+evidence; the engine rename must remain atomic; and public documentation is
+rewritten only after those final names settle.
+
+**Impact:** The built TypeScript package no longer exposes duplicate payload
+authority, but the repository as a whole is not yet locally release-ready and
+current historical documentation can still lead a reader to removed APIs.
+
+**Dependencies and closure criteria:** Task 4 removes orphaned native
+allocators, fixes descriptor determinism, and closes all governed SWIG
+warnings. Task 5 performs the no-alias `RecordEngine` rename. Task 6 rewrites
+documentation and installs the exact clean-cut policy. Task 7 must then pass
+fresh local and installed-package matrices before any version, tag,
+publication, release, or C-Two composition claim.
+
+**Next owner slice:** P5 Task 4 removes orphaned native allocator/final-backing
+surfaces, repairs deterministic descriptor initialization, and closes the
+seven governed SWIG warnings. After all FastDB P5 tasks, stop design work at
+the frozen owner boundary and begin the separate C-Two-owned composition
+task.
 
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,

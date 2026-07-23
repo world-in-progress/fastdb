@@ -17,6 +17,8 @@ from typing import Any
 REQUIRED = {
     "README.md",
     "package.json",
+    "dist/index.d.ts",
+    "dist/index.js",
     "dist/payload/abi.d.ts",
     "dist/payload/abi.js",
     "dist/payload/builder.d.ts",
@@ -36,6 +38,10 @@ REQUIRED = {
     "dist/wasm/fastdb4ts.d.ts",
     "dist/wasm/fastdb4ts.js",
     "dist/wasm/fastdb4ts.wasm",
+}
+FORBIDDEN = {
+    "dist/call-db.d.ts",
+    "dist/call-db.js",
 }
 FORBIDDEN_PARTS = {
     "node_modules",
@@ -121,6 +127,9 @@ def check_inventory(names: set[str]) -> None:
     missing = sorted(REQUIRED - names)
     if missing:
         raise CheckError(f"npm package is missing payload artifacts: {missing}")
+    forbidden = sorted(FORBIDDEN & names)
+    if forbidden:
+        raise CheckError(f"npm package contains removed call-db artifacts: {forbidden}")
     debris = []
     for name in sorted(names):
         path = PurePosixPath(name)
@@ -150,13 +159,21 @@ def reject_special_members(members: list[tarfile.TarInfo]) -> None:
 def check_package_json(document: Any) -> None:
     if not isinstance(document, dict):
         raise CheckError("package.json root must be an object")
-    expected = {
+    expected_root = {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js",
+    }
+    expected_payload = {
         "types": "./dist/payload/index.d.ts",
         "import": "./dist/payload/index.js",
     }
+    expected_exports = {
+        ".": expected_root,
+        "./payload": expected_payload,
+    }
     exports = document.get("exports")
-    if not isinstance(exports, dict) or exports.get("./payload") != expected:
-        raise CheckError("package.json must export the exact ./payload subpath")
+    if not isinstance(exports, dict) or exports != expected_exports:
+        raise CheckError("package.json must export the exact root and ./payload subpaths")
     files = document.get("files")
     if not isinstance(files, list) or "dist" not in files or "README.md" not in files:
         raise CheckError("package.json files must include dist and README.md")
@@ -178,13 +195,29 @@ def run_smoke(package: Path) -> None:
         shutil.move(str(root / "package"), str(node_modules / "fastdb4ts"))
         smoke = root / "smoke.mjs"
         smoke.write_text(
-            """import {
+            """import * as fastdb from 'fastdb4ts';
+import {
   ArtifactKind,
   CodegenTarget,
   CompiledSpec,
   Profile,
   initPayload,
 } from 'fastdb4ts/payload';
+
+for (const name of [
+  'encodeFastdbCallDb',
+  'decodeFastdbCallDb',
+  'viewFastdbCallDb',
+  'encodeFastdbFeature',
+  'decodeFastdbFeature',
+]) {
+  if (name in fastdb) throw new Error(`removed root export present: ${name}`);
+}
+for (const name of ['Feature', 'ORM', 'FastSerializer']) {
+  if (typeof fastdb[name] !== 'function') {
+    throw new Error(`retained root export missing: ${name}`);
+  }
+}
 
 await initPayload();
 const source = new TextEncoder().encode(
