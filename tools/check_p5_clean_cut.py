@@ -76,6 +76,7 @@ ISSUE_0002 = (
     "docs/issues/0002-portable-payload-foundation-implementation-status.md"
 )
 ISSUE_0003 = "docs/issues/0003-legacy-swig-diagnostics.md"
+ISSUE_INDEX = "docs/issues/README.md"
 MARKDOWN_EXCLUDED_ROOTS = ("fastcarto/lib/",)
 
 ABI_SYMBOL_PATTERN = re.compile(r"^fdb_payload_v1_[A-Za-z0-9_]+$")
@@ -1199,6 +1200,22 @@ def _check_issues(root: Path) -> list[str]:
                     f"Issue 0003 is missing required {statuses[0].lower()} "
                     f"evidence marker {marker!r}"
                 )
+
+    issue_index, error = _read_text(root, ISSUE_INDEX)
+    if error is not None or issue_index is None:
+        violations.append(error or f"cannot read {ISSUE_INDEX}")
+    else:
+        index_markers = (
+            "| [0002](0002-portable-payload-foundation-implementation-status.md) "
+            "| Open (P1-P5 locally frozen; hosted/release/C-Two evidence pending) |",
+            "| [0003](0003-legacy-swig-diagnostics.md) | Closed |",
+        )
+        for marker in index_markers:
+            if marker not in issue_index:
+                violations.append(
+                    f"{ISSUE_INDEX}: Issue index is missing exact current "
+                    f"status {marker!r}"
+                )
     return violations
 
 
@@ -1267,6 +1284,15 @@ def _check_workflow(root: Path) -> list[str]:
     if len(run_starts) != 1 or tuple(script_lines) != required_commands:
         violations.append(
             f"{WORKFLOW_PATH}: clean_cut must use the exact fail-fast script"
+        )
+    shells = [
+        line.strip()
+        for line in body.splitlines()
+        if re.match(r"^[ \t]+shell:", line) is not None
+    ]
+    if shells != ["shell: bash"]:
+        violations.append(
+            f"{WORKFLOW_PATH}: clean_cut must use the exact fail-fast shell"
         )
     if "uses: actions/checkout@" not in body:
         violations.append(

@@ -197,6 +197,7 @@ def create_repository(root: Path) -> dict[str, object]:
         "    steps:\n"
         "      - uses: actions/checkout@v6\n"
         "      - name: Enforce the clean cut\n"
+        "        shell: bash\n"
         "        run: |\n"
         "          python3 tests/ci/test_check_p5_clean_cut.py\n"
         "          python3 tools/check_p5_clean_cut.py --check\n",
@@ -218,6 +219,16 @@ def create_repository(root: Path) -> dict[str, object]:
         "Status: Closed\n\n"
         "P5 Task 4 closed this issue with zero matched SWIG diagnostics. "
         "Hosted execution remains pending.\n",
+    )
+    write(
+        root,
+        "docs/issues/README.md",
+        "# Issue index\n\n"
+        "| Issue | Status |\n"
+        "|---|---|\n"
+        "| [0002](0002-portable-payload-foundation-implementation-status.md) "
+        "| Open (P1-P5 locally frozen; hosted/release/C-Two evidence pending) |\n"
+        "| [0003](0003-legacy-swig-diagnostics.md) | Closed |\n",
     )
 
     for relative in MODULE.PYTHON_PORTABLE_MODULES:
@@ -583,6 +594,17 @@ class GovernanceSurfaceTests(RepositoryFixture):
         )
         self.assert_rejected("Task 6")
 
+    def test_rejects_stale_issue_index_status(self) -> None:
+        index = self.root / "docs/issues/README.md"
+        index.write_text(
+            index.read_text(encoding="utf-8").replace(
+                "| [0003](0003-legacy-swig-diagnostics.md) | Closed |",
+                "| [0003](0003-legacy-swig-diagnostics.md) | Open |",
+            ),
+            encoding="utf-8",
+        )
+        self.assert_rejected("Issue index")
+
     def test_accepts_truthful_open_issue_0003(self) -> None:
         write(
             self.root,
@@ -684,6 +706,17 @@ class GovernanceSurfaceTests(RepositoryFixture):
             encoding="utf-8",
         )
         self.assert_rejected("exact fail-fast script")
+
+    def test_rejects_non_fail_fast_clean_cut_shell(self) -> None:
+        workflow = self.root / ".github/workflows/tests.yml"
+        workflow.write_text(
+            workflow.read_text(encoding="utf-8").replace(
+                "        shell: bash\n",
+                "        shell: bash {0} || true\n",
+            ),
+            encoding="utf-8",
+        )
+        self.assert_rejected("exact fail-fast shell")
 
 
 if __name__ == "__main__":
