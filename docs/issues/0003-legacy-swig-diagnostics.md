@@ -131,3 +131,7 @@ replacement typemap or writable borrowed-pointer API was introduced, so the
 conditional ownership/lifetime-test criterion does not apply. Hosted
 execution remains pending and is tracked by Issue 0002 rather than keeping
 this source-level SWIG cleanup open.
+
+The scoped implementation is commit `ad3e4d6`; the frozen descriptor-padding
+proof correction is `099a890`. Issue 0002 records the exact-range same-agent
+review and its non-independent status.

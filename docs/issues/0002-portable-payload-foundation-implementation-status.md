@@ -1848,8 +1848,8 @@ fresh local and installed-package matrices before any version, tag,
 publication, release, or C-Two composition claim.
 
 **Task 3 next owner slice:** P5 Task 4 removes orphaned native
-allocator/final-backing
-surfaces, repairs deterministic descriptor initialization, and closes the
+allocator/final-backing surfaces, repairs deterministic descriptor
+initialization, and closes the
 seven governed SWIG warnings. After all FastDB P5 tasks, stop design work at
 the frozen owner boundary and begin the separate C-Two-owned composition
 task.
@@ -1919,6 +1919,31 @@ atomically and without an alias. Public-documentation and clean-cut policy
 work remains Task 6; fresh local and installed-package release-readiness
 matrices remain Task 7. Hosted execution, package-version changes, tag,
 publication, release, and C-Two composition remain pending.
+
+**Task 4 frozen review:** The scoped implementation commit is `ad3e4d6`
+(`fix(native): clean legacy backing and descriptor state`). The
+context-owning primary agent reviewed exact range `74ab723..ad3e4d6` first for
+authority/scope, wire/ABI/backing ownership, and clean-cut completeness, then
+separately for correctness, safety, resource behavior, maintainability, and
+package portability.
+
+The first pass found one material Minor proof gap: the descriptor regression
+asserted the formerly uninitialized `element_type`, but did not independently
+pin the alignment padding that is serialized with the complete native
+descriptor object. Correction `099a890`
+(`test(native): pin serialized descriptor padding`) requires every byte
+between `element_type` and `vmin` to be zero. The poison-focused target passes
+1/1 in 1.20 seconds. The final exact-range Debug rerun passes 40/40 in 71.76
+seconds and remains ABI-117. No production code changed after the complete
+sanitizer, Python, package, and TypeScript/Wasm gates recorded above.
+
+The final re-review of `74ab723..099a890` reports 0 Critical, 0 Important, and
+0 unresolved material Minor findings. The review confirms that no portable
+Core/ABI file changed, the legacy wire bytes and zero-copy data spans remain
+in place, removed backing names have no compatibility surface, native tile
+implementations still compile, and the zero-warning package gate fails closed.
+This is same-agent primary review by explicit user direction, not independent
+or subagent evidence.
 
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
