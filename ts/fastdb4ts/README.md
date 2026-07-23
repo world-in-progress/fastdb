@@ -78,9 +78,9 @@ P5 clean cut rather than extended by this projection.
 
 P4 is locally complete. The official WebAssembly projection type-checks and
 executes the four-shape hostile generated-artifact matrix through the same
-ABI-117 Core; TypeScript gains no private parser or renderer. P5 local clean
-cut is complete. Hosted execution, versioning, publication, and release
-evidence remain open.
+ABI-117 Core; TypeScript gains no private parser or renderer. P5 local clean cut
+is complete. Hosted execution, versioning, publication, and release evidence
+remain open.
 
 ## Installation
 
