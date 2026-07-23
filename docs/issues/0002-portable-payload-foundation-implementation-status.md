@@ -44,10 +44,10 @@ same-agent primary review. P5 Task 1 now removes the Python-owned
 feature-discovery generator and makes `fdb codegen` a creation-only filesystem
 facade over the same Core ArtifactSet. The Python and TypeScript duplicate
 authority, native/SWIG debris, no-alias `RecordEngine` rename, and executable
-clean-cut policy are locally implemented through P5 Task 6; its formal review
-freeze is still pending. Fresh Task 7 release-readiness gates and later
-C-Two-owned composition remain open. Package metadata is still 0.1.x, so
-Issue 0002 remains open and no FastDB 0.2.0 release is claimed.
+clean-cut policy are locally frozen through P5 Task 6. Fresh Task 7
+release-readiness gates and later C-Two-owned composition remain open. Package
+metadata is still 0.1.x, so Issue 0002 remains open and no FastDB 0.2.0 release
+is claimed.
 
 It is not a mechanism for shrinking the accepted milestone. Capabilities intentionally outside 0.2.0 belong in Issue 0001. Every item below remains non-deferrable for the 0.2.0 foundation and must be removed from this issue by implementation, not reclassified to make a release claim pass.
 
@@ -1598,8 +1598,8 @@ semantics.
 **Current limit:** The duplicate Python/TypeScript authority, orphaned
 native/SWIG backing surfaces, old engine name, stale current instructions, and
 unclassified current/historical literals are removed or governed through P5
-Task 6 implementation. The Task 6 review freeze and fresh Task 7
-source/package/platform readiness matrix remain open. Package metadata remains
+Task 6. Its implementation and same-agent review are frozen; the fresh Task 7
+source/package/platform readiness matrix remains open. Package metadata remains
 `fastdb4py==0.1.22` and
 `fastdb4ts==0.0.3`; no 0.2.0 release, tag, publication, or C-Two composition
 proof exists.
@@ -2043,8 +2043,8 @@ evidence.
 P5 Task 6 installs the exact
 `fastdb.p5-clean-cut-policy.v1` contract and a standard-library-only,
 fail-closed repository gate. The policy freezes ABI-117, Python `0.1.22`,
-TypeScript `0.0.3`, 14 removed paths, 10 required paths, 25 exact historical
-files, one non-historical policy-literal carrier, 12 visibly superseded
+TypeScript `0.0.3`, 14 removed paths, 10 required paths, 27 exact historical
+files, one non-historical policy-literal carrier, 14 visibly superseded
 documents, 26 obsolete-authority literals, nine downstream-domain literals,
 and eight standalone-boundary markers. It contains no wildcard or directory
 allowlist.
@@ -2063,7 +2063,7 @@ Current root/Python/TypeScript package instructions now describe the official
 portable projections, retained standalone storage helpers, and the Core-only
 `fdb codegen` ArtifactSet facade. The eight retained modules state that they
 are standalone metadata, storage, serializer, detachment, or lifetime helpers
-rather than portable authority. All 12 older design/plan/audit files have a
+rather than portable authority. All 14 older design/plan/audit files have a
 visible historical/superseded status and resolving links to the accepted
 foundation and P5 design. Negative source/package tests keep their absence
 proofs while constructing obsolete names from reviewed fragments.
@@ -2126,9 +2126,58 @@ Emscripten `5.0.2`.
 
 All Python, Node, Wasm, native build, package, and cache output was deleted
 after evidence; the governed source tree remains approximately `48 MiB`.
-The same policy commands are present in one hosted workflow step, but
-**Hosted Task 6 execution remains pending** because no push or hosted run is
-authorized.
+The same policy commands are present in one unconditional standalone hosted
+workflow job. **Hosted Task 6 execution remains pending** because no push or
+hosted run is authorized.
+
+The scoped implementation is `928baa8` (`test: enforce portable payload clean
+cut`). The frozen primary-agent spec-compliance review found three Important
+gaps:
+
+1. downstream-domain and binding-duplicate scans did not cover the Rust
+   bindings and several other current implementation surfaces;
+2. Markdown target/anchor validation did not cover all first-party Markdown,
+   leaving two stale standalone optimization plans and two broken links
+   outside the governed set; and
+3. the clean-cut commands lived inside a path-conditional job, so changes
+   outside its filter could skip the hosted gate.
+
+The code-quality pass also found three material Minor fail-closed defects: the
+SWIG scan hard-coded the fixture/production carrier path instead of consuming
+the validated policy; an Open Issue 0003 could pair a completed clean-package
+claim with an unrelated hosted `pending` marker; and workflow command checks
+accepted `|| true` or `continue-on-error`. The correction RED sequence was
+`3/30`, `1/31`, `1/32`, `1/33`, `1/34`, and `1/35` failures for those missing
+behaviors and the policy-driven carrier case. Review-fix commit `3cd064a`
+closes every finding by:
+
+- scanning the exact Rust raw/safe module inventories for parser, digest, and
+  renderer dependencies or definitions;
+- expanding downstream-domain roots across all current owned implementation,
+  binding, example, package, schema, test, and tool surfaces while keeping
+  vendored `fastcarto/lib` outside first-party documentation governance;
+- validating links/anchors in every first-party Markdown file and classifying
+  `plan.md` plus `optimize/optimize_plan.md` as the 13th and 14th visibly
+  superseded records;
+- installing an unconditional standalone `clean_cut` workflow job with exact,
+  non-failing commands; and
+- making Issue-state and literal-carrier behavior policy-driven and
+  relationship-aware.
+
+After the last fix, the affected complete gate set passes: clean-cut `35/35`
+plus the real repository, P4 `17/17` plus repository validation, P3 `12`
+runs / `48` assertions plus repository validation, Python package checker
+`16/16`, TypeScript package checker `7/7`, and `git diff --check`. The review
+fix changes no runtime, binding implementation, schema, ABI, or package
+metadata, so the fresh Python 340, TypeScript/Wasm 57, native Debug 40/40,
+packed TypeScript, and ABI-117 evidence above remains the complete affected
+runtime gate result.
+
+The final frozen re-review of exact range `d353a1d..3cd064a` is APPROVE with
+zero Critical, zero Important, and zero material Minor findings. The
+spec-compliance and code-quality passes were performed personally by the
+context-owning primary agent as required by the user; this is explicitly not
+independent or subagent evidence.
 
 **Task 6 developer-helper limit:** `./py_utils.sh --setup` is an initial
 environment setup helper, not a forced native-binding rebuild. After generated
@@ -2329,7 +2378,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut and local release-readiness handoff | Open; Tasks 0-5 are frozen and Task 6 has an executable exact clean-cut policy with 27 focused tests; Task 6 broad-gate/review freeze and Task 7 fresh readiness remain | Freeze Task 6 after its full affected gates, then run Task 7 without a version bump or publication; keep hosted platform results pending and hand only the frozen FastDB boundary to C-Two |
+| P5. Clean cut and local release-readiness handoff | Open; Tasks 0-6 are frozen: Task 6 has an executable exact clean-cut policy with 35 focused tests, complete affected gates, and same-agent review APPROVE 0/0/0; Task 7 fresh readiness remains | Run Task 7 without a version bump or publication; keep hosted platform results pending and hand only the frozen FastDB boundary to C-Two |
 
 ## Non-deferrable 0.2.0 work
 

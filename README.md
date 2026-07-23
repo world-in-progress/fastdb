@@ -63,13 +63,12 @@ The C++ Core remains the only semantic authority; none of the bindings or
 generated outputs contains a second parser, canonicalizer, digest, layout,
 binary, graph, or materialization model.
 
-P5 clean cut remains open. Tasks 1-5 are frozen, and the Task 6 implementation
-and broad local gates are complete while its formal review freeze is pending:
-the source tree uses the final `RecordEngine` name directly, removed authority
-surfaces are absent, retained standalone helpers state their non-portable
-boundary, and the exact clean-cut policy is executable over tracked plus
-untracked/non-ignored files. Task 7 release-readiness gates and later
-downstream composition also remain open. Those non-deferrable gaps are
+P5 clean cut remains open at Task 7. Tasks 1-6 are locally frozen: the source
+tree uses the final `RecordEngine` name directly, removed authority surfaces
+are absent, retained standalone helpers state their non-portable boundary,
+and the exact clean-cut policy is executable over tracked plus
+untracked/non-ignored files. Task 7 fresh release-readiness gates and later
+downstream composition remain open. Those non-deferrable gaps are
 tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 No local result or workflow definition is represented as a hosted pass; the
