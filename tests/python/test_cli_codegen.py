@@ -167,6 +167,24 @@ def test_windows_artifact_policy_rejects_non_file_paths(
     assert not cli._artifact_path_is_safe(relative_path, windows=True)
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "trailing.",
+        "trailing ",
+        "file:stream",
+        'bad"name.py',
+    ],
+)
+def test_windows_artifact_policy_does_not_depend_on_ntpath_isreserved(
+    monkeypatch: pytest.MonkeyPatch,
+    relative_path: str,
+) -> None:
+    monkeypatch.delattr(cli.ntpath, "isreserved", raising=False)
+
+    assert not cli._artifact_path_is_safe(relative_path, windows=True)
+
+
 def test_posix_artifact_policy_keeps_core_valid_colon_paths() -> None:
     assert cli._artifact_path_is_safe("é:relative.hpp", windows=False)
 

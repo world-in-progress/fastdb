@@ -30,12 +30,37 @@ TARGETS = {
     "typescript": CodegenTarget.TYPESCRIPT,
 }
 
+_WINDOWS_RESERVED_CHARS = frozenset('<>:"/\\|?*') | frozenset(
+    chr(value) for value in range(32)
+)
+_WINDOWS_RESERVED_NAMES = frozenset(
+    {
+        "CON",
+        "PRN",
+        "AUX",
+        "NUL",
+        "CONIN$",
+        "CONOUT$",
+        *(f"COM{suffix}" for suffix in (*range(1, 10), "¹", "²", "³")),
+        *(f"LPT{suffix}" for suffix in (*range(1, 10), "¹", "²", "³")),
+    }
+)
+
 
 def _windows_path_is_reserved(relative_path: str) -> bool:
     checker = getattr(ntpath, "isreserved", None)
     if checker is not None:
         return bool(checker(relative_path))
-    return PureWindowsPath(relative_path).is_reserved()
+    for name in reversed(relative_path.replace("\\", "/").split("/")):
+        if name[-1:] in {".", " "}:
+            if name not in {".", ".."}:
+                return True
+            continue
+        if _WINDOWS_RESERVED_CHARS.intersection(name):
+            return True
+        if name.partition(".")[0].rstrip(" ").upper() in _WINDOWS_RESERVED_NAMES:
+            return True
+    return False
 
 
 def _artifact_path_is_safe(
