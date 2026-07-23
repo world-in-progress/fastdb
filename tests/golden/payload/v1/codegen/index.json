@@ -7,28 +7,28 @@
       "relative_path": "fastdb_payload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.hpp",
       "kind": "source",
       "golden": "empty-record.expected.hpp",
-      "sha256": "3c03f9bc2ffdddef3f7b696bf8229848265bbff20a1e144d0a07b8676c8982e6"
+      "sha256": "35d69aca349814ba3ef652c8b5b84e55114a2a00564d88fc431f62e9da1acd2e"
     },
     {
       "target": "rust",
       "relative_path": "fastdb_payload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.rs",
       "kind": "source",
       "golden": "empty-record.expected.rs",
-      "sha256": "1997b551fbda02c685bf297053ebdb8771d3f8dd80b46a4fbe2f18d5245dc322"
+      "sha256": "bf96706c49fb64f622ea36c50d638f101135e39b913f1b3ec47bdc8a8084b6dd"
     },
     {
       "target": "python",
       "relative_path": "fastdb_payload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.py",
       "kind": "source",
       "golden": "empty-record.expected.py",
-      "sha256": "0e3d549cd5f452252bb4b6e6056c463fbde2debba6d5216fea2ffa10a51a8d4f"
+      "sha256": "73ffe4949b9b070d2d53c04ffdfe6d6d46e3049cb26af6881bd520c5af4b822e"
     },
     {
       "target": "typescript",
       "relative_path": "fastdb_payload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.ts",
       "kind": "source",
       "golden": "empty-record.expected.ts",
-      "sha256": "8d37aa04167f183721cb981db7cca5aba2c9fc8e33619fdc077e450aa6b8bd0a"
+      "sha256": "ee48fe1c1b9b05abb7d75464a32132323b950258e4cbd8b139606a9fea546dc2"
     }
   ]
 }

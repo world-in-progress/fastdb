@@ -235,6 +235,13 @@ Result<View> PayloadOwner::entry_view(std::uint32_t entry_index) const try {
     return Result<View>::failure(allocation_error());
 }
 
+Result<void> PayloadOwner::require_spec_sha256(
+    const std::array<std::uint8_t, 32>& expected) const {
+    return spec::require_spec_sha256(
+        state_->spec.digest(), expected,
+        JsonPointer{}.append("payload").append("spec_sha256"));
+}
+
 Result<void> PayloadOwner::invalidate() const {
     AccessBarrierState& barrier = state_->barrier;
     std::optional<backing::CommittedBacking> released;

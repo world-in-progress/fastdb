@@ -182,11 +182,67 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Validate ordered projection and open-codegen map
+      - name: Validate ordered projection and closed-codegen map
         run: |
           python3 tests/ci/test_check_p4_projection_codegen_quality.py
           python3 tests/ci/check_p4_projection_codegen_quality.py \
             --check-repository
+
+  generated_projections:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.rust == 'true' || needs.detect_changes.outputs.python == 'true' || needs.detect_changes.outputs.ts == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Emscripten 5.0.2
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          cd "$RUNNER_TEMP/emsdk"
+          ./emsdk install 5.0.2
+          ./emsdk activate 5.0.2
+          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Build the official native and TypeScript runtimes
+        run: |
+          cmake -S fastcarto -B build/generated-projections \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_TOOLS=OFF \
+            -DUSE_SWIG_PYTHON=OFF \
+            -DUSE_SWIG_NODE=OFF \
+            -DUSE_SWIG_GO=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/generated-projections --target fastdb --parallel
+          npm install --prefix ts/fastdb4ts
+          npm --prefix ts/fastdb4ts run build:wasm
+          npm --prefix ts/fastdb4ts run build
+
+      - name: Compile, import, and execute all generated projections
+        env:
+          FASTDB_PAYLOAD_LIBRARY: ${{ github.workspace }}/build/generated-projections/fastdb/libfastdb.so
+          PYTHONPATH: ${{ github.workspace }}/python
+        run: |
+          uv run python tests/ci/test_run_generated_payload_projections.py
+          uv run python tests/ci/run_generated_payload_projections.py \
+            --build-dir build/generated-projections
 
   wasm_core:
     needs: detect_changes
@@ -224,6 +280,8 @@ jobs:
           --target
           fastdb_payload_wasm_runtime_harness
           fastdb_payload_test_c_header_smoke
+          fastdb_payload_test_codegen_c_abi
+          fastdb_payload_test_cpp_facade
           fastdb_payload_test_runtime_cpp_facade
           fastdb_payload_wasm_runtime_abi_single_thread
 
@@ -231,6 +289,8 @@ jobs:
         run: |
           node build/wasm-core/wasm-tests/payload_runtime_harness.js
           node build/wasm-core/tests/cpp/fastdb_payload_test_c_header_smoke.js
+          node build/wasm-core/tests/cpp/fastdb_payload_test_codegen_c_abi.js
+          node build/wasm-core/tests/cpp/fastdb_payload_test_cpp_facade.js
           node build/wasm-core/tests/cpp/fastdb_payload_test_runtime_cpp_facade.js
           node build/wasm-core/wasm-tests/payload_runtime_abi_single_thread.js \
             --single-thread-injected-failure
@@ -429,6 +489,7 @@ jobs:
       - wasm_core
       - package_tests
       - projection_parity
+      - generated_projections
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -451,6 +512,7 @@ jobs:
           PACKAGE_TESTS_RESULT: ${{ needs.package_tests.result }}
           RUST_PAYLOAD_RESULT: ${{ needs.rust_payload.result }}
           PROJECTION_PARITY_RESULT: ${{ needs.projection_parity.result }}
+          GENERATED_PROJECTIONS_RESULT: ${{ needs.generated_projections.result }}
         run: |
           python3 tests/ci/check_p4_projection_codegen_quality.py \
             --validate-results

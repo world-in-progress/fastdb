@@ -16,6 +16,7 @@ import {
   readU64,
   withAllocation,
   withInputBytes,
+  withSha256,
   writeU32,
   writeU64,
 } from './abi.js';
@@ -541,6 +542,20 @@ export class View {
     }
   }
 
+  requireSpecSha256(expectedSha256: Uint8Array): void {
+    const module = payloadModule();
+    withSha256(module, expectedSha256, (digest) =>
+      withAllocation(module, POINTER_SIZE, (error) => {
+        const status = module._fdb_payload_v1_view_require_spec_sha256(
+          this.requireHandle(),
+          digest,
+          error,
+        );
+        checkStatus(status, error);
+      }),
+    );
+  }
+
   kind(): ViewKind {
     const value = this.readU32((view, output, error) =>
       payloadModule()._fdb_payload_v1_view_kind(view, output, error),
@@ -945,6 +960,20 @@ export class Payload {
       payloadModule()._fdb_payload_v1_payload_release(handle);
       this.#keeper = undefined;
     }
+  }
+
+  requireSpecSha256(expectedSha256: Uint8Array): void {
+    const module = payloadModule();
+    withSha256(module, expectedSha256, (digest) =>
+      withAllocation(module, POINTER_SIZE, (error) => {
+        const status = module._fdb_payload_v1_payload_require_spec_sha256(
+          this.requireHandle(),
+          digest,
+          error,
+        );
+        checkStatus(status, error);
+      }),
+    );
   }
 
   sha256(): Uint8Array {

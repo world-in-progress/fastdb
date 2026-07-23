@@ -5,7 +5,9 @@
 #include "payload/identity/Sha256.hpp"
 #include "payload/spec/Model.hpp"
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -53,8 +55,7 @@ ScalarGetter rust_scalar_getter(TypeKind kind) noexcept {
     return {};
 }
 
-void append_provenance(std::string& output,
-                       std::string_view digest) {
+void append_provenance(CheckedOutput& output, std::string_view digest) {
     output += "// generated-by: ";
     output += generator_version;
     output += "\n";
@@ -68,7 +69,23 @@ void append_provenance(std::string& output,
     output += "// target: rust\n";
 }
 
-void append_metadata(std::string& output,
+void append_digest_bytes(CheckedOutput& output,
+                         const std::array<std::uint8_t, 32>& digest) {
+    static constexpr char hex[] = "0123456789abcdef";
+    output += "pub const PAYLOAD_SHA256_BYTES: [u8; 32] = [";
+    for (std::size_t index = 0U; index < digest.size(); ++index) {
+        if (index != 0U) {
+            output += ", ";
+        }
+        const std::uint8_t byte = digest[index];
+        output += "0x";
+        output.push_back(hex[(byte >> UINT8_C(4)) & UINT8_C(0x0f)]);
+        output.push_back(hex[byte & UINT8_C(0x0f)]);
+    }
+    output += "];\n\n";
+}
+
+void append_metadata(CheckedOutput& output,
                      const spec::ResolvedSpec& resolved) {
     output +=
         "#[derive(Clone, Copy, Debug, Eq, PartialEq)]\n"
@@ -130,8 +147,7 @@ void append_metadata(std::string& output,
     output += "];\n\n";
 }
 
-void append_entry(std::string& output,
-                  const Entry& entry,
+void append_entry(CheckedOutput& output, const Entry& entry,
                   spec::Profile profile) {
     const std::string symbol =
         project_identifier(Target::rust, entry.id);
@@ -154,33 +170,34 @@ void append_entry(std::string& output,
         "    pub fn len(&self) -> Result<u64, fastdb::PayloadError> {\n"
         "        self.view.length()\n"
         "    }\n"
-        "    pub fn at(&self, index: u64) -> Result<fastdb::View, fastdb::PayloadError> {\n"
+        "    pub fn at(&self, index: u64) -> Result<fastdb::View, "
+        "fastdb::PayloadError> {\n"
         "        self.view.at(index)\n"
         "    }\n";
     if (entry.type.kind == TypeKind::ref) {
-        output +=
-            "    pub fn at_ref_target(&self, index: u64) -> Result<fastdb::View, fastdb::PayloadError> {\n"
-            "        self.at(index)?.ref_target()\n"
-            "    }\n";
+        output += "    pub fn at_ref_target(&self, index: u64) -> "
+                  "Result<fastdb::View, fastdb::PayloadError> {\n"
+                  "        self.at(index)?.ref_target()\n"
+                  "    }\n";
     }
     if (profile == spec::Profile::object_graph_v1 &&
         entry.type.kind == TypeKind::component) {
-        output +=
-            "    pub fn at_graph_identity(&self, index: u64) -> Result<fastdb::GraphIdentity, fastdb::PayloadError> {\n"
-            "        self.at(index)?.graph_identity()\n"
-            "    }\n";
+        output += "    pub fn at_graph_identity(&self, index: u64) -> "
+                  "Result<fastdb::GraphIdentity, fastdb::PayloadError> {\n"
+                  "        self.at(index)?.graph_identity()\n"
+                  "    }\n";
     }
-    output +=
-        "    pub fn materialize(&self) -> Result<Self, fastdb::PayloadError> {\n"
-        "        Ok(Self::new(self.view.materialize()?))\n"
-        "    }\n"
-        "}\n\npub fn ";
+    output += "    pub fn materialize(&self) -> Result<Self, "
+              "fastdb::PayloadError> {\n"
+              "        Ok(Self::new(self.view.materialize()?))\n"
+              "    }\n"
+              "}\n\npub fn ";
     output += symbol;
     output += "_from_payload(payload: &fastdb::Payload) -> Result<";
     output += type;
-    output +=
-        ", fastdb::PayloadError> {\n"
-        "    Ok(";
+    output += ", fastdb::PayloadError> {\n"
+              "    payload.require_spec_sha256(&PAYLOAD_SHA256_BYTES)?;\n"
+              "    Ok(";
     output += type;
     output += "::new(payload.entry_view(";
     output += symbol;
@@ -188,18 +205,17 @@ void append_entry(std::string& output,
         "_entry_index)?))\n"
         "}\n\npub fn ";
     output += symbol;
-    output +=
-        "_builder_entry_begin<'a>(\n"
-        "    builder: &'a mut fastdb::Builder,\n"
-        "    value_count: u64,\n"
-        ") -> Result<&'a mut fastdb::Builder, fastdb::PayloadError> {\n"
-        "    builder.entry_begin(";
+    output += "_builder_entry_begin<'a>(\n"
+              "    builder: &'a mut fastdb::Builder,\n"
+              "    value_count: u64,\n"
+              ") -> Result<&'a mut fastdb::Builder, fastdb::PayloadError> {\n"
+              "    builder.require_spec_sha256(&PAYLOAD_SHA256_BYTES)?;\n"
+              "    builder.entry_begin(";
     output += symbol;
     output += "_entry_index, value_count)\n}\n\n";
 }
 
-void append_component(std::string& output,
-                      const Component& component,
+void append_component(CheckedOutput& output, const Component& component,
                       bool is_identity) {
     const std::string symbol =
         project_identifier(Target::rust, component.id);
@@ -216,10 +232,11 @@ void append_component(std::string& output,
         "    view: fastdb::View,\n"
         "}\n\nimpl ";
     output += type;
-    output +=
-        " {\n"
-        "    pub fn try_from_view(view: fastdb::View) -> Result<Option<Self>, fastdb::PayloadError> {\n"
-        "        if view.component_index()? != ";
+    output += " {\n"
+              "    pub fn try_from_view(view: fastdb::View) -> "
+              "Result<Option<Self>, fastdb::PayloadError> {\n"
+              "        view.require_spec_sha256(&PAYLOAD_SHA256_BYTES)?;\n"
+              "        if view.component_index()? != ";
     output += symbol;
     output +=
         "_component_index {\n"
@@ -229,15 +246,15 @@ void append_component(std::string& output,
         "    }\n"
         "    pub fn generic_view(&self) -> fastdb::View { self.view.clone() }\n";
     if (is_identity) {
-        output +=
-            "    pub fn graph_identity(&self) -> Result<fastdb::GraphIdentity, fastdb::PayloadError> {\n"
-            "        self.view.graph_identity()\n"
-            "    }\n";
+        output += "    pub fn graph_identity(&self) -> "
+                  "Result<fastdb::GraphIdentity, fastdb::PayloadError> {\n"
+                  "        self.view.graph_identity()\n"
+                  "    }\n";
     }
-    output +=
-        "    pub fn materialize(&self) -> Result<Self, fastdb::PayloadError> {\n"
-        "        Ok(Self { view: self.view.materialize()? })\n"
-        "    }\n";
+    output += "    pub fn materialize(&self) -> Result<Self, "
+              "fastdb::PayloadError> {\n"
+              "        Ok(Self { view: self.view.materialize()? })\n"
+              "    }\n";
     for (const Field& field : component.fields) {
         const std::string field_symbol =
             project_identifier(Target::rust, field.id);
@@ -267,7 +284,8 @@ void append_component(std::string& output,
         if (field.type.kind == TypeKind::ref) {
             output += "    pub fn ";
             output += field_symbol;
-            output += "_ref_target(&self) -> Result<fastdb::View, fastdb::PayloadError> {\n";
+            output += "_ref_target(&self) -> Result<fastdb::View, "
+                      "fastdb::PayloadError> {\n";
             output += "        self.";
             output += field_symbol;
             output += "()?.ref_target()\n    }\n";
@@ -277,11 +295,11 @@ void append_component(std::string& output,
     if (is_identity) {
         output += "pub fn ";
         output += symbol;
-        output +=
-            "_builder_declare(\n"
-            "    builder: &mut fastdb::Builder,\n"
-            ") -> Result<fastdb::ObjectHandle, fastdb::PayloadError> {\n"
-            "    builder.declare_object(";
+        output += "_builder_declare(\n"
+                  "    builder: &mut fastdb::Builder,\n"
+                  ") -> Result<fastdb::ObjectHandle, fastdb::PayloadError> {\n"
+                  "    builder.require_spec_sha256(&PAYLOAD_SHA256_BYTES)?;\n"
+                  "    builder.declare_object(";
         output += symbol;
         output += "_component_index)\n}\n\n";
     }
@@ -290,11 +308,11 @@ void append_component(std::string& output,
 }  // namespace
 
 std::string render_rust(const spec::CompiledSpec& compiled,
-                        const spec::RuntimeTopology& topology) {
-    const std::string digest =
-        identity::sha256_lower_hex(compiled.digest());
+                        const spec::RuntimeTopology& topology,
+                        std::uint64_t max_total_bytes) {
+    const std::string digest = identity::sha256_lower_hex(compiled.digest());
     const spec::ResolvedSpec& resolved = compiled.resolved();
-    std::string output;
+    CheckedOutput output(max_total_bytes);
     output.reserve(compiled.canonical_bytes().size() + 4096U);
     append_provenance(output, digest);
     output +=
@@ -303,10 +321,12 @@ std::string render_rust(const spec::CompiledSpec& compiled,
     output += compiled.canonical_bytes();
     output += "\"#;\npub const PAYLOAD_SHA256: &str = \"";
     output += digest;
-    output +=
-        "\";\n\npub fn compile_spec() -> Result<fastdb::CompiledSpec, fastdb::PayloadError> {\n"
-        "    fastdb::CompiledSpec::compile(CANONICAL_SOURCE)\n"
-        "}\n\n";
+    output += "\";\n";
+    append_digest_bytes(output, compiled.digest());
+    output += "pub fn compile_spec() -> Result<fastdb::CompiledSpec, "
+              "fastdb::PayloadError> {\n"
+              "    fastdb::CompiledSpec::compile(CANONICAL_SOURCE)\n"
+              "}\n\n";
     append_metadata(output, resolved);
     for (const Entry& entry : resolved.entries()) {
         append_entry(output, entry, resolved.profile());
@@ -320,7 +340,7 @@ std::string render_rust(const spec::CompiledSpec& compiled,
         output.compare(output.size() - 2U, 2U, "\n\n") == 0) {
         output.pop_back();
     }
-    return output;
+    return std::move(output).finish();
 }
 
 }  // namespace fastdb::payload::codegen

@@ -1032,4 +1032,25 @@ Result<Access> View::acquire() const try {
 
 Result<View> View::materialize() const { return view::materialize(*this); }
 
+Result<void>
+View::require_spec_sha256(const std::array<std::uint8_t, 32>& expected) const {
+    if (state_->is_backed) {
+        if (state_->owner == nullptr) {
+            return Result<void>::failure(internal_error(
+                state_->diagnostic_path, "backed_view_state_missing"));
+        }
+        return spec::require_spec_sha256(
+            state_->owner->spec.digest(), expected,
+            JsonPointer{}.append("view").append("spec_sha256"));
+    }
+    if (state_->detached == nullptr ||
+        state_->detached->runtime_schema == nullptr) {
+        return Result<void>::failure(internal_error(
+            state_->diagnostic_path, "detached_runtime_schema_missing"));
+    }
+    return spec::require_spec_sha256(
+        state_->detached->runtime_schema->spec().digest(), expected,
+        JsonPointer{}.append("view").append("spec_sha256"));
+}
+
 }  // namespace fastdb::payload::view

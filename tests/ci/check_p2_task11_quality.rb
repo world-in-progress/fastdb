@@ -26,7 +26,8 @@ JOBS = {
 # current inventory rather than silently accepting arbitrary extra jobs.
 POST_P2_JOBS = {
   "rust_payload" => %w[core rust workflow],
-  "projection_parity" => %w[core python rust ts workflow]
+  "projection_parity" => %w[core python rust ts workflow],
+  "generated_projections" => %w[core python rust ts workflow]
 }.freeze
 POST_P2_AGGREGATE_JOBS = POST_P2_JOBS.keys.freeze
 
@@ -260,7 +261,7 @@ def check_workflow
   require_quality(projection.fetch("runs-on") == "ubuntu-24.04",
                   "projection_parity must use ubuntu-24.04")
   projection_gate = step_run(
-    projection, "Validate ordered projection and open-codegen map"
+    projection, "Validate ordered projection and closed-codegen map"
   )
   require_quality(projection_gate.include?(
                     "python3 tests/ci/test_check_p4_projection_codegen_quality.py") &&
@@ -408,12 +409,27 @@ def check_workflow
     fdb_payload_v1_view_graph_identity
     fdb_payload_v1_view_ref_target
   ]
-  p2_symbols = allowlist - p3_additions
-  require_quality(allowlist.length == 105 &&
+  p4_additions = %w[
+    fdb_payload_v1_builder_require_spec_sha256
+    fdb_payload_v1_codegen_options_init
+    fdb_payload_v1_codegen_result_artifact_bytes
+    fdb_payload_v1_codegen_result_artifact_count
+    fdb_payload_v1_codegen_result_artifact_kind
+    fdb_payload_v1_codegen_result_artifact_relative_path
+    fdb_payload_v1_codegen_result_artifact_sha256
+    fdb_payload_v1_codegen_result_release
+    fdb_payload_v1_codegen_result_retain
+    fdb_payload_v1_payload_require_spec_sha256
+    fdb_payload_v1_spec_codegen
+    fdb_payload_v1_view_require_spec_sha256
+  ]
+  p2_symbols = allowlist - p3_additions - p4_additions
+  require_quality(allowlist.length == 117 &&
                   allowlist == allowlist.uniq.sort &&
                   (p3_additions - allowlist).empty? &&
+                  (p4_additions - allowlist).empty? &&
                   p2_symbols.length == 99,
-                  "portable payload ABI allowlist must preserve the 99 P2 symbols and add exactly six sorted P3 symbols")
+                  "portable payload ABI allowlist must preserve the 99 P2 symbols plus the exact P3 and P4 additive families")
 end
 
 def check_documentation

@@ -228,6 +228,7 @@ export interface FastdbModule {
   _fdb_payload_v1_open_options_init(options: number): void;
   _fdb_payload_v1_plan_info_init(info: number): void;
   _fdb_payload_v1_execution_report_init(report: number): void;
+  _fdb_payload_v1_codegen_options_init(options: number): void;
   _fdb_payload_v1_spec_capabilities(
     spec: number,
     outCapabilities: number,
@@ -290,6 +291,44 @@ export interface FastdbModule {
     outFieldIndex: number,
     outError: number,
   ): number;
+  _fdb_payload_v1_spec_codegen(
+    spec: number,
+    target: bigint,
+    options: number,
+    outResult: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_codegen_result_retain(result: number): void;
+  _fdb_payload_v1_codegen_result_release(result: number): void;
+  _fdb_payload_v1_codegen_result_artifact_count(
+    result: number,
+    outCount: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_codegen_result_artifact_relative_path(
+    result: number,
+    artifactIndex: bigint,
+    outPath: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_codegen_result_artifact_kind(
+    result: number,
+    artifactIndex: bigint,
+    outKind: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_codegen_result_artifact_bytes(
+    result: number,
+    artifactIndex: bigint,
+    outBytes: number,
+    outError: number,
+  ): number;
+  _fdb_payload_v1_codegen_result_artifact_sha256(
+    result: number,
+    artifactIndex: bigint,
+    outDigest: number,
+    outError: number,
+  ): number;
   _fdb_payload_v1_builder_create(
     spec: number,
     options: number,
@@ -297,6 +336,11 @@ export interface FastdbModule {
     outError: number,
   ): number;
   _fdb_payload_v1_builder_release(builder: number): void;
+  _fdb_payload_v1_builder_require_spec_sha256(
+    builder: number,
+    expectedSha256: number,
+    outError: number,
+  ): number;
   _fdb_payload_v1_builder_entry_begin(
     builder: number,
     entryIndex: number,
@@ -445,6 +489,11 @@ export interface FastdbModule {
   ): number;
   _fdb_payload_v1_payload_retain(payload: number): void;
   _fdb_payload_v1_payload_release(payload: number): void;
+  _fdb_payload_v1_payload_require_spec_sha256(
+    payload: number,
+    expectedSha256: number,
+    outError: number,
+  ): number;
   _fdb_payload_v1_payload_sha256(
     payload: number,
     outDigest: number,
@@ -482,6 +531,11 @@ export interface FastdbModule {
   ): number;
   _fdb_payload_v1_view_retain(view: number): void;
   _fdb_payload_v1_view_release(view: number): void;
+  _fdb_payload_v1_view_require_spec_sha256(
+    view: number,
+    expectedSha256: number,
+    outError: number,
+  ): number;
   _fdb_payload_v1_view_kind(
     view: number,
     outKind: number,

@@ -50,7 +50,10 @@
           "capabilities": {
             "properties": {
               "operations": {
-                "const": ["compile", "query", "build", "open", "view", "materialize", "invalidate"]
+                "const": ["compile", "query", "build", "open", "view", "materialize", "invalidate", "codegen"]
+              },
+              "codegen_targets": {
+                "const": ["cpp", "rust", "python", "typescript"]
               },
               "direct_build": {
                 "properties": {
@@ -73,7 +76,10 @@
           "capabilities": {
             "properties": {
               "operations": {
-                "const": ["compile", "query", "build", "open", "view", "materialize", "invalidate"]
+                "const": ["compile", "query", "build", "open", "view", "materialize", "invalidate", "codegen"]
+              },
+              "codegen_targets": {
+                "const": ["cpp", "rust", "python", "typescript"]
               },
               "direct_build": {
                 "properties": {
@@ -232,18 +238,17 @@
                 {"const": "open"},
                 {"const": "view"},
                 {"const": "materialize"},
-                {"const": "invalidate"}
+                {"const": "invalidate"},
+                {"const": "codegen"}
               ],
               "items": false,
-              "minItems": 7,
-              "maxItems": 7
+              "minItems": 8,
+              "maxItems": 8
             }
           ]
         },
         "codegen_targets": {
-          "type": "array",
-          "items": false,
-          "maxItems": 0
+          "const": ["cpp", "rust", "python", "typescript"]
         },
         "direct_build": {"$ref": "#/$defs/direct_build"}
       },

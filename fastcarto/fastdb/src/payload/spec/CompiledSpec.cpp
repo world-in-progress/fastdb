@@ -5,6 +5,8 @@
 #include "payload/json/JsonPointer.hpp"
 #include "payload/spec/Resolve.hpp"
 
+#include <fastdb_payload.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -92,6 +94,24 @@ Error canonicalization_failure(json::JcsFailure failure) {
 }
 
 }  // namespace
+
+Result<void> require_spec_sha256(const std::array<std::uint8_t, 32>& actual,
+                                 const std::array<std::uint8_t, 32>& expected,
+                                 JsonPointer path) {
+    if (actual == expected) {
+        return Result<void>::success();
+    }
+    return Result<void>::failure(Error::from_details(
+        FDB_PAYLOAD_E_DIGEST_MISMATCH, std::move(path),
+        "Portable payload spec digest does not match",
+        JsonValue::object({
+            JsonValue::Member{"actual",
+                              JsonValue{identity::sha256_lower_hex(actual)}},
+            JsonValue::Member{"expected",
+                              JsonValue{identity::sha256_lower_hex(expected)}},
+            JsonValue::Member{"reason", JsonValue{"spec_digest_mismatch"}},
+        })));
+}
 
 struct CompiledSpec::State final {
     State(std::string canonical_value,

@@ -663,6 +663,19 @@ impl View {
         })
     }
 
+    pub fn require_spec_sha256(&self, expected: &[u8; 32]) -> Result<(), PayloadError> {
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live, expected has the required fixed length, and error is valid.
+        let status = unsafe {
+            sys::fdb_payload_v1_view_require_spec_sha256(
+                self.raw.as_ptr(),
+                expected.as_ptr(),
+                &mut error,
+            )
+        };
+        check_status(status, error)
+    }
+
     pub fn kind(&self) -> Result<ViewKind, PayloadError> {
         let value = self.read_u32(sys::fdb_payload_v1_view_kind)?;
         ViewKind::from_raw(value)
@@ -1023,6 +1036,19 @@ impl Payload {
                 r#"{"reason":"missing_payload_handle"}"#,
             )
         })
+    }
+
+    pub fn require_spec_sha256(&self, expected: &[u8; 32]) -> Result<(), PayloadError> {
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live, expected has the required fixed length, and error is valid.
+        let status = unsafe {
+            sys::fdb_payload_v1_payload_require_spec_sha256(
+                self.raw.as_ptr(),
+                expected.as_ptr(),
+                &mut error,
+            )
+        };
+        check_status(status, error)
     }
 
     pub fn open_copy(

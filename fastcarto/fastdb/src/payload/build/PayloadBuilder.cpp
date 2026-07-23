@@ -651,6 +651,13 @@ PayloadBuilder::PayloadBuilder(PayloadBuilder&&) noexcept = default;
 PayloadBuilder& PayloadBuilder::operator=(PayloadBuilder&&) noexcept = default;
 PayloadBuilder::~PayloadBuilder() = default;
 
+Result<void> PayloadBuilder::require_spec_sha256(
+    const std::array<std::uint8_t, 32>& expected) const {
+    return spec::require_spec_sha256(
+        state_->spec.digest(), expected,
+        JsonPointer{}.append("builder").append("spec_sha256"));
+}
+
 PayloadBuilder::State* PayloadBuilder::state_pointer() noexcept {
     return state_.get();
 }

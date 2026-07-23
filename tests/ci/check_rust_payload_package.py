@@ -31,6 +31,7 @@ PACKAGE_REQUIRED = {
         "Cargo.toml.orig",
         "README.md",
         "src/builder.rs",
+        "src/codegen.rs",
         "src/lib.rs",
         "src/runtime.rs",
     },
@@ -151,7 +152,7 @@ fastdb = { path = "../bindings/rust/fastdb" }
         encoding="utf-8",
     )
     (consumer / "src/main.rs").write_text(
-        r'''use fastdb::{CompiledSpec, Profile};
+        r'''use fastdb::{ArtifactKind, CodegenOptions, CodegenTarget, CompiledSpec, Profile};
 
 fn main() {
     let source = br#"{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]}"#;
@@ -160,6 +161,15 @@ fn main() {
     assert_eq!(spec.entry_count().expect("entry count"), 0);
     assert_eq!(spec.component_count().expect("component count"), 0);
     assert_eq!(spec.sha256().expect("digest").len(), 32);
+    let generated = spec
+        .generate(CodegenTarget::Rust, &CodegenOptions::default())
+        .expect("system Core codegen");
+    assert_eq!(generated.len().expect("artifact count"), 1);
+    let artifact = generated.artifact(0).expect("artifact");
+    assert_eq!(artifact.kind, ArtifactKind::Source);
+    assert!(artifact.relative_path.ends_with(".rs"));
+    assert!(!artifact.bytes.is_empty());
+    assert!(artifact.sha256.iter().any(|byte| *byte != 0));
 }
 ''',
         encoding="utf-8",

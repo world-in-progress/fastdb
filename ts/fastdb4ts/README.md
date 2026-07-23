@@ -69,9 +69,12 @@ the sole authority.
 Owned handles use explicit, idempotent `dispose()` with finalization only as a
 fallback. Safe text and byte methods copy out of scoped Wasm access, graph
 sharing/cycles use Core `(componentIndex, objectId)` coordinates, and detached
-materialization is one Core call. Four-target Core-owned codegen remains open
-through P4 Tasks 7-9; existing `fdb codegen --ts` behavior below is legacy
-0.1.x migration input and is not extended by this projection.
+materialization is one Core call. `CompiledSpec.generate(...)` returns an
+explicitly disposable immutable ArtifactSet from the same Core-owned
+C++/Rust/Python/TypeScript generator. Artifact paths, bytes, SHA-256 receipts,
+limits, provenance, and errors come through the Wasm C ABI; TypeScript does not
+render source. Existing `fdb codegen --ts` behavior below is legacy 0.1.x
+migration input and is not extended by this projection.
 
 ## Installation
 

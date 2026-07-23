@@ -13,6 +13,7 @@ import {
   withAllocation,
   withInputBytes,
   withInputU16,
+  withSha256,
   writeU32,
   writeU64,
 } from './abi.js';
@@ -284,6 +285,19 @@ export class Builder {
       builderFinalizer.unregister(this.#finalizerToken);
       payloadModule()._fdb_payload_v1_builder_release(handle);
     }
+  }
+
+  requireSpecSha256(expectedSha256: Uint8Array): void {
+    const module = payloadModule();
+    withSha256(module, expectedSha256, (digest) => {
+      this.call((handle, error) =>
+        module._fdb_payload_v1_builder_require_spec_sha256(
+          handle,
+          digest,
+          error,
+        ),
+      );
+    });
   }
 
   entryBegin(entryIndex: number, valueCount: bigint): Builder {

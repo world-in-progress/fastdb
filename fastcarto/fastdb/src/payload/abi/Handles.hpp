@@ -6,6 +6,7 @@
 #include "payload/error/Result.hpp"
 #include "payload/build/BuildPlan.hpp"
 #include "payload/build/PayloadBuilder.hpp"
+#include "payload/codegen/Artifact.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 #include "payload/view/PayloadOwner.hpp"
 #include "payload/view/View.hpp"
@@ -127,6 +128,15 @@ struct fdb_payload_v1_access final {
         : value(std::move(initial_value)) {}
 
     fastdb::payload::view::Access value;
+};
+
+struct fdb_payload_v1_codegen_result final {
+    explicit fdb_payload_v1_codegen_result(
+        fastdb::payload::codegen::ArtifactSet initial_value) noexcept
+        : value(std::move(initial_value)) {}
+
+    std::atomic<std::uint64_t> references{UINT64_C(1)};
+    const fastdb::payload::codegen::ArtifactSet value;
 };
 
 struct fdb_payload_v1_error {

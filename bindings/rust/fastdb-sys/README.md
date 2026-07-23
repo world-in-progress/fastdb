@@ -27,5 +27,10 @@ library. The raw ABI test and the safe crate call `fdb_payload_v1_abi_version`
 against the linked library; a mismatched ABI is rejected rather than adapted.
 The dynamic loader path remains the embedding application's responsibility.
 
+The current ABI version remains 1 and the reviewed allowlist contains exactly
+117 symbols. The historical P3 runtime sub-boundary is ABI-105; the twelve P4
+additions are only three Core provenance guards and nine immutable
+ArtifactSet/codegen functions.
+
 Only one of these link modes selects where the same Core comes from. Neither
 mode creates a Rust implementation of FastDB semantics.

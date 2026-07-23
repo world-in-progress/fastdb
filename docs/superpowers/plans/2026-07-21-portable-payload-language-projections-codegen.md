@@ -541,7 +541,7 @@ ctest --test-dir build/p4-task8 -R \
   --output-on-failure
 cargo test --manifest-path bindings/rust/Cargo.toml --workspace --all-features \
   codegen
-uv run pytest tests/python/payload/test_codegen.py -q
+uv run pytest tests/python/payload/test_payload_codegen.py -q
 npm --prefix ts/fastdb4ts run build
 node --test tests/ts/payload_codegen.mjs
 python3 tools/check_payload_abi_symbols.py --build-dir build/p4-task8

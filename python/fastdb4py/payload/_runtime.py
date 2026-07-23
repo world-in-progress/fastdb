@@ -14,7 +14,7 @@ from typing import Iterator, Optional, Type, TypeVar
 from . import _ffi
 from ._builder import BuildPlan
 from ._error import PayloadError, binding_error
-from ._spec import CompiledSpec, Profile, _check_status, _input_bytes
+from ._spec import CompiledSpec, Profile, _check_status, _input_bytes, _input_digest
 
 
 class BackingStatus(IntEnum):
@@ -602,6 +602,19 @@ class View:
     def __deepcopy__(self: _ViewT, memo: object) -> _ViewT:
         return self.clone()
 
+    def require_spec_sha256(self, expected_sha256: bytes) -> None:
+        native = _ffi.library()
+        storage, digest = _input_digest(expected_sha256)
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_view_require_spec_sha256(
+                    handle, digest, ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        del storage
+
     def kind(self) -> ViewKind:
         value = self._scalar("fdb_payload_v1_view_kind", ctypes.c_uint32)
         try:
@@ -914,6 +927,19 @@ class Payload:
 
     def __deepcopy__(self: _PayloadT, memo: object) -> _PayloadT:
         return self.clone()
+
+    def require_spec_sha256(self, expected_sha256: bytes) -> None:
+        native = _ffi.library()
+        storage, digest = _input_digest(expected_sha256)
+        error = _ffi.Handle()
+        with self._borrow_handle() as handle:
+            status = int(
+                native.fdb_payload_v1_payload_require_spec_sha256(
+                    handle, digest, ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        del storage
 
     def sha256(self) -> bytes:
         native = _ffi.library()

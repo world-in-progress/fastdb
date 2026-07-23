@@ -71,12 +71,17 @@ PACKAGE_IDS = (
     "python-3.10-wheel",
     "typescript-wasm-package",
 )
-WORKFLOW_JOBS = ("rust_payload", "projection_parity")
+WORKFLOW_JOBS = ("rust_payload", "projection_parity", "generated_projections")
 WORKFLOW_QUALITY_PATHS = (
     "README.md",
     "docs/issues/0002-portable-payload-foundation-implementation-status.md",
 )
 CODEGEN_TARGETS = ("cpp", "rust", "python", "typescript")
+CODEGEN_PROOF_IDS = (
+    "core-artifact",
+    "public-projection",
+    "generated-execution",
+)
 
 TOP_LEVEL_KEYS = (
     "schema",
@@ -92,18 +97,23 @@ PROOF_KEYS = ("language", "cases")
 PROOF_CASE_KEYS = ("file", "test", "markers")
 PACKAGE_KEYS = ("id", "status", "proofs", "workflow_markers")
 PACKAGE_PROOF_KEYS = ("file", "marker")
+CODEGEN_PROOF_KEYS = ("id", "file", "language", "test", "markers")
 
 ISSUE_MARKERS = (
     "#### P4 Task 6 local evidence",
     "exactly six ordered runtime",
     "Hosted Task 6 execution remains pending",
     "P4 Task 7",
+    "#### P4 Task 8 local evidence",
+    "exactly 117",
+    "Windows generated-C++ linking",
     "same-agent",
 )
 DOCUMENTATION_MARKERS = {
     "README.md": (
-        "P4 Tasks 1-6",
-        "Core-owned four-language code generation remains open",
+        "P4 Tasks 1-8",
+        "exactly 117",
+        "Core-owned four-language",
         "definitions until an authorized hosted run exists",
     ),
     "bindings/rust/fastdb-sys/README.md": (
@@ -114,13 +124,18 @@ DOCUMENTATION_MARKERS = {
     "bindings/rust/fastdb/README.md": (
         "C++ Core",
         "projection",
-        "codegen",
+        "CompiledSpec::generate",
     ),
-    "python/README.md": ("fastdb4py.payload", "Python 3.10", "C++ Core"),
+    "python/README.md": (
+        "fastdb4py.payload",
+        "Python 3.10",
+        "C++ Core",
+        "CompiledSpec.generate",
+    ),
     "ts/fastdb4ts/README.md": (
         "fastdb4ts/payload",
         "WebAssembly",
-        "codegen",
+        "CompiledSpec.generate",
     ),
 }
 
@@ -200,11 +215,11 @@ def check_map(document: dict[str, Any]) -> None:
         document["abi"]
         == {
             "version": 1,
-            "symbol_count": 105,
+            "symbol_count": 117,
             "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
-            "status": "frozen-p3",
+            "status": "frozen-p4-task-8",
         },
-        "P4 runtime map must freeze the reviewed ABI-105",
+        "P4 map must freeze the reviewed ABI-117",
     )
 
     receipts = document["runtime_receipts"]
@@ -322,8 +337,45 @@ def check_map(document: dict[str, Any]) -> None:
             tuple(row) == ("target", "status", "proofs"),
             "codegen row keys must be exact and ordered",
         )
-        require(row["status"] == "open", "all Task 6 codegen rows must stay open")
-        require(row["proofs"] == [], "open codegen rows cannot claim proof")
+        target = row["target"]
+        require(
+            row["status"] == "closed-task-8",
+            f"codegen target {target} must be closed by Task 8",
+        )
+        proofs = row["proofs"]
+        require(isinstance(proofs, list), f"{target} codegen proofs must be an array")
+        require(
+            tuple(proof.get("id") for proof in proofs) == CODEGEN_PROOF_IDS,
+            f"{target} codegen proofs must be exact, unique, and ordered",
+        )
+        seen = set()
+        for proof in proofs:
+            proof_id = proof["id"]
+            exact_keys(
+                proof,
+                CODEGEN_PROOF_KEYS,
+                f"{target}/{proof_id} codegen proof",
+            )
+            check_repository_relative_path(
+                proof["file"], f"{target}/{proof_id} codegen proof file"
+            )
+            require(
+                proof["language"] in LANGUAGES,
+                f"{target}/{proof_id} codegen proof language is invalid",
+            )
+            require(
+                isinstance(proof["test"], str) and bool(proof["test"]),
+                f"{target}/{proof_id} codegen proof test must be non-empty",
+            )
+            non_empty_strings(
+                proof["markers"], f"{target}/{proof_id} codegen proof markers"
+            )
+            identity = (proof["file"], proof["test"])
+            require(
+                identity not in seen,
+                f"{target} codegen proof source is duplicated",
+            )
+            seen.add(identity)
 
 
 def test_pattern(language: str, name: str) -> re.Pattern[str]:
@@ -403,6 +455,29 @@ def check_package_sources(
             )
 
 
+def check_codegen_sources(
+    document: dict[str, Any], reader: Callable[[str], str] = default_reader
+) -> None:
+    for row in document["codegen"]:
+        target = row["target"]
+        for proof in row["proofs"]:
+            proof_id = proof["id"]
+            source = reader(proof["file"])
+            language = proof["language"]
+            name = proof["test"]
+            region = proof_region(source, language, name)
+            for marker in proof["markers"]:
+                require(
+                    marker in region,
+                    f"{target}/{proof_id} marker is absent from {name}: {marker}",
+                )
+            if proof_id == "generated-execution":
+                require(
+                    len(re.findall(rf"\b{re.escape(name)}\s*\(", source)) >= 2,
+                    f"{target} generated execution is defined but not invoked: {name}",
+                )
+
+
 def check_workflow(document: dict[str, Any], source: str) -> None:
     for job in WORKFLOW_JOBS:
         require(
@@ -434,11 +509,20 @@ def check_workflow(document: dict[str, Any], source: str) -> None:
         is not None,
         "workflow aggregate does not execute the Task 6 result validator",
     )
+    for marker in (
+        "test_run_generated_payload_projections.py",
+        "run_generated_payload_projections.py",
+        "FASTDB_PAYLOAD_LIBRARY",
+        "npm --prefix ts/fastdb4ts run build:wasm",
+        "fastdb_payload_test_codegen_c_abi.js",
+        "fastdb_payload_test_cpp_facade.js",
+    ):
+        require(marker in source, f"generated projection workflow marker is absent: {marker}")
 
 
 def check_abi_allowlist(source: str) -> None:
     symbols = source.splitlines()
-    require(len(symbols) == 105, "P4 runtime ABI allowlist must remain exactly 105")
+    require(len(symbols) == 117, "P4 ABI allowlist must be exactly 117")
     require(symbols == sorted(set(symbols)), "ABI allowlist must be sorted and unique")
     require(
         all(re.fullmatch(r"fdb_payload_v1_[A-Za-z0-9_]+", item) for item in symbols),
@@ -476,6 +560,7 @@ def check_workflow_results(environment: dict[str, str]) -> None:
     expectations = {
         "RUST_PAYLOAD_RESULT": scopes["CORE"] or scopes["RUST"] or scopes["WORKFLOW"],
         "PROJECTION_PARITY_RESULT": any(scopes.values()),
+        "GENERATED_PROJECTIONS_RESULT": any(scopes.values()),
     }
     for key, required in expectations.items():
         result = environment.get(key)
@@ -497,6 +582,7 @@ def check_repository() -> None:
     check_map(document)
     check_proof_sources(document)
     check_package_sources(document)
+    check_codegen_sources(document)
     workflow_source = default_reader(document["workflow"]["file"])
     check_workflow(document, workflow_source)
     check_abi_allowlist(ABI_ALLOWLIST.read_text(encoding="utf-8"))

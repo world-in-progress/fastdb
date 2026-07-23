@@ -201,10 +201,9 @@ Result<ArtifactSet> make_artifact_set(Target target,
     }
 
     const std::uint64_t artifact_count = checked_size(drafts.size());
-    if (artifact_count > limits.max_artifacts) {
-        return Result<ArtifactSet>::failure(
-            limit_error("max_artifacts", "artifact_count_exceeded",
-                        artifact_count, limits.max_artifacts));
+    auto valid_count = validate_artifact_count(artifact_count, limits);
+    if (!valid_count.has_value()) {
+        return Result<ArtifactSet>::failure(std::move(valid_count).error());
     }
 
     std::uint64_t total_bytes = UINT64_C(0);
@@ -229,10 +228,9 @@ Result<ArtifactSet> make_artifact_set(Target target,
                 limits.max_total_bytes));
         }
         total_bytes += byte_count;
-        if (total_bytes > limits.max_total_bytes) {
-            return Result<ArtifactSet>::failure(limit_error(
-                "max_total_bytes", "total_bytes_exceeded", total_bytes,
-                limits.max_total_bytes));
+        auto valid_bytes = validate_total_bytes(total_bytes, limits);
+        if (!valid_bytes.has_value()) {
+            return Result<ArtifactSet>::failure(std::move(valid_bytes).error());
         }
     }
 
@@ -266,6 +264,26 @@ Result<ArtifactSet> make_artifact_set(Target target,
 Result<void> validate_target(Target target) {
     if (!known_target(target)) {
         return Result<void>::failure(target_error());
+    }
+    return Result<void>::success();
+}
+
+Result<void> validate_artifact_count(std::uint64_t artifact_count,
+                                     GenerationLimits limits) {
+    if (artifact_count > limits.max_artifacts) {
+        return Result<void>::failure(
+            limit_error("max_artifacts", "artifact_count_exceeded",
+                        artifact_count, limits.max_artifacts));
+    }
+    return Result<void>::success();
+}
+
+Result<void> validate_total_bytes(std::uint64_t total_bytes,
+                                  GenerationLimits limits) {
+    if (total_bytes > limits.max_total_bytes) {
+        return Result<void>::failure(
+            limit_error("max_total_bytes", "total_bytes_exceeded", total_bytes,
+                        limits.max_total_bytes));
     }
     return Result<void>::success();
 }

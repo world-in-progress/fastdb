@@ -16,5 +16,7 @@ and point `FASTDB_PAYLOAD_SYSTEM_LIB_DIR` at a compatible shared FastDB
 library. `CompiledSpec::compile` checks the real Core ABI version before
 publishing a safe handle.
 
-Core-owned four-target payload codegen is still open during P4 Task 6. No Rust
-generator or privileged private-Core route is provided here.
+`CompiledSpec::generate` projects Core-owned deterministic C++/Rust/Python/
+TypeScript artifacts as an immutable `ArtifactSet`. Artifact paths, bytes,
+SHA-256 receipts, limits, provenance, and errors all come from the stable C
+ABI. Rust contains no generator or privileged private-Core route.

@@ -71,6 +71,8 @@ public:
     error::Result<Access> acquire() const;
     error::Result<View> entry_view(std::uint32_t entry_index) const;
     error::Result<void> invalidate() const;
+    error::Result<void>
+    require_spec_sha256(const std::array<std::uint8_t, 32>& expected) const;
 
 private:
     explicit PayloadOwner(std::shared_ptr<PayloadOwnerState> state) noexcept

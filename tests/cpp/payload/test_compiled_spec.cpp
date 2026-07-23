@@ -85,15 +85,15 @@ namespace {
 using fastdb::payload::error::Error;
 using fastdb::payload::error::Result;
 using fastdb::payload::identity::sha256_lower_hex;
+using fastdb::payload::json::jcs_serialize;
 using fastdb::payload::json::JsonCursor;
 using fastdb::payload::json::JsonDocument;
-using fastdb::payload::json::jcs_serialize;
-using fastdb::payload::spec::CompileLimits;
 using fastdb::payload::spec::CompiledSpec;
-using fastdb::payload::spec::Profile;
-using fastdb::payload::spec::SchemaRepository;
+using fastdb::payload::spec::CompileLimits;
 using fastdb::payload::spec::derive_runtime_topology;
 using fastdb::payload::spec::manifest_value_conforms;
+using fastdb::payload::spec::Profile;
+using fastdb::payload::spec::SchemaRepository;
 using fastdb::test::payload::GoldenCase;
 using fastdb::test::payload::GoldenError;
 using fastdb::test::payload::GoldenSuccess;
@@ -349,10 +349,12 @@ int test_manifest_indexes_facts_and_capabilities() {
     require(compiled.capabilities().operation_flags ==
             (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
              FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
-             FDB_PAYLOAD_OPERATION_VIEW |
-             FDB_PAYLOAD_OPERATION_MATERIALIZE |
-             FDB_PAYLOAD_OPERATION_INVALIDATE));
-    require(compiled.capabilities().codegen_target_flags == UINT64_C(0));
+             FDB_PAYLOAD_OPERATION_VIEW | FDB_PAYLOAD_OPERATION_MATERIALIZE |
+             FDB_PAYLOAD_OPERATION_INVALIDATE | FDB_PAYLOAD_OPERATION_CODEGEN));
+    require(compiled.capabilities().codegen_target_flags ==
+            (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
+             FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT));
     require(compiled.capabilities().direct_build_status ==
             FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
     require(compiled.capabilities().direct_build_reason ==
@@ -416,8 +418,11 @@ int test_manifest_indexes_facts_and_capabilities() {
     require(rejects_replacement(R"("layout_model":"record_aos")",
                                 R"("layout_model":"object_pool_aos")"));
     require(rejects_replacement(
-        R"("operations":["compile","query","build","open","view","materialize","invalidate"])",
+        R"("operations":["compile","query","build","open","view","materialize","invalidate","codegen"])",
         R"("operations":["compile","query"])"));
+    require(rejects_replacement(
+        R"("codegen_targets":["cpp","rust","python","typescript"])",
+        R"("codegen_targets":[])"));
     require(rejects_replacement(R"("profile":"record.v1")",
                                 R"("profile":"object_graph.v1")"));
     const JsonCursor entries = required_member(root, "entries");
@@ -465,9 +470,12 @@ int test_manifest_indexes_facts_and_capabilities() {
     require(graph.capabilities().operation_flags ==
             (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
              FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
-             FDB_PAYLOAD_OPERATION_VIEW |
-             FDB_PAYLOAD_OPERATION_MATERIALIZE |
-             FDB_PAYLOAD_OPERATION_INVALIDATE));
+             FDB_PAYLOAD_OPERATION_VIEW | FDB_PAYLOAD_OPERATION_MATERIALIZE |
+             FDB_PAYLOAD_OPERATION_INVALIDATE | FDB_PAYLOAD_OPERATION_CODEGEN));
+    require(graph.capabilities().codegen_target_flags ==
+            (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
+             FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT));
     require(graph.capabilities().direct_build_status ==
             FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
     auto graph_manifest = JsonDocument::parse(
@@ -653,13 +661,22 @@ int test_schema_artifacts_and_manifest_schema_contract() {
         capability_properties(record_branch);
     const JsonCursor record_operations = required_member(
         required_member(record_capabilities, "operations"), "const");
-    constexpr std::array<std::string_view, 7> record_operation_names{{
-        "compile", "query", "build", "open", "view", "materialize",
-        "invalidate"}};
+    constexpr std::array<std::string_view, 8> record_operation_names{
+        {"compile", "query", "build", "open", "view", "materialize",
+         "invalidate", "codegen"}};
     for (std::uint64_t index = UINT64_C(0);
          index < record_operation_names.size(); ++index) {
         require(array_at(record_operations, index).string() ==
                 record_operation_names[static_cast<std::size_t>(index)]);
+    }
+    constexpr std::array<std::string_view, 4> codegen_target_names{
+        {"cpp", "rust", "python", "typescript"}};
+    const JsonCursor record_codegen_targets = required_member(
+        required_member(record_capabilities, "codegen_targets"), "const");
+    for (std::uint64_t index = UINT64_C(0); index < codegen_target_names.size();
+         ++index) {
+        require(array_at(record_codegen_targets, index).string() ==
+                codegen_target_names[static_cast<std::size_t>(index)]);
     }
     const JsonCursor record_direct = required_member(
         required_member(record_capabilities, "direct_build"), "properties");
@@ -681,11 +698,18 @@ int test_schema_artifacts_and_manifest_schema_contract() {
         capability_properties(graph_branch);
     const JsonCursor graph_operations = required_member(
         required_member(graph_capabilities, "operations"), "const");
-    require(graph_operations.size() == UINT64_C(7));
+    require(graph_operations.size() == UINT64_C(8));
     for (std::uint64_t index = UINT64_C(0);
          index < record_operation_names.size(); ++index) {
         require(array_at(graph_operations, index).string() ==
                 record_operation_names[static_cast<std::size_t>(index)]);
+    }
+    const JsonCursor graph_codegen_targets = required_member(
+        required_member(graph_capabilities, "codegen_targets"), "const");
+    for (std::uint64_t index = UINT64_C(0); index < codegen_target_names.size();
+         ++index) {
+        require(array_at(graph_codegen_targets, index).string() ==
+                codegen_target_names[static_cast<std::size_t>(index)]);
     }
     const JsonCursor graph_direct = required_member(
         required_member(graph_capabilities, "direct_build"), "properties");

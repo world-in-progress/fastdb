@@ -8,6 +8,14 @@ export {
   PlanInfo,
 } from './builder.js';
 export type { BuilderOptions } from './builder.js';
+export {
+  Artifact,
+  ArtifactKind,
+  ArtifactSet,
+  CodegenOptions,
+  CodegenTarget,
+} from './codegen.js';
+export type { CodegenOptionValues } from './codegen.js';
 export { PayloadError } from './error.js';
 export { Capabilities, CompiledSpec, Profile } from './spec.js';
 export {

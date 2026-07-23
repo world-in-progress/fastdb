@@ -21,6 +21,8 @@ REQUIRED = {
     "dist/payload/abi.js",
     "dist/payload/builder.d.ts",
     "dist/payload/builder.js",
+    "dist/payload/codegen.d.ts",
+    "dist/payload/codegen.js",
     "dist/payload/error.d.ts",
     "dist/payload/error.js",
     "dist/payload/index.d.ts",
@@ -176,7 +178,13 @@ def run_smoke(package: Path) -> None:
         shutil.move(str(root / "package"), str(node_modules / "fastdb4ts"))
         smoke = root / "smoke.mjs"
         smoke.write_text(
-            """import { CompiledSpec, Profile, initPayload } from 'fastdb4ts/payload';
+            """import {
+  ArtifactKind,
+  CodegenTarget,
+  CompiledSpec,
+  Profile,
+  initPayload,
+} from 'fastdb4ts/payload';
 
 await initPayload();
 const source = new TextEncoder().encode(
@@ -189,6 +197,21 @@ try {
     throw new Error('empty spec indexes mismatch');
   }
   if (spec.sha256().byteLength !== 32) throw new Error('digest mismatch');
+  const generated = spec.generate(CodegenTarget.TypeScript);
+  try {
+    if (generated.size() !== 1n) throw new Error('artifact count mismatch');
+    const artifact = generated.artifact(0n);
+    if (
+      artifact.kind !== ArtifactKind.Source ||
+      !artifact.relativePath.endsWith('.ts') ||
+      artifact.bytes.byteLength === 0 ||
+      artifact.sha256.byteLength !== 32
+    ) {
+      throw new Error('artifact mismatch');
+    }
+  } finally {
+    generated.dispose();
+  }
 } finally {
   spec.dispose();
 }

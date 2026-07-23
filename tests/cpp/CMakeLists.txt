@@ -358,6 +358,25 @@ set_target_properties(
 )
 
 add_fastdb_payload_test(
+    codegen_c_abi
+    SOURCES payload/test_codegen_c_abi.c
+    EXTRA_LIBRARIES fastdb
+)
+target_include_directories(
+    fastdb_payload_test_codegen_c_abi
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+)
+set_target_properties(
+    fastdb_payload_test_codegen_c_abi
+    PROPERTIES
+        C_EXTENSIONS OFF
+        C_STANDARD 11
+        C_STANDARD_REQUIRED ON
+        LINKER_LANGUAGE CXX
+)
+
+add_fastdb_payload_test(
     spec_abi
     SOURCES payload/test_spec_abi.cpp
     EXTRA_LIBRARIES
@@ -391,7 +410,7 @@ add_fastdb_payload_test(
     cpp_facade
     SOURCES payload/test_cpp_facade.cpp
     EXTRA_LIBRARIES
-        fastdb_payload_core
+        fastdb_payload_native
         Threads::Threads
 )
 target_include_directories(

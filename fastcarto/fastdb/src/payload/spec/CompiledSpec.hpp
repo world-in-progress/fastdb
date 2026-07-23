@@ -2,6 +2,7 @@
 
 #include "payload/error/Result.hpp"
 #include "payload/json/JsonDocument.hpp"
+#include "payload/json/JsonPointer.hpp"
 #include "payload/spec/Manifest.hpp"
 #include "payload/spec/Model.hpp"
 #include "payload/spec/Parse.hpp"
@@ -13,6 +14,11 @@
 #include <string_view>
 
 namespace fastdb::payload::spec {
+
+error::Result<void>
+require_spec_sha256(const std::array<std::uint8_t, 32>& actual,
+                    const std::array<std::uint8_t, 32>& expected,
+                    json::JsonPointer path);
 
 struct CompileLimits final {
     json::JsonParseLimits json;

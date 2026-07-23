@@ -6,6 +6,7 @@
 #include "payload/view/AccessBarrier.hpp"
 #include "payload/view/Open.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -172,6 +173,8 @@ public:
     error::Result<std::uint64_t> get_f64_bits() const;
     error::Result<Access> acquire() const;
     error::Result<View> materialize() const;
+    error::Result<void>
+    require_spec_sha256(const std::array<std::uint8_t, 32>& expected) const;
 
 private:
     struct State;

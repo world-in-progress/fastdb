@@ -1,9 +1,11 @@
 //! Safe Rust projection of the FastDB portable-payload Core.
 
 mod builder;
+mod codegen;
 mod runtime;
 
 pub use builder::{BuildPlan, Builder, BuilderOptions, FixedRun, ObjectHandle, PlanInfo};
+pub use codegen::{Artifact, ArtifactKind, ArtifactSet, CodegenOptions, CodegenTarget};
 pub use runtime::{
     Access, BackingFailure, BackingObserver, BuildPolicy, BuildResult, ExecutionMode,
     ExecutionReport, ExternalBytes, FallbackReason, GraphIdentity, MemoryBacking, OpenOptions,

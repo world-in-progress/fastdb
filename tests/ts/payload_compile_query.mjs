@@ -41,7 +41,7 @@ test('compile and query record-all-types through Core', async () => {
     assert.equal(spec.profile(), Profile.RecordV1);
     assert.deepEqual(
       spec.capabilities(),
-      new Capabilities(Profile.RecordV1, 0x1bn, 0x7fn, 0n, 1),
+      new Capabilities(Profile.RecordV1, 0x1bn, 0xffn, 0x0fn, 1),
     );
     assert.equal(spec.entryCount(), 2);
     assert.equal(spec.entryId(0), 'single');

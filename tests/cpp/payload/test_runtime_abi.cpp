@@ -3019,9 +3019,12 @@ int test_checked_view_access_materialize_and_barrier_abi() {
     require(capabilities.operation_flags ==
             (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
              FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
-             FDB_PAYLOAD_OPERATION_VIEW |
-             FDB_PAYLOAD_OPERATION_MATERIALIZE |
-             FDB_PAYLOAD_OPERATION_INVALIDATE));
+             FDB_PAYLOAD_OPERATION_VIEW | FDB_PAYLOAD_OPERATION_MATERIALIZE |
+             FDB_PAYLOAD_OPERATION_INVALIDATE | FDB_PAYLOAD_OPERATION_CODEGEN));
+    require(capabilities.codegen_target_flags ==
+            (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
+             FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT));
 
     fdb_payload_v1_access_t* payload_access = nullptr;
     require(fdb_payload_v1_payload_acquire(

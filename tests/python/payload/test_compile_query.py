@@ -34,8 +34,8 @@ def test_compile_and_query_record_all_types_through_core() -> None:
             assert spec.capabilities() == Capabilities(
                 profile=Profile.RECORD_V1,
                 semantic_flags=0x1B,
-                operation_flags=0x7F,
-                codegen_target_flags=0,
+                operation_flags=0xFF,
+                codegen_target_flags=0x0F,
                 direct_build_status=1,
             )
             assert spec.entry_count() == 2

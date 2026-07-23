@@ -2,19 +2,25 @@
 
 #include <fastdb_payload.hpp>
 
+#include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 static_assert(sizeof(fdb_payload_v1_compile_options_t) ==
                   FDB_PAYLOAD_V1_COMPILE_OPTIONS_V1_SIZE);
 static_assert(sizeof(fdb_payload_v1_capabilities_t) ==
                   FDB_PAYLOAD_V1_CAPABILITIES_V1_SIZE);
+static_assert(sizeof(fdb_payload_v1_codegen_options_t) ==
+              FDB_PAYLOAD_V1_CODEGEN_OPTIONS_V1_SIZE);
 static_assert(std::is_nothrow_move_constructible_v<
               fastdb::payload::v1::Blob>);
 static_assert(std::is_nothrow_move_assignable_v<fastdb::payload::v1::Blob>);
@@ -22,14 +28,23 @@ static_assert(std::is_nothrow_move_constructible_v<
               fastdb::payload::v1::CompiledSpec>);
 static_assert(std::is_nothrow_move_assignable_v<
               fastdb::payload::v1::CompiledSpec>);
+static_assert(
+    std::is_nothrow_move_constructible_v<fastdb::payload::v1::ArtifactSet>);
+static_assert(
+    std::is_nothrow_move_assignable_v<fastdb::payload::v1::ArtifactSet>);
 static_assert(std::is_copy_constructible_v<fastdb::payload::v1::PayloadError>);
 
 namespace {
 
+using fastdb::payload::v1::Artifact;
+using fastdb::payload::v1::ArtifactKind;
+using fastdb::payload::v1::ArtifactSet;
 using fastdb::payload::v1::Blob;
 using fastdb::payload::v1::Capabilities;
-using fastdb::payload::v1::CompileOptions;
+using fastdb::payload::v1::CodegenOptions;
+using fastdb::payload::v1::CodegenTarget;
 using fastdb::payload::v1::CompiledSpec;
+using fastdb::payload::v1::CompileOptions;
 using fastdb::payload::v1::PayloadError;
 using fastdb::payload::v1::Profile;
 
@@ -316,6 +331,102 @@ int test_payload_error_copies_every_owned_field() {
     return EXIT_SUCCESS;
 }
 
+int test_artifact_codegen_raii_and_limits() {
+    const CompiledSpec spec = CompiledSpec::compile(kSpec);
+    ArtifactSet generated = spec.generate(CodegenTarget::cpp);
+    require(generated.size() == UINT64_C(1));
+
+    ArtifactSet copied(generated);
+    require(copied.size() == UINT64_C(1));
+    ArtifactSet assigned = spec.generate(CodegenTarget::rust);
+    assigned = generated;
+    require(assigned.size() == UINT64_C(1));
+    ArtifactSet moved(std::move(copied));
+    require(moved.size() == UINT64_C(1));
+
+    const Artifact artifact = generated.at(UINT64_C(0));
+    require(artifact.kind() == ArtifactKind::source);
+    require(!artifact.relative_path().empty());
+    require(artifact.relative_path().size() > 4U);
+    require(artifact.relative_path().substr(artifact.relative_path().size() -
+                                            4U) == ".hpp");
+    require(artifact.bytes().data != nullptr);
+    require(artifact.bytes().size != 0U);
+    require(std::any_of(artifact.sha256().begin(), artifact.sha256().end(),
+                        [](std::uint8_t byte) { return byte != UINT8_C(0); }));
+
+    const Artifact detached = [&spec]() {
+        ArtifactSet temporary = spec.generate(CodegenTarget::python);
+        return temporary.at(UINT64_C(0));
+    }();
+    require(!detached.relative_path().empty());
+    require(detached.bytes().size != 0U);
+
+    // The ordinary Core Wasm receipt is deliberately single-threaded. Native
+    // and pthread-enabled builds retain the shared ArtifactSet stress proof.
+#if !defined(__EMSCRIPTEN__) || defined(__EMSCRIPTEN_PTHREADS__)
+    {
+        std::atomic<std::uint32_t> concurrent_failures{UINT32_C(0)};
+        std::vector<std::thread> workers;
+        for (std::uint32_t worker = UINT32_C(0); worker < UINT32_C(8);
+             ++worker) {
+            workers.emplace_back([local = generated, &concurrent_failures]() {
+                try {
+                    for (std::uint32_t query = UINT32_C(0);
+                         query < UINT32_C(32); ++query) {
+                        const Artifact observed = local.at(UINT64_C(0));
+                        if (local.size() != UINT64_C(1) ||
+                            observed.kind() != ArtifactKind::source ||
+                            observed.relative_path().empty() ||
+                            observed.bytes().size == 0U) {
+                            concurrent_failures.fetch_add(
+                                UINT32_C(1), std::memory_order_relaxed);
+                        }
+                    }
+                } catch (...) {
+                    concurrent_failures.fetch_add(UINT32_C(1),
+                                                  std::memory_order_relaxed);
+                }
+            });
+        }
+        for (std::thread& worker : workers) {
+            worker.join();
+        }
+        require(concurrent_failures.load(std::memory_order_relaxed) ==
+                UINT32_C(0));
+    }
+#endif
+
+    try {
+        static_cast<void>(generated.at(UINT64_C(1)));
+        require(false);
+    } catch (const PayloadError& error) {
+        require(error.code() == FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE);
+    }
+
+    CodegenOptions no_artifacts;
+    no_artifacts.value.max_artifacts = UINT64_C(0);
+    try {
+        static_cast<void>(
+            spec.generate(CodegenTarget::typescript, no_artifacts));
+        require(false);
+    } catch (const PayloadError& error) {
+        require(error.code() == FDB_PAYLOAD_E_GENERATOR_FAILED);
+        require(error.path() == "/codegen/limits/max_artifacts");
+    }
+
+    CodegenOptions no_bytes;
+    no_bytes.value.max_total_bytes = UINT64_C(0);
+    try {
+        static_cast<void>(spec.generate(CodegenTarget::rust, no_bytes));
+        require(false);
+    } catch (const PayloadError& error) {
+        require(error.code() == FDB_PAYLOAD_E_GENERATOR_FAILED);
+        require(error.path() == "/codegen/limits/max_total_bytes");
+    }
+    return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main() {
@@ -323,5 +434,6 @@ int main() {
     require(test_blob_and_spec_copy_move_self_assignment_lifetimes() ==
             EXIT_SUCCESS);
     require(test_payload_error_copies_every_owned_field() == EXIT_SUCCESS);
+    require(test_artifact_codegen_raii_and_limits() == EXIT_SUCCESS);
     return EXIT_SUCCESS;
 }

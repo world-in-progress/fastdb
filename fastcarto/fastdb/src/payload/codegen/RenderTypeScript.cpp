@@ -5,7 +5,9 @@
 #include "payload/identity/Sha256.hpp"
 #include "payload/spec/Model.hpp"
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -53,8 +55,7 @@ ScalarGetter typescript_scalar_getter(TypeKind kind) noexcept {
     return {};
 }
 
-void append_provenance(std::string& output,
-                       std::string_view digest) {
+void append_provenance(CheckedOutput& output, std::string_view digest) {
     output += "// generated-by: ";
     output += generator_version;
     output += "\n";
@@ -68,7 +69,20 @@ void append_provenance(std::string& output,
     output += "// target: typescript\n";
 }
 
-void append_metadata(std::string& output,
+void append_digest_bytes(CheckedOutput& output,
+                         const std::array<std::uint8_t, 32>& digest) {
+    output += "export function payloadSha256(): Uint8Array {\n"
+              "  return new Uint8Array([";
+    for (std::size_t index = 0U; index < digest.size(); ++index) {
+        if (index != 0U) {
+            output += ", ";
+        }
+        output += std::to_string(digest[index]);
+    }
+    output += "]);\n}\n\n";
+}
+
+void append_metadata(CheckedOutput& output,
                      const spec::ResolvedSpec& resolved) {
     output +=
         "export interface IdMetadata {\n"
@@ -132,8 +146,7 @@ void append_metadata(std::string& output,
     output += "]);\n\n";
 }
 
-void append_entry(std::string& output,
-                  const Entry& entry,
+void append_entry(CheckedOutput& output, const Entry& entry,
                   spec::Profile profile) {
     const std::string symbol =
         project_identifier(Target::typescript, entry.id);
@@ -144,24 +157,38 @@ void append_entry(std::string& output,
     output += std::to_string(entry.index);
     output += " as const;\n\nexport class ";
     output += type;
-    output +=
-        " {\n"
-        "  constructor(private readonly view: View, token: symbol) {\n"
-        "    if (token !== fastdbEntryViewToken) {\n"
-        "      throw new TypeError('FastDB generated entry views require owned construction');\n"
-        "    }\n"
-        "  }\n\n"
-        "  genericView(): View { return this.view.clone(); }\n"
-        "  length(): bigint { return this.view.length(); }\n"
-        "  at(index: bigint): View { return this.view.at(index); }\n";
+    output += " {\n"
+              "  constructor(private readonly view: View, token: symbol) {\n"
+              "    if (token !== fastdbEntryViewToken) {\n"
+              "      throw new TypeError('FastDB generated entry views require "
+              "owned construction');\n"
+              "    }\n"
+              "  }\n\n"
+              "  genericView(): View { return this.view.clone(); }\n"
+              "  length(): bigint { return this.view.length(); }\n"
+              "  at(index: bigint): View { return this.view.at(index); }\n";
     if (entry.type.kind == TypeKind::ref) {
         output +=
-            "  atRefTarget(index: bigint): View { return this.at(index).refTarget(); }\n";
+            "  atRefTarget(index: bigint): View {\n"
+            "    const view = this.at(index);\n"
+            "    try {\n"
+            "      return view.refTarget();\n"
+            "    } finally {\n"
+            "      view.dispose();\n"
+            "    }\n"
+            "  }\n";
     }
     if (profile == spec::Profile::object_graph_v1 &&
         entry.type.kind == TypeKind::component) {
         output +=
-            "  atGraphIdentity(index: bigint): GraphIdentity { return this.at(index).graphIdentity(); }\n";
+            "  atGraphIdentity(index: bigint): GraphIdentity {\n"
+            "    const view = this.at(index);\n"
+            "    try {\n"
+            "      return view.graphIdentity();\n"
+            "    } finally {\n"
+            "      view.dispose();\n"
+            "    }\n"
+            "  }\n";
     }
     output += "  materialize(): ";
     output += type;
@@ -174,7 +201,9 @@ void append_entry(std::string& output,
     output += symbol;
     output += "_from_payload(payload: Payload): ";
     output += type;
-    output += " {\n  return new ";
+    output += " {\n"
+              "  payload.requireSpecSha256(payloadSha256());\n"
+              "  return new ";
     output += type;
     output += "(payload.entryView(";
     output += symbol;
@@ -182,15 +211,15 @@ void append_entry(std::string& output,
         "_entry_index), fastdbEntryViewToken);\n"
         "}\n\nexport function ";
     output += symbol;
-    output +=
-        "_builder_entry_begin(builder: Builder, valueCount: bigint): Builder {\n"
-        "  return builder.entryBegin(";
+    output += "_builder_entry_begin(builder: Builder, valueCount: bigint): "
+              "Builder {\n"
+              "  builder.requireSpecSha256(payloadSha256());\n"
+              "  return builder.entryBegin(";
     output += symbol;
     output += "_entry_index, valueCount);\n}\n\n";
 }
 
-void append_component(std::string& output,
-                      const Component& component,
+void append_component(CheckedOutput& output, const Component& component,
                       bool is_identity) {
     const std::string symbol =
         project_identifier(Target::typescript, component.id);
@@ -206,14 +235,15 @@ void append_component(std::string& output,
         " {\n"
         "  private constructor(private readonly view: View, token: symbol) {\n"
         "    if (token !== fastdbComponentViewToken) {\n"
-        "      throw new TypeError('FastDB generated component views require checked construction');\n"
+        "      throw new TypeError('FastDB generated component views require "
+        "checked construction');\n"
         "    }\n"
         "  }\n\n"
         "  static tryFromView(view: View): ";
     output += type;
-    output +=
-        " | undefined {\n"
-        "    if (view.componentIndex() !== ";
+    output += " | undefined {\n"
+              "    view.requireSpecSha256(payloadSha256());\n"
+              "    if (view.componentIndex() !== ";
     output += symbol;
     output +=
         "_component_index) { return undefined; }\n"
@@ -224,8 +254,8 @@ void append_component(std::string& output,
         "  }\n\n"
         "  genericView(): View { return this.view.clone(); }\n";
     if (is_identity) {
-        output +=
-            "  graphIdentity(): GraphIdentity { return this.view.graphIdentity(); }\n";
+        output += "  graphIdentity(): GraphIdentity { return "
+                  "this.view.graphIdentity(); }\n";
     }
     output += "  materialize(): ";
     output += type;
@@ -256,27 +286,39 @@ void append_component(std::string& output,
             output += field_symbol;
             output += "_value(): ";
             output += scalar.type;
-            output += " { return this.";
+            output += " {\n    const view = this.";
             output += field_symbol;
-            output += "().";
+            output += "();\n    try {\n      return view.";
             output += scalar.method;
-            output += "(); }\n";
+            output +=
+                "();\n"
+                "    } finally {\n"
+                "      view.dispose();\n"
+                "    }\n"
+                "  }\n";
         }
         if (field.type.kind == TypeKind::ref) {
             output += "  ";
             output += field_symbol;
-            output += "_refTarget(): View { return this.";
+            output += "_refTarget(): View {\n    const view = this.";
             output += field_symbol;
-            output += "().refTarget(); }\n";
+            output +=
+                "();\n"
+                "    try {\n"
+                "      return view.refTarget();\n"
+                "    } finally {\n"
+                "      view.dispose();\n"
+                "    }\n"
+                "  }\n";
         }
     }
     output += "}\n\n";
     if (is_identity) {
         output += "export function ";
         output += symbol;
-        output +=
-            "_builder_declare(builder: Builder): ObjectHandle {\n"
-            "  return builder.declareObject(";
+        output += "_builder_declare(builder: Builder): ObjectHandle {\n"
+                  "  builder.requireSpecSha256(payloadSha256());\n"
+                  "  return builder.declareObject(";
         output += symbol;
         output += "_component_index);\n}\n\n";
     }
@@ -285,11 +327,11 @@ void append_component(std::string& output,
 }  // namespace
 
 std::string render_typescript(const spec::CompiledSpec& compiled,
-                              const spec::RuntimeTopology& topology) {
-    const std::string digest =
-        identity::sha256_lower_hex(compiled.digest());
+                              const spec::RuntimeTopology& topology,
+                              std::uint64_t max_total_bytes) {
+    const std::string digest = identity::sha256_lower_hex(compiled.digest());
     const spec::ResolvedSpec& resolved = compiled.resolved();
-    std::string output;
+    CheckedOutput output(max_total_bytes);
     output.reserve(compiled.canonical_bytes().size() + 4096U);
     append_provenance(output, digest);
     const bool has_entries = !resolved.entries().empty();
@@ -313,15 +355,15 @@ std::string render_typescript(const spec::CompiledSpec& compiled,
     }
     output += "} from 'fastdb4ts/payload';\n\n";
     if (!resolved.entries().empty()) {
-        output +=
-            "const fastdbEntryViewToken = Symbol('fastdb.payload.codegen.entry-view');\n";
+        output += "const fastdbEntryViewToken = "
+                  "Symbol('fastdb.payload.codegen.entry-view');\n";
     }
     if (!resolved.components().empty()) {
         if (!resolved.entries().empty()) {
             output += "\n";
         }
-        output +=
-            "const fastdbComponentViewToken = Symbol('fastdb.payload.codegen.component-view');\n\n";
+        output += "const fastdbComponentViewToken = "
+                  "Symbol('fastdb.payload.codegen.component-view');\n\n";
     } else if (!resolved.entries().empty()) {
         output += "\n";
     }
@@ -337,11 +379,11 @@ std::string render_typescript(const spec::CompiledSpec& compiled,
         "}\n"
         "export const PAYLOAD_SHA256 = '";
     output += digest;
-    output +=
-        "' as const;\n\n"
-        "export function compileSpec(): CompiledSpec {\n"
-        "  return CompiledSpec.compile(canonicalSource());\n"
-        "}\n\n";
+    output += "' as const;\n";
+    append_digest_bytes(output, compiled.digest());
+    output += "export function compileSpec(): CompiledSpec {\n"
+              "  return CompiledSpec.compile(canonicalSource());\n"
+              "}\n\n";
     append_metadata(output, resolved);
     for (const Entry& entry : resolved.entries()) {
         append_entry(output, entry, resolved.profile());
@@ -355,7 +397,7 @@ std::string render_typescript(const spec::CompiledSpec& compiled,
         output.compare(output.size() - 2U, 2U, "\n\n") == 0) {
         output.pop_back();
     }
-    return output;
+    return std::move(output).finish();
 }
 
 }  // namespace fastdb::payload::codegen

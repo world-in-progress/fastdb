@@ -54,8 +54,7 @@ ScalarGetter cpp_scalar_getter(TypeKind kind) noexcept {
     return {};
 }
 
-void append_provenance(std::string& output,
-                       std::string_view digest) {
+void append_provenance(CheckedOutput& output, std::string_view digest) {
     output += "// generated-by: ";
     output += generator_version;
     output += "\n";
@@ -69,7 +68,25 @@ void append_provenance(std::string& output,
     output += "// target: cpp\n";
 }
 
-void append_id_metadata(std::string& output,
+void append_digest_bytes(CheckedOutput& output,
+                         const std::array<std::uint8_t, 32>& digest) {
+    static constexpr char hex[] = "0123456789abcdef";
+    output += "inline constexpr std::array<std::uint8_t, 32> "
+              "payload_sha256_bytes{{";
+    for (std::size_t index = 0U; index < digest.size(); ++index) {
+        if (index != 0U) {
+            output += ", ";
+        }
+        const std::uint8_t byte = digest[index];
+        output += "0x";
+        output.push_back(hex[(byte >> UINT8_C(4)) & UINT8_C(0x0f)]);
+        output.push_back(hex[byte & UINT8_C(0x0f)]);
+        output += "U";
+    }
+    output += "}};\n\n";
+}
+
+void append_id_metadata(CheckedOutput& output,
                         const spec::ResolvedSpec& resolved) {
     output +=
         "struct IdMetadata final {\n"
@@ -140,8 +157,7 @@ void append_id_metadata(std::string& output,
     output += "}};\n\n";
 }
 
-void append_entry(std::string& output,
-                  const Entry& entry,
+void append_entry(CheckedOutput& output, const Entry& entry,
                   spec::Profile profile) {
     const std::string symbol = project_identifier(Target::cpp, entry.id);
     const std::string type = "FdbCppEntry_" + symbol + "_Sequence";
@@ -160,10 +176,10 @@ void append_entry(std::string& output,
         "        return view_.at(index);\n"
         "    }\n";
     if (entry.type.kind == TypeKind::ref) {
-        output +=
-            "    fastdb::payload::v1::View at_ref_target(std::uint64_t index) const {\n"
-            "        return at(index).ref_target();\n"
-            "    }\n";
+        output += "    fastdb::payload::v1::View at_ref_target(std::uint64_t "
+                  "index) const {\n"
+                  "        return at(index).ref_target();\n"
+                  "    }\n";
     }
     if (profile == spec::Profile::object_graph_v1 &&
         entry.type.kind == TypeKind::component) {
@@ -198,9 +214,9 @@ void append_entry(std::string& output,
     output += type;
     output += " ";
     output += symbol;
-    output +=
-        "_from_payload(const fastdb::payload::v1::Payload& payload) {\n"
-        "    return ";
+    output += "_from_payload(const fastdb::payload::v1::Payload& payload) {\n"
+              "    payload.require_spec_sha256(payload_sha256_bytes);\n"
+              "    return ";
     output += type;
     output += "(payload.entry_view(";
     output += symbol;
@@ -208,18 +224,17 @@ void append_entry(std::string& output,
         "_entry_index));\n"
         "}\n\ninline fastdb::payload::v1::Builder& ";
     output += symbol;
-    output +=
-        "_builder_entry_begin(fastdb::payload::v1::Builder& builder,\n"
-        "                     std::uint64_t value_count) {\n"
-        "    return builder.entry_begin(";
+    output += "_builder_entry_begin(fastdb::payload::v1::Builder& builder,\n"
+              "                     std::uint64_t value_count) {\n"
+              "    builder.require_spec_sha256(payload_sha256_bytes);\n"
+              "    return builder.entry_begin(";
     output += symbol;
     output +=
         "_entry_index, value_count);\n"
         "}\n\n";
 }
 
-void append_component(std::string& output,
-                      const Component& component,
+void append_component(CheckedOutput& output, const Component& component,
                       bool is_identity) {
     const std::string symbol =
         project_identifier(Target::cpp, component.id);
@@ -301,9 +316,9 @@ void append_component(std::string& output,
     output += type;
     output += "> ";
     output += type;
-    output +=
-        "::try_from_view(fastdb::payload::v1::View view) {\n"
-        "    if (view.component_index() != ";
+    output += "::try_from_view(fastdb::payload::v1::View view) {\n"
+              "    view.require_spec_sha256(payload_sha256_bytes);\n"
+              "    if (view.component_index() != ";
     output += symbol;
     output +=
         "_component_index) {\n"
@@ -315,9 +330,9 @@ void append_component(std::string& output,
     if (is_identity) {
         output += "inline fastdb::payload::v1::ObjectHandle ";
         output += symbol;
-        output +=
-            "_builder_declare(fastdb::payload::v1::Builder& builder) {\n"
-            "    return builder.declare_object(";
+        output += "_builder_declare(fastdb::payload::v1::Builder& builder) {\n"
+                  "    builder.require_spec_sha256(payload_sha256_bytes);\n"
+                  "    return builder.declare_object(";
         output += symbol;
         output += "_component_index);\n}\n\n";
     }
@@ -326,12 +341,12 @@ void append_component(std::string& output,
 }  // namespace
 
 std::string render_cpp(const spec::CompiledSpec& compiled,
-                       const spec::RuntimeTopology& topology) {
-    const std::string digest =
-        identity::sha256_lower_hex(compiled.digest());
+                       const spec::RuntimeTopology& topology,
+                       std::uint64_t max_total_bytes) {
+    const std::string digest = identity::sha256_lower_hex(compiled.digest());
     const spec::ResolvedSpec& resolved = compiled.resolved();
 
-    std::string output;
+    CheckedOutput output(max_total_bytes);
     output.reserve(compiled.canonical_bytes().size() + 4096U);
     append_provenance(output, digest);
     output +=
@@ -356,11 +371,12 @@ std::string render_cpp(const spec::CompiledSpec& compiled,
         ")FDB_PAYLOAD\";\n"
         "inline constexpr std::string_view payload_sha256 = \"";
     output += digest;
-    output +=
-        "\";\n\n"
-        "inline fastdb::payload::v1::CompiledSpec compile_spec() {\n"
-        "    return fastdb::payload::v1::CompiledSpec::compile(canonical_source);\n"
-        "}\n\n";
+    output += "\";\n";
+    append_digest_bytes(output, compiled.digest());
+    output += "inline fastdb::payload::v1::CompiledSpec compile_spec() {\n"
+              "    return "
+              "fastdb::payload::v1::CompiledSpec::compile(canonical_source);\n"
+              "}\n\n";
 
     append_id_metadata(output, resolved);
     for (const Entry& entry : resolved.entries()) {
@@ -374,7 +390,7 @@ std::string render_cpp(const spec::CompiledSpec& compiled,
     output += "}  // namespace fastdb_payload_";
     output += digest;
     output += "\n";
-    return output;
+    return std::move(output).finish();
 }
 
 }  // namespace fastdb::payload::codegen

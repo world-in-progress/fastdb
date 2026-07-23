@@ -48,8 +48,8 @@ fn compile_and_query_record_all_types_through_core() -> Result<(), PayloadError>
         Capabilities {
             profile: Profile::RecordV1,
             semantic_flags: 0x1b,
-            operation_flags: 0x7f,
-            codegen_target_flags: 0,
+            operation_flags: 0xff,
+            codegen_target_flags: 0x0f,
             direct_build_status: 1,
         }
     );

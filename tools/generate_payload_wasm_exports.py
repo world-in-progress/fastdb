@@ -12,7 +12,7 @@ import tempfile
 
 
 SYMBOL_PATTERN = re.compile(r"^fdb_payload_v1_[A-Za-z0-9_]+$")
-EXPECTED_ABI_SYMBOLS = 105
+EXPECTED_ABI_SYMBOLS = 117
 
 
 class GenerationError(RuntimeError):

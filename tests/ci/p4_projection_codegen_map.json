@@ -6,9 +6,9 @@
   },
   "abi": {
     "version": 1,
-    "symbol_count": 105,
+    "symbol_count": 117,
     "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
-    "status": "frozen-p3"
+    "status": "frozen-p4-task-8"
   },
   "runtime_receipts": [
     {
@@ -564,6 +564,10 @@
         {
           "file": "bindings/rust/fastdb/README.md",
           "marker": "C++ Core is the sole semantic authority"
+        },
+        {
+          "file": "bindings/rust/fastdb/src/codegen.rs",
+          "marker": "pub struct ArtifactSet"
         }
       ],
       "workflow_markers": [
@@ -582,6 +586,10 @@
         {
           "file": "tests/ci/check_rust_payload_package.py",
           "marker": "check_relocated_system_consumer"
+        },
+        {
+          "file": "tests/ci/check_rust_payload_package.py",
+          "marker": "CodegenTarget::Rust"
         }
       ],
       "workflow_markers": [
@@ -600,6 +608,10 @@
         {
           "file": "python/README.md",
           "marker": "Python 3.10+"
+        },
+        {
+          "file": "python/fastdb4py/payload/_codegen.py",
+          "marker": "class ArtifactSet"
         }
       ],
       "workflow_markers": [
@@ -619,6 +631,10 @@
         {
           "file": "tests/ci/check_ts_payload_package.py",
           "marker": "fastdb4ts/payload"
+        },
+        {
+          "file": "tests/ci/check_ts_payload_package.py",
+          "marker": "CodegenTarget.TypeScript"
         }
       ],
       "workflow_markers": [
@@ -631,7 +647,8 @@
     "file": ".github/workflows/tests.yml",
     "jobs": [
       "rust_payload",
-      "projection_parity"
+      "projection_parity",
+      "generated_projections"
     ],
     "definition_status": "definitions-only",
     "hosted_status": "pending"
@@ -639,23 +656,111 @@
   "codegen": [
     {
       "target": "cpp",
-      "status": "open",
-      "proofs": []
+      "status": "closed-task-8",
+      "proofs": [
+        {
+          "id": "core-artifact",
+          "file": "tests/cpp/payload/test_codegen.cpp",
+          "language": "cpp",
+          "test": "test_exact_empty_artifacts_and_repeated_determinism",
+          "markers": ["expectation.target", "artifact.sha256() == repeated.sha256()", "payload_sha256"]
+        },
+        {
+          "id": "public-projection",
+          "file": "tests/cpp/payload/test_cpp_facade.cpp",
+          "language": "cpp",
+          "test": "test_artifact_codegen_raii_and_limits",
+          "markers": ["CodegenTarget::cpp", "ArtifactSet", "artifact.sha256()"]
+        },
+        {
+          "id": "generated-execution",
+          "file": "tests/ci/run_generated_payload_projections.py",
+          "language": "python",
+          "test": "run_cpp_projection",
+          "markers": ["\"-std=c++17\"", "\"-lfastdb\"", "run([os.fspath(executable)]"]
+        }
+      ]
     },
     {
       "target": "rust",
-      "status": "open",
-      "proofs": []
+      "status": "closed-task-8",
+      "proofs": [
+        {
+          "id": "core-artifact",
+          "file": "tests/cpp/payload/test_codegen.cpp",
+          "language": "cpp",
+          "test": "test_exact_empty_artifacts_and_repeated_determinism",
+          "markers": ["expectation.target", "artifact.sha256() == repeated.sha256()", "payload_sha256"]
+        },
+        {
+          "id": "public-projection",
+          "file": "bindings/rust/fastdb/src/codegen.rs",
+          "language": "rust",
+          "test": "core_codegen_projects_owned_artifacts_and_limits",
+          "markers": ["CodegenTarget::Rust", "ArtifactKind::Source", "artifact.sha256"]
+        },
+        {
+          "id": "generated-execution",
+          "file": "tests/ci/run_generated_payload_projections.py",
+          "language": "python",
+          "test": "run_rust_projection",
+          "markers": ["FASTDB_PAYLOAD_LINK_MODE", "\"system\"", "\"cargo\""]
+        }
+      ]
     },
     {
       "target": "python",
-      "status": "open",
-      "proofs": []
+      "status": "closed-task-8",
+      "proofs": [
+        {
+          "id": "core-artifact",
+          "file": "tests/cpp/payload/test_codegen.cpp",
+          "language": "cpp",
+          "test": "test_exact_empty_artifacts_and_repeated_determinism",
+          "markers": ["expectation.target", "artifact.sha256() == repeated.sha256()", "payload_sha256"]
+        },
+        {
+          "id": "public-projection",
+          "file": "tests/python/payload/test_payload_codegen.py",
+          "language": "python",
+          "test": "test_core_codegen_projects_all_targets_and_owned_artifacts",
+          "markers": ["CodegenTarget.PYTHON", "ArtifactKind.SOURCE", "hashlib.sha256"]
+        },
+        {
+          "id": "generated-execution",
+          "file": "tests/ci/run_generated_payload_projections.py",
+          "language": "python",
+          "test": "run_python_projection",
+          "markers": ["generated.compile_spec()", "expect_digest_mismatch", "returned the wrong value"]
+        }
+      ]
     },
     {
       "target": "typescript",
-      "status": "open",
-      "proofs": []
+      "status": "closed-task-8",
+      "proofs": [
+        {
+          "id": "core-artifact",
+          "file": "tests/cpp/payload/test_codegen.cpp",
+          "language": "cpp",
+          "test": "test_exact_empty_artifacts_and_repeated_determinism",
+          "markers": ["expectation.target", "artifact.sha256() == repeated.sha256()", "payload_sha256"]
+        },
+        {
+          "id": "public-projection",
+          "file": "tests/ts/payload_codegen.mjs",
+          "language": "typescript",
+          "test": "Core codegen projects all targets into independently owned artifacts",
+          "markers": ["CodegenTarget.TypeScript", "ArtifactKind.Source", "createHash('sha256')"]
+        },
+        {
+          "id": "generated-execution",
+          "file": "tests/ci/run_generated_payload_projections.py",
+          "language": "python",
+          "test": "run_typescript_projection",
+          "markers": ["tsconfig.json", "dist/smoke.js", "node"]
+        }
+      ]
     }
   ]
 }

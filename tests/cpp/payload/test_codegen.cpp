@@ -754,6 +754,43 @@ int test_allocation_failures_publish_no_partial_artifact_set() {
     require(invalid_target->error().details_json() ==
             R"({"reason":"allocation_failed"})");
 
+    GenerationLimits zero_bytes;
+    zero_bytes.max_total_bytes = UINT64_C(0);
+    bool observed_limit_allocation_failure = false;
+    bool observed_checked_limit = false;
+    for (std::size_t failure = 0U; failure < 4096U; ++failure) {
+        bool allocation_escaped = false;
+        std::optional<fastdb::payload::error::Result<ArtifactSet>> limited;
+        try {
+            allocation_guard::FailAt fail_at(failure);
+            limited.emplace(generate(spec, Target::cpp, zero_bytes));
+        } catch (const std::bad_alloc&) {
+            allocation_escaped = true;
+        }
+        require(!allocation_escaped);
+        require(limited.has_value());
+        require(!limited->has_value());
+        require(limited->error().code() == FDB_PAYLOAD_E_GENERATOR_FAILED);
+        if (limited->error().details_json() ==
+            R"({"reason":"allocation_failed"})") {
+            observed_limit_allocation_failure = true;
+        } else {
+            require(limited->error().path() ==
+                    "/codegen/limits/max_total_bytes");
+            require(limited->error().details_json().find(
+                        R"("limit":"0")") != std::string_view::npos);
+            require(limited->error().details_json().find(
+                        R"("reason":"total_bytes_exceeded")") !=
+                    std::string_view::npos);
+            observed_checked_limit = true;
+        }
+        if (observed_limit_allocation_failure && observed_checked_limit) {
+            break;
+        }
+    }
+    require(observed_limit_allocation_failure);
+    require(observed_checked_limit);
+
     bool observed_failure = false;
     bool observed_success = false;
     for (std::size_t failure = 0U; failure < 4096U; ++failure) {

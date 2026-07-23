@@ -14,5 +14,5 @@ A limitation cannot be introduced only in code or release notes. It must be reco
 | Issue | Status | Scope |
 |---|---|---|
 | [0001](0001-portable-payload-deferred-capabilities.md) | Open (D1 closed; D2-D5 open) | D1 graph direct construction is locally closed with executable P3 evidence; segmented backing, streaming authoring, additional guaranteed platforms, and native Node/Go projections remain deferred. |
-| [0002](0002-portable-payload-foundation-implementation-status.md) | Open (P1-P3 locally frozen; P4-P5 and hosted evidence pending) | Frozen P2/P3 traceability, exact ABI-105 and D1 closure evidence, plus remaining non-deferrable projection/codegen/clean-cut/release gaps. |
+| [0002](0002-portable-payload-foundation-implementation-status.md) | Open (P1-P3 locally frozen; P4 Tasks 1-8 local; Task 9, P5, and hosted evidence pending) | Frozen P2/P3 traceability and historical ABI-105, current exact ABI-117 projections/codegen/generated-output evidence, explicit platform limits, and remaining robustness/clean-cut/release gaps. |
 | [0003](0003-legacy-swig-diagnostics.md) | Open | Exact seven-warning baseline and closure gate for the legacy 0.1.x SWIG input surface; no new warning is accepted implicitly. |

@@ -16,9 +16,9 @@
 
 using fastdb::payload::v1::Access;
 using fastdb::payload::v1::Blob;
+using fastdb::payload::v1::Builder;
 using fastdb::payload::v1::BuildPlan;
 using fastdb::payload::v1::BuildPolicy;
-using fastdb::payload::v1::Builder;
 using fastdb::payload::v1::ByteView;
 using fastdb::payload::v1::CompiledSpec;
 using fastdb::payload::v1::FixedRun;
@@ -551,6 +551,58 @@ int test_graph_facade_is_thin_and_complete() {
     return EXIT_SUCCESS;
 }
 
+int test_provenance_guards_reject_same_indexes_from_another_spec() {
+    constexpr std::string_view spec_a_source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"value","cardinality":"one","type":{"kind":"u8"}}],"components":[]})";
+    constexpr std::string_view spec_b_source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"other","cardinality":"one","type":{"kind":"u8"}}],"components":[]})";
+    const CompiledSpec spec_a = CompiledSpec::compile(spec_a_source);
+    const CompiledSpec spec_b = CompiledSpec::compile(spec_b_source);
+    const auto digest_a = spec_a.sha256();
+    const auto digest_b = spec_b.sha256();
+    const auto mismatch_matches = [](const PayloadError& error,
+                                     std::string_view path) {
+        return error.code() == FDB_PAYLOAD_E_DIGEST_MISMATCH &&
+               error.symbol() == "DIGEST_MISMATCH" && error.path() == path &&
+               std::string_view(error.what()) ==
+                   "Portable payload spec digest does not match" &&
+               error.details_json().find(
+                   R"("reason":"spec_digest_mismatch")") !=
+                   std::string_view::npos;
+    };
+
+    Builder builder = Builder::create(spec_a);
+    builder.require_spec_sha256(digest_a);
+    try {
+        builder.require_spec_sha256(digest_b);
+        require(false);
+    } catch (const PayloadError& error) {
+        require(mismatch_matches(error, "/builder/spec_sha256"));
+    }
+    builder.entry_begin(UINT32_C(0), UINT64_C(1)).value_u8(UINT8_C(7));
+    auto built = builder.freeze().execute(BuildPolicy::allow_staging);
+    built.payload.require_spec_sha256(digest_a);
+    try {
+        built.payload.require_spec_sha256(digest_b);
+        require(false);
+    } catch (const PayloadError& error) {
+        require(mismatch_matches(error, "/payload/spec_sha256"));
+    }
+
+    View view = built.payload.entry_view(UINT32_C(0));
+    View detached = view.materialize();
+    for (View* candidate : {&view, &detached}) {
+        candidate->require_spec_sha256(digest_a);
+        try {
+            candidate->require_spec_sha256(digest_b);
+            require(false);
+        } catch (const PayloadError& error) {
+            require(mismatch_matches(error, "/view/spec_sha256"));
+        }
+    }
+    return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main() {
@@ -559,5 +611,7 @@ int main() {
     require(test_external_execute_and_open() == EXIT_SUCCESS);
     require(test_checked_native_sizes() == EXIT_SUCCESS);
     require(test_graph_facade_is_thin_and_complete() == EXIT_SUCCESS);
+    require(test_provenance_guards_reject_same_indexes_from_another_spec() ==
+            EXIT_SUCCESS);
     return EXIT_SUCCESS;
 }

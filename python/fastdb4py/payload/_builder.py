@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Iterator, Optional, Sequence, Type, TypeVar
 
 from . import _ffi
 from ._error import PayloadError, binding_error
-from ._spec import CompiledSpec, _check_status, _input_bytes
+from ._spec import CompiledSpec, _check_status, _input_bytes, _input_digest
 
 if TYPE_CHECKING:
     from ._runtime import BuildPolicy, BuildResult, MemoryBacking
@@ -313,6 +313,21 @@ class Builder:
 
     def __deepcopy__(self, memo: object) -> Builder:
         raise TypeError("Builder is unique and cannot be copied")
+
+    def require_spec_sha256(self, expected_sha256: bytes) -> None:
+        native = _ffi.library()
+        storage, digest = _input_digest(expected_sha256)
+        error = _ffi.Handle()
+        self._check_thread()
+        with self._lock:
+            handle = self._require_handle_locked()
+            status = int(
+                native.fdb_payload_v1_builder_require_spec_sha256(
+                    handle, digest, ctypes.byref(error)
+                )
+            )
+            _check_status(status, error)
+        del storage
 
     def entry_begin(self, entry_index: int, value_count: int) -> Builder:
         return self._call(

@@ -59,6 +59,17 @@ enum class ViewKind : std::uint32_t {
     ref = FDB_PAYLOAD_VIEW_REF,
 };
 
+enum class CodegenTarget : std::uint64_t {
+    cpp = FDB_PAYLOAD_CODEGEN_TARGET_CPP,
+    rust = FDB_PAYLOAD_CODEGEN_TARGET_RUST,
+    python = FDB_PAYLOAD_CODEGEN_TARGET_PYTHON,
+    typescript = FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT,
+};
+
+enum class ArtifactKind : std::uint32_t {
+    source = FDB_PAYLOAD_ARTIFACT_SOURCE,
+};
+
 class Access;
 class BuildPlan;
 class Builder;
@@ -216,6 +227,12 @@ struct ExecutionReport final {
     fdb_payload_v1_execution_report_t value;
 };
 
+struct CodegenOptions final {
+    CodegenOptions() noexcept { fdb_payload_v1_codegen_options_init(&value); }
+
+    fdb_payload_v1_codegen_options_t value;
+};
+
 namespace detail {
 
 struct BlobFactory final {
@@ -304,6 +321,102 @@ inline void check(fdb_payload_v1_status_t status,
 
 }  // namespace detail
 
+class Artifact final {
+public:
+    const Blob& relative_path_blob() const noexcept { return relative_path_; }
+    std::string_view relative_path() const {
+        return relative_path_.as_string_view();
+    }
+    ArtifactKind kind() const noexcept { return kind_; }
+    const Blob& bytes_blob() const noexcept { return bytes_; }
+    ByteView bytes() const { return bytes_.bytes(); }
+    const std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE>&
+    sha256() const noexcept {
+        return sha256_;
+    }
+
+private:
+    friend class ArtifactSet;
+
+    Artifact(Blob relative_path, ArtifactKind kind, Blob bytes,
+             std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE> sha256)
+        : relative_path_(std::move(relative_path)), kind_(kind),
+          bytes_(std::move(bytes)), sha256_(sha256) {}
+
+    Blob relative_path_;
+    ArtifactKind kind_;
+    Blob bytes_;
+    std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE> sha256_;
+};
+
+class ArtifactSet final {
+public:
+    ArtifactSet(const ArtifactSet& other) noexcept : handle_(other.handle_) {
+        fdb_payload_v1_codegen_result_retain(handle_);
+    }
+    ArtifactSet(ArtifactSet&& other) noexcept : handle_(other.handle_) {
+        other.handle_ = nullptr;
+    }
+    ArtifactSet& operator=(const ArtifactSet& other) noexcept {
+        if (this != &other) {
+            fdb_payload_v1_codegen_result_retain(other.handle_);
+            fdb_payload_v1_codegen_result_release(handle_);
+            handle_ = other.handle_;
+        }
+        return *this;
+    }
+    ArtifactSet& operator=(ArtifactSet&& other) noexcept {
+        if (this != &other) {
+            fdb_payload_v1_codegen_result_release(handle_);
+            handle_ = other.handle_;
+            other.handle_ = nullptr;
+        }
+        return *this;
+    }
+    ~ArtifactSet() { fdb_payload_v1_codegen_result_release(handle_); }
+
+    std::uint64_t size() const {
+        std::uint64_t result = UINT64_C(0);
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_codegen_result_artifact_count(
+                          handle_, &result, &error),
+                      &error);
+        return result;
+    }
+
+    Artifact at(std::uint64_t index) const {
+        fdb_payload_v1_blob_t* path = nullptr;
+        fdb_payload_v1_blob_t* bytes = nullptr;
+        fdb_payload_v1_artifact_kind_t kind = UINT32_C(0);
+        std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE> digest{};
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_codegen_result_artifact_relative_path(
+                          handle_, index, &path, &error),
+                      &error);
+        Blob owned_path = detail::BlobFactory::take(path);
+        detail::check(fdb_payload_v1_codegen_result_artifact_kind(
+                          handle_, index, &kind, &error),
+                      &error);
+        detail::check(fdb_payload_v1_codegen_result_artifact_bytes(
+                          handle_, index, &bytes, &error),
+                      &error);
+        Blob owned_bytes = detail::BlobFactory::take(bytes);
+        detail::check(fdb_payload_v1_codegen_result_artifact_sha256(
+                          handle_, index, digest.data(), &error),
+                      &error);
+        return Artifact(std::move(owned_path), static_cast<ArtifactKind>(kind),
+                        std::move(owned_bytes), digest);
+    }
+
+private:
+    friend class CompiledSpec;
+
+    explicit ArtifactSet(fdb_payload_v1_codegen_result_t* handle) noexcept
+        : handle_(handle) {}
+
+    fdb_payload_v1_codegen_result_t* handle_{nullptr};
+};
+
 class CompiledSpec final {
 public:
     static CompiledSpec compile(
@@ -391,6 +504,19 @@ public:
             fdb_payload_v1_spec_capabilities(handle_, &result.value, &error),
             &error);
         return result;
+    }
+
+    ArtifactSet generate(
+        CodegenTarget target,
+        const CodegenOptions& options = CodegenOptions{}) const {
+        fdb_payload_v1_codegen_result_t* result = nullptr;
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_spec_codegen(
+                          handle_,
+                          static_cast<fdb_payload_v1_codegen_target_t>(target),
+                          &options.value, &result, &error),
+                      &error);
+        return ArtifactSet(result);
     }
 
     std::uint32_t entry_count() const {
@@ -819,6 +945,15 @@ public:
         return View(result);
     }
 
+    void require_spec_sha256(
+        const std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE>& expected)
+        const {
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_view_require_spec_sha256(
+                          handle_, expected.data(), &error),
+                      &error);
+    }
+
 private:
     friend class Payload;
 
@@ -947,6 +1082,15 @@ public:
                       &error);
     }
 
+    void require_spec_sha256(
+        const std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE>& expected)
+        const {
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_payload_require_spec_sha256(
+                          handle_, expected.data(), &error),
+                      &error);
+    }
+
 private:
     friend class BuildPlan;
 
@@ -1058,6 +1202,15 @@ public:
     }
 
     ~Builder() { fdb_payload_v1_builder_release(handle_); }
+
+    void require_spec_sha256(
+        const std::array<std::uint8_t, FDB_PAYLOAD_V1_SHA256_SIZE>& expected)
+        const {
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_builder_require_spec_sha256(
+                          handle_, expected.data(), &error),
+                      &error);
+    }
 
     Builder& entry_begin(std::uint32_t index, std::uint64_t count) {
         fdb_payload_v1_error_t* error = nullptr;

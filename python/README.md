@@ -74,10 +74,11 @@ than recursively decoding one in Python.
 
 The wheel contains one native FastDB Core and Python projection source, not a
 second Python runtime. Python 3.10 compile/import and installed-wheel execution
-are package gates. Core-owned C++/Rust/Python/TypeScript codegen remains open
-through P4 Tasks 7-9; the historical Python-to-TypeScript generator described
-later in this document is a 0.1.x migration input, not portable-payload
-authority.
+are package gates. `CompiledSpec.generate(...)` returns the same Core-owned
+deterministic C++/Rust/Python/TypeScript ArtifactSet available to the other
+official projections. It never writes a destination tree. The historical
+Python-to-TypeScript generator described later in this document is a 0.1.x
+migration input, not portable-payload authority.
 
 ## Installation
 

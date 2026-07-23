@@ -75,6 +75,10 @@ private:
 };
 
 error::Result<void> validate_target(Target target);
+error::Result<void> validate_artifact_count(std::uint64_t artifact_count,
+                                            GenerationLimits limits);
+error::Result<void> validate_total_bytes(std::uint64_t total_bytes,
+                                         GenerationLimits limits);
 
 error::Result<ArtifactSet> make_artifact_set(
     Target target,

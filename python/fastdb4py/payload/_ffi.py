@@ -16,6 +16,7 @@ FIXED_RUN_SIZE = 96
 OPEN_OPTIONS_SIZE = 112
 PLAN_INFO_SIZE = 112
 EXECUTION_REPORT_SIZE = 72
+CODEGEN_OPTIONS_SIZE = 48
 BACKING_SIZE = 96
 
 Handle = ctypes.c_void_p
@@ -154,6 +155,16 @@ class ExecutionReportV1(ctypes.Structure):
     ]
 
 
+class CodegenOptionsV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_uint32),
+        ("flags", ctypes.c_uint32),
+        ("max_artifacts", ctypes.c_uint64),
+        ("max_total_bytes", ctypes.c_uint64),
+        ("reserved", ctypes.c_uint64 * 3),
+    ]
+
+
 class BackingV1(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_uint32),
@@ -179,6 +190,8 @@ if ctypes.sizeof(PlanInfoV2) != PLAN_INFO_SIZE:
     raise ImportError("FastDB plan-info ABI layout mismatch")
 if ctypes.sizeof(ExecutionReportV1) != EXECUTION_REPORT_SIZE:
     raise ImportError("FastDB execution-report ABI layout mismatch")
+if ctypes.sizeof(CodegenOptionsV1) != CODEGEN_OPTIONS_SIZE:
+    raise ImportError("FastDB codegen-options ABI layout mismatch")
 if ctypes.sizeof(BackingV1) != BACKING_SIZE:
     raise ImportError("FastDB backing ABI layout mismatch")
 
@@ -242,6 +255,10 @@ def _declare(library: ctypes.CDLL) -> None:
         ctypes.POINTER(ExecutionReportV1)
     ]
     library.fdb_payload_v1_execution_report_init.restype = None
+    library.fdb_payload_v1_codegen_options_init.argtypes = [
+        ctypes.POINTER(CodegenOptionsV1)
+    ]
+    library.fdb_payload_v1_codegen_options_init.restype = None
     library.fdb_payload_v1_backing_init.argtypes = [ctypes.POINTER(BackingV1)]
     library.fdb_payload_v1_backing_init.restype = None
 
@@ -257,6 +274,50 @@ def _declare(library: ctypes.CDLL) -> None:
     library.fdb_payload_v1_spec_retain.restype = None
     library.fdb_payload_v1_spec_release.argtypes = [Handle]
     library.fdb_payload_v1_spec_release.restype = None
+    library.fdb_payload_v1_spec_codegen.argtypes = [
+        Handle,
+        ctypes.c_uint64,
+        ctypes.POINTER(CodegenOptionsV1),
+        HandlePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_spec_codegen.restype = ctypes.c_uint32
+    library.fdb_payload_v1_codegen_result_retain.argtypes = [Handle]
+    library.fdb_payload_v1_codegen_result_retain.restype = None
+    library.fdb_payload_v1_codegen_result_release.argtypes = [Handle]
+    library.fdb_payload_v1_codegen_result_release.restype = None
+    library.fdb_payload_v1_codegen_result_artifact_count.argtypes = [
+        Handle,
+        ctypes.POINTER(ctypes.c_uint64),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_codegen_result_artifact_count.restype = ctypes.c_uint32
+    for name in (
+        "fdb_payload_v1_codegen_result_artifact_relative_path",
+        "fdb_payload_v1_codegen_result_artifact_bytes",
+    ):
+        function = getattr(library, name)
+        function.argtypes = [
+            Handle,
+            ctypes.c_uint64,
+            HandlePointer,
+            HandlePointer,
+        ]
+        function.restype = ctypes.c_uint32
+    library.fdb_payload_v1_codegen_result_artifact_kind.argtypes = [
+        Handle,
+        ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint32),
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_codegen_result_artifact_kind.restype = ctypes.c_uint32
+    library.fdb_payload_v1_codegen_result_artifact_sha256.argtypes = [
+        Handle,
+        ctypes.c_uint64,
+        BytePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_codegen_result_artifact_sha256.restype = ctypes.c_uint32
 
     for name in (
         "fdb_payload_v1_spec_canonical_json",
@@ -360,6 +421,12 @@ def _declare(library: ctypes.CDLL) -> None:
     library.fdb_payload_v1_builder_create.restype = ctypes.c_uint32
     library.fdb_payload_v1_builder_release.argtypes = [Handle]
     library.fdb_payload_v1_builder_release.restype = None
+    library.fdb_payload_v1_builder_require_spec_sha256.argtypes = [
+        Handle,
+        BytePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_require_spec_sha256.restype = ctypes.c_uint32
     library.fdb_payload_v1_builder_entry_begin.argtypes = [
         Handle,
         ctypes.c_uint32,
@@ -484,6 +551,12 @@ def _declare(library: ctypes.CDLL) -> None:
     library.fdb_payload_v1_payload_retain.restype = None
     library.fdb_payload_v1_payload_release.argtypes = [Handle]
     library.fdb_payload_v1_payload_release.restype = None
+    library.fdb_payload_v1_payload_require_spec_sha256.argtypes = [
+        Handle,
+        BytePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_payload_require_spec_sha256.restype = ctypes.c_uint32
     library.fdb_payload_v1_payload_sha256.argtypes = [
         Handle,
         BytePointer,
@@ -528,6 +601,12 @@ def _declare(library: ctypes.CDLL) -> None:
     library.fdb_payload_v1_view_retain.restype = None
     library.fdb_payload_v1_view_release.argtypes = [Handle]
     library.fdb_payload_v1_view_release.restype = None
+    library.fdb_payload_v1_view_require_spec_sha256.argtypes = [
+        Handle,
+        BytePointer,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_view_require_spec_sha256.restype = ctypes.c_uint32
     for name, value_type in (
         ("fdb_payload_v1_view_kind", ctypes.c_uint32),
         ("fdb_payload_v1_view_is_null", ctypes.c_uint8),

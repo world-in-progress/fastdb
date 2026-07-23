@@ -5,6 +5,7 @@
 #include "payload/error/Result.hpp"
 #include "payload/spec/RuntimeTopology.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string_view>
@@ -72,6 +73,8 @@ public:
     error::Result<void> push_ref(ObjectHandle object);
     error::Result<LogicalPayload> freeze();
     error::Result<BuildPlan> freeze_plan();
+    error::Result<void>
+    require_spec_sha256(const std::array<std::uint8_t, 32>& expected) const;
 
 private:
     struct State;

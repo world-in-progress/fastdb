@@ -7,10 +7,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum
 import threading
-from typing import Callable, Iterator, Optional, Type, TypeVar
+from typing import TYPE_CHECKING, Callable, Iterator, Optional, Type, TypeVar
 
 from . import _ffi
 from ._error import PayloadError, binding_error
+
+if TYPE_CHECKING:
+    from ._codegen import ArtifactSet, CodegenOptions, CodegenTarget
 
 
 class Profile(IntEnum):
@@ -84,6 +87,13 @@ def _input_bytes(value: bytes) -> tuple[object, _ffi.BytePointer, int]:
         return copied, _ffi.BytePointer(), 0
     storage = (ctypes.c_uint8 * len(copied)).from_buffer_copy(copied)
     return storage, ctypes.cast(storage, _ffi.BytePointer), len(copied)
+
+
+def _input_digest(value: bytes) -> tuple[object, _ffi.BytePointer]:
+    storage, pointer, size = _input_bytes(value)
+    if size != _ffi.SHA256_SIZE:
+        raise ValueError(f"expected_sha256 must contain {_ffi.SHA256_SIZE} bytes")
+    return storage, pointer
 
 
 def _checked_u32(value: int, name: str) -> int:
@@ -236,6 +246,15 @@ class CompiledSpec:
             codegen_target_flags=int(raw.codegen_target_flags),
             direct_build_status=int(raw.direct_build_status),
         )
+
+    def generate(
+        self,
+        target: "CodegenTarget",
+        options: Optional["CodegenOptions"] = None,
+    ) -> "ArtifactSet":
+        from ._codegen import generate
+
+        return generate(self, target, options)
 
     def entry_count(self) -> int:
         return self._query_count("fdb_payload_v1_spec_entry_count")

@@ -465,6 +465,7 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
         JsonValue{"view"},
         JsonValue{"materialize"},
         JsonValue{"invalidate"},
+        JsonValue{"codegen"},
     };
     return JsonValue::object({
         JsonValue::Member{"schema",
@@ -503,7 +504,14 @@ JsonValue manifest_value(const ResolvedSpec& resolved,
                 JsonValue::Member{
                     "operations",
                     JsonValue::array(std::move(operations))},
-                JsonValue::Member{"codegen_targets", JsonValue::array({})},
+                JsonValue::Member{
+                    "codegen_targets",
+                    JsonValue::array({
+                        JsonValue{"cpp"},
+                        JsonValue{"rust"},
+                        JsonValue{"python"},
+                        JsonValue{"typescript"},
+                    })},
                 JsonValue::Member{
                     "direct_build",
                     JsonValue::object({
@@ -723,8 +731,8 @@ bool manifest_value_conforms(const JsonValue& manifest) {
         *array_value(*member(capability_object, "operations"));
     const JsonValue::Array& targets =
         *array_value(*member(capability_object, "codegen_targets"));
-    constexpr std::size_t expected_operations = 7U;
-    if (operations.size() != expected_operations || targets.size() != 0U ||
+    constexpr std::size_t expected_operations = 8U;
+    if (operations.size() != expected_operations || targets.size() != 4U ||
         string_value(operations[0]) == nullptr ||
         *string_value(operations[0]) != "compile" ||
         string_value(operations[1]) == nullptr ||
@@ -740,7 +748,17 @@ bool manifest_value_conforms(const JsonValue& manifest) {
         string_value(operations[5]) == nullptr ||
         *string_value(operations[5]) != "materialize" ||
         string_value(operations[6]) == nullptr ||
-        *string_value(operations[6]) != "invalidate") {
+        *string_value(operations[6]) != "invalidate" ||
+        string_value(operations[7]) == nullptr ||
+        *string_value(operations[7]) != "codegen" ||
+        string_value(targets[0]) == nullptr ||
+        *string_value(targets[0]) != "cpp" ||
+        string_value(targets[1]) == nullptr ||
+        *string_value(targets[1]) != "rust" ||
+        string_value(targets[2]) == nullptr ||
+        *string_value(targets[2]) != "python" ||
+        string_value(targets[3]) == nullptr ||
+        *string_value(targets[3]) != "typescript") {
         return false;
     }
     const JsonValue& direct = *member(capability_object, "direct_build");
@@ -784,8 +802,11 @@ Result<ManifestArtifact> build_manifest(
             FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
             FDB_PAYLOAD_OPERATION_VIEW |
             FDB_PAYLOAD_OPERATION_MATERIALIZE |
-            FDB_PAYLOAD_OPERATION_INVALIDATE,
-        UINT64_C(0),
+            FDB_PAYLOAD_OPERATION_INVALIDATE |
+            FDB_PAYLOAD_OPERATION_CODEGEN,
+        FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
+        FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
+            FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT,
         FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE,
         record ? "record_layout_exact"
                : "graph_layout_exact_after_freeze"};

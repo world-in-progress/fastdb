@@ -73,6 +73,21 @@ module P3RuntimeQuality
     fdb_payload_v1_view_ref_target
   ].freeze
 
+  P4_ABI_ADDITIONS = %w[
+    fdb_payload_v1_builder_require_spec_sha256
+    fdb_payload_v1_codegen_options_init
+    fdb_payload_v1_codegen_result_artifact_bytes
+    fdb_payload_v1_codegen_result_artifact_count
+    fdb_payload_v1_codegen_result_artifact_kind
+    fdb_payload_v1_codegen_result_artifact_relative_path
+    fdb_payload_v1_codegen_result_artifact_sha256
+    fdb_payload_v1_codegen_result_release
+    fdb_payload_v1_codegen_result_retain
+    fdb_payload_v1_payload_require_spec_sha256
+    fdb_payload_v1_spec_codegen
+    fdb_payload_v1_view_require_spec_sha256
+  ].freeze
+
   D1_KEYS = %w[status direct_test source report_fields facts].freeze
   D1_OPEN_STATUS = "open-until-task-10"
   D1_CLOSED_STATUS = "closed-task-10"
@@ -383,10 +398,15 @@ module P3RuntimeQuality
     check_traceability(document) if expected_d1_status == D1_CLOSED_STATUS
 
     symbols = ABI_ALLOWLIST.read.lines(chomp: true)
-    check_abi_symbols(symbols, symbols)
-    require_quality((P3_ABI_ADDITIONS - symbols).empty? &&
-                    (symbols - P3_ABI_ADDITIONS).length == 99,
-                    "ABI-105 must preserve 99 P2 exports and add exact P3 six")
+    require_quality(symbols.length == 117 &&
+                    symbols == symbols.uniq.sort &&
+                    (P4_ABI_ADDITIONS - symbols).empty?,
+                    "current ABI must be the sorted ABI-117 with exact P4 additions")
+    p3_symbols = symbols - P4_ABI_ADDITIONS
+    check_abi_symbols(p3_symbols, p3_symbols)
+    require_quality((P3_ABI_ADDITIONS - p3_symbols).empty? &&
+                    (p3_symbols - P3_ABI_ADDITIONS).length == 99,
+                    "historical ABI-105 must preserve 99 P2 exports and add exact P3 six")
 
     corpus = JSON.parse(CORPUS_MANIFEST.read).fetch("cases")
     corpus_files = CORPUS_DIRECTORY.children.select(&:file?).map do |path|

@@ -11,6 +11,12 @@ import {
   withInputBytes,
 } from './abi.js';
 import { PayloadError, bindingError, checkStatus } from './error.js';
+import {
+  ArtifactSet,
+  CodegenOptions,
+  CodegenTarget,
+  generateArtifacts,
+} from './codegen.js';
 
 export enum Profile {
   RecordV1 = 1,
@@ -175,6 +181,13 @@ export class CompiledSpec {
         );
       },
     );
+  }
+
+  generate(
+    target: CodegenTarget,
+    options = new CodegenOptions(),
+  ): ArtifactSet {
+    return generateArtifacts(this.requireHandle(), target, options);
   }
 
   entryCount(): number {

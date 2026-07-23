@@ -25,6 +25,7 @@
 #define FDB_PAYLOAD_V1_PLAN_INFO_V1_SIZE UINT32_C(104)
 #define FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE UINT32_C(112)
 #define FDB_PAYLOAD_V1_EXECUTION_REPORT_V1_SIZE UINT32_C(72)
+#define FDB_PAYLOAD_V1_CODEGEN_OPTIONS_V1_SIZE UINT32_C(48)
 #define FDB_PAYLOAD_V1_INVALID_OBJECT_HANDLE UINT64_C(0)
 
 #define FDB_PAYLOAD_BINARY_V1_HEADER_SIZE UINT32_C(128)
@@ -56,6 +57,14 @@
 #define FDB_PAYLOAD_OPERATION_VIEW (UINT64_C(1) << 4)
 #define FDB_PAYLOAD_OPERATION_MATERIALIZE (UINT64_C(1) << 5)
 #define FDB_PAYLOAD_OPERATION_INVALIDATE (UINT64_C(1) << 6)
+#define FDB_PAYLOAD_OPERATION_CODEGEN (UINT64_C(1) << 7)
+
+#define FDB_PAYLOAD_CODEGEN_TARGET_CPP (UINT64_C(1) << 0)
+#define FDB_PAYLOAD_CODEGEN_TARGET_RUST (UINT64_C(1) << 1)
+#define FDB_PAYLOAD_CODEGEN_TARGET_PYTHON (UINT64_C(1) << 2)
+#define FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT (UINT64_C(1) << 3)
+
+#define FDB_PAYLOAD_ARTIFACT_SOURCE UINT32_C(1)
 
 #define FDB_PAYLOAD_DIRECT_BUILD_NOT_EVALUATED UINT32_C(0)
 #define FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE UINT32_C(1)
@@ -153,6 +162,8 @@
 typedef uint32_t fdb_payload_v1_status_t;
 typedef uint32_t fdb_payload_v1_profile_t;
 typedef uint64_t fdb_payload_v1_object_handle_t;
+typedef uint64_t fdb_payload_v1_codegen_target_t;
+typedef uint32_t fdb_payload_v1_artifact_kind_t;
 
 typedef struct fdb_payload_v1_spec fdb_payload_v1_spec_t;
 typedef struct fdb_payload_v1_blob fdb_payload_v1_blob_t;
@@ -162,6 +173,7 @@ typedef struct fdb_payload_v1_plan fdb_payload_v1_plan_t;
 typedef struct fdb_payload_v1_payload fdb_payload_v1_payload_t;
 typedef struct fdb_payload_v1_view fdb_payload_v1_view_t;
 typedef struct fdb_payload_v1_access fdb_payload_v1_access_t;
+typedef struct fdb_payload_v1_codegen_result fdb_payload_v1_codegen_result_t;
 
 typedef struct fdb_payload_v1_compile_options {
     uint32_t struct_size;
@@ -243,6 +255,14 @@ typedef struct fdb_payload_v1_execution_report {
     uint64_t backing_capacity;
     uint64_t reserved64[2];
 } fdb_payload_v1_execution_report_t;
+
+typedef struct fdb_payload_v1_codegen_options {
+    uint32_t struct_size;
+    uint32_t flags;
+    uint64_t max_artifacts;
+    uint64_t max_total_bytes;
+    uint64_t reserved[3];
+} fdb_payload_v1_codegen_options_t;
 
 typedef struct fdb_payload_v1_fixed_run_v1 {
     uint32_t struct_size;
@@ -359,6 +379,9 @@ FDB_PAYLOAD_API void fdb_payload_v1_plan_info_init(
 /* Present output receives a zeroed V1 execution report; null is accepted. */
 FDB_PAYLOAD_API void fdb_payload_v1_execution_report_init(
     fdb_payload_v1_execution_report_t* report);
+/* Present output receives safe codegen-limit V1 defaults; null is accepted. */
+FDB_PAYLOAD_API void
+fdb_payload_v1_codegen_options_init(fdb_payload_v1_codegen_options_t* options);
 /* Present output receives target sizeof and null/zero members; null is accepted. */
 FDB_PAYLOAD_API void fdb_payload_v1_backing_init(
     fdb_payload_v1_backing_v1_t* backing);
@@ -387,6 +410,15 @@ FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_create(
     fdb_payload_v1_error_t** out_error);
 FDB_PAYLOAD_API void fdb_payload_v1_builder_release(
     fdb_payload_v1_builder_t* builder);
+/*
+ * Compares the builder's Core-owned spec identity with one digest borrowed
+ * only for this call. The check does not mutate or advance the builder.
+ */
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_builder_require_spec_sha256(
+    const fdb_payload_v1_builder_t* builder,
+    const uint8_t expected_sha256[FDB_PAYLOAD_V1_SHA256_SIZE],
+    fdb_payload_v1_error_t** out_error);
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_entry_begin(
     fdb_payload_v1_builder_t* builder,
     uint32_t entry_index,
@@ -546,6 +578,15 @@ FDB_PAYLOAD_API void fdb_payload_v1_payload_retain(
     fdb_payload_v1_payload_t* payload);
 FDB_PAYLOAD_API void fdb_payload_v1_payload_release(
     fdb_payload_v1_payload_t* payload);
+/*
+ * Compares the payload's Core-owned spec identity with one digest borrowed
+ * only for this call. The identity remains queryable after invalidation.
+ */
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_payload_require_spec_sha256(
+    const fdb_payload_v1_payload_t* payload,
+    const uint8_t expected_sha256[FDB_PAYLOAD_V1_SHA256_SIZE],
+    fdb_payload_v1_error_t** out_error);
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_payload_sha256(
     const fdb_payload_v1_payload_t* payload,
     uint8_t out_digest[FDB_PAYLOAD_V1_SHA256_SIZE],
@@ -607,6 +648,14 @@ FDB_PAYLOAD_API void fdb_payload_v1_view_retain(
     fdb_payload_v1_view_t* view);
 FDB_PAYLOAD_API void fdb_payload_v1_view_release(
     fdb_payload_v1_view_t* view);
+/*
+ * Compares the retained Core spec identity of a backed or detached view with
+ * one digest borrowed only for this call. It exposes no backing span.
+ */
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_require_spec_sha256(
+    const fdb_payload_v1_view_t* view,
+    const uint8_t expected_sha256[FDB_PAYLOAD_V1_SHA256_SIZE],
+    fdb_payload_v1_error_t** out_error);
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_view_kind(
     const fdb_payload_v1_view_t* view,
     uint32_t* out_kind,
@@ -760,6 +809,47 @@ FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_spec_compile_json(
 /* Null is accepted. Each retain owns one matching release. */
 FDB_PAYLOAD_API void fdb_payload_v1_spec_retain(fdb_payload_v1_spec_t* spec);
 FDB_PAYLOAD_API void fdb_payload_v1_spec_release(fdb_payload_v1_spec_t* spec);
+
+/*
+ * Codegen returns one immutable, target-homogeneous ArtifactSet. The options
+ * prefix and result output are required. A target contains exactly one known
+ * target bit. Result handles are atomically retained and read-only queries are
+ * thread-safe while each caller owns a live reference. Artifact path and bytes
+ * queries return fresh owned blobs that outlive the result handle. Every
+ * present result/query output is cleared before validation, including when the
+ * required error-output location is null.
+ */
+FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_spec_codegen(
+    const fdb_payload_v1_spec_t* spec, fdb_payload_v1_codegen_target_t target,
+    const fdb_payload_v1_codegen_options_t* options,
+    fdb_payload_v1_codegen_result_t** out_result,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API void
+fdb_payload_v1_codegen_result_retain(fdb_payload_v1_codegen_result_t* result);
+FDB_PAYLOAD_API void
+fdb_payload_v1_codegen_result_release(fdb_payload_v1_codegen_result_t* result);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_codegen_result_artifact_count(
+    const fdb_payload_v1_codegen_result_t* result, uint64_t* out_count,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_codegen_result_artifact_relative_path(
+    const fdb_payload_v1_codegen_result_t* result, uint64_t artifact_index,
+    fdb_payload_v1_blob_t** out_path, fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_codegen_result_artifact_kind(
+    const fdb_payload_v1_codegen_result_t* result, uint64_t artifact_index,
+    fdb_payload_v1_artifact_kind_t* out_kind,
+    fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_codegen_result_artifact_bytes(
+    const fdb_payload_v1_codegen_result_t* result, uint64_t artifact_index,
+    fdb_payload_v1_blob_t** out_bytes, fdb_payload_v1_error_t** out_error);
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_codegen_result_artifact_sha256(
+    const fdb_payload_v1_codegen_result_t* result, uint64_t artifact_index,
+    uint8_t out_digest[FDB_PAYLOAD_V1_SHA256_SIZE],
+    fdb_payload_v1_error_t** out_error);
 
 /*
  * Immutable spec queries are thread-safe. Each blob output is a fresh owned

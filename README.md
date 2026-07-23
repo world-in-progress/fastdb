@@ -9,12 +9,14 @@
 ## Portable payload status and 0.2.0 direction
 
 The current tree implements the P1 `fastdb.payload.v1` compiler/query Core,
-the P2 non-reference `record.v1` runtime, and the complete ordinary P3
-`object_graph.v1` Core/runtime path for C and C++. The pure-C boundary is
-locally frozen at exactly 105 `fdb_payload_v1_*` exports: the original 99 P2
-symbols plus six graph authoring/navigation functions. The frozen P2
-sub-boundary remains exactly 99 `fdb_payload_v1_*` exports; P3 does not rewrite
-their meaning. The combined surface covers all V1
+the P2 non-reference `record.v1` runtime, the complete ordinary P3
+`object_graph.v1` Core/runtime, and the public P4 four-language artifact
+generator. The pure-C boundary is now locally frozen at exactly 117
+`fdb_payload_v1_*` exports: the historical P3 boundary remains exactly 105,
+and P4 adds only the reviewed three provenance guards plus nine immutable
+ArtifactSet/codegen functions. The frozen P2 sub-boundary remains exactly 99;
+that is exactly 99 `fdb_payload_v1_*` exports, and neither P3 nor P4 rewrites
+its meaning. The combined runtime surface covers all V1
 values and nullability, graph roots/refs, sharing and cycles, immutable
 repeatable plans, truthful direct/staged heap and external final backing,
 hardened copy/external open, checked views and scoped access, detached
@@ -42,19 +44,23 @@ inferred from the single-thread proof; native tests plus ThreadSanitizer remain
 the concurrency authority. Hosted Linux/macOS results remain pending because
 this branch has not been pushed.
 
-P4 Tasks 1-6 now provide safe Rust, Python 3.10+, and official
+P4 Tasks 1-8 now provide safe Rust, Python 3.10+, and official
 TypeScript/WASM portable projections over the unchanged C ABI alongside the
 existing C++ facade. Their shared executable map covers canonical identity,
 record and graph binary bytes, complete logical values, five-field errors,
 ownership/invalidation/materialization, and truthful direct/staged execution.
 Rust source/system link seams, installed Python wheels, and the packed
-browser-capable `fastdb4ts/payload` subpath are locally exercised. The C++ Core
-remains the only semantic authority; none of these bindings contains a second
-parser, canonicalizer, digest, layout, binary, graph, or materialization model.
+browser-capable `fastdb4ts/payload` subpath are locally exercised. Core-owned four-language
+code generation returns deterministic in-memory C++/Rust/Python/
+TypeScript artifacts through every projection; a clean-tree harness compiles,
+imports, type-checks, and executes all four against their official runtimes.
+The C++ Core remains the only semantic authority; none of the bindings or
+generated outputs contains a second parser, canonicalizer, digest, layout,
+binary, graph, or materialization model.
 
-Core-owned four-language code generation remains open for P4 Tasks 7-9. P5
-legacy authority removal, `RecordEngine` clean rename, release readiness, and
-later downstream composition also remain open. Those non-deferrable gaps are
+P4 Task 9 robustness/documentation closure remains open. P5 legacy authority
+removal, `RecordEngine` clean rename, release readiness, and later downstream
+composition also remain open. Those non-deferrable gaps are
 tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 No local result or workflow definition is represented as a hosted pass; the
@@ -86,7 +92,7 @@ This repository now contains three closely related layers:
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — the 0.2.0 target makes the C++ Core, rather than a language binding, the semantic authority
 - **Schema-driven codegen** — the target Core returns deterministic C++/Rust/Python/TypeScript payload artifacts in memory
-- **Portable record and object-graph runtime** — P1 provides canonical identity, P2 provides the frozen record path, and P3 provides the locally frozen C/C++ graph build/open/view/materialize/invalidate path with truthful direct/staged execution at the exact 105-symbol boundary; P4-P5 remain open
+- **Portable record, object-graph runtime, and codegen** — P1 provides canonical identity, P2 provides the frozen record path, P3 provides the frozen C/C++ graph build/open/view/materialize/invalidate path at the historical 105-symbol boundary, and P4 adds equal language projections plus Core-owned four-target codegen at the exact 117-symbol boundary; P4 robustness closure and P5 remain open
 
 ## Documentation map
 

@@ -1,6 +1,13 @@
 """Official Python projection of the FastDB portable-payload Core."""
 
 from ._error import PayloadError
+from ._codegen import (
+    Artifact,
+    ArtifactKind,
+    ArtifactSet,
+    CodegenOptions,
+    CodegenTarget,
+)
 from ._builder import (
     BuildPlan,
     Builder,
@@ -30,6 +37,9 @@ from ._runtime import (
 
 __all__ = [
     "Access",
+    "Artifact",
+    "ArtifactKind",
+    "ArtifactSet",
     "BuildPlan",
     "BackingStatus",
     "BuildPolicy",
@@ -38,6 +48,8 @@ __all__ = [
     "BuilderOptions",
     "Capabilities",
     "CompiledSpec",
+    "CodegenOptions",
+    "CodegenTarget",
     "FixedRun",
     "ExecutionMode",
     "ExecutionReport",

@@ -7,13 +7,15 @@ This directory contains the native implementation that the higher-level bindings
 > frozen P3 ordinary `object_graph.v1` runtime. Graph support includes every V1
 > value, roots/refs, sharing/cycles, exact profile-2 bytes and hardened open,
 > truthful direct/staged backing, checked views/invalidation, and detached
-> reachable-closure materialization. The public C ABI contains exactly 105
-> reviewed `fdb_payload_v1_*` symbols, and the C++17 facade projects that ABI.
+> reachable-closure materialization. P4 adds Core-owned deterministic
+> C++/Rust/Python/TypeScript codegen and equal public projections. The public C
+> ABI now contains exactly 117 reviewed `fdb_payload_v1_*` symbols: the frozen
+> P3 ABI-105 plus exactly twelve additive provenance/codegen exports. The
+> C++17 facade projects that ABI.
 > D1 is closed by executable no-full-image evidence and the complete local P3
 > gate is green. The user-authorized final review was performed by the
-> context-owning primary agent and is not claimed as independent. P4-P5,
-> hosted CI, Rust/Python/official TypeScript portable projections, codegen, and
-> the 0.2.0 release remain open. See the [current status
+> context-owning primary agent and is not claimed as independent. P4 Task 9,
+> P5, hosted CI, and the 0.2.0 release remain open. See the [current status
 > issue](../docs/issues/0002-portable-payload-foundation-implementation-status.md)
 > and [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
 
@@ -60,7 +62,8 @@ The current 0.1.x storage API lives in:
 
 The implemented portable surface adds the stable C header
 `fastdb_payload.h` and the thin C++ RAII facade `fastdb_payload.hpp`. Both
-expose the P1 compile/query, P2 record, and P3 graph runtime/lifetime families;
+expose the P1 compile/query, P2 record, P3 graph runtime/lifetime, and P4
+provenance/ArtifactSet/codegen families;
 neither facade owns independent topology, wire-format, planning,
 materialization, or lifetime semantics.
 

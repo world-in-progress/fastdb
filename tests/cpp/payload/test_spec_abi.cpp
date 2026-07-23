@@ -285,7 +285,11 @@ int test_compile_and_every_query_round_trip() {
     require(!blob_view(canonical).empty());
     require(!blob_view(manifest).empty());
     require(blob_view(manifest).find(
-                "\"operations\":[\"compile\",\"query\",\"build\",\"open\",\"view\",\"materialize\",\"invalidate\"]") !=
+                "\"operations\":[\"compile\",\"query\",\"build\",\"open\","
+                "\"view\",\"materialize\",\"invalidate\",\"codegen\"]") !=
+            std::string_view::npos);
+    require(blob_view(manifest).find("\"codegen_targets\":[\"cpp\",\"rust\","
+                                     "\"python\",\"typescript\"]") !=
             std::string_view::npos);
     require(blob_view(manifest).find(
                 "\"runtime\":{\"fixed_width_values_only\":false") !=
@@ -318,10 +322,12 @@ int test_compile_and_every_query_round_trip() {
     require(capabilities.operation_flags ==
             (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
              FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
-             FDB_PAYLOAD_OPERATION_VIEW |
-             FDB_PAYLOAD_OPERATION_MATERIALIZE |
-             FDB_PAYLOAD_OPERATION_INVALIDATE));
-    require(capabilities.codegen_target_flags == UINT64_C(0));
+             FDB_PAYLOAD_OPERATION_VIEW | FDB_PAYLOAD_OPERATION_MATERIALIZE |
+             FDB_PAYLOAD_OPERATION_INVALIDATE | FDB_PAYLOAD_OPERATION_CODEGEN));
+    require(capabilities.codegen_target_flags ==
+            (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
+             FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT));
     require(capabilities.direct_build_status ==
             FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
 
@@ -1511,13 +1517,13 @@ int test_sixteen_thread_query_consistency() {
                 }
                 if (ok &&
                     (fdb_payload_v1_spec_capabilities(
-                        spec, &capabilities, &local_error) != UINT32_C(0) ||
+                         spec, &capabilities, &local_error) != UINT32_C(0) ||
                      capabilities.struct_size !=
                          FDB_PAYLOAD_V1_CAPABILITIES_V1_SIZE ||
                      capabilities.profile != FDB_PAYLOAD_PROFILE_RECORD_V1 ||
                      capabilities.semantic_flags != UINT64_C(27) ||
-                     capabilities.operation_flags != UINT64_C(127) ||
-                     capabilities.codegen_target_flags != UINT64_C(0) ||
+                     capabilities.operation_flags != UINT64_C(255) ||
+                     capabilities.codegen_target_flags != UINT64_C(15) ||
                      capabilities.direct_build_status !=
                          FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE)) {
                     ok = false;

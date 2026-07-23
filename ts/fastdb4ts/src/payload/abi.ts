@@ -70,6 +70,17 @@ export function withInputBytes<T>(
   });
 }
 
+export function withSha256<T>(
+  module: FastdbModule,
+  digest: Uint8Array,
+  operation: (pointer: number) => T,
+): T {
+  if (!(digest instanceof Uint8Array) || digest.byteLength !== SHA256_SIZE) {
+    throw new RangeError(`expectedSha256 must contain ${SHA256_SIZE} bytes`);
+  }
+  return withInputBytes(module, digest, (pointer) => operation(pointer));
+}
+
 export function withInputU16<T>(
   module: FastdbModule,
   units: Uint16Array,

@@ -48,17 +48,17 @@ std::string suffix(Target target) {
 }
 
 std::string render(const spec::CompiledSpec& compiled,
-                   const spec::RuntimeTopology& topology,
-                   Target target) {
+                   const spec::RuntimeTopology& topology, Target target,
+                   std::uint64_t max_total_bytes) {
     switch (target) {
     case Target::cpp:
-        return render_cpp(compiled, topology);
+        return render_cpp(compiled, topology, max_total_bytes);
     case Target::rust:
-        return render_rust(compiled, topology);
+        return render_rust(compiled, topology, max_total_bytes);
     case Target::python:
-        return render_python(compiled, topology);
+        return render_python(compiled, topology, max_total_bytes);
     case Target::typescript:
-        return render_typescript(compiled, topology);
+        return render_typescript(compiled, topology, max_total_bytes);
     }
     return {};
 }
@@ -73,6 +73,11 @@ Result<ArtifactSet> generate(const spec::CompiledSpec& compiled,
         if (!valid_target.has_value()) {
             return Result<ArtifactSet>::failure(
                 std::move(valid_target).error());
+        }
+
+        auto valid_count = validate_artifact_count(UINT64_C(1), limits);
+        if (!valid_count.has_value()) {
+            return Result<ArtifactSet>::failure(std::move(valid_count).error());
         }
 
         auto topology =
@@ -92,10 +97,23 @@ Result<ArtifactSet> generate(const spec::CompiledSpec& compiled,
         relative_path += digest;
         relative_path += suffix(target);
 
+        std::string rendered;
+        try {
+            rendered = render(compiled, topology.value(), target,
+                              limits.max_total_bytes);
+        } catch (const OutputLimitExceeded& exceeded) {
+            auto valid_bytes = validate_total_bytes(exceeded.actual, limits);
+            if (!valid_bytes.has_value()) {
+                return Result<ArtifactSet>::failure(
+                    std::move(valid_bytes).error());
+            }
+            return Result<ArtifactSet>::failure(
+                generator_failure("renderer_limit_invariant"));
+        }
         std::vector<ArtifactDraft> drafts;
-        drafts.push_back(ArtifactDraft{
-            std::move(relative_path), ArtifactKind::source,
-            render(compiled, topology.value(), target)});
+        drafts.push_back(ArtifactDraft{std::move(relative_path),
+                                       ArtifactKind::source,
+                                       std::move(rendered)});
         return make_artifact_set(target, std::move(drafts), limits);
     } catch (const std::bad_alloc&) {
         return Result<ArtifactSet>::failure(

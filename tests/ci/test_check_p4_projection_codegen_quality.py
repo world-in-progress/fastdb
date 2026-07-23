@@ -36,6 +36,19 @@ def proof(language: str) -> dict[str, object]:
     }
 
 
+def codegen_proofs(target: str) -> list[dict[str, object]]:
+    return [
+        {
+            "id": proof_id,
+            "file": f"{target}-{proof_id}.source",
+            "language": "python",
+            "test": f"test_{target}_{proof_id.replace('-', '_')}",
+            "markers": [f"{target}-{proof_id}-marker"],
+        }
+        for proof_id in MODULE.CODEGEN_PROOF_IDS
+    ]
+
+
 def valid_document() -> dict[str, object]:
     return {
         "schema": MODULE.SCHEMA,
@@ -45,9 +58,9 @@ def valid_document() -> dict[str, object]:
         },
         "abi": {
             "version": 1,
-            "symbol_count": 105,
+            "symbol_count": 117,
             "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
-            "status": "frozen-p3",
+            "status": "frozen-p4-task-8",
         },
         "runtime_receipts": [
             {
@@ -79,7 +92,11 @@ def valid_document() -> dict[str, object]:
             "hosted_status": "pending",
         },
         "codegen": [
-            {"target": target, "status": "open", "proofs": []}
+            {
+                "target": target,
+                "status": "closed-task-8",
+                "proofs": codegen_proofs(target),
+            }
             for target in MODULE.CODEGEN_TARGETS
         ],
     }
@@ -213,16 +230,39 @@ class ProjectionMapTests(unittest.TestCase):
                 with self.assertRaises(MODULE.QualityError):
                     MODULE.check_proof_sources(document, readers.__getitem__)
 
-    def test_rejects_non_open_reordered_or_fabricated_codegen_rows(self) -> None:
+    def test_rejects_incomplete_reordered_or_fabricated_codegen_rows(self) -> None:
         for mutate in (
-            lambda rows: rows[0].__setitem__("status", "closed"),
-            lambda rows: rows[0].__setitem__("proofs", ["invented"]),
+            lambda rows: rows[0].__setitem__("status", "open"),
+            lambda rows: rows[0]["proofs"].pop(),
+            lambda rows: rows[0]["proofs"][0].__setitem__("id", "invented"),
             lambda rows: rows.__setitem__(slice(0, 2), list(reversed(rows[:2]))),
         ):
             document = valid_document()
             mutate(document["codegen"])
             with self.assertRaises(MODULE.QualityError):
                 MODULE.check_map(document)
+
+    def test_codegen_sources_are_executable_and_marker_scoped(self) -> None:
+        document = valid_document()
+        sources: dict[str, str] = {}
+        for row in document["codegen"]:
+            for proof in row["proofs"]:
+                name = proof["test"]
+                marker = proof["markers"][0]
+                invocation = (
+                    f"\n{name}()\n"
+                    if proof["id"] == "generated-execution"
+                    else ""
+                )
+                sources[proof["file"]] = (
+                    f"def {name}():\n    pass  # {marker}{invocation}"
+                )
+        MODULE.check_codegen_sources(document, sources.__getitem__)
+
+        first = document["codegen"][0]["proofs"][0]
+        sources[first["file"]] = f"def {first['test']}():\n    pass"
+        with self.assertRaises(MODULE.QualityError):
+            MODULE.check_codegen_sources(document, sources.__getitem__)
 
     def test_rejects_incomplete_package_or_workflow_inventory(self) -> None:
         document = valid_document()
@@ -239,6 +279,7 @@ class ProjectionMapTests(unittest.TestCase):
             [
                 "  rust_payload:",
                 "  projection_parity:",
+                "  generated_projections:",
                 *(f"- '{path}'" for path in MODULE.WORKFLOW_QUALITY_PATHS),
                 *(
                     marker
@@ -247,6 +288,12 @@ class ProjectionMapTests(unittest.TestCase):
                 ),
                 "check_p4_projection_codegen_quality.py --check-repository",
                 "check_p4_projection_codegen_quality.py --validate-results",
+                "test_run_generated_payload_projections.py",
+                "run_generated_payload_projections.py",
+                "FASTDB_PAYLOAD_LIBRARY",
+                "npm --prefix ts/fastdb4ts run build:wasm",
+                "fastdb_payload_test_codegen_c_abi.js",
+                "fastdb_payload_test_cpp_facade.js",
             ]
         )
         MODULE.check_workflow(document, workflow)
@@ -285,9 +332,16 @@ class ProjectionMapTests(unittest.TestCase):
             environment["PROJECTION_PARITY_RESULT"] = (
                 "success" if any(active.values()) else "skipped"
             )
+            environment["GENERATED_PROJECTIONS_RESULT"] = (
+                "success" if any(active.values()) else "skipped"
+            )
             MODULE.check_workflow_results(environment)
 
-            for key in ("RUST_PAYLOAD_RESULT", "PROJECTION_PARITY_RESULT"):
+            for key in (
+                "RUST_PAYLOAD_RESULT",
+                "PROJECTION_PARITY_RESULT",
+                "GENERATED_PROJECTIONS_RESULT",
+            ):
                 wrong = dict(environment)
                 wrong[key] = (
                     "skipped" if environment[key] == "success" else "success"
@@ -317,7 +371,7 @@ class ProjectionMapTests(unittest.TestCase):
                 MODULE.check_issue_truth(f"{accepted}\n{false_claim}")
 
     def test_rejects_abi_count_order_or_shape_drift(self) -> None:
-        exact = [f"fdb_payload_v1_symbol_{index:03d}" for index in range(105)]
+        exact = [f"fdb_payload_v1_symbol_{index:03d}" for index in range(117)]
         MODULE.check_abi_allowlist("\n".join(exact))
         for invalid in (exact[:-1], list(reversed(exact)), exact[:-1] + ["bad"]):
             with self.assertRaises(MODULE.QualityError):

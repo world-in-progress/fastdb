@@ -179,6 +179,19 @@ impl Builder {
             })
     }
 
+    pub fn require_spec_sha256(&self, expected: &[u8; 32]) -> Result<(), PayloadError> {
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live, expected has the required fixed length, and error is valid.
+        let status = unsafe {
+            sys::fdb_payload_v1_builder_require_spec_sha256(
+                self.raw.as_ptr(),
+                expected.as_ptr(),
+                &mut error,
+            )
+        };
+        check_status(status, error)
+    }
+
     pub fn entry_begin(
         &mut self,
         entry_index: u32,

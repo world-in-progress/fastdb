@@ -5,7 +5,9 @@
 #include "payload/identity/Sha256.hpp"
 #include "payload/spec/Model.hpp"
 
+#include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -55,8 +57,7 @@ ScalarGetter python_scalar_getter(TypeKind kind) noexcept {
     return {};
 }
 
-void append_provenance(std::string& output,
-                       std::string_view digest) {
+void append_provenance(CheckedOutput& output, std::string_view digest) {
     output += "# generated-by: ";
     output += generator_version;
     output += "\n";
@@ -70,7 +71,19 @@ void append_provenance(std::string& output,
     output += "# target: python\n";
 }
 
-void append_metadata(std::string& output,
+void append_digest_bytes(CheckedOutput& output,
+                         const std::array<std::uint8_t, 32>& digest) {
+    output += "PAYLOAD_SHA256_BYTES = bytes([";
+    for (std::size_t index = 0U; index < digest.size(); ++index) {
+        if (index != 0U) {
+            output += ", ";
+        }
+        output += std::to_string(digest[index]);
+    }
+    output += "])\n\n";
+}
+
+void append_metadata(CheckedOutput& output,
                      const spec::ResolvedSpec& resolved) {
     output +=
         "@dataclass(frozen=True)\n"
@@ -131,8 +144,7 @@ void append_metadata(std::string& output,
     output += ")\n\n";
 }
 
-void append_entry(std::string& output,
-                  const Entry& entry,
+void append_entry(CheckedOutput& output, const Entry& entry,
                   spec::Profile profile) {
     const std::string symbol =
         project_identifier(Target::python, entry.id);
@@ -146,7 +158,8 @@ void append_entry(std::string& output,
         ":\n"
         "    def __init__(self, view: View, token: object) -> None:\n"
         "        if token is not _fastdb_entry_view_token:\n"
-        "            raise TypeError('FastDB generated entry views require owned construction')\n"
+        "            raise TypeError('FastDB generated entry views require "
+        "owned construction')\n"
         "        self._view = view\n\n"
         "    def generic_view(self) -> View:\n"
         "        return self._view.clone()\n\n"
@@ -157,26 +170,30 @@ void append_entry(std::string& output,
     if (entry.type.kind == TypeKind::ref) {
         output +=
             "    def at_ref_target(self, index: int) -> View:\n"
-            "        return self.at(index).ref_target()\n\n";
+            "        with self.at(index) as view:\n"
+            "            return view.ref_target()\n\n";
     }
     if (profile == spec::Profile::object_graph_v1 &&
         entry.type.kind == TypeKind::component) {
         output +=
             "    def at_graph_identity(self, index: int) -> GraphIdentity:\n"
-            "        return self.at(index).graph_identity()\n\n";
+            "        with self.at(index) as view:\n"
+            "            return view.graph_identity()\n\n";
     }
     output += "    def materialize(self) -> '";
     output += type;
-    output +=
-        "':\n"
-        "        return type(self)(self._view.materialize(), _fastdb_entry_view_token)\n\n"
-        "    def close(self) -> None:\n"
-        "        self._view.close()\n\n"
-        "def ";
+    output += "':\n"
+              "        return type(self)(self._view.materialize(), "
+              "_fastdb_entry_view_token)\n\n"
+              "    def close(self) -> None:\n"
+              "        self._view.close()\n\n"
+              "def ";
     output += symbol;
     output += "_from_payload(payload: Payload) -> ";
     output += type;
-    output += ":\n    return ";
+    output += ":\n"
+              "    payload.require_spec_sha256(PAYLOAD_SHA256_BYTES)\n"
+              "    return ";
     output += type;
     output += "(payload.entry_view(";
     output += symbol;
@@ -186,13 +203,13 @@ void append_entry(std::string& output,
     output += symbol;
     output +=
         "_builder_entry_begin(builder: Builder, value_count: int) -> Builder:\n"
+        "    builder.require_spec_sha256(PAYLOAD_SHA256_BYTES)\n"
         "    return builder.entry_begin(";
     output += symbol;
     output += "_entry_index, value_count)\n\n";
 }
 
-void append_component(std::string& output,
-                      const Component& component,
+void append_component(CheckedOutput& output, const Component& component,
                       bool is_identity) {
     const std::string symbol =
         project_identifier(Target::python, component.id);
@@ -203,18 +220,18 @@ void append_component(std::string& output,
     output += std::to_string(component.index);
     output += "\n\nclass ";
     output += type;
-    output +=
-        ":\n"
-        "    def __init__(self, view: View, token: object) -> None:\n"
-        "        if token is not _fastdb_component_view_token:\n"
-        "            raise TypeError('FastDB generated component views require checked construction')\n"
-        "        self._view = view\n\n"
-        "    @classmethod\n"
-        "    def try_from_view(cls, view: View) -> '";
+    output += ":\n"
+              "    def __init__(self, view: View, token: object) -> None:\n"
+              "        if token is not _fastdb_component_view_token:\n"
+              "            raise TypeError('FastDB generated component views "
+              "require checked construction')\n"
+              "        self._view = view\n\n"
+              "    @classmethod\n"
+              "    def try_from_view(cls, view: View) -> '";
     output += type;
-    output +=
-        " | None':\n"
-        "        if view.component_index() != ";
+    output += " | None':\n"
+              "        view.require_spec_sha256(PAYLOAD_SHA256_BYTES)\n"
+              "        if view.component_index() != ";
     output += symbol;
     output +=
         "_component_index:\n"
@@ -229,11 +246,11 @@ void append_component(std::string& output,
     }
     output += "    def materialize(self) -> '";
     output += type;
-    output +=
-        "':\n"
-        "        return type(self)(self._view.materialize(), _fastdb_component_view_token)\n\n"
-        "    def close(self) -> None:\n"
-        "        self._view.close()\n\n";
+    output += "':\n"
+              "        return type(self)(self._view.materialize(), "
+              "_fastdb_component_view_token)\n\n"
+              "    def close(self) -> None:\n"
+              "        self._view.close()\n\n";
     for (const Field& field : component.fields) {
         const std::string field_symbol =
             project_identifier(Target::python, field.id);
@@ -252,26 +269,26 @@ void append_component(std::string& output,
             output += field_symbol;
             output += "_value(self) -> ";
             output += scalar.type;
-            output += ":\n        return self.";
+            output += ":\n        with self.";
             output += field_symbol;
-            output += "().";
+            output += "() as view:\n            return view.";
             output += scalar.method;
             output += "()\n\n";
         }
         if (field.type.kind == TypeKind::ref) {
             output += "    def ";
             output += field_symbol;
-            output += "_ref_target(self) -> View:\n        return self.";
+            output += "_ref_target(self) -> View:\n        with self.";
             output += field_symbol;
-            output += "().ref_target()\n\n";
+            output += "() as view:\n            return view.ref_target()\n\n";
         }
     }
     if (is_identity) {
         output += "def ";
         output += symbol;
-        output +=
-            "_builder_declare(builder: Builder) -> ObjectHandle:\n"
-            "    return builder.declare_object(";
+        output += "_builder_declare(builder: Builder) -> ObjectHandle:\n"
+                  "    builder.require_spec_sha256(PAYLOAD_SHA256_BYTES)\n"
+                  "    return builder.declare_object(";
         output += symbol;
         output += "_component_index)\n\n";
     }
@@ -280,11 +297,11 @@ void append_component(std::string& output,
 }  // namespace
 
 std::string render_python(const spec::CompiledSpec& compiled,
-                          const spec::RuntimeTopology& topology) {
-    const std::string digest =
-        identity::sha256_lower_hex(compiled.digest());
+                          const spec::RuntimeTopology& topology,
+                          std::uint64_t max_total_bytes) {
+    const std::string digest = identity::sha256_lower_hex(compiled.digest());
     const spec::ResolvedSpec& resolved = compiled.resolved();
-    std::string output;
+    CheckedOutput output(max_total_bytes);
     output.reserve(compiled.canonical_bytes().size() + 4096U);
     append_provenance(output, digest);
     output +=
@@ -315,9 +332,10 @@ std::string render_python(const spec::CompiledSpec& compiled,
     output += compiled.canonical_bytes();
     output += "'\nPAYLOAD_SHA256 = '";
     output += digest;
-    output +=
-        "'\n\ndef compile_spec() -> CompiledSpec:\n"
-        "    return CompiledSpec.compile(CANONICAL_SOURCE)\n\n";
+    output += "'\n";
+    append_digest_bytes(output, compiled.digest());
+    output += "def compile_spec() -> CompiledSpec:\n"
+              "    return CompiledSpec.compile(CANONICAL_SOURCE)\n\n";
     append_metadata(output, resolved);
     for (const Entry& entry : resolved.entries()) {
         append_entry(output, entry, resolved.profile());
@@ -331,7 +349,7 @@ std::string render_python(const spec::CompiledSpec& compiled,
         output.compare(output.size() - 2U, 2U, "\n\n") == 0) {
         output.pop_back();
     }
-    return output;
+    return std::move(output).finish();
 }
 
 }  // namespace fastdb::payload::codegen

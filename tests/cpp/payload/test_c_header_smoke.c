@@ -1,5 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 
 #include <fastdb_payload.h>
 
@@ -49,6 +51,68 @@ _Static_assert(offsetof(fdb_payload_v1_backing_v1_t, release) <
                    offsetof(fdb_payload_v1_backing_v1_t, reserved),
                "backing reserved tail order");
 
+static int borrowed_text_equals(const uint8_t* data, uint64_t size,
+                                const char* expected) {
+    const size_t expected_size = strlen(expected);
+    return size == (uint64_t)expected_size &&
+           (expected_size == 0U ||
+            (data != (const uint8_t*)0 &&
+             memcmp(data, expected, expected_size) == 0));
+}
+
+static void digest_to_hex(const uint8_t digest[FDB_PAYLOAD_V1_SHA256_SIZE],
+                          char out_hex[65]) {
+    static const char alphabet[] = "0123456789abcdef";
+    uint32_t index = UINT32_C(0);
+    for (index = UINT32_C(0); index < FDB_PAYLOAD_V1_SHA256_SIZE; ++index) {
+        out_hex[index * UINT32_C(2)] = alphabet[digest[index] >> 4U];
+        out_hex[index * UINT32_C(2) + UINT32_C(1)] =
+            alphabet[digest[index] & UINT8_C(0x0f)];
+    }
+    out_hex[64] = '\0';
+}
+
+static int digest_mismatch_error_matches(
+    const fdb_payload_v1_error_t* error, const char* expected_path,
+    const uint8_t actual[FDB_PAYLOAD_V1_SHA256_SIZE],
+    const uint8_t expected[FDB_PAYLOAD_V1_SHA256_SIZE]) {
+    const uint8_t* data = (const uint8_t*)0;
+    uint64_t size = UINT64_C(0);
+    char actual_hex[65] = {0};
+    char expected_hex[65] = {0};
+    char expected_details[256] = {0};
+    int details_size = 0;
+
+    if (error == (const fdb_payload_v1_error_t*)0 ||
+        fdb_payload_v1_error_code(error) != FDB_PAYLOAD_E_DIGEST_MISMATCH) {
+        return 0;
+    }
+    fdb_payload_v1_error_symbol(error, &data, &size);
+    if (!borrowed_text_equals(data, size, "DIGEST_MISMATCH")) {
+        return 0;
+    }
+    fdb_payload_v1_error_path(error, &data, &size);
+    if (!borrowed_text_equals(data, size, expected_path)) {
+        return 0;
+    }
+    fdb_payload_v1_error_message(error, &data, &size);
+    if (!borrowed_text_equals(data, size,
+                              "Portable payload spec digest does not match")) {
+        return 0;
+    }
+    digest_to_hex(actual, actual_hex);
+    digest_to_hex(expected, expected_hex);
+    details_size = snprintf(expected_details, sizeof(expected_details),
+                            "{\"actual\":\"%s\",\"expected\":\"%s\","
+                            "\"reason\":\"spec_digest_mismatch\"}",
+                            actual_hex, expected_hex);
+    if (details_size < 0 || (size_t)details_size >= sizeof(expected_details)) {
+        return 0;
+    }
+    fdb_payload_v1_error_details_json(error, &data, &size);
+    return borrowed_text_equals(data, size, expected_details);
+}
+
 int main(void) {
     static const char valid_source[] =
         "{\"schema\":\"fastdb.payload.v1\",\"profile\":\"record.v1\","
@@ -61,15 +125,22 @@ int main(void) {
         "{\"schema\":\"fastdb.payload.v1\",\"profile\":\"record.v1\","
         "\"entries\":[{\"id\":\"value\",\"cardinality\":\"one\","
         "\"type\":{\"kind\":\"u8\"}}],\"components\":[]}";
+    static const char other_runtime_source[] =
+        "{\"schema\":\"fastdb.payload.v1\",\"profile\":\"record.v1\","
+        "\"entries\":[{\"id\":\"other\",\"cardinality\":\"one\","
+        "\"type\":{\"kind\":\"u8\"}}],\"components\":[]}";
     fdb_payload_v1_compile_options_t options = {0};
     fdb_payload_v1_capabilities_t capabilities = {0};
     fdb_payload_v1_spec_t* spec = (fdb_payload_v1_spec_t*)0;
+    fdb_payload_v1_spec_t* other_spec = (fdb_payload_v1_spec_t*)0;
     fdb_payload_v1_blob_t* canonical = (fdb_payload_v1_blob_t*)0;
     fdb_payload_v1_blob_t* manifest = (fdb_payload_v1_blob_t*)0;
     fdb_payload_v1_error_t* error = (fdb_payload_v1_error_t*)0;
     fdb_payload_v1_status_t status = UINT32_C(0);
     fdb_payload_v1_profile_t profile = UINT32_C(0);
     uint8_t digest[FDB_PAYLOAD_V1_SHA256_SIZE] = {0};
+    uint8_t runtime_digest[FDB_PAYLOAD_V1_SHA256_SIZE] = {0};
+    uint8_t other_runtime_digest[FDB_PAYLOAD_V1_SHA256_SIZE] = {0};
     uint32_t count = UINT32_C(1);
     uint32_t index = UINT32_C(0);
     fdb_payload_v1_builder_options_t builder_options = {0};
@@ -236,12 +307,14 @@ int main(void) {
         capabilities.operation_flags !=
             (FDB_PAYLOAD_OPERATION_COMPILE | FDB_PAYLOAD_OPERATION_QUERY |
              FDB_PAYLOAD_OPERATION_BUILD | FDB_PAYLOAD_OPERATION_OPEN |
-             FDB_PAYLOAD_OPERATION_VIEW |
-             FDB_PAYLOAD_OPERATION_MATERIALIZE |
-             FDB_PAYLOAD_OPERATION_INVALIDATE) ||
-        capabilities.codegen_target_flags != UINT64_C(0) ||
-        capabilities.direct_build_status !=
-            FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE ||
+             FDB_PAYLOAD_OPERATION_VIEW | FDB_PAYLOAD_OPERATION_MATERIALIZE |
+             FDB_PAYLOAD_OPERATION_INVALIDATE |
+             FDB_PAYLOAD_OPERATION_CODEGEN) ||
+        capabilities.codegen_target_flags !=
+            (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
+             FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT) ||
+        capabilities.direct_build_status != FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE ||
         error != (fdb_payload_v1_error_t*)0) {
         return 12;
     }
@@ -283,14 +356,47 @@ int main(void) {
         error != (fdb_payload_v1_error_t*)0) {
         return 17;
     }
-    status = fdb_payload_v1_builder_create(
-        spec, &builder_options, &builder, &error);
+    status = fdb_payload_v1_spec_sha256(spec, runtime_digest, &error);
+    if (status != UINT32_C(0) || error != (fdb_payload_v1_error_t*)0) {
+        return 39;
+    }
+    status = fdb_payload_v1_spec_compile_json(
+        (const uint8_t*)other_runtime_source,
+        (uint64_t)(sizeof(other_runtime_source) - UINT64_C(1)),
+        (const fdb_payload_v1_compile_options_t*)0, &other_spec, &error);
+    if (status != UINT32_C(0) || other_spec == (fdb_payload_v1_spec_t*)0 ||
+        error != (fdb_payload_v1_error_t*)0) {
+        return 40;
+    }
+    status =
+        fdb_payload_v1_spec_sha256(other_spec, other_runtime_digest, &error);
+    if (status != UINT32_C(0) || error != (fdb_payload_v1_error_t*)0 ||
+        memcmp(runtime_digest, other_runtime_digest,
+               FDB_PAYLOAD_V1_SHA256_SIZE) == 0) {
+        return 41;
+    }
+    status =
+        fdb_payload_v1_builder_create(spec, &builder_options, &builder, &error);
     if (status != UINT32_C(0) || builder == (fdb_payload_v1_builder_t*)0 ||
         error != (fdb_payload_v1_error_t*)0) {
         return 18;
     }
-    status = fdb_payload_v1_builder_entry_begin(
-        builder, UINT32_C(0), UINT64_C(1), &error);
+    status = fdb_payload_v1_builder_require_spec_sha256(builder, runtime_digest,
+                                                        &error);
+    if (status != UINT32_C(0) || error != (fdb_payload_v1_error_t*)0) {
+        return 42;
+    }
+    status = fdb_payload_v1_builder_require_spec_sha256(
+        builder, other_runtime_digest, &error);
+    if (status != FDB_PAYLOAD_E_DIGEST_MISMATCH ||
+        !digest_mismatch_error_matches(error, "/builder/spec_sha256",
+                                       runtime_digest, other_runtime_digest)) {
+        return 43;
+    }
+    fdb_payload_v1_error_release(error);
+    error = (fdb_payload_v1_error_t*)0;
+    status = fdb_payload_v1_builder_entry_begin(builder, UINT32_C(0),
+                                                UINT64_C(1), &error);
     if (status != UINT32_C(0) || error != (fdb_payload_v1_error_t*)0) {
         return 19;
     }
@@ -328,6 +434,20 @@ int main(void) {
         error != (fdb_payload_v1_error_t*)0) {
         return 24;
     }
+    status = fdb_payload_v1_payload_require_spec_sha256(payload, runtime_digest,
+                                                        &error);
+    if (status != UINT32_C(0) || error != (fdb_payload_v1_error_t*)0) {
+        return 44;
+    }
+    status = fdb_payload_v1_payload_require_spec_sha256(
+        payload, other_runtime_digest, &error);
+    if (status != FDB_PAYLOAD_E_DIGEST_MISMATCH ||
+        !digest_mismatch_error_matches(error, "/payload/spec_sha256",
+                                       runtime_digest, other_runtime_digest)) {
+        return 45;
+    }
+    fdb_payload_v1_error_release(error);
+    error = (fdb_payload_v1_error_t*)0;
     status = fdb_payload_v1_payload_binary_blob(payload, &binary, &error);
     if (status != UINT32_C(0) || binary == (fdb_payload_v1_blob_t*)0 ||
         fdb_payload_v1_blob_size(binary) == UINT64_C(0) ||
@@ -369,6 +489,20 @@ int main(void) {
         error != (fdb_payload_v1_error_t*)0) {
         return 32;
     }
+    status = fdb_payload_v1_view_require_spec_sha256(sequence, runtime_digest,
+                                                     &error);
+    if (status != UINT32_C(0) || error != (fdb_payload_v1_error_t*)0) {
+        return 46;
+    }
+    status = fdb_payload_v1_view_require_spec_sha256(
+        sequence, other_runtime_digest, &error);
+    if (status != FDB_PAYLOAD_E_DIGEST_MISMATCH ||
+        !digest_mismatch_error_matches(error, "/view/spec_sha256",
+                                       runtime_digest, other_runtime_digest)) {
+        return 47;
+    }
+    fdb_payload_v1_error_release(error);
+    error = (fdb_payload_v1_error_t*)0;
     status = fdb_payload_v1_view_kind(sequence, &view_kind, &error);
     if (status != UINT32_C(0) ||
         view_kind != FDB_PAYLOAD_VIEW_SEQUENCE ||
@@ -402,6 +536,20 @@ int main(void) {
         error != (fdb_payload_v1_error_t*)0) {
         return 38;
     }
+    status = fdb_payload_v1_view_require_spec_sha256(detached, runtime_digest,
+                                                     &error);
+    if (status != UINT32_C(0) || error != (fdb_payload_v1_error_t*)0) {
+        return 48;
+    }
+    status = fdb_payload_v1_view_require_spec_sha256(
+        detached, other_runtime_digest, &error);
+    if (status != FDB_PAYLOAD_E_DIGEST_MISMATCH ||
+        !digest_mismatch_error_matches(error, "/view/spec_sha256",
+                                       runtime_digest, other_runtime_digest)) {
+        return 49;
+    }
+    fdb_payload_v1_error_release(error);
+    error = (fdb_payload_v1_error_t*)0;
     fdb_payload_v1_view_release(detached);
     fdb_payload_v1_view_release(value_view);
     fdb_payload_v1_view_release(sequence);
@@ -415,6 +563,7 @@ int main(void) {
     fdb_payload_v1_blob_release(binary);
     fdb_payload_v1_payload_release(payload);
     fdb_payload_v1_plan_release(plan);
+    fdb_payload_v1_spec_release(other_spec);
     fdb_payload_v1_spec_release(spec);
 
     return 0;

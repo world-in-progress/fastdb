@@ -13,6 +13,7 @@ pub const FDB_PAYLOAD_V1_FIXED_RUN_V1_SIZE: u32 = 96;
 pub const FDB_PAYLOAD_V1_OPEN_OPTIONS_V1_SIZE: u32 = 112;
 pub const FDB_PAYLOAD_V1_PLAN_INFO_V2_SIZE: u32 = 112;
 pub const FDB_PAYLOAD_V1_EXECUTION_REPORT_V1_SIZE: u32 = 72;
+pub const FDB_PAYLOAD_V1_CODEGEN_OPTIONS_V1_SIZE: u32 = 48;
 pub const FDB_PAYLOAD_V1_BACKING_V1_SIZE: u32 = 96;
 pub const FDB_PAYLOAD_V1_INVALID_OBJECT_HANDLE: u64 = 0;
 
@@ -29,6 +30,12 @@ pub const FDB_PAYLOAD_FALLBACK_NONE: u32 = 0;
 pub const FDB_PAYLOAD_FALLBACK_PLAN_REQUIRES_STAGING: u32 = 1;
 pub const FDB_PAYLOAD_FALLBACK_BACKING_DECLINED_DIRECT: u32 = 2;
 pub const FDB_PAYLOAD_OPEN_VALIDATE_TEXT_EAGER: u32 = 1;
+
+pub const FDB_PAYLOAD_CODEGEN_TARGET_CPP: u64 = 1 << 0;
+pub const FDB_PAYLOAD_CODEGEN_TARGET_RUST: u64 = 1 << 1;
+pub const FDB_PAYLOAD_CODEGEN_TARGET_PYTHON: u64 = 1 << 2;
+pub const FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT: u64 = 1 << 3;
+pub const FDB_PAYLOAD_ARTIFACT_SOURCE: u32 = 1;
 
 pub const FDB_PAYLOAD_VIEW_SEQUENCE: u32 = 1;
 pub const FDB_PAYLOAD_VIEW_BOOL: u32 = 2;
@@ -48,15 +55,22 @@ pub const FDB_PAYLOAD_VIEW_LIST: u32 = 15;
 pub const FDB_PAYLOAD_VIEW_REF: u32 = 16;
 
 pub const FDB_PAYLOAD_E_DIRECT_UNAVAILABLE: u32 = 2007;
+pub const FDB_PAYLOAD_E_DIGEST_MISMATCH: u32 = 3006;
 pub const FDB_PAYLOAD_E_BACKING_CONTRACT: u32 = 5001;
 pub const FDB_PAYLOAD_E_ALLOCATION_FAILED: u32 = 5002;
 pub const FDB_PAYLOAD_E_COMMIT_FAILED: u32 = 5003;
 pub const FDB_PAYLOAD_E_ROLLBACK_FAILED: u32 = 5004;
+pub const FDB_PAYLOAD_E_UNSUPPORTED_TARGET: u32 = 6001;
+pub const FDB_PAYLOAD_E_INVALID_ARTIFACT_PATH: u32 = 6002;
+pub const FDB_PAYLOAD_E_GENERATOR_FAILED: u32 = 6003;
 pub const FDB_PAYLOAD_E_UNSUPPORTED_ABI: u32 = 7002;
+pub const FDB_PAYLOAD_E_INDEX_OUT_OF_RANGE: u32 = 7004;
 pub const FDB_PAYLOAD_E_INTERNAL: u32 = 9001;
 
 pub type fdb_payload_v1_status_t = u32;
 pub type fdb_payload_v1_profile_t = u32;
+pub type fdb_payload_v1_codegen_target_t = u64;
+pub type fdb_payload_v1_artifact_kind_t = u32;
 
 #[repr(C)]
 pub struct fdb_payload_v1_spec_t {
@@ -102,6 +116,12 @@ pub struct fdb_payload_v1_view_t {
 
 #[repr(C)]
 pub struct fdb_payload_v1_access_t {
+    _private: [u8; 0],
+    _marker: std::marker::PhantomData<(*mut u8, std::marker::PhantomPinned)>,
+}
+
+#[repr(C)]
+pub struct fdb_payload_v1_codegen_result_t {
     _private: [u8; 0],
     _marker: std::marker::PhantomData<(*mut u8, std::marker::PhantomPinned)>,
 }
@@ -214,6 +234,16 @@ pub struct fdb_payload_v1_execution_report_t {
     pub reserved64: [u64; 2],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct fdb_payload_v1_codegen_options_t {
+    pub struct_size: u32,
+    pub flags: u32,
+    pub max_artifacts: u64,
+    pub max_total_bytes: u64,
+    pub reserved: [u64; 3],
+}
+
 pub type fdb_payload_v1_backing_reserve_fn = unsafe extern "C" fn(
     context: *mut c_void,
     reserve_mode: u32,
@@ -268,6 +298,7 @@ unsafe extern "C" {
     pub fn fdb_payload_v1_open_options_init(options: *mut fdb_payload_v1_open_options_t);
     pub fn fdb_payload_v1_plan_info_init(info: *mut fdb_payload_v1_plan_info_t);
     pub fn fdb_payload_v1_execution_report_init(report: *mut fdb_payload_v1_execution_report_t);
+    pub fn fdb_payload_v1_codegen_options_init(options: *mut fdb_payload_v1_codegen_options_t);
     pub fn fdb_payload_v1_backing_init(backing: *mut fdb_payload_v1_backing_v1_t);
 
     pub fn fdb_payload_v1_spec_compile_json(
@@ -279,6 +310,44 @@ unsafe extern "C" {
     ) -> fdb_payload_v1_status_t;
     pub fn fdb_payload_v1_spec_retain(spec: *mut fdb_payload_v1_spec_t);
     pub fn fdb_payload_v1_spec_release(spec: *mut fdb_payload_v1_spec_t);
+    pub fn fdb_payload_v1_spec_codegen(
+        spec: *const fdb_payload_v1_spec_t,
+        target: fdb_payload_v1_codegen_target_t,
+        options: *const fdb_payload_v1_codegen_options_t,
+        out_result: *mut *mut fdb_payload_v1_codegen_result_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_codegen_result_retain(result: *mut fdb_payload_v1_codegen_result_t);
+    pub fn fdb_payload_v1_codegen_result_release(result: *mut fdb_payload_v1_codegen_result_t);
+    pub fn fdb_payload_v1_codegen_result_artifact_count(
+        result: *const fdb_payload_v1_codegen_result_t,
+        out_count: *mut u64,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_codegen_result_artifact_relative_path(
+        result: *const fdb_payload_v1_codegen_result_t,
+        artifact_index: u64,
+        out_path: *mut *mut fdb_payload_v1_blob_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_codegen_result_artifact_kind(
+        result: *const fdb_payload_v1_codegen_result_t,
+        artifact_index: u64,
+        out_kind: *mut fdb_payload_v1_artifact_kind_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_codegen_result_artifact_bytes(
+        result: *const fdb_payload_v1_codegen_result_t,
+        artifact_index: u64,
+        out_bytes: *mut *mut fdb_payload_v1_blob_t,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_codegen_result_artifact_sha256(
+        result: *const fdb_payload_v1_codegen_result_t,
+        artifact_index: u64,
+        out_digest: *mut u8,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
     pub fn fdb_payload_v1_spec_canonical_json(
         spec: *const fdb_payload_v1_spec_t,
         out_blob: *mut *mut fdb_payload_v1_blob_t,
@@ -369,6 +438,11 @@ unsafe extern "C" {
         out_error: *mut *mut fdb_payload_v1_error_t,
     ) -> fdb_payload_v1_status_t;
     pub fn fdb_payload_v1_builder_release(builder: *mut fdb_payload_v1_builder_t);
+    pub fn fdb_payload_v1_builder_require_spec_sha256(
+        builder: *const fdb_payload_v1_builder_t,
+        expected_sha256: *const u8,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
     pub fn fdb_payload_v1_builder_entry_begin(
         builder: *mut fdb_payload_v1_builder_t,
         entry_index: u32,
@@ -519,6 +593,11 @@ unsafe extern "C" {
     ) -> fdb_payload_v1_status_t;
     pub fn fdb_payload_v1_payload_retain(payload: *mut fdb_payload_v1_payload_t);
     pub fn fdb_payload_v1_payload_release(payload: *mut fdb_payload_v1_payload_t);
+    pub fn fdb_payload_v1_payload_require_spec_sha256(
+        payload: *const fdb_payload_v1_payload_t,
+        expected_sha256: *const u8,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
     pub fn fdb_payload_v1_payload_sha256(
         payload: *const fdb_payload_v1_payload_t,
         out_digest: *mut u8,
@@ -553,6 +632,11 @@ unsafe extern "C" {
 
     pub fn fdb_payload_v1_view_retain(view: *mut fdb_payload_v1_view_t);
     pub fn fdb_payload_v1_view_release(view: *mut fdb_payload_v1_view_t);
+    pub fn fdb_payload_v1_view_require_spec_sha256(
+        view: *const fdb_payload_v1_view_t,
+        expected_sha256: *const u8,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
     pub fn fdb_payload_v1_view_kind(
         view: *const fdb_payload_v1_view_t,
         out_kind: *mut u32,
@@ -725,6 +809,7 @@ const _: () = {
     assert!(std::mem::size_of::<fdb_payload_v1_open_options_t>() == 112);
     assert!(std::mem::size_of::<fdb_payload_v1_plan_info_t>() == 112);
     assert!(std::mem::size_of::<fdb_payload_v1_execution_report_t>() == 72);
+    assert!(std::mem::size_of::<fdb_payload_v1_codegen_options_t>() == 48);
     assert!(std::mem::size_of::<fdb_payload_v1_backing_v1_t>() == 96);
 };
 

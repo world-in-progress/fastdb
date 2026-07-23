@@ -43,7 +43,7 @@ def test_exact_deterministic_export_inventory() -> None:
         first_bytes = output.read_bytes()
         exports = ast.literal_eval(first_bytes.decode("utf-8"))
         assert exports == ["_malloc", "_free", *[f"_{symbol}" for symbol in symbols]]
-        assert len(exports) == 107
+        assert len(exports) == 119
 
         second = run_generator(ALLOWLIST, output)
         assert second.returncode == 0, second.stderr
