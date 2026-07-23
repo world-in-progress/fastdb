@@ -2014,6 +2014,29 @@ records. Task 7 must then execute the fresh source and installed-package
 release-readiness matrix. Hosted runs, version changes, push, tag,
 publication, release, and C-Two composition remain pending and unauthorized.
 
+**Task 5 frozen review:** The scoped implementation commit is `99e7916`
+(`refactor(python): rename AoS engine to RecordEngine`). The context-owning
+primary agent first reviewed exact range `2e99f30..99e7916` for brief scope,
+authority ownership, exact public surface, no-alias clean cut, retained
+standalone behavior, package contents, and documented next-owner boundaries.
+All `19` changed paths are within the brief; old tree paths and active old-name
+spellings are absent; and Core, ABI-117, Rust, TypeScript/Wasm, schema,
+manifest, workflow, versions, C-Two, and Toodle are unchanged.
+
+A separate code-quality pass normalized the file/class/test rename and
+compared the frozen source with its predecessor. The engine's executable
+implementation is unchanged; only its formerly misleading columnar
+description becomes the accurate AoS-record/strided-field description. The
+normalized primary test file is byte-identical. Frozen-commit runtime
+import/absence checks, `73` public/engine tests, compileall, and diff checks
+pass.
+
+Both passes report 0 Critical, 0 Important, and 0 unresolved material Minor
+findings. The documented stale public call-db/helper instructions remain the
+explicit Task 6 input rather than an unrecorded limitation. This is same-agent
+primary review by explicit user direction, not independent or subagent
+evidence.
+
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
 clean-cut, parity, warning-free package, and local release-readiness gates
@@ -2191,7 +2214,7 @@ result.
 | P2. Record binary/runtime/lifetime | Locally complete and frozen at exactly 99 symbols; Task 11 complete fresh local gates are green and the same-reviewer final result is 0 Critical / 0 Important / 0 Minor | Keep hosted outcomes pending until an authorized run exists; do not reopen P2 semantics from a downstream binding |
 | P3. Object-graph runtime | Locally complete and frozen at exactly 105 symbols; D1 closed; complete local gates and the user-authorized primary-agent review are green; hosted execution pending | Preserve the frozen P3 Core/ABI meaning through P4/P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
 | P4. Language projections and payload codegen | Locally complete and frozen at exact ABI-117: equal projections, Core-owned deterministic four-target generation, truthful manifests, simple and four-shape hostile generated-output execution, packages/workflow, fresh local gates, and the same-agent primary review are green; hosted execution remains pending | Preserve ABI-105 runtime meaning and ABI-117 public truth through P5; do not convert the explicitly non-independent review or workflow definitions into independent/hosted evidence |
-| P5. Clean cut and local release-readiness handoff | Open; Tasks 0-4 are frozen, and Task 5 has local implementation evidence for the no-alias `RecordEngine` class/module/export rename, 340 Python tests, clean archives, zero SWIG diagnostics, and an installed-wheel round trip; the Task 5 frozen review plus Tasks 6-7 remain | Freeze the Task 5 same-agent review, then complete exact clean-cut documentation/policy and fresh local gates without a version bump or publication; keep hosted platform results pending and then hand the frozen FastDB boundary to C-Two |
+| P5. Clean cut and local release-readiness handoff | Open; Tasks 0-5 are frozen: Task 5 provides the no-alias `RecordEngine` class/module/export rename, 340 Python tests, clean archives, zero SWIG diagnostics, an installed-wheel round trip, and same-agent review with no material findings; Tasks 6-7 remain | Complete exact clean-cut documentation/policy and fresh local gates without a version bump or publication; keep hosted platform results pending and then hand the frozen FastDB boundary to C-Two |
 
 ## Non-deferrable 0.2.0 work
 
