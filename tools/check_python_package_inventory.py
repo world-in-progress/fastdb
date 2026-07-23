@@ -74,6 +74,15 @@ WHEEL_REQUIRED = {
     "fastdb4py/payload/_runtime.py",
     "fastdb4py/payload/_spec.py",
 }
+WHEEL_FORBIDDEN = {
+    "fastdb4py/call_db.py",
+    "fastdb4py/schema.py",
+    "fastdb4py/require.py",
+    "fastdb4py/allocator.py",
+    "fastdb4py/codegen/__init__.py",
+    "fastdb4py/codegen/ts_gen.py",
+}
+SDIST_FORBIDDEN = {f"python/{path}" for path in WHEEL_FORBIDDEN}
 FORBIDDEN_PARTS = {
     "__pycache__",
     ".pytest_cache",
@@ -141,6 +150,12 @@ def require_members(names: set[str], required: set[str], label: str) -> None:
     missing = sorted(required - names)
     if missing:
         raise CheckError(f"{label} is missing required portable-payload files: {missing}")
+
+
+def reject_members(names: set[str], forbidden: set[str], label: str) -> None:
+    present = sorted(names & forbidden)
+    if present:
+        raise CheckError(f"{label} contains removed Python authority: {present}")
 
 
 def check_wheel_native_artifacts(names: set[str]) -> None:
@@ -283,6 +298,7 @@ def main() -> int:
         sdist_metadata = metadata_identity(package_info.read(), "sdist PKG-INFO")
     sdist_names = strip_sdist_root(raw_names, root)
     require_members(sdist_names, SDIST_REQUIRED, "sdist")
+    reject_members(sdist_names, SDIST_FORBIDDEN, "sdist")
     reject_debris(sdist_names, "sdist")
 
     with zipfile.ZipFile(wheel) as archive:
@@ -318,6 +334,7 @@ def main() -> int:
             )
     check_wheel_native_artifacts(wheel_names)
     require_members(wheel_names, WHEEL_REQUIRED, "wheel")
+    reject_members(wheel_names, WHEEL_FORBIDDEN, "wheel")
     reject_debris(wheel_names, "wheel")
 
     print(

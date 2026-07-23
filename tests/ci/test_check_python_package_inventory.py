@@ -66,6 +66,33 @@ class SwigDiagnosticTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_forbids_removed_python_authority_in_sdist_and_wheel(self) -> None:
+        wheel_forbidden = {
+            "fastdb4py/call_db.py",
+            "fastdb4py/schema.py",
+            "fastdb4py/require.py",
+            "fastdb4py/allocator.py",
+            "fastdb4py/codegen/__init__.py",
+            "fastdb4py/codegen/ts_gen.py",
+        }
+        sdist_forbidden = {
+            f"python/{path}" for path in wheel_forbidden
+        }
+        self.assertEqual(MODULE.WHEEL_FORBIDDEN, wheel_forbidden)
+        self.assertEqual(MODULE.SDIST_FORBIDDEN, sdist_forbidden)
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.reject_members(
+                {"fastdb4py/__init__.py", "fastdb4py/call_db.py"},
+                MODULE.WHEEL_FORBIDDEN,
+                "wheel",
+            )
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.reject_members(
+                {"python/fastdb4py/schema.py"},
+                MODULE.SDIST_FORBIDDEN,
+                "sdist",
+            )
+
     def test_requires_task8_codegen_projection_in_sdist_and_wheel(self) -> None:
         self.assertIn("python/fastdb4py/payload/_codegen.py", MODULE.SDIST_REQUIRED)
         self.assertIn("fastdb4py/payload/_codegen.py", MODULE.WHEEL_REQUIRED)

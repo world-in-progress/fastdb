@@ -126,3 +126,33 @@ def test_fdb_codegen_help_advertises_only_core_artifact_targets():
     assert '--c-two-ts' not in completed.stdout
     assert 'C-Two' not in completed.stdout
     assert 'feature' not in completed.stdout.lower()
+
+
+def test_package_root_import_loads_neither_payload_nor_removed_authority():
+    script = """
+import json
+import sys
+import fastdb4py
+
+forbidden_modules = [
+    'fastdb4py.payload',
+    'fastdb4py.call_db',
+    'fastdb4py.schema',
+    'fastdb4py.require',
+    'fastdb4py.allocator',
+    'fastdb4py.codegen',
+]
+print(json.dumps([
+    name for name in forbidden_modules if name in sys.modules
+]))
+"""
+    completed = subprocess.run(
+        [sys.executable, '-c', script],
+        check=False,
+        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == '[]'

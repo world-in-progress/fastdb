@@ -80,6 +80,24 @@ def test_column_engine_truncate():
     assert tbl.column.x[99] == 99.0
 
 
+def test_layout_names_a_physical_table() -> None:
+    engine = ColumnEngine.truncate([Layout(CEPoint, 2, name="points")])
+    table = engine.table(CEPoint, name="points")
+
+    assert table.name == "points"
+    assert len(table) == 2
+
+
+def test_layout_rejects_an_empty_table_name() -> None:
+    with pytest.raises(ValueError, match="name must be non-empty"):
+        Layout(CEPoint, 1, name="")
+
+
+def test_layout_rejects_a_non_string_table_name() -> None:
+    with pytest.raises(TypeError, match="name must be a string"):
+        Layout(CEPoint, 1, name=123)
+
+
 def test_column_engine_truncate_keeps_other_tables_after_string_layer():
     engine = ColumnEngine.truncate([Layout(CEStringPoint, 2), Layout(CEOtherPoint, 3)])
 
@@ -538,14 +556,14 @@ def test_native_build_posts_through_final_backing_resource():
 
 
 def test_native_heap_scratch_allocator_exposes_separate_core_role():
-    allocator = fdb.HeapScratchAllocator()
+    allocator = core.WxHeapScratchAllocator()
     allocation = allocator._allocate_for_context(16)
     buffer = allocation._writable_buffer()
 
     buffer[:4] = b'fdb!'
 
-    assert isinstance(allocation, fdb.ScratchAllocation)
-    assert isinstance(allocator, fdb.ScratchAllocator)
+    assert isinstance(allocation, core.WxScratchAllocation)
+    assert isinstance(allocator, core.WxScratchAllocator)
     assert allocation.size() == 16
     assert bytes(buffer[:4]) == b'fdb!'
     assert allocator.allocation_count() == 1
@@ -560,7 +578,7 @@ def test_native_final_backing_resource_does_not_expose_uncommitted_allocation_su
 
 
 def test_native_final_backing_allocation_cannot_be_read_before_commit():
-    resource = fdb.HeapFinalBackingResource()
+    resource = core.WxHeapFinalBackingResource()
     allocation = resource._allocate_for_context(8)
 
     with pytest.raises(RuntimeError, match='not committed'):

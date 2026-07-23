@@ -1595,11 +1595,11 @@ semantics.
 
 ### P5 clean cut and local release-readiness handoff
 
-**Current limit:** Public call-db, `fastdb.schema.v1`, `columnar.v1`, and
-`ColumnEngine` remain in the 0.1.x package surface. The old Python
-feature-discovery generator is removed, but the remaining Python,
-TypeScript/Wasm, native/SWIG, engine-name, policy, and documentation clean-cut
-tasks are still open. Package metadata remains `fastdb4py==0.1.22` and
+**Current limit:** The Python call-db, schema, requirement, allocator, and
+feature-discovery codegen surfaces are removed. TypeScript/Wasm call-db,
+legacy native/SWIG surfaces, `columnar.v1`, `ColumnEngine`, policy, and
+documentation clean-cut tasks remain open. Package metadata remains
+`fastdb4py==0.1.22` and
 `fastdb4ts==0.0.3`; no 0.2.0 release, tag, publication, or C-Two composition
 proof exists.
 
@@ -1698,10 +1698,63 @@ downstream multi-artifact concern without moving conflict rules into FastDB.
 These owner boundaries are intentional and do not close the remaining P5
 tasks.
 
-**Next owner slice:** P5 Task 2 removes the remaining Python call-db/schema
-authority and proves the clean package surface. After all FastDB P5 tasks,
-stop design work at the frozen owner boundary and begin the separate
-C-Two-owned composition task.
+**P5 Task 2 local implementation evidence:** From exact start
+`4bb68dcc1b215a8a2c7ee7da3998f386d2e4a9e`, the Python-owned
+`call_db.py`, `schema.py`, `require.py`, and `allocator.py` modules and their
+authority-only tests are deleted without aliases or deprecation shims.
+`BatchRequirement`, `ArrayRequirement`, `batch`, `array`, `Array`, and
+`Batch` are also removed from `type.py`. The retained package-root `__all__`
+is the exact standalone decorator, registry, layout, engine, table, string,
+view-owner, materialization, serializer, and native-type-alias set. A root
+`import fastdb4py` neither imports `fastdb4py.payload` nor creates a second
+portable facade; consumers import the frozen projection explicitly.
+
+The package inventory gate now rejects the exact six historical module paths
+in both sdist and wheel layouts, including the already removed
+`fastdb4py.codegen` files. This is an explicit forbidden-member assertion, not
+an inference from a recursive build. The genuine RED produced seven failures:
+the old top-level surface and four authority modules remained importable, the
+requirement value classes remained in `type.py`, and the package checker had
+no forbidden inventory. The corrected replacement gate passes 25 tests plus
+seven subtests. After migrating retained standalone cases, the focused gate
+passes 126/126 and the complete Python source suite passes 341/341.
+
+The first complete-suite run exposed two native allocation tests that still
+used aliases from the deleted Python allocator facade. Their behavior remains
+valid and now names the existing `fastdb4py.core.Wx*` types directly. No new
+allocator facade or Python-owned allocation semantics were introduced.
+Nine retained `LayerSchema`/registry cases and three generic `Layout.name`
+cases were also migrated out of the deleted authority-named test files, so
+the clean cut does not discard standalone storage coverage.
+Compileall passes, the package-checker unit suite passes 18 tests, and a fresh
+`fastdb4py==0.1.22` sdist/wheel pair passes the real inventory gate. The build
+continues to emit exactly the seven governed SWIG diagnostics; Issue 0003 and
+P5 Task 4 still own their removal.
+
+**Task 2 ordered intermediate limit:** The standalone AoS implementation is
+still exported as `ColumnEngine`, and current README examples still describe
+the now-removed Python call-db surface.
+
+**Reason:** P5 Task 5 performs the class/module/export rename atomically, while
+P5 Task 6 rewrites all public instructions only after Python, TypeScript, and
+native clean cuts have settled. Mixing either concern into Task 2 would make
+its package-authority proof ambiguous.
+
+**Impact:** The source and built Python package have a clean authority boundary,
+but this branch is not release-ready: users following the current README can
+encounter removed names, and the old engine name can still be mistaken for a
+true columnar-storage engine.
+
+**Dependencies and closure criteria:** P5 Task 3 must remove the TypeScript
+call-db surface, Task 4 must close native/SWIG debris, Task 5 must replace
+`ColumnEngine` with `RecordEngine` without an alias, and Task 6 must make
+standalone boundaries and documentation policy executable. Until the fresh
+Task 7 readiness run passes, package versions remain unchanged and no
+publication is authorized.
+
+**Next owner slice:** P5 Task 3 removes the TypeScript call-db runtime and
+package surface. After all FastDB P5 tasks, stop design work at the frozen
+owner boundary and begin the separate C-Two-owned composition task.
 
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
@@ -1717,12 +1770,13 @@ These are implementation-gate observations, not post-0.2.0 deferrals.
 
 ### Legacy call-db uninitialized descriptor-member nondeterminism
 
-**Current limit:** The supported Python range is `>=3.10`, but on CPython 3.13
-two independent legacy `encode_call_db` / `encode_call_db_into` builds of the
-same scalar-array value can differ at byte 182. The existing byte-for-byte
+**Current limit:** Before P5 Task 2, two independent legacy
+`encode_call_db` / `encode_call_db_into` builds of the same scalar-array value
+could differ at byte 182 on CPython 3.13. The deleted byte-for-byte call-db
 test reproduces this at the pre-P2-Task-5 starting commit
-`0f08e9feeed09a7acba8d3639e0f0e3d2091a756`; the official CPython 3.14t gate
-passes and Task 5 does not change the affected legacy code.
+`0f08e9feeed09a7acba8d3639e0f0e3d2091a756`. P5 Task 2 removes that obsolete
+Python entry point and test, but the underlying native descriptor write
+remains open for the P5 Task 4 cleanup.
 
 **Reason:** `FastVectorDbLayerBuild::Impl::addField` declares
 `field_desc_ex_t fd` and does not initialize `element_type` for non-list
@@ -1737,11 +1791,10 @@ uninitialized member can also disclose process-local residual bytes. This is
 a legacy 0.1.x/P5 owner defect, not portable-record Task 5 behavior, and no
 new portable authority may depend on those bytes.
 
-**Closure criteria:** P5 removes the obsolete call-db surface, or the legacy
-owner initializes the complete descriptor representation (including a
-defined non-list `element_type`) and adds deterministic repeated-encode tests
-across the supported Python matrix before P5. The repair must be separately
-scoped and must not be folded into a portable-record slice.
+**Closure criteria:** P5 Task 4 initializes the complete descriptor
+representation, including a defined non-list `element_type`, and pins
+deterministic descriptor bytes in the native owner. The repair must remain
+separately scoped and must not be folded into the portable-record Core.
 
 ### Pre-existing SWIG diagnostics
 
