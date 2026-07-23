@@ -2226,15 +2226,15 @@ was a genuine RED: the exact
 `**P5 local clean cut:** Complete` line was absent and `rg` exited `1`. No
 release record was written before the complete readiness matrix passed.
 
-The fresh native results on macOS `26.5.2` / Darwin `25.5.0` arm64 with
-AppleClang `21.0.0` and CMake `4.3.2` are:
+The final post-review native results on macOS `26.5.2` / Darwin `25.5.0`
+arm64 with AppleClang `21.0.0` and CMake `4.3.2` are:
 
 | Configuration | Result | Portable static SHA-256 | `libfastdb` SHA-256 |
 |---|---:|---|---|
-| Debug | 40/40 in 69.80s | `156743f9263b74813d4c7dacade1a397fbf75224d91ad7fdaa6bb4db6a2c9570` | `e7594cf2daf9f6a770c3603e57066cfbc2a2b45367375f89fccf02ea65539252` |
-| Release | 40/40 in 48.33s | `3b4ad2ac3c2b6eecce678838ef2ceb8f6191641be6803e6d1c2ff4bde11d1eda` | `41e86fa6e18c08f3d9cadb46ab2f051dc82baaddd936d3df351964ddb59336d2` |
-| ASan+UBSan Debug | 40/40 in 232.30s | `8161c0ff4a9a342229debc154975949563e8bed5484c91efe5113003916c92d0` | `588f6b3a39eb30953300a08a5b4b33a65779fb876a4c6f3b08b46c4d7b0ac277` |
-| focused TSan Debug | 14/14 in 353.18s | `bfb9ab0997454b2ac22f89520591a456ea06d2d658a77c9d18afe77e59678638` | `d6d59f31c5bcc04102bec30133122ec2068b675e37c85c8ea0cc8ba1e46496e8` |
+| Debug | 40/40 in 54.17s | `030a9afe148ec2a95db062d6273cb41e513804155e88035f38bc87c6be31e847` | `dadb3553d20de55dd0033e2a58b60c5397bfd22ce5ac368d39518dcf43bda0d1` |
+| Release | 40/40 in 48.08s | `dc34a9bcd3e430a4b81dd50dfcaaf2544237a26bdfa2fc9a8b1b2000dac7d6a8` | `b9e96d45748695aeacf6d4dd8675d672ad3a602c05a28a3f14bfb4fd81212d34` |
+| ASan+UBSan Debug | 40/40 in 231.83s | `4759ddb10ea81ffecb122af22f8742f444cda99da2ab226e4e93394f75ce6efe` | `168d0a5005f112ce0d3f528e201a60c87ffd842ed0bb00eb6f7551d27db95c9c` |
+| focused TSan Debug | 14/14 in 349.32s | `e541757dfb6fd5b51ce871237a2784b900fc647611f77d19848311e866e54af8` | `21266ac069fd27d49284b8aef68c21ca19da5899cd8a095ff88bfe6066c3dab9` |
 
 ASan+UBSan ran with
 `ASAN_OPTIONS=halt_on_error=1:abort_on_error=1:detect_leaks=0` and
@@ -2285,16 +2285,18 @@ names including superscript aliases. It changes only the CLI destination-path
 safety boundary, not Core parsing, canonicalization, digest, layout, binary,
 codegen, or artifact identity.
 
-Post-fix source results are 344/344 on both free-threaded CPython `3.14.3` and
-minimum supported CPython `3.10.17`. Both fresh package inventories pass, and
-both isolated no-project installed-wheel suites pass 195/195:
+The final rerun passes the source suite 344/344 on free-threaded CPython
+`3.14.3`, source compileall under both CPython `3.14.3` and minimum supported
+CPython `3.10.17`, and the full independently installed Python 3.10 wheel
+suite 344/344. Both fresh package inventories pass, and both isolated
+no-project selected installed-wheel suites pass 195/195:
 
 | Python artifact | Bytes | SHA-256 |
 |---|---:|---|
-| `fastdb4py-0.1.22-cp314-cp314t-macosx_26_0_arm64.whl` | 1,135,239 | `b89a929b122bd3f9a56b29515873207c6a3cea7a13d08760f1240e576674e40e` |
-| current-interpreter `fastdb4py-0.1.22.tar.gz` | 1,067,851 | `94d2ce3910dd565f991687bcd13980d469c532b2f0954d71e11039c1715212ae` |
-| `fastdb4py-0.1.22-cp310-cp310-macosx_26_0_arm64.whl` | 1,132,015 | `9947f9ceb9d51cff8e07198f3ba604c9c857ee64c0cd31ccdde42d4b580a405c` |
-| Python-3.10 `fastdb4py-0.1.22.tar.gz` | 1,067,841 | `691e97c59e4d7721972ee87862699e5a62f2a2b7540df510cab3f13f3c617e06` |
+| `fastdb4py-0.1.22-cp314-cp314t-macosx_26_0_arm64.whl` | 1,135,772 | `6c87edc721141b295b511e0c76f22da5e37c2fb8584513c6fee77d9f59591866` |
+| current-interpreter `fastdb4py-0.1.22.tar.gz` | 1,068,012 | `c6fb7e11ee6a02b61b2d7c02bc4d93d66555fefa663faf8f2bb79c228217517a` |
+| `fastdb4py-0.1.22-cp310-cp310-macosx_26_0_arm64.whl` | 1,132,548 | `b8bdb707031207d24bed70eb37aa1fd1d0f5e0ee23d17dd725b5f1c2afea19cd` |
+| Python-3.10 `fastdb4py-0.1.22.tar.gz` | 1,067,979 | `1e4f29bc39df1c643718f8b9497e1bc5e551dcea7fa3f6e7af9bbdc682de5ac1` |
 
 Both final logs contain zero matched SWIG `Warning NNN` diagnostics, so Issue
 0003 remains closed. The Python 3.10 log does contain one C++ compiler warning
@@ -2311,9 +2313,9 @@ inventory, package smoke, and ABI-117. Its artifacts are:
 
 | TypeScript artifact | Bytes | SHA-256 |
 |---|---:|---|
-| `fastdb4ts-0.0.3.tgz` | 639,277 | `37414ab1dbd7d96f367651ce9f8c0638559cae3a19db43ed18def55e67d0f0b9` |
-| `dist/wasm/fastdb4ts.wasm` | 1,975,482 | `a4c85a21d18aa40862a22013098e3441ea66d7f8ddd301564a352bdb2da59093` |
-| `dist/wasm/fastdb4ts.js` | 122,622 | `2e551575ffb880ee8863b6b29b09e5c685a59d0ddca9824a9df263e50dfaad53` |
+| `fastdb4ts-0.0.3.tgz` | 639,738 | `219fcda8ae71ff97a8ddc0cf11a1edf6c2d7299b5371c32195f5bbd781080a9a` |
+| `dist/wasm/fastdb4ts.wasm` | 1,976,272 | `67320567f90fb0c49615e731a58adfd0e639c282c2b9c0eb01d6a3836f3cd0cd` |
+| `dist/wasm/fastdb4ts.js` | 122,622 | `ed28d53b23c336abc5dd4c94bc4472a7c323c9fa8029d049758bdafc33a7dc54` |
 
 A separate fresh Core Wasm tree also exposes exact ABI-117 and passes all
 seven explicit Node receipts: runtime harness, pure-C header, generated C ABI,
@@ -2321,16 +2323,17 @@ C++ facade, runtime C++ facade, injected-failure rollback, and graph-runtime
 proof. The generated projection checker passes 6/6 before the complete
 four-language execution harness.
 
-The final pre-record documentation/scope gate passes P5 clean-cut 35/35 plus
-the real repository check, `git diff --check`, schema/JSON/package
-inventories, first-party Markdown link/anchor checks, and an added-line
-credentials/private-endpoint scan. The plan's whole-changed-file drafting
-token scan reports two baseline facts: a 2026-04 plan sentence that literally
-spells the token it says is absent and a 2025 native geometry-size comment.
-`git blame` at the frozen P5 start proves both predate P5; neither is a new
-production placeholder or Task 7 limitation, and Task 7 does not expand into
-the unrelated legacy geometry algorithm merely to force an unqualified text
-scan to exit `1`.
+The final pre-record documentation/scope gate passes P5 clean-cut 41/41 plus
+the real repository check, P4 projection/codegen 18/18 plus its repository
+check, Python package inventory 17/17, `git diff --check`,
+schema/JSON/package inventories, first-party Markdown link/anchor checks, and
+an added-line credentials/private-endpoint scan. The plan's
+whole-changed-file drafting-token scan reports two baseline facts: a 2026-04
+plan sentence that literally spells the token it says is absent and a 2025
+native geometry-size comment. `git blame` at the frozen P5 start proves both
+predate P5; neither is a new production placeholder or Task 7 limitation,
+and Task 7 does not expand into the unrelated legacy geometry algorithm
+merely to force an unqualified text scan to exit `1`.
 
 All disposable Task 7 native, sanitizer, Rust target, Python distribution,
 TypeScript distribution/package, and Wasm build trees were deleted after
@@ -2339,6 +2342,39 @@ retained as required by the plan. The primary-agent closure review is
 performed personally in separate specification-compliance and code-quality
 passes after freezing the closure commit; by user direction it is same-agent
 evidence and is not represented as independent or subagent review.
+
+##### P5 final frozen primary-agent review
+
+The mechanically frozen review starts at P4 closure
+`9d86c171eda1fe107c3519ce040ca2ec417167f9` and includes every P5
+implementation, deletion, review fix, and closure record. The final review
+found and closed these post-closure issues:
+
+- `026b17b` makes the repository clean-state gate include nonignored
+  untracked files, makes the workflow and Python package inventories exact,
+  and copies standalone serialized `wstr` values into aligned owned storage
+  before exposing a wide-character pointer. The alignment correction belongs
+  only to the retained standalone legacy reader; it does not change portable
+  Core layout, binary meaning, ABI, or any language projection.
+- `a599e40`, `c5e4bce`, `9e013c3`, `216a3a7`, `b8ec185`, and `2203180`
+  make workflow shell behavior, Issue-index state, and current guide markers
+  executable and exact without introducing downstream-domain semantics into
+  the FastDB policy checker.
+- `1c0c88f` and `1b508a1` keep historical P2/P4 facts frozen while allowing
+  their repository gates to accept the later truthful P5 phase. Their genuine
+  REDs were the current Issue-index row rejected by the old P2 checker and
+  the current P5-complete README rejected by the old P4 checker.
+
+The final specification-compliance pass covers the sole C++ Core authority,
+exact ABI-117, complete removal policy, `RecordEngine` clean rename,
+standalone truth, four-language projection/codegen parity, package contents,
+and external-fact limits. The separate code-quality pass covers native
+initialization/alignment and ownership, C ABI output clearing, Python 3.10
+path safety, TypeScript/Wasm disposal, checker fail-closure, workflow shell
+semantics, determinism, portability, credentials, debris, and maintainability.
+Both passes end with 0 Critical, 0 Important, and 0 unresolved material Minor
+findings. This is same-agent primary review by explicit user direction, not
+independent or subagent evidence.
 
 **Closure criteria:** Remove the obsolete public authority without aliases or
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
