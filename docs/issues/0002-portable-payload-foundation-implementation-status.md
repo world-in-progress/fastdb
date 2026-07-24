@@ -1605,17 +1605,20 @@ unclassified current/historical literals are removed or governed through P5
 Task 6. Task 7 completes the fresh local source/package/platform-applicable
 readiness matrix. Package metadata remains `fastdb4py==0.1.22` and
 `fastdb4ts==0.0.3`; hosted Linux/Windows evidence, a 0.2.0 version change,
-push, tag, publication, release, and C-Two composition proof do not exist.
+push, tag, publication, and release do not exist. A downstream C-Two local
+composition proof now exists at exact implementation commits and hashes, but
+it is not an official package release or hosted result.
 
 **Reason:** P1-P4 now provide the complete replacement and parity evidence, so
 the P5 clean cut can proceed without a compatibility parser or binding-owned
 fallback. Downstream composition still belongs in C-Two only after FastDB
 freezes its owner boundary.
 
-**Impact:** The FastDB owner boundary is locally release-ready and may now be
-consumed by the separate C-Two owner slice. That local result is not a hosted
-platform matrix, a versioned package release, or a published 0.2.0 artifact.
-C-Two cannot fill a missing generic FastDB slice in its own repository.
+**Impact:** The FastDB owner boundary is locally release-ready and has been
+consumed by the separate C-Two owner slice without moving payload meaning into
+C-Two. That local result is not a hosted platform matrix, a versioned package
+release, or a published 0.2.0 artifact. C-Two still cannot fill a missing
+generic FastDB slice in its own repository.
 
 **P5 Task 0 handoff:** The design and executable plan are frozen from exact
 start `9d86c171eda1fe107c3519ce040ca2ec417167f9`. The portable ABI remains
@@ -2380,9 +2383,51 @@ independent or subagent evidence.
 compatibility parsers; rename `ColumnEngine` to `RecordEngine`; pass package,
 clean-cut, parity, warning-free package, and local release-readiness gates
 without changing the current package versions or publishing. Record hosted,
-version-bump, tag, publication, and release facts as pending. C-Two's later
-proof must delegate the nested spec and compose artifacts without duplicating
-FastDB semantics, but that proof is not part of FastDB P5.
+version-bump, tag, publication, and release facts as pending. The now-complete
+local C-Two proof delegates the nested spec and composes artifacts without
+duplicating FastDB semantics, but remains downstream evidence rather than part
+of FastDB P5 or an official release.
+
+#### C-Two downstream local-candidate handoff evidence
+
+FastDB implementation commit
+`7eb74734926bd8fe911229eee9744a6dd8172487` packages the unchanged P5/Core
+boundary into seven FastDB-owned artifacts. The canonical retained manifest is
+[`evidence/fastdb-local-candidate-manifest.v1.json`](evidence/fastdb-local-candidate-manifest.v1.json),
+has SHA-256
+`9a1c7c83dca16237257dcc50d5917f10d032e02ffceae1278ae331d101b69d32`,
+and records exact ABI-117 plus the Core bundle, CPython 3.10/current wheels,
+sdist, `fastdb`/`fastdb-sys` crates, and `fastdb4ts` tarball.
+
+C-Two implementation commit
+`bf6f5c950959bcd2723cf3c7bfe772c9ee91dc02` embeds that exact FastDB
+manifest and artifact set in its 42-entry candidate manifest with SHA-256
+`73d723dbec919d20c229b6fa441750571efcb0937bd2b3c9f84260807c11e0f1`.
+Isolated consumers pass for version-only Rust packages, no-index CPython 3.10
+and current wheels, and tarball-only Node packages. Candidate-stage runtime
+receipts contain exactly 18/18 passing Rust/Python direct/relay rows and 12/12
+passing generated TypeScript Node rows. No row is skipped or xfailed.
+
+The downstream matrix covers no-payload, `record.v1`, and
+`object_graph.v1`; Rust client to Rust host, Rust client to Python host, and
+Python client to Rust host; direct IPC and explicit relay; plus generated
+TypeScript direct IPC, explicit relay, relay-aware verified local IPC, and
+relay-aware HTTP. The TypeScript result is Node-only on the recorded
+darwin-arm64 platform; browser runtime remains unverified.
+
+The proven Rust and Python receive adapters are copy-backed. Held response and
+borrowed request lifetimes invalidate checked FastDB owners before C-Two lease
+release, but this does not prove direct construction into final response shared
+memory or revocation of deliberately leaked raw buffers. The local artifact
+versions remain `0.1.22`/`0.0.3`; commit and SHA-256 provenance disambiguate
+them from previously published packages with the same metadata.
+
+This handoff changes no FastDB payload semantics, C ABI symbol, profile, binary
+layout, lifetime rule, package version, or owner boundary. The source of every
+artifact is the implementation commit above; the documentation-only commit
+containing this record follows it and is not an artifact source. Hosted
+Linux/Windows execution, version bump, push, tag, publication, official
+release, browser proof, and official downstream pinning remain pending.
 
 ## P1 implementation-gate observations
 

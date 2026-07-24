@@ -67,8 +67,19 @@ P5 local clean cut is complete at exact ABI-117. Tasks 1-7 remove the duplicate
 authority without aliases, expose the final `RecordEngine` name directly,
 state the retained standalone boundaries, enforce the exact clean-cut policy
 over tracked plus untracked/non-ignored files, and pass the fresh local
-release-readiness matrix. Hosted execution, versioning, publication, and
-downstream owner composition remain open. Those external facts are tracked in [Issue
+release-readiness matrix. FastDB implementation commit
+`7eb74734926bd8fe911229eee9744a6dd8172487` packages that frozen owner
+boundary into a seven-artifact local candidate at unchanged ABI-117 and
+unchanged package versions. C-Two implementation commit
+`bf6f5c950959bcd2723cf3c7bfe772c9ee91dc02` consumes those exact hashes in
+isolated Rust, Python 3.10/current, and Node environments and passes its
+18-row Rust/Python and 12-row generated TypeScript local matrices. The retained
+FastDB manifest has SHA-256
+`9a1c7c83dca16237257dcc50d5917f10d032e02ffceae1278ae331d101b69d32`;
+see the [local-candidate evidence](docs/issues/evidence/README.md).
+
+Hosted execution, versioning, publication, and official downstream package
+composition remain open. Those external facts are tracked in [Issue
 0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
 No local result or workflow definition is represented as a hosted pass; the
 new projection jobs are definitions until an authorized hosted run exists.
