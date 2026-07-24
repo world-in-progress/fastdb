@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
 
@@ -47,6 +48,80 @@ class RustPayloadPackageTests(unittest.TestCase):
                 MODULE.locate_system_library(root, "darwin")
             with self.assertRaises(MODULE.CheckError):
                 MODULE.locate_system_library(root, "plan9")
+
+    def test_archive_paths_are_rooted_canonical_and_unique(self) -> None:
+        root = "fastdb-sys-0.1.22"
+        self.assertEqual(
+            MODULE.strip_archive_root(
+                [
+                    root,
+                    f"{root}/Cargo.toml",
+                    f"{root}/src/lib.rs",
+                ],
+                root,
+            ),
+            {"Cargo.toml", "src/lib.rs"},
+        )
+        for names in (
+            [f"{root}/Cargo.toml", f"{root}/Cargo.toml"],
+            ["outside/Cargo.toml"],
+            [f"{root}/../escape"],
+            [f"{root}/..\\escape"],
+            [f"{root}/./Cargo.toml"],
+            [f"{root}/double//Cargo.toml"],
+            ["/absolute/Cargo.toml"],
+        ):
+            with self.subTest(names=names), self.assertRaises(MODULE.CheckError):
+                MODULE.strip_archive_root(names, root)
+
+    def test_archive_rejects_links_and_other_special_members(self) -> None:
+        regular = tarfile.TarInfo("fastdb-0.1.22/src/lib.rs")
+        regular.size = 0
+        directory = tarfile.TarInfo("fastdb-0.1.22/src")
+        directory.type = tarfile.DIRTYPE
+        MODULE.reject_special_members([regular, directory])
+
+        link = tarfile.TarInfo("fastdb-0.1.22/src/link.rs")
+        link.type = tarfile.SYMTYPE
+        link.linkname = "lib.rs"
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.reject_special_members([regular, link])
+
+    def test_package_inventory_requires_license_and_build_seam(self) -> None:
+        self.assertIn("LICENSE", MODULE.PACKAGE_REQUIRED["fastdb-sys"])
+        self.assertIn("LICENSE", MODULE.PACKAGE_REQUIRED["fastdb"])
+        self.assertIn("build.rs", MODULE.PACKAGE_REQUIRED["fastdb-sys"])
+        self.assertNotIn("build.rs", MODULE.PACKAGE_REQUIRED["fastdb"])
+
+    def test_safe_manifest_requires_versioned_sys_dependency(self) -> None:
+        MODULE.check_normalized_manifest(
+            "fastdb",
+            b"""[package]
+name = "fastdb"
+version = "0.1.22"
+
+[dependencies.fastdb-sys]
+version = "0.1.22"
+""",
+        )
+        for invalid in (
+            b"""[package]
+name = "fastdb"
+version = "0.1.22"
+
+[dependencies.fastdb-sys]
+path = "../fastdb-sys"
+""",
+            b"""[package]
+name = "fastdb"
+version = "0.1.22"
+
+[dependencies.fastdb-sys]
+version = "0.1.21"
+""",
+        ):
+            with self.assertRaises(MODULE.CheckError):
+                MODULE.check_normalized_manifest("fastdb", invalid)
 
 
 if __name__ == "__main__":

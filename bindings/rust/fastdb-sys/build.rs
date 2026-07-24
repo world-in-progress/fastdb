@@ -6,6 +6,15 @@ use std::process::{Command, ExitStatus};
 
 const LINK_MODE_ENV: &str = "FASTDB_PAYLOAD_LINK_MODE";
 const SYSTEM_LIB_DIR_ENV: &str = "FASTDB_PAYLOAD_SYSTEM_LIB_DIR";
+const SOURCE_MARKERS: &[&str] = &[
+    "fastcarto/CMakeLists.txt",
+    "fastcarto/fastdb/CMakeLists.txt",
+    "fastcarto/fastdb/include/fastdb_payload.h",
+    "fastcarto/fastdb/src/payload",
+    "fastcarto/lib/yyjson/src",
+    "fastcarto/lib/double-conversion/double-conversion",
+    "fastcarto/lib/picosha2",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LinkMode {
@@ -14,11 +23,27 @@ enum LinkMode {
 }
 
 fn repository_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(3)
         .map(Path::to_path_buf)
-        .unwrap_or_else(|| panic!("fastdb-sys must remain under bindings/rust"))
+        .unwrap_or_else(|| packaged_source_mode_boundary());
+    if SOURCE_MARKERS
+        .iter()
+        .all(|marker| root.join(marker).exists())
+    {
+        root
+    } else {
+        packaged_source_mode_boundary()
+    }
+}
+
+fn packaged_source_mode_boundary() -> ! {
+    panic!(
+        "{LINK_MODE_ENV}=source is checkout-only; packaged consumers must use \
+         {LINK_MODE_ENV}=system with {SYSTEM_LIB_DIR_ENV} set to the absolute \
+         directory containing the platform FastDB shared library"
+    )
 }
 
 fn run(command: &mut Command, description: &str) {

@@ -9,4 +9,4 @@ repository = "https://github.com/world-in-progress/fastdb"
 readme = "README.md"
 
 [dependencies]
-fastdb-sys = { path = "../fastdb-sys" }
+fastdb-sys = { version = "0.1.22", path = "../fastdb-sys" }

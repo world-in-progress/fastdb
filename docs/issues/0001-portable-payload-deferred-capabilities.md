@@ -172,6 +172,59 @@ The required initial consumers are C++, Rust, Python, and browser-capable TypeSc
 - Generated target code compiles and regeneration is deterministic.
 - Native Node and WASM TypeScript expose equivalent logical semantics if both are supported.
 
+## D6. Published and multi-platform portable-payload release artifacts
+
+### Current limit
+
+The Phase 0B artifact set is a FastDB-owned **local release candidate**, not a
+registry publication or a cross-platform release. It contains the current
+platform Core/C ABI bundle, both Rust crate archives, a Python sdist, current
+and CPython-3.10 wheels, and the TypeScript/Wasm tarball. The retained manifest
+reconstructs archive inventories and hashes byte-for-byte, but does not claim
+that native compiler or archive output is reproducible across independent
+machines.
+
+`fastdb-sys` source mode remains checkout-only because the crate deliberately
+does not duplicate FastDB Core sources. Packaged Rust consumers must select
+`FASTDB_PAYLOAD_LINK_MODE=system` and provide an absolute
+`FASTDB_PAYLOAD_SYSTEM_LIB_DIR`. Until `fastdb-sys 0.1.22` is published, the
+owner-repository helper uses a temporary local Cargo index solely to prepare
+the versioned `fastdb` archive; that index is neither retained nor presented
+as a public registry.
+
+### Why it is deferred
+
+Publishing unchanged `0.1.22` metadata would conflate this audited candidate
+with older registry artifacts, while changing versions or tags is outside the
+Phase 0B clean-cut package proof. Multi-platform native artifacts additionally
+require platform CI, signing/notarization policy, registry credentials, and a
+release decision. None of those changes FastDB Core authority or is needed for
+C-Two to prove isolated local consumption of the exact candidate hashes.
+
+### Impact and dependencies
+
+- The manifest explicitly records the locally verified platform and the
+  unverified platforms; absence of a platform artifact is not a portability
+  guarantee.
+- Rust packaged source builds fail closed with a precise ownership diagnostic
+  instead of searching sibling C-Two or Toodle checkouts.
+- Consumers must pin the candidate by artifact hash and source commit rather
+  than treating the reused package version as globally unique.
+- Deterministic manifest reconstruction detects artifact drift without making
+  an unsupported bit-reproducible-native-build claim.
+
+### Closure criteria
+
+- Release versions and tags are chosen without overwriting an existing
+  registry identity.
+- Supported native targets build and run the same ABI-117 consumer matrix in
+  CI, with signing/notarization evidence where required.
+- Rust and Python registries plus npm expose mutually coherent artifacts whose
+  hashes and source commit match a published owner manifest.
+- Independent clean builders demonstrate the declared reproducibility level,
+  or the release contract continues to distinguish evidence determinism from
+  native-byte reproducibility.
+
 ## Not deferred
 
 The following are part of the 0.2.0 foundation and must not be moved into this issue to shorten implementation:
