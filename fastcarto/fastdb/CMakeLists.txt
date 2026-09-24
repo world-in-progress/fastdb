@@ -116,6 +116,15 @@ target_include_directories(
     PUBLIC
         ${PROJECT_DIR}/include
 )
+# Consumers link the C ABI statically, so on Windows they must not annotate it
+# dllimport. This is INTERFACE-only: it reaches the archive's consumers and
+# never the shared producer (which keeps FASTDB_PAYLOAD_BUILDING/dllexport) or
+# that DLL's consumers (which keep dllimport).
+target_compile_definitions(
+    fastdb_payload_native
+    INTERFACE
+        FASTDB_PAYLOAD_STATIC=1
+)
 target_link_libraries(
     fastdb_payload_native
     PUBLIC

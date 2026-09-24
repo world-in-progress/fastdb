@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+import re
 import unittest
 
 
@@ -84,6 +85,25 @@ class AllowlistContractTests(unittest.TestCase):
         symbols = MODULE.read_allowlist(MODULE.ALLOWLIST)
         self.assertEqual(len(symbols), 117)
         self.assertEqual(symbols, sorted(set(symbols)))
+
+
+HEADER_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "fastcarto"
+    / "fastdb"
+    / "include"
+    / "fastdb_payload.h"
+)
+PUBLIC_DECLARATION = re.compile(
+    r"FDB_PAYLOAD_API\s[^;]*?(fdb_payload_v1_[A-Za-z0-9_]+)\s*\("
+)
+
+
+class ApiAnnotationTests(unittest.TestCase):
+    def test_header_declares_exactly_the_reviewed_allowlist(self) -> None:
+        declared = PUBLIC_DECLARATION.findall(HEADER_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(len(declared), len(set(declared)))
+        self.assertEqual(sorted(declared), MODULE.read_allowlist(MODULE.ALLOWLIST))
 
 
 if __name__ == "__main__":
