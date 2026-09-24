@@ -135,24 +135,29 @@ ISSUE_MARKERS = (
 )
 DOCUMENTATION_MARKERS = {
     "README.md": (
+        "fastdb.payload.v1",
+        "fastdb4py",
+        "fastdb4ts",
+        "fastdb-sys",
+        "docs/issues/0002-portable-payload-foundation-implementation-status.md",
+    ),
+    "docs/issues/0002-portable-payload-foundation-implementation-status.md": (
         "P4 is locally complete",
-        "exactly 117",
-        "Core-owned four-language",
-        "P5 local clean cut is complete at exact ABI-117.",
-        "definitions until an authorized hosted run exists",
+        "exact ABI-117",
+        "The **P5 local clean cut is complete** at exact ABI-117.",
     ),
     "bindings/rust/fastdb-sys/README.md": (
         "C++ Core",
         "FASTDB_PAYLOAD_LINK_MODE",
         "system",
         "ABI-117",
-        "0.2.0",
+        "0.2.1",
     ),
     "bindings/rust/fastdb/README.md": (
         "C++ Core",
         "projection",
         "CompiledSpec::generate",
-        "0.2.0",
+        "0.2.1",
     ),
     "python/README.md": (
         "fastdb4py.payload",

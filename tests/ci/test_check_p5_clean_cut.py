@@ -70,8 +70,8 @@ def valid_policy() -> dict[str, object]:
     return {
         "schema": "fastdb.p5-clean-cut-policy.v1",
         "native_abi_symbol_count": 117,
-        "python_version": "0.2.0",
-        "typescript_version": "0.2.0",
+        "python_version": "0.2.1",
+        "typescript_version": "0.2.1",
         "removed_paths": list(PRODUCTION_POLICY["removed_paths"]),
         "required_paths": [
             "src/standalone.py",
@@ -140,7 +140,6 @@ def create_repository(root: Path) -> dict[str, object]:
         root,
         "README.md",
         "# Fixture\n\n"
-        "P5 local clean cut is complete at exact ABI-117.\n\n"
         "See [the current guide](docs/current.md#current-guide).\n",
     )
     write(
@@ -162,12 +161,12 @@ def create_repository(root: Path) -> dict[str, object]:
     write(
         root,
         "pyproject.toml",
-        '[project]\nname = "fixture"\nversion = "0.2.0"\n',
+        '[project]\nname = "fixture"\nversion = "0.2.1"\n',
     )
     write(
         root,
         "ts/fastdb4ts/package.json",
-        '{"name":"fixture","version":"0.2.0"}\n',
+        '{"name":"fixture","version":"0.2.1"}\n',
     )
     write(root, "tests/abi/fastdb_payload_v1_symbols.txt", abi_symbols())
     write(
@@ -227,6 +226,7 @@ def create_repository(root: Path) -> dict[str, object]:
         "#### P5 Task 6 local evidence\n\n"
         "P5 Task 7 is locally complete.\n\n"
         "**P5 local clean cut:** Complete\n\n"
+        "The **P5 local clean cut is complete** at exact ABI-117.\n\n"
         "Hosted execution remains pending. Version change, push, tag, "
         "publication, release, and downstream C-" "Two composition remain "
         "pending.\n",
@@ -345,8 +345,8 @@ class PolicyTests(RepositoryFixture):
         policy = PRODUCTION_POLICY
         self.assertEqual(policy["schema"], "fastdb.p5-clean-cut-policy.v1")
         self.assertEqual(policy["native_abi_symbol_count"], 117)
-        self.assertEqual(policy["python_version"], "0.2.0")
-        self.assertEqual(policy["typescript_version"], "0.2.0")
+        self.assertEqual(policy["python_version"], "0.2.1")
+        self.assertEqual(policy["typescript_version"], "0.2.1")
         self.assertEqual(len(policy["removed_paths"]), 14)
         self.assertEqual(len(policy["required_paths"]), 10)
         self.assertEqual(len(policy["historical_allowlist"]), 27)
@@ -521,7 +521,7 @@ class GovernanceSurfaceTests(RepositoryFixture):
         write(
             self.root,
             "pyproject.toml",
-            '[project]\nname = "fixture"\nversion = "0.2.0"\n',
+            '[project]\nname = "fixture"\nversion = "0.2.1"\n',
         )
         write(
             self.root,
@@ -639,10 +639,10 @@ class GovernanceSurfaceTests(RepositoryFixture):
         self.assert_rejected("Issue index")
 
     def test_rejects_stale_current_readiness_document(self) -> None:
-        readme = self.root / "README.md"
+        readme = self.root / MODULE.ISSUE_0002
         readme.write_text(
             readme.read_text(encoding="utf-8").replace(
-                "P5 local clean cut is complete at exact ABI-117.",
+                "The **P5 local clean cut is complete** at exact ABI-117.",
                 "P5 remains open.",
             ),
             encoding="utf-8",

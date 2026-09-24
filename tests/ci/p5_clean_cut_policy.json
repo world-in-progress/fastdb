@@ -1,8 +1,8 @@
 {
   "schema": "fastdb.p5-clean-cut-policy.v1",
   "native_abi_symbol_count": 117,
-  "python_version": "0.2.0",
-  "typescript_version": "0.2.0",
+  "python_version": "0.2.1",
+  "typescript_version": "0.2.1",
   "removed_paths": [
     "python/fastdb4py/allocator.py",
     "python/fastdb4py/call_db.py",
