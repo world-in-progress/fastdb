@@ -83,7 +83,7 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
         }
         accepted = {
             "name": "fastdb4ts",
-            "version": "0.2.0",
+            "version": MODULE.PACKAGE_VERSION,
             "private": False,
             "type": "module",
             "files": ["dist", "README.md"],
@@ -95,7 +95,7 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
         MODULE.check_package_json(accepted)
         for changed in (
             {**accepted, "name": "some-other-package"},
-            {**accepted, "version": "0.0.3"},
+            {**accepted, "version": MODULE.PACKAGE_VERSION + "-wrong"},
             {**accepted, "private": True},
             {**accepted, "type": "commonjs"},
             {**accepted, "files": ["dist"]},
@@ -117,6 +117,30 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
             MODULE.load_json_no_duplicates(
                 '{"type":"module","type":"commonjs"}', "package.json"
             )
+
+    def test_release_version_tracks_authoritative_owner_metadata(self) -> None:
+        self.assertEqual(
+            MODULE.owner_package_version(
+                {"name": "fastdb4ts", "version": "9.9.9"}
+            ),
+            "9.9.9",
+        )
+        for incoherent in (
+            {"name": "fastdb4ts", "version": "invalid"},
+            {"name": "some-other-package", "version": "9.9.9"},
+            {"name": "fastdb4ts", "version": "9.9.9-rc.1"},
+            {"name": "fastdb4ts", "version": ""},
+            {"name": "fastdb4ts"},
+            "fastdb4ts",
+        ):
+            with self.subTest(incoherent=incoherent):
+                with self.assertRaises(MODULE.CheckError):
+                    MODULE.owner_package_version(incoherent)
+        owner = MODULE.load_json_no_duplicates(
+            MODULE.OWNER_PACKAGE_JSON.read_text(encoding="utf-8"),
+            "authoritative ts/fastdb4ts/package.json",
+        )
+        self.assertEqual(MODULE.PACKAGE_VERSION, owner["version"])
 
     def test_requires_one_clean_tarball_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -493,15 +493,16 @@ def check_documentation
     "public consumer guidance, proof\nmapping, and final independent review remain open"
   require_quality(!issue.include?(stale_guidance),
                   "Issue 0002 retains the stale Task 11 guidance/proof status")
+  # The historical P2 ABI-freeze statement lives in this authoritative status
+  # issue; the root README only carries public documentation navigation.
+  require_quality(issue.include?("freezing the sorted public ABI at exactly 99 symbols"),
+                  "Issue 0002 does not record the frozen exact P2 ABI-99 statement")
 
-  readme = ROOT.join("README.md").read
   core_readme = ROOT.join("fastcarto/README.md").read
   schemas = ROOT.join("schemas/README.md").read
   changelog = ROOT.join("CHANGELOG.md").read
   index = ROOT.join("docs/issues/README.md").read
   compact = ->(text) { text.gsub(/\s+/, " ") }
-  require_quality(compact.call(readme).include?("exactly 99 `fdb_payload_v1_*` exports"),
-                  "root README does not state the exact P2 ABI")
   require_quality(compact.call(core_readme).include?("Emscripten exception model"),
                   "Core README lacks source-build exception guidance")
   require_quality(compact.call(schemas).include?("P2 requirement-to-test traceability"),

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
@@ -13,8 +14,9 @@ import tempfile
 from typing import Any
 
 
+ROOT = Path(__file__).resolve().parents[2]
+OWNER_PACKAGE_JSON = ROOT / "ts" / "fastdb4ts" / "package.json"
 PACKAGE_NAME = "fastdb4ts"
-PACKAGE_VERSION = "0.2.0"
 REQUIRED = {
     "README.md",
     "package.json",
@@ -90,6 +92,51 @@ def load_json_no_duplicates(source: str, label: str) -> Any:
         return result
 
     return json.loads(source, object_pairs_hook=object_from_pairs)
+
+
+def owner_package_version(document: Any) -> str:
+    """Validate the authoritative fastdb4ts identity and return its version."""
+    if not isinstance(document, dict):
+        raise CheckError(
+            "authoritative ts/fastdb4ts/package.json must be an object"
+        )
+    if document.get("name") != PACKAGE_NAME:
+        raise CheckError(
+            "authoritative package metadata must identify "
+            f"{PACKAGE_NAME}, received {document.get('name')!r}"
+        )
+    version = document.get("version")
+    if not isinstance(version, str) or re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+        raise CheckError(
+            "authoritative fastdb4ts version must be a final release "
+            f"version, received {version!r}"
+        )
+    return version
+
+
+def load_owner_package_version() -> str:
+    try:
+        source = OWNER_PACKAGE_JSON.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise CheckError(
+            "cannot read authoritative package metadata "
+            f"{OWNER_PACKAGE_JSON}: {error}"
+        ) from error
+    try:
+        document = load_json_no_duplicates(
+            source, "authoritative ts/fastdb4ts/package.json"
+        )
+    except json.JSONDecodeError as error:
+        raise CheckError(
+            "authoritative package metadata "
+            f"{OWNER_PACKAGE_JSON} is not valid JSON: {error}"
+        ) from error
+    return owner_package_version(document)
+
+
+# The release identity must track the authoritative owner metadata instead of
+# a checker-local literal, so version bumps never desynchronize the gate.
+PACKAGE_VERSION = load_owner_package_version()
 
 
 def exact_package(package_dir: Path) -> Path:
