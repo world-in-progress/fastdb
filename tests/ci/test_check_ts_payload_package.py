@@ -62,6 +62,8 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
     def test_requires_payload_inventory_and_rejects_debris(self) -> None:
         self.assertIn("dist/index.js", MODULE.REQUIRED)
         self.assertIn("dist/index.d.ts", MODULE.REQUIRED)
+        self.assertIn("dist/LICENSE", MODULE.REQUIRED)
+        self.assertIn("dist/THIRD_PARTY_NOTICES.txt", MODULE.REQUIRED)
         MODULE.check_inventory(set(MODULE.REQUIRED))
         with self.assertRaises(MODULE.CheckError):
             MODULE.check_inventory(set(MODULE.REQUIRED) - {"dist/payload/index.js"})

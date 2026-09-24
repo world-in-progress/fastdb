@@ -57,6 +57,13 @@ class SwigDiagnosticTests(unittest.TestCase):
 
 
 class InventoryTests(unittest.TestCase):
+    def test_original_license_texts_are_required_not_just_filenames(self) -> None:
+        files = {name: (ROOT / name).read_bytes() for name in MODULE.LICENSE_FILES}
+        MODULE.check_license_files(files, "fixture")
+        for name in MODULE.LICENSE_FILES:
+            with self.subTest(name=name), self.assertRaises(MODULE.CheckError):
+                MODULE.check_license_files({**files, name: b"missing original notice"}, "fixture")
+
     def test_requires_every_retained_standalone_python_module(self) -> None:
         retained = {
             "fastdb4py/__init__.py",

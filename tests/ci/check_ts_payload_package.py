@@ -18,6 +18,8 @@ PACKAGE_VERSION = "0.2.0"
 REQUIRED = {
     "README.md",
     "package.json",
+    "dist/LICENSE",
+    "dist/THIRD_PARTY_NOTICES.txt",
     "dist/index.d.ts",
     "dist/index.js",
     "dist/payload/abi.d.ts",
@@ -376,6 +378,11 @@ def main() -> int:
             reject_special_members(members)
             names = strip_root([member.name for member in members])
             check_inventory(names)
+            for filename in ("LICENSE", "THIRD_PARTY_NOTICES.txt"):
+                member = archive.extractfile(f"package/dist/{filename}")
+                expected = Path(__file__).resolve().parents[2] / filename
+                if member is None or member.read() != expected.read_bytes():
+                    raise CheckError(f"npm package does not retain the original {filename}")
             package_json = archive.extractfile("package/package.json")
             if package_json is None:
                 raise CheckError("npm package is missing package.json contents")

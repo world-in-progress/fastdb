@@ -88,6 +88,7 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
             shutil.copy2(ROOT / "fastcarto/fastdb/include" / header, bundle / "include" / header)
         shutil.copy2(library, bundle / "lib" / library.name)
         shutil.copy2(ROOT / "LICENSE", bundle / "LICENSE")
+        shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.txt", bundle / "THIRD_PARTY_NOTICES.txt")
         for dependency in ("yyjson", "double-conversion", "picosha2"):
             destination = bundle / "licenses" / dependency
             destination.mkdir(parents=True)
@@ -138,6 +139,11 @@ def inspect_wheel(path: Path, release_version: str) -> str:
         info = BytesParser().parsebytes(archive.read(metadata[0]))
         if info["Name"] != "fastdb4py" or info["Version"] != release_version:
             raise ReleaseError(f"Unexpected wheel identity: {path.name}")
+        license_directory = str(PurePosixPath(metadata[0]).parent / "licenses")
+        for filename in ("LICENSE", "THIRD_PARTY_NOTICES.txt"):
+            member = f"{license_directory}/{filename}"
+            if member not in archive.namelist() or archive.read(member) != (ROOT / filename).read_bytes():
+                raise ReleaseError(f"Wheel does not retain original {filename}: {path.name}")
         if not any(name.startswith("fastdb4py/payload/") for name in archive.namelist()):
             raise ReleaseError(f"Wheel omits the portable payload API: {path.name}")
     pieces = path.stem.split("-")

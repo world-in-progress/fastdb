@@ -3,6 +3,7 @@ name = "fastdb4py"
 version = "0.2.0"
 description = "FastCarto database bindings"
 readme = "README.md"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.txt"]
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
@@ -13,7 +14,7 @@ fdb = "fastdb4py.cli:main"
 
 [build-system]
 requires = [
-    "setuptools>=42",
+    "setuptools>=77",
     "wheel",
     "numpy",
     "cmake>=3.16",
@@ -25,7 +26,7 @@ build-backend = "setuptools.build_meta"
 dev = [
     "pyarrow>=23.0.1",
     "pytest>=9.0.1",
-    "setuptools>=42",
+    "setuptools>=77",
 ]
 
 [tool.pyright]

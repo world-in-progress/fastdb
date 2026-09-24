@@ -35,7 +35,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json && mkdir -p dist/wasm && cp src/wasm/*.js src/wasm/*.d.ts dist/wasm/ && if ls src/wasm/*.wasm >/dev/null 2>&1; then cp src/wasm/*.wasm dist/wasm/; fi",
+    "build": "rm -rf dist && tsc -p tsconfig.json && cp ../../LICENSE ../../THIRD_PARTY_NOTICES.txt dist/ && mkdir -p dist/wasm && cp src/wasm/*.js src/wasm/*.d.ts dist/wasm/ && if ls src/wasm/*.wasm >/dev/null 2>&1; then cp src/wasm/*.wasm dist/wasm/; fi",
     "build:wasm": "bash ../build-wasm.sh",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:ts": "npm run build && node --test ../../tests/ts/*.mjs",

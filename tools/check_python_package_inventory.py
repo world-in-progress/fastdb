@@ -38,6 +38,9 @@ STANDALONE_WHEEL_REQUIRED = {
     "fastdb4py/view_owner.py",
 }
 SDIST_REQUIRED = {
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.txt",
+    "tools/generate_third_party_notices.py",
     "fastcarto/fastdb/include/fastdb_payload.h",
     "fastcarto/fastdb/include/fastdb_payload.hpp",
     "fastcarto/fastdb/src/payload/codegen/Artifact.cpp",
@@ -119,6 +122,14 @@ SWIG_DIAGNOSTIC = re.compile(
 NATIVE_ARTIFACT = re.compile(r"\.(?:so(?:\.\d+)*|dylib|dll|pyd)$")
 NORMALIZED_NAME_SEPARATOR = re.compile(r"[-_.]+")
 DIST_AUXILIARY_FILES = {".gitignore"}
+LICENSE_FILES = ("LICENSE", "THIRD_PARTY_NOTICES.txt")
+
+
+def check_license_files(files: dict[str, bytes], label: str) -> None:
+    root = Path(__file__).resolve().parents[1]
+    for filename in LICENSE_FILES:
+        if files.get(filename) != (root / filename).read_bytes():
+            raise CheckError(f"{label} does not retain the original {filename}")
 
 
 def strip_sdist_root(names: list[str], root: str) -> set[str]:
@@ -292,6 +303,14 @@ def main() -> int:
         if package_info is None:
             raise CheckError("sdist is missing its root PKG-INFO")
         sdist_metadata = metadata_identity(package_info.read(), "sdist PKG-INFO")
+        licenses = {}
+        for filename in LICENSE_FILES:
+            path = f"{root}/{filename}"
+            if path in raw_names:
+                member = archive.extractfile(path)
+                if member is not None:
+                    licenses[filename] = member.read()
+        check_license_files(licenses, "sdist")
     sdist_names = strip_sdist_root(raw_names, root)
     require_members(sdist_names, SDIST_REQUIRED, "sdist")
     reject_members(sdist_names, SDIST_FORBIDDEN, "sdist")
@@ -316,6 +335,12 @@ def main() -> int:
         wheel_metadata = metadata_identity(
             archive.read(metadata_paths[0]), "wheel METADATA"
         )
+        license_directory = str(PurePosixPath(metadata_paths[0]).parent / "licenses")
+        check_license_files({
+            filename: archive.read(f"{license_directory}/{filename}")
+            for filename in LICENSE_FILES
+            if f"{license_directory}/{filename}" in wheel_names
+        }, "wheel")
 
     expected_identity = (canonical_distribution_name(filename_name), version)
     actual_identities = {

@@ -4,15 +4,40 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 import release_artifacts as release
 
 
 class ReleaseInventoryTests(unittest.TestCase):
+    def test_repaired_wheel_preserves_license_texts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            wheel = Path(directory) / "fastdb4py-0.2.0-cp312-cp312-manylinux_2_17_x86_64.whl"
+            for notice in (None, b"replaced original text", (release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes()):
+                with zipfile.ZipFile(wheel, "w") as archive:
+                    archive.writestr("fastdb4py-0.2.0.dist-info/METADATA", "Name: fastdb4py\nVersion: 0.2.0\n")
+                    archive.writestr("fastdb4py/payload/__init__.py", "")
+                    archive.writestr("fastdb4py-0.2.0.dist-info/licenses/LICENSE", (release.ROOT / "LICENSE").read_bytes())
+                    if notice is not None:
+                        archive.writestr("fastdb4py-0.2.0.dist-info/licenses/THIRD_PARTY_NOTICES.txt", notice)
+                if notice is None or notice == b"replaced original text":
+                    with self.assertRaisesRegex(release.ReleaseError, "original THIRD_PARTY_NOTICES"):
+                        release.inspect_wheel(wheel, "0.2.0")
+                else:
+                    self.assertEqual(release.inspect_wheel(wheel, "0.2.0"), "cp312")
+
+    def test_third_party_notice_matches_repository_originals(self):
+        subprocess.run([
+            sys.executable,
+            str(release.ROOT / "tools/generate_third_party_notices.py"),
+            "--check",
+        ], check=True)
+
     def test_source_provenance_rejects_dirty_tracked_files_but_allows_wheelhouse(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -41,7 +66,7 @@ class ReleaseInventoryTests(unittest.TestCase):
                 release.make_core(build, root / "dist", release.TARGETS[0])
             with tarfile.open(root / "dist/fastdb-core-0.2.0-x86_64-unknown-linux-gnu.tar.gz") as archive:
                 members = set(archive.getnames())
-                for expected in ("LICENSE", "include/fastdb_payload.h", "include/fastdb_payload.hpp", "licenses/double-conversion/LICENSE", "licenses/yyjson/UPSTREAM.md", "licenses/picosha2/LICENSE", "licenses/clipper/NOTICES.txt", "licenses/gaiageo/NOTICES.txt"):
+                for expected in ("LICENSE", "THIRD_PARTY_NOTICES.txt", "include/fastdb_payload.h", "include/fastdb_payload.hpp", "licenses/double-conversion/LICENSE", "licenses/yyjson/UPSTREAM.md", "licenses/picosha2/LICENSE", "licenses/clipper/NOTICES.txt", "licenses/gaiageo/NOTICES.txt"):
                     self.assertIn(expected, members)
                 manifest = json.load(archive.extractfile("manifest.json"))
                 inventory = {item["path"] for item in manifest["files"]}

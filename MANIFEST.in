@@ -11,3 +11,5 @@ recursive-include python *
 global-exclude *.py[cod]
 global-exclude *.so *.dylib *.dll
 global-exclude .DS_Store
+include LICENSE THIRD_PARTY_NOTICES.txt
+include tools/generate_third_party_notices.py
