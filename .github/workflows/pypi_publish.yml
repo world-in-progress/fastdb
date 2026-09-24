@@ -2,130 +2,69 @@ name: Publish to PyPI
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "pyproject.toml"
+    inputs:
+      candidate_run_id:
+        description: Successful Release Artifacts run ID from main
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character tested source SHA
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
+
+concurrency:
+  group: fastdb-publish-pypi
+  cancel-in-progress: false
 
 jobs:
-  check_version:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.get_version.outputs.VERSION }}
-      exists: ${{ steps.check_tag.outputs.exists }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Get version from pyproject.toml
-        id: get_version
-        run: |
-          # Extract version using python for reliability
-          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
-          echo "Detected version: $VERSION"
-
-      - name: Check if tag exists
-        id: check_tag
-        run: |
-          if git rev-parse "py/v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
-            echo "Tag py/v${{ steps.get_version.outputs.VERSION }} already exists. Skipping build and publish."
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "Tag py/v${{ steps.get_version.outputs.VERSION }} does not exist. Proceeding."
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
-  build_wheels:
-    needs: check_version
-    if: needs.check_version.outputs.exists == 'false'
-    name: Build wheels on ${{ matrix.label }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: linux-x86_64
-            os: ubuntu-latest
-            archs: x86_64
-          - label: linux-aarch64
-            os: ubuntu-24.04-arm
-            archs: aarch64
-          - label: macos
-            os: macos-latest
-            archs: x86_64 arm64
-          - label: windows
-            os: windows-latest
-            archs: AMD64
-
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v3.4.0
-        env:
-          # Build each platform's target architecture(s); Linux aarch64 uses a native arm64 runner.
-          CIBW_ARCHS: ${{ matrix.archs }}
-          # Skip musllinux
-          CIBW_SKIP: "*musllinux*"
-          # Ensure cmake is available in the build environment
-          CIBW_BEFORE_ALL_LINUX: "yum install -y cmake || apt-get install -y cmake || apk add cmake"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: cibw-wheels-${{ matrix.label }}
-          path: ./wheelhouse/*.whl
-
-  build_sdist:
-    needs: check_version
-    if: needs.check_version.outputs.exists == 'false'
-    name: Build source distribution
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Build sdist
-        run: uv build --sdist
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: cibw-sdist
-          path: dist/*.tar.gz
-
   publish:
-    needs: [check_version, build_wheels, build_sdist]
-    if: needs.check_version.outputs.exists == 'false'
-    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'world-in-progress/fastdb' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RELEASE_RUN_ID: ${{ inputs.candidate_run_id }}
+      RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v8
+      - uses: actions/checkout@v6
         with:
-          pattern: cibw-*
-          path: dist
-          merge-multiple: true
-
-      - name: Create release tag
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Require complete proof and artifact runs for the exact source
+        run: >-
+          python3 tests/ci/publish_release.py check-ci
+          --run-id "$RELEASE_RUN_ID" --source-sha "$RELEASE_SOURCE_SHA"
+      - uses: actions/download-artifact@v8
+        with:
+          name: portable-release-${{ inputs.source_sha }}
+          path: release
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Verify hashes and prepare only missing registry artifacts
+        id: prepare
+        run: >-
+          python3 tests/ci/publish_release.py prepare
+          --directory release --output stage --ecosystem pypi
+          --run-id "$RELEASE_RUN_ID" --source-sha "$RELEASE_SOURCE_SHA"
+      - uses: astral-sh/setup-uv@v6
+      - name: Upload tested Python distributions
+        if: steps.prepare.outputs.pending == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/git/refs \
-            --method POST \
-            -f ref="refs/tags/py/v${{ needs.check_version.outputs.version }}" \
-            -f sha="${{ github.sha }}"
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: uv publish stage/packages/*
+      - name: Verify registry bytes and retain publication receipt
+        run: python3 tests/ci/publish_release.py verify-registry --stage stage
+      - uses: actions/upload-artifact@v7
+        if: always()
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
+          name: pypi-publication-${{ inputs.source_sha }}
+          path: |
+            stage/publish-plan.json
+            stage/published.json
+          if-no-files-found: warn

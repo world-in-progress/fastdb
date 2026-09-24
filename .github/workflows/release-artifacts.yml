@@ -1,0 +1,215 @@
+name: Release Artifacts
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-artifacts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - name: Verify coherent release versions and release tooling
+        run: |
+          python3 tests/ci/release_artifacts.py version
+          python3 tests/ci/test_release_artifacts.py
+          python3 tests/ci/test_publish_release.py
+
+  native:
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            part: core-linux
+          - os: macos-15
+            target: aarch64-apple-darwin
+            part: core-macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build and test native release Core
+        run: |
+          python3 tests/ci/release_artifacts.py start-native --build-dir build/release
+          cmake -S fastcarto -B build/release \
+            -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF \
+            -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+          cmake --build build/release --parallel 2
+          ctest --test-dir build/release --output-on-failure
+          python3 tools/check_payload_abi_symbols.py --build-dir build/release
+          cargo test --manifest-path bindings/rust/Cargo.toml --workspace --all-features
+      - name: Verify and retain isolated Rust packages
+        run: >-
+          python3 tests/ci/check_rust_payload_package.py
+          --build-dir build/release --package-dir build/release-crates
+      - name: Package Core and exact Rust archives
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_PART: ${{ matrix.part }}
+        run: |
+          python3 tests/ci/release_artifacts.py core \
+            --build-dir build/release --output dist --target "$RELEASE_TARGET"
+          if [ "$RELEASE_PART" = core-linux ]; then
+            cp build/release-crates/*.crate dist/
+          fi
+          python3 tests/ci/release_artifacts.py record \
+            --output dist --part "$RELEASE_PART" --target "$RELEASE_TARGET"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-part-${{ matrix.part }}
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: native-logs-${{ matrix.part }}
+          path: build/release/Testing/Temporary/
+
+  wheels:
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            arch: x86_64
+            part: wheels-linux
+          - os: macos-15
+            target: aarch64-apple-darwin
+            arch: arm64
+            part: wheels-macos
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build repaired wheels and test installed payload projections
+        uses: pypa/cibuildwheel@v3.4.0
+        env:
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-* cp314t-*"
+          CIBW_ENABLE: cpython-freethreading
+          CIBW_SKIP: "*musllinux*"
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=11.0"
+          CIBW_TEST_REQUIRES: pytest
+          CIBW_TEST_COMMAND: "python -m pytest {project}/tests/python/payload -q"
+      - name: Verify release wheel identities and record bytes
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          RELEASE_PART: ${{ matrix.part }}
+        run: >-
+          python3 tests/ci/release_artifacts.py record
+          --output wheelhouse --part "$RELEASE_PART" --target "$RELEASE_TARGET"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-part-${{ matrix.part }}
+          path: wheelhouse/
+          if-no-files-found: error
+
+  sdist:
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build and install source distribution in isolation
+        run: |
+          uv build --sdist --out-dir dist
+          uv run --isolated --no-project --with ./dist/fastdb4py-*.tar.gz \
+            --with pytest python -m pytest tests/python/payload -q
+          python3 tests/ci/release_artifacts.py record --output dist --part sdist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-part-sdist
+          path: dist/
+          if-no-files-found: error
+
+  typescript:
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install Emscripten 5.0.2
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          "$RUNNER_TEMP/emsdk/emsdk" install 5.0.2
+          "$RUNNER_TEMP/emsdk/emsdk" activate 5.0.2
+          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+      - name: Build, test, and install the exact TypeScript tarball
+        run: |
+          npm ci --prefix ts/fastdb4ts
+          bash ts/build-wasm.sh
+          npm run test:ts
+          mkdir -p dist
+          npm pack ./ts/fastdb4ts --pack-destination dist
+          python3 tests/ci/check_ts_payload_package.py --package-dir dist
+          python3 tests/ci/release_artifacts.py record --output dist --part typescript
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-part-typescript
+          path: dist/
+          if-no-files-found: error
+
+  candidate:
+    needs: [native, wheels, sdist, typescript]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-part-*
+          path: release-parts
+      - name: Assemble the complete source-bound release manifest
+        run: >-
+          python3 tests/ci/release_artifacts.py assemble
+          --input release-parts --output release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: portable-release-${{ github.sha }}
+          path: release/
+          if-no-files-found: error
+          retention-days: 30

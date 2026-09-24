@@ -62,7 +62,7 @@ jobs:
               - 'tests/ts/**'
               - 'package.json'
             workflow:
-              - '.github/workflows/tests.yml'
+              - '.github/workflows/**'
               - '.github/copilot-instructions.md'
               - 'tests/ci/**'
               - 'tools/check_p5_clean_cut.py'

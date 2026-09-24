@@ -1,4 +1,4 @@
-name: Publish fastdb4ts to npm
+name: Publish Rust crates
 
 on:
   workflow_dispatch:
@@ -15,10 +15,9 @@ on:
 permissions:
   contents: read
   actions: read
-  id-token: write
 
 concurrency:
-  group: fastdb-publish-npm
+  group: fastdb-publish-crates
   cancel-in-progress: false
 
 jobs:
@@ -51,22 +50,19 @@ jobs:
         id: prepare
         run: >-
           python3 tests/ci/publish_release.py prepare
-          --directory release --output stage --ecosystem npm
+          --directory release --output stage --ecosystem crates
           --run-id "$RELEASE_RUN_ID" --source-sha "$RELEASE_SOURCE_SHA"
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-      - name: Install npm with trusted publishing support
-        run: npm install -g npm@11.6.2
-      - name: Upload tested npm tarball
+      - name: Upload tested Rust archives in dependency order
         if: steps.prepare.outputs.pending == 'true'
-        run: npm publish ./stage/packages/*.tgz --provenance --access public
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: python3 tests/ci/publish_release.py publish-crates --stage stage
       - name: Verify registry bytes and retain publication receipt
         run: python3 tests/ci/publish_release.py verify-registry --stage stage
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: npm-publication-${{ inputs.source_sha }}
+          name: crates-publication-${{ inputs.source_sha }}
           path: |
             stage/publish-plan.json
             stage/published.json
