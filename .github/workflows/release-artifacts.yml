@@ -87,6 +87,10 @@ jobs:
           # returns nonzero when any target fails, checked immediately below.
           cmake --build build/release --parallel 2 -- -k 0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Shared-library test executables live outside the DLL directory.
+          $fastdbDll = @(Get-ChildItem build/release -Filter fastdb.dll -File -Recurse)
+          if ($fastdbDll.Count -ne 1) { throw "Expected exactly one built fastdb.dll" }
+          $env:PATH = "$($fastdbDll[0].DirectoryName);$env:PATH"
           ctest --test-dir build/release --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tools/check_payload_abi_symbols.py --build-dir build/release
