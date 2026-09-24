@@ -497,9 +497,9 @@ JsonValue JsonDocument::to_json_value() const {
                 while (yyjson_val* child = yyjson_arr_iter_next(&iterator)) {
                     children.push_back(child);
                 }
-                for (auto iterator = children.rbegin();
-                     iterator != children.rend(); ++iterator) {
-                    pending.push_back(ConvertItem{*iterator, false});
+                for (auto reverse_child = children.rbegin();
+                     reverse_child != children.rend(); ++reverse_child) {
+                    pending.push_back(ConvertItem{*reverse_child, false});
                 }
             } else {
                 std::vector<yyjson_val*> children;
@@ -507,9 +507,9 @@ JsonValue JsonDocument::to_json_value() const {
                 while (yyjson_val* key = yyjson_obj_iter_next(&iterator)) {
                     children.push_back(yyjson_obj_iter_get_val(key));
                 }
-                for (auto iterator = children.rbegin();
-                     iterator != children.rend(); ++iterator) {
-                    pending.push_back(ConvertItem{*iterator, false});
+                for (auto reverse_child = children.rbegin();
+                     reverse_child != children.rend(); ++reverse_child) {
+                    pending.push_back(ConvertItem{*reverse_child, false});
                 }
             }
             continue;
