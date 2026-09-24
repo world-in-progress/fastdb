@@ -1,3 +1,5 @@
+// Standalone feature metadata; not fastdb.payload.v1 authority.
+
 import {
   FastdbRuntimeError,
   FastdbSchemaError,

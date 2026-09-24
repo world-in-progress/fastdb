@@ -1,0 +1,66 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {
+      "id": "single",
+      "cardinality": "one",
+      "type": {"kind": "component", "id": "AllTypes"}
+    },
+    {
+      "id": "series",
+      "cardinality": "many",
+      "type": {
+        "kind": "list",
+        "nullable": true,
+        "items": {"kind": "u8", "nullable": true}
+      }
+    }
+  ],
+  "components": [
+    {
+      "id": "AllTypes",
+      "kind": "record",
+      "fields": [
+        {"id": "boolean_value", "type": {"kind": "bool"}},
+        {"id": "u8_value", "type": {"kind": "u8"}},
+        {"id": "u16_value", "type": {"kind": "u16"}},
+        {"id": "u32_value", "type": {"kind": "u32"}},
+        {"id": "i32_value", "type": {"kind": "i32"}},
+        {
+          "id": "u8n_value",
+          "type": {"kind": "u8n", "min": -0.0, "max": 1.0}
+        },
+        {
+          "id": "u16n_value",
+          "type": {"kind": "u16n", "min": -1.0, "max": 1.0}
+        },
+        {"id": "f32_value", "type": {"kind": "f32"}},
+        {"id": "f64_value", "type": {"kind": "f64"}},
+        {"id": "str_value", "type": {"kind": "str"}},
+        {"id": "wstr_value", "type": {"kind": "wstr"}},
+        {"id": "bytes_value", "type": {"kind": "bytes"}},
+        {
+          "id": "component_value",
+          "type": {"kind": "component", "id": "Leaf"}
+        },
+        {
+          "id": "list_value",
+          "type": {
+            "kind": "list",
+            "items": {
+              "kind": "list",
+              "nullable": true,
+              "items": {"kind": "str", "nullable": true}
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "Leaf",
+      "kind": "record",
+      "fields": []
+    }
+  ]
+}

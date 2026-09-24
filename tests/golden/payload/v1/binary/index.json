@@ -1,0 +1,264 @@
+{
+  "schema": "fastdb.payload.golden.binary-index.v1",
+  "cases": [
+    {
+      "name": "empty",
+      "success": {
+        "source": "spec/empty.source.json",
+        "scenario": "empty",
+        "binary_hex": "valid/empty.bin.hex",
+        "sha256": "valid/empty.sha256"
+      }
+    },
+    {
+      "name": "fixed-scalars",
+      "success": {
+        "source": "spec/fixed-scalars.source.json",
+        "scenario": "fixed_scalars",
+        "binary_hex": "valid/fixed-scalars.bin.hex",
+        "sha256": "valid/fixed-scalars.sha256"
+      }
+    },
+    {
+      "name": "numeric-edges",
+      "success": {
+        "source": "spec/numeric-edges.source.json",
+        "scenario": "numeric_edges",
+        "binary_hex": "valid/numeric-edges.bin.hex",
+        "sha256": "valid/numeric-edges.sha256"
+      }
+    },
+    {
+      "name": "nested-components",
+      "success": {
+        "source": "spec/nested-components.source.json",
+        "scenario": "nested_components",
+        "binary_hex": "valid/nested-components.bin.hex",
+        "sha256": "valid/nested-components.sha256"
+      }
+    },
+    {
+      "name": "text-bytes",
+      "success": {
+        "source": "spec/text-bytes.source.json",
+        "scenario": "text_bytes",
+        "binary_hex": "valid/text-bytes.bin.hex",
+        "sha256": "valid/text-bytes.sha256"
+      }
+    },
+    {
+      "name": "nested-lists",
+      "success": {
+        "source": "spec/nested-lists.source.json",
+        "scenario": "nested_lists",
+        "binary_hex": "valid/nested-lists.bin.hex",
+        "sha256": "valid/nested-lists.sha256"
+      }
+    },
+    {
+      "name": "component-list-composition",
+      "success": {
+        "source": "spec/component-list-composition.source.json",
+        "scenario": "component_list_composition",
+        "binary_hex": "valid/component-list-composition.bin.hex",
+        "sha256": "valid/component-list-composition.sha256"
+      }
+    },
+    {
+      "name": "component-list-empty",
+      "success": {
+        "source": "spec/component-list-composition.source.json",
+        "scenario": "component_list_empty",
+        "binary_hex": "valid/component-list-empty.bin.hex",
+        "sha256": "valid/component-list-empty.sha256"
+      }
+    },
+    {
+      "name": "graph-all-values",
+      "success": {
+        "source": "spec/graph-all-values.source.json",
+        "scenario": "graph_all_values",
+        "binary_hex": "valid/graph-all-values.bin.hex",
+        "sha256": "valid/graph-all-values.sha256",
+        "layout": "valid/graph-all-values.layout.md"
+      }
+    },
+    {
+      "name": "graph-nested-lists",
+      "success": {
+        "source": "spec/graph-nested-lists.source.json",
+        "scenario": "graph_nested_lists",
+        "binary_hex": "valid/graph-nested-lists.bin.hex",
+        "sha256": "valid/graph-nested-lists.sha256",
+        "layout": "valid/graph-nested-lists.layout.md"
+      }
+    },
+    {
+      "name": "graph-disconnected-roots",
+      "success": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "scenario": "graph_disconnected_roots",
+        "binary_hex": "valid/graph-disconnected-roots.bin.hex",
+        "sha256": "valid/graph-disconnected-roots.sha256",
+        "layout": "valid/graph-disconnected-roots.layout.md"
+      }
+    },
+    {
+      "name": "graph-null-empty",
+      "success": {
+        "source": "spec/graph-null-empty.source.json",
+        "scenario": "graph_null_empty",
+        "binary_hex": "valid/graph-null-empty.bin.hex",
+        "sha256": "valid/graph-null-empty.sha256",
+        "layout": "valid/graph-null-empty.layout.md"
+      }
+    },
+    {
+      "name": "graph-empty",
+      "success": {
+        "source": "spec/graph-empty.source.json",
+        "scenario": "graph_empty",
+        "binary_hex": "valid/graph-empty.bin.hex",
+        "sha256": "valid/graph-empty.sha256",
+        "layout": "valid/graph-empty.layout.md"
+      }
+    },
+    {
+      "name": "graph-single-root",
+      "success": {
+        "source": "spec/graph-single-root.source.json",
+        "scenario": "graph_single_root",
+        "binary_hex": "valid/graph-single-root.bin.hex",
+        "sha256": "valid/graph-single-root.sha256",
+        "layout": "valid/graph-single-root.layout.md"
+      }
+    },
+    {
+      "name": "graph-shared-cycle",
+      "success": {
+        "source": "spec/graph-shared-cycle.source.json",
+        "scenario": "graph_shared_cycle",
+        "binary_hex": "valid/graph-shared-cycle.bin.hex",
+        "sha256": "valid/graph-shared-cycle.sha256",
+        "layout": "valid/graph-shared-cycle.layout.md"
+      }
+    },
+    {
+      "name": "invalid-graph-object-owner",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-object-owner.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-object-owner.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-object-stride",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-object-stride.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-object-stride.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-root-id",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-root-id.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-root-id.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-ref-id",
+      "invalid": {
+        "source": "spec/graph-shared-cycle.source.json",
+        "binary_hex": "invalid/graph-ref-id.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-ref-id.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-unreachable",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-unreachable.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-unreachable.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-null-slot",
+      "invalid": {
+        "source": "spec/graph-null-empty.source.json",
+        "binary_hex": "invalid/graph-null-slot.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-null-slot.error.json"}
+      }
+    },
+    {
+      "name": "invalid-graph-region-order",
+      "invalid": {
+        "source": "spec/graph-disconnected-roots.source.json",
+        "binary_hex": "invalid/graph-region-order.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/graph-region-order.error.json"}
+      }
+    },
+    {
+      "name": "invalid-header-magic",
+      "invalid": {
+        "source": "spec/empty.source.json",
+        "binary_hex": "invalid/header-magic.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/header-magic.error.json"}
+      }
+    },
+    {
+      "name": "invalid-header-reserved",
+      "invalid": {
+        "source": "spec/empty.source.json",
+        "binary_hex": "invalid/header-reserved.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/header-reserved.error.json"}
+      }
+    },
+    {
+      "name": "invalid-directory-offset",
+      "invalid": {
+        "source": "spec/empty.source.json",
+        "binary_hex": "invalid/directory-offset.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/directory-offset.error.json"}
+      }
+    },
+    {
+      "name": "invalid-resource-total",
+      "invalid": {
+        "source": "spec/empty.source.json",
+        "binary_hex": "invalid/resource-total.bin.hex",
+        "open_options": {"max_total_bytes": 127},
+        "error": {"expectation": "invalid/resource-total.error.json"}
+      }
+    },
+    {
+      "name": "invalid-region-flags",
+      "invalid": {
+        "source": "spec/fixed-scalars.source.json",
+        "binary_hex": "invalid/region-flags.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/region-flags.error.json"}
+      }
+    },
+    {
+      "name": "invalid-entry-index",
+      "invalid": {
+        "source": "spec/fixed-scalars.source.json",
+        "binary_hex": "invalid/entry-index.bin.hex",
+        "open_options": {},
+        "error": {"expectation": "invalid/entry-index.error.json"}
+      }
+    }
+  ]
+}

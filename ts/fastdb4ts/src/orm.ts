@@ -151,10 +151,10 @@ export class ORM {
     const bytes = this.copyChunkToBytes(stream);
     stream.delete();
 
-    this.disposeBuildTables();
+    // Layer handles borrow their native storage from this builder.
+    this.tableMap.clear();
     build.delete();
     this.origin = ORM.fromBuffer(bytes).origin;
-    this.tableMap.clear();
   }
 
   toBuffer(): Uint8Array {
@@ -262,14 +262,6 @@ export class ORM {
   private copyChunkToBytes(stream: WxMemoryStreamHandle): Uint8Array {
     const chunk = stream.dataView();
     return this.module.HEAPU8.slice(chunk.data, chunk.data + chunk.size);
-  }
-
-  private disposeBuildTables(): void {
-    for (const table of this.tableMap.values()) {
-      if (!table.fixed) {
-        (table.origin as WxLayerTableBuildHandle).delete();
-      }
-    }
   }
 }
 

@@ -1,0 +1,7 @@
+{
+  "status": 3001,
+  "symbol": "INVALID_MAGIC",
+  "path": "/binary/header/magic",
+  "message": "Portable payload magic is invalid",
+  "details_json": "{\"actual\":\"4744425041593100\",\"expected\":\"4644425041593100\",\"reason\":\"invalid_magic\"}"
+}

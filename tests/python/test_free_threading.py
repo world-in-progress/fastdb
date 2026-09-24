@@ -13,7 +13,7 @@ import pytest
 
 from fastdb4py import F64, U32, STR
 from fastdb4py.decorator import feature
-from fastdb4py.column_engine import ColumnEngine
+from fastdb4py.record_engine import RecordEngine
 from fastdb4py.layout import Layout
 from fastdb4py.registry import get_schema as get_class_schema
 from fastdb4py.serializer import FastSerializer
@@ -173,7 +173,7 @@ class TestColumnAccessorConcurrency:
             x: F64
             y: F64
 
-        orm = ColumnEngine.truncate([Layout(ColPoint, N)])
+        orm = RecordEngine.truncate([Layout(ColPoint, N)])
         tbl = orm.table(ColPoint)
 
         # Fill with known data
@@ -201,7 +201,7 @@ class TestColumnAccessorConcurrency:
             a: F64
             b: F64
 
-        orm = ColumnEngine.truncate([Layout(FreshColPoint, N)])
+        orm = RecordEngine.truncate([Layout(FreshColPoint, N)])
         tbl = orm.table(FreshColPoint)
 
         data = np.ones(N, dtype=np.float64) * 7.0
@@ -297,7 +297,7 @@ class TestORMConcurrency:
             x: F64
             y: F64
 
-        orm = ColumnEngine.truncate([Layout(OrmPoint, N)])
+        orm = RecordEngine.truncate([Layout(OrmPoint, N)])
 
         def get_table(i):
             tbl = orm.table(OrmPoint)
@@ -319,7 +319,7 @@ class TestORMConcurrency:
         class TableB:
             b: U32
 
-        orm = ColumnEngine.truncate([Layout(TableA, N), Layout(TableB, N)])
+        orm = RecordEngine.truncate([Layout(TableA, N), Layout(TableB, N)])
 
         def read_table(i):
             if i % 2 == 0:
@@ -342,7 +342,7 @@ class TestORMConcurrency:
         class IterPoint:
             x: F64
 
-        orm = ColumnEngine.truncate([Layout(IterPoint, N)])
+        orm = RecordEngine.truncate([Layout(IterPoint, N)])
         tbl = orm.table(IterPoint)
         tbl.fill(x=np.arange(N, dtype=np.float64))
 
@@ -378,7 +378,7 @@ class TestFreeThreadingStress:
             y: F64
 
         # Shared ORM for read operations
-        shared_orm = ColumnEngine.truncate([Layout(StressPoint, N)])
+        shared_orm = RecordEngine.truncate([Layout(StressPoint, N)])
         shared_tbl = shared_orm.table(StressPoint)
         shared_tbl.fill(
             x=np.arange(N, dtype=np.float64),
@@ -388,9 +388,9 @@ class TestFreeThreadingStress:
         errors = []
 
         def workload_truncate():
-            """Create independent ColumnEngine, write, read back."""
+            """Create independent RecordEngine, write, read back."""
             try:
-                orm = ColumnEngine.truncate([Layout(StressPoint, 10)])
+                orm = RecordEngine.truncate([Layout(StressPoint, 10)])
                 tbl = orm.table(StressPoint)
                 tbl.fill(x=np.ones(10, dtype=np.float64))
                 assert np.all(tbl.column.x == 1.0)

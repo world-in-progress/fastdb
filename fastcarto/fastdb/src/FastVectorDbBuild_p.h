@@ -7,6 +7,7 @@
 
 #include "fastdb.h"
 #include "fastdb-geometry-utils.h"
+#include <memory>
 #include <vector>
 using namespace std;
 namespace wx
@@ -91,12 +92,11 @@ struct
         size_t byteLength();
         size_t tableBufferBytes();
         size_t postToBuffer(void* pdata, size_t size);
-        FinalBackingAllocation* postToFinalBacking(FinalBackingResource* resource);
         void save(WriteStream *stream);
         void save(const char *filename);
 
     private:
-        vector<FastVectorDbLayerBuild *> m_layers;
+        vector<std::unique_ptr<FastVectorDbLayerBuild>> m_layers;
         FastVectorDbLayerBuild *m_current_layer;
         aabbox_t m_extent;
         bool m_aabbox_enable;

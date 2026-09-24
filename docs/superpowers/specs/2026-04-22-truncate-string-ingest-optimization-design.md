@@ -1,5 +1,10 @@
 # Truncate String Ingest Optimization Design
 
+> **Status: historical/superseded.** Retained as migration evidence only.
+> Current authority is the
+> [accepted portable-payload foundation](2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](2026-07-23-portable-payload-clean-cut-design.md).
+
 ## Problem
 
 `ColumnEngine.truncate()` fixed-table writes are already much faster than the old split string path, but the benchmark still shows a stable gap versus Arrow on schemas that include `STR`.

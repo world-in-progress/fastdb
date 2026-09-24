@@ -1,0 +1,7 @@
+{
+  "status": 3009,
+  "symbol": "NON_CANONICAL_BINARY",
+  "path": "/binary/regions/1/owner_index",
+  "message": "Portable payload binary is not canonical",
+  "details_json": "{\"actual\":\"1\",\"expected\":\"0\",\"reason\":\"region_owner_index\"}"
+}

@@ -1,0 +1,7 @@
+{
+  "status": 3007,
+  "symbol": "INVALID_REFERENCE",
+  "path": "/binary/entries/0/0",
+  "message": "Portable payload object reference is invalid",
+  "details_json": "{\"object_id\":\"2\",\"reason\":\"root_object_id_out_of_range\"}"
+}

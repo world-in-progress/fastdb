@@ -2,7 +2,7 @@
 fastdb4py Comprehensive Benchmark Suite (v2.0 unified-engine API)
 ==================================================================
 
-Covers ColumnEngine + ObjectEngine + FastSerializer paths to quantify
+Covers RecordEngine + ObjectEngine + FastSerializer paths to quantify
 performance across realistic scenarios.
 
   Section 1 – Microbenchmarks:  individual operation cost (ns precision)
@@ -38,7 +38,7 @@ from typing import Callable, List, Optional
 import numpy as np
 
 from fastdb4py import (
-    feature, ColumnEngine, ObjectEngine, Layout, FastSerializer,
+    feature, RecordEngine, ObjectEngine, Layout, FastSerializer,
     U8, U16, U32, I32, F32, F64, STR, BOOL,
     get_schema,
 )
@@ -220,9 +220,9 @@ def fmt_ns(ns: float) -> str:
 # Test fixture builders.
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _build_truncated_point_db(n: int = 10_000) -> ColumnEngine:
-    """ColumnEngine with truncated BenchPoint layer, columns pre-filled."""
-    db = ColumnEngine.truncate([Layout(BenchPoint, n)])
+def _build_truncated_point_db(n: int = 10_000) -> RecordEngine:
+    """RecordEngine with truncated BenchPoint layer, columns pre-filled."""
+    db = RecordEngine.truncate([Layout(BenchPoint, n)])
     tbl = db.table(BenchPoint)
     rng = np.random.default_rng(42)
     tbl.column.x[:] = rng.standard_normal(n).astype(np.float64)
@@ -329,16 +329,16 @@ def run_meso(quick: bool = False) -> List[BenchResult]:
     n = 1_000 if quick else 10_000
     samples = 3 if quick else 5
 
-    # 2.1 ColumnEngine.truncate (pre-allocate fixed-size).
+    # 2.1 RecordEngine.truncate (pre-allocate fixed-size).
     def _truncate():
-        db = ColumnEngine.truncate([Layout(BenchPoint, n)])
+        db = RecordEngine.truncate([Layout(BenchPoint, n)])
         del db
     results.append(time_one_shot(f"column_truncate_{n}", "meso", _truncate,
                                  samples=samples))
 
-    # 2.2 ColumnEngine.create + push.
+    # 2.2 RecordEngine.create + push.
     def _create_push():
-        db = ColumnEngine.create()
+        db = RecordEngine.create()
         for i in range(n):
             db.push(BenchPoint(x=float(i), y=float(i), z=float(i)))
         db.combine()
@@ -351,7 +351,7 @@ def run_meso(quick: bool = False) -> List[BenchResult]:
     arr_y = rng.standard_normal(n).astype(np.float64)
     arr_z = rng.standard_normal(n).astype(np.float64)
     def _bulk_fill():
-        db = ColumnEngine.truncate([Layout(BenchPoint, n)])
+        db = RecordEngine.truncate([Layout(BenchPoint, n)])
         tbl = db.table(BenchPoint)
         tbl.column.x[:] = arr_x
         tbl.column.y[:] = arr_y
@@ -369,10 +369,10 @@ def run_meso(quick: bool = False) -> List[BenchResult]:
     db_full = _build_truncated_point_db(n)
     blob = bytes(db_full._origin.buffer().as_array(np.uint8))
     def _load_buffer():
-        ce = ColumnEngine.from_buffer(blob) if hasattr(ColumnEngine, "from_buffer") else None
+        ce = RecordEngine.from_buffer(blob) if hasattr(RecordEngine, "from_buffer") else None
         if ce is None:
             # fallback: re-truncate as a sanity-equivalent op
-            _ = ColumnEngine.truncate([Layout(BenchPoint, n)])
+            _ = RecordEngine.truncate([Layout(BenchPoint, n)])
     results.append(time_one_shot(f"column_load_buffer_{n}", "meso", _load_buffer,
                                  samples=samples))
 
@@ -400,7 +400,7 @@ def run_macro(quick: bool = False) -> List[BenchResult]:
 
     # 3.1 Build a large point cloud and reduce it.
     def _scenario_build_reduce():
-        db = ColumnEngine.truncate([Layout(BenchPoint, n)])
+        db = RecordEngine.truncate([Layout(BenchPoint, n)])
         tbl = db.table(BenchPoint)
         rng = np.random.default_rng(7)
         tbl.column.x[:] = rng.standard_normal(n)

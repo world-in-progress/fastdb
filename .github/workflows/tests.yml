@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       core: ${{ steps.filter.outputs.core }}
+      rust: ${{ steps.filter.outputs.rust }}
       python: ${{ steps.filter.outputs.python }}
       ts: ${{ steps.filter.outputs.ts }}
       workflow: ${{ steps.filter.outputs.workflow }}
@@ -28,23 +29,101 @@ jobs:
         with:
           filters: |
             core:
+              - 'schemas/**'
+              - 'tools/vendor_portable_payload_deps.sh'
+              - 'tools/generate_embedded_payload_schemas.py'
+              - 'tools/check_payload_abi_symbols.py'
+              - 'tools/check_emscripten_exception_flags.py'
+              - 'tools/check_payload_binary_corpus.py'
               - 'fastcarto/**'
               - 'fastcarto/fastdb/**'
+              - 'fastcarto/lib/yyjson/**'
+              - 'fastcarto/lib/double-conversion/**'
+              - 'fastcarto/lib/picosha2/**'
               - 'fastcarto/CMakeLists.txt'
               - 'fastcarto/fastdb/CMakeLists.txt'
+              - 'tests/cpp/**'
+              - 'tests/fuzz/**'
+              - 'tests/golden/payload/**'
+              - 'tests/abi/**'
               - 'setup.py'
               - 'pyproject.toml'
               - 'MANIFEST.in'
             python:
               - 'python/**'
               - 'tests/python/**'
+              - 'tools/check_python_package_inventory.py'
               - 'py_utils.sh'
+            rust:
+              - 'bindings/rust/**'
+              - 'tests/rust/**'
             ts:
               - 'ts/**'
               - 'tests/ts/**'
               - 'package.json'
             workflow:
-              - '.github/workflows/tests.yml'
+              - '.github/workflows/**'
+              - '.github/copilot-instructions.md'
+              - 'tests/ci/**'
+              - 'tools/check_p5_clean_cut.py'
+              - 'README.md'
+              - 'AGENTS.md'
+              - 'CHANGELOG.md'
+              - 'docs/**'
+              - 'docs/issues/0002-portable-payload-foundation-implementation-status.md'
+
+  clean_cut:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Enforce the P5 clean-cut repository policy
+        shell: bash
+        run: |
+          python3 tests/ci/test_check_p5_clean_cut.py
+          python3 tools/check_p5_clean_cut.py --check
+
+  rust_payload:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.rust == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust with formatting and lint components
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Run Rust source-link projection tests
+        run: >-
+          cargo test --manifest-path bindings/rust/Cargo.toml
+          --workspace --all-features
+
+      - name: Check Rust formatting and warnings
+        run: |
+          cargo fmt --manifest-path bindings/rust/Cargo.toml --all -- --check
+          cargo clippy --manifest-path bindings/rust/Cargo.toml \
+            --workspace --all-targets --all-features -- -D warnings
+
+      - name: Configure shared FastDB for relocated system linking
+        run: >-
+          cmake -S fastcarto -B build/rust-system
+          -DBUILD_TESTING=OFF
+          -DBUILD_TOOLS=OFF
+          -DUSE_SWIG_PYTHON=OFF
+          -DUSE_SWIG_NODE=OFF
+          -DUSE_SWIG_GO=OFF
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build and link relocated Rust consumer to the system Core
+        run: |
+          cmake --build build/rust-system --target fastdb --parallel
+          python3 tests/ci/test_check_rust_payload_package.py
+          python3 tests/ci/check_rust_payload_package.py \
+            --build-dir build/rust-system
 
   python_tests:
     needs: detect_changes
@@ -104,31 +183,355 @@ jobs:
       - name: Run TypeScript tests
         run: npm run test:ts
 
+      - name: Verify packed portable-payload subpath
+        run: |
+          python3 tests/ci/test_check_ts_payload_package.py
+          cmake -E make_directory build/ts-package
+          npm pack ./ts/fastdb4ts --pack-destination build/ts-package
+          python3 tests/ci/check_ts_payload_package.py \
+            --package-dir build/ts-package
+
+  projection_parity:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.rust == 'true' || needs.detect_changes.outputs.python == 'true' || needs.detect_changes.outputs.ts == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Validate ordered projection and closed-codegen map
+        run: |
+          python3 tests/ci/test_check_p4_projection_codegen_quality.py
+          python3 tests/ci/check_p4_projection_codegen_quality.py \
+            --check-repository
+
+  generated_projections:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.rust == 'true' || needs.detect_changes.outputs.python == 'true' || needs.detect_changes.outputs.ts == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Emscripten 5.0.2
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          cd "$RUNNER_TEMP/emsdk"
+          ./emsdk install 5.0.2
+          ./emsdk activate 5.0.2
+          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Build the official native and TypeScript runtimes
+        run: |
+          cmake -S fastcarto -B build/generated-projections \
+            -DBUILD_TESTING=OFF \
+            -DBUILD_TOOLS=OFF \
+            -DUSE_SWIG_PYTHON=OFF \
+            -DUSE_SWIG_NODE=OFF \
+            -DUSE_SWIG_GO=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/generated-projections --target fastdb --parallel
+          npm install --prefix ts/fastdb4ts
+          npm --prefix ts/fastdb4ts run build:wasm
+          npm --prefix ts/fastdb4ts run build
+
+      - name: Compile, import, and execute simple and hostile generated projections
+        env:
+          FASTDB_PAYLOAD_LIBRARY: ${{ github.workspace }}/build/generated-projections/fastdb/libfastdb.so
+          PYTHONPATH: ${{ github.workspace }}/python
+        run: |
+          uv run python tests/ci/test_run_generated_payload_projections.py
+          uv run python tests/ci/run_generated_payload_projections.py \
+            --build-dir build/generated-projections
+
+  wasm_core:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Emscripten 5.0.2
+        run: |
+          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
+          cd "$RUNNER_TEMP/emsdk"
+          ./emsdk install 5.0.2
+          ./emsdk activate 5.0.2
+          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
+
+      - name: Configure portable payload WASM proofs
+        run: >-
+          emcmake cmake -S fastcarto -B build/wasm-core
+          -DBUILD_TESTING=ON
+          -DBUILD_TOOLS=OFF
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build portable payload WASM proofs
+        run: >-
+          cmake --build build/wasm-core --parallel
+          --target
+          fastdb_payload_wasm_runtime_harness
+          fastdb_payload_test_c_header_smoke
+          fastdb_payload_test_codegen_c_abi
+          fastdb_payload_test_cpp_facade
+          fastdb_payload_test_runtime_cpp_facade
+          fastdb_payload_wasm_runtime_abi_single_thread
+
+      - name: Run portable payload WASM proofs
+        run: |
+          node build/wasm-core/wasm-tests/payload_runtime_harness.js
+          node build/wasm-core/tests/cpp/fastdb_payload_test_c_header_smoke.js
+          node build/wasm-core/tests/cpp/fastdb_payload_test_codegen_c_abi.js
+          node build/wasm-core/tests/cpp/fastdb_payload_test_cpp_facade.js
+          node build/wasm-core/tests/cpp/fastdb_payload_test_runtime_cpp_facade.js
+          node build/wasm-core/wasm-tests/payload_runtime_abi_single_thread.js \
+            --single-thread-injected-failure
+          node build/wasm-core/wasm-tests/payload_runtime_abi_single_thread.js \
+            --graph-runtime-proof
+
+      - name: Verify Emscripten exception propagation
+        run: |
+          python3 tests/ci/test_check_emscripten_exception_flags.py
+          python3 tools/check_emscripten_exception_flags.py --build-dir build/wasm-core
+
+      - name: Verify portable payload WASM ABI symbols
+        run: python3 tools/check_payload_abi_symbols.py --wasm-build-dir build/wasm-core
+
+  native_tests:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            expected_arch: x86_64
+          - os: macos-15
+            expected_arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Assert runner architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.expected_arch }}
+        run: |
+          actual_arch="$(uname -m)"
+          echo "runner architecture: ${actual_arch}"
+          test "${actual_arch}" = "${EXPECTED_ARCH}"
+
+      - name: Verify vendored portable payload dependencies
+        run: tools/vendor_portable_payload_deps.sh --check
+
+      - name: Verify embedded payload schemas
+        run: python3 tools/generate_embedded_payload_schemas.py --check
+
+      - name: Verify reviewed binary-open corpus
+        run: |
+          python3 tests/ci/test_check_payload_binary_corpus.py
+          python3 tools/check_payload_binary_corpus.py --check
+
+      - name: Verify P3 runtime quality contract
+        run: |
+          ruby tests/ci/test_check_p3_runtime_quality.rb
+          ruby tests/ci/check_p3_runtime_quality.rb --check-repository
+
+      - name: Configure native tests
+        run: >-
+          cmake -S fastcarto -B build/native
+          -DBUILD_TESTING=ON
+          -DBUILD_TOOLS=OFF
+          -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build native tests
+        run: cmake --build build/native --parallel
+
+      - name: Run native tests
+        run: ctest --test-dir build/native --output-on-failure
+
+      - name: Verify portable payload ABI symbols
+        run: python3 tools/check_payload_abi_symbols.py --build-dir build/native
+
+  native_sanitizers:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    env:
+      ASAN_OPTIONS: halt_on_error=1:abort_on_error=1:detect_leaks=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Show Clang toolchain
+        run: |
+          clang --version
+          clang++ --version
+
+      - name: Configure sanitizer and fuzz tests
+        run: >-
+          cmake -S fastcarto -B build/native-sanitizers
+          -DBUILD_TESTING=ON
+          -DBUILD_TOOLS=OFF
+          -DFASTDB_ENABLE_SANITIZERS=ON
+          -DFASTDB_BUILD_FUZZERS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build sanitizer and fuzz tests
+        run: cmake --build build/native-sanitizers --parallel
+
+      - name: Run deterministic sanitizer suite
+        run: |
+          set -o pipefail
+          ctest --test-dir build/native-sanitizers --output-on-failure \
+            2>&1 | tee build/native-sanitizers/ctest-sanitizer.log
+
+      - name: Run portable payload parser quality smokes
+        run: |
+          set -o pipefail
+          cmake -E make_directory \
+            build/native-sanitizers/spec-runtime-corpus \
+            build/native-sanitizers/binary-runtime-corpus \
+            build/native-sanitizers/parser-artifacts
+          build/native-sanitizers/tests/cpp/fuzz_payload_spec_compile \
+            build/native-sanitizers/spec-runtime-corpus \
+            tests/fuzz/payload/corpus \
+            -runs=1000 -max_len=1048576 \
+            -artifact_prefix=build/native-sanitizers/parser-artifacts/ \
+            2>&1 | tee build/native-sanitizers/spec-parser-quality.log
+          build/native-sanitizers/tests/cpp/fuzz_payload_open \
+            build/native-sanitizers/binary-runtime-corpus \
+            tests/fuzz/payload/binary-corpus \
+            -runs=1000 -max_len=1048576 \
+            -artifact_prefix=build/native-sanitizers/parser-artifacts/ \
+            2>&1 | tee build/native-sanitizers/binary-parser-quality.log
+
+      - name: Reject sanitizer diagnostics and artifacts
+        run: |
+          if grep -E \
+            'runtime error:|ERROR: (AddressSanitizer|LeakSanitizer)|SUMMARY: (AddressSanitizer|UndefinedBehaviorSanitizer|LeakSanitizer)' \
+            build/native-sanitizers/*-sanitizer.log \
+            build/native-sanitizers/*-parser-quality.log; then
+            echo "sanitizer diagnostic found in retained logs"
+            exit 1
+          fi
+          if find build/native-sanitizers/parser-artifacts \
+            -type f -print -quit | grep -q .; then
+            echo "parser quality run produced an artifact"
+            find build/native-sanitizers/parser-artifacts -type f -print
+            exit 1
+          fi
+
+  package_tests:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.python == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "${{ matrix.python-version }}"
+
+      - name: Compile Python sources
+        run: python -m compileall -q python/fastdb4py tests/python
+
+      - name: Build Python sdist and wheel
+        run: |
+          set -o pipefail
+          mkdir -p build
+          uv build --out-dir build/package-dist 2>&1 | tee build/package-build.log
+
+      - name: Verify Python package inventories
+        run: |
+          python3 tests/ci/test_check_python_package_inventory.py
+          python3 tools/check_python_package_inventory.py \
+            --dist-dir build/package-dist \
+            --build-log build/package-build.log
+
+      - name: Run payload suite from the installed wheel
+        run: |
+          wheels=(build/package-dist/*.whl)
+          test "${#wheels[@]}" -eq 1
+          uv run --isolated --no-project \
+            --python "${{ matrix.python-version }}" \
+            --with "${wheels[0]}" --with pytest \
+            python -m pytest tests/python/payload -q
+
   test:
     name: test
     needs:
       - detect_changes
       - python_tests
+      - rust_payload
       - ts_tests
+      - native_tests
+      - native_sanitizers
+      - wasm_core
+      - package_tests
+      - projection_parity
+      - generated_projections
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
       - name: Validate required test results
         env:
-          PYTHON_RESULT: ${{ needs.python_tests.result }}
-          TS_RESULT: ${{ needs.ts_tests.result }}
+          DETECT_RESULT: ${{ needs.detect_changes.result }}
+          CORE_SCOPE: ${{ needs.detect_changes.outputs.core }}
+          RUST_SCOPE: ${{ needs.detect_changes.outputs.rust }}
+          PYTHON_SCOPE: ${{ needs.detect_changes.outputs.python }}
+          TS_SCOPE: ${{ needs.detect_changes.outputs.ts }}
+          WORKFLOW_SCOPE: ${{ needs.detect_changes.outputs.workflow }}
+          PYTHON_TESTS_RESULT: ${{ needs.python_tests.result }}
+          TS_TESTS_RESULT: ${{ needs.ts_tests.result }}
+          NATIVE_TESTS_RESULT: ${{ needs.native_tests.result }}
+          NATIVE_SANITIZERS_RESULT: ${{ needs.native_sanitizers.result }}
+          WASM_CORE_RESULT: ${{ needs.wasm_core.result }}
+          PACKAGE_TESTS_RESULT: ${{ needs.package_tests.result }}
+          RUST_PAYLOAD_RESULT: ${{ needs.rust_payload.result }}
+          PROJECTION_PARITY_RESULT: ${{ needs.projection_parity.result }}
+          GENERATED_PROJECTIONS_RESULT: ${{ needs.generated_projections.result }}
         run: |
-          echo "python_tests result: ${PYTHON_RESULT}"
-          echo "ts_tests result: ${TS_RESULT}"
-
-          if [ "${PYTHON_RESULT}" = "failure" ] || [ "${PYTHON_RESULT}" = "cancelled" ]; then
-            echo "python_tests did not succeed"
-            exit 1
-          fi
-
-          if [ "${TS_RESULT}" = "failure" ] || [ "${TS_RESULT}" = "cancelled" ]; then
-            echo "ts_tests did not succeed"
-            exit 1
-          fi
-
-          echo "All required test jobs completed successfully or were skipped by scope."
+          python3 tests/ci/check_p4_projection_codegen_quality.py \
+            --validate-results
+          ruby tests/ci/check_p2_task11_quality.rb --validate-results

@@ -1,5 +1,10 @@
 # FastDB Require Envelope And Neutral Allocator Implementation Plan
 
+> **Status: historical/superseded.** Retained as migration evidence only.
+> Current authority is the
+> [accepted portable-payload foundation](../specs/2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](../specs/2026-07-23-portable-payload-clean-cut-design.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a FastDB-owned, transport-neutral `fdb.require(...)` envelope allocation path so fixed-size columnar call-db payloads can be planned once and built directly into caller-provided memory without exposing `ColumnEngine`, physical `Table` names, C-Two concepts, or raw bytes to normal users.

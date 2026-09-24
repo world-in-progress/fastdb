@@ -19,13 +19,6 @@ export {
 } from './database-buffer.js';
 export type { FastdbDatabaseBytes } from './database-buffer.js';
 export {
-  decodeFastdbCallDb,
-  decodeFastdbFeature,
-  encodeFastdbCallDb,
-  encodeFastdbFeature,
-  viewFastdbCallDb,
-} from './call-db.js';
-export {
   defineSchema,
   getClassSchema,
 } from './schema.js';
@@ -70,18 +63,6 @@ export type {
   SchemaDefinition,
   SchemaFieldDefinition,
 } from './schema.js';
-export type {
-  FastdbCallDbArrayItem,
-  FastdbCallDbBinding,
-  FastdbCallDbArrayView,
-  FastdbCallDbColumnView,
-  FastdbCallDbFeatureDependency,
-  FastdbCallDbScalarField,
-  FastdbCallDbTable,
-  FastdbCallDbTableView,
-  FastdbCallDbView,
-  FastdbFeatureCodecBinding,
-} from './call-db.js';
 export type {
   FeatureClass,
   FeatureDatabaseHandle,

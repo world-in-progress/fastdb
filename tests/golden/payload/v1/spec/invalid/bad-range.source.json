@@ -1,0 +1,14 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [],
+  "components": [
+    {
+      "id": "Ranges",
+      "kind": "record",
+      "fields": [
+        {"id": "bad", "type": {"kind": "u16n", "min": 1.0, "max": 1.0}}
+      ]
+    }
+  ]
+}

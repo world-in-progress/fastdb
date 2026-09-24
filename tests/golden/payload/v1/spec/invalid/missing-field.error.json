@@ -1,0 +1,1 @@
+{"status":1005,"symbol":"INVALID_TYPE","path":"/entries/0/type","message":"Payload object is missing required field","details_json":"{\"field\":\"type\",\"reason\":\"missing_field\"}"}

@@ -2,6 +2,8 @@
 
 Python bindings for `fastdb`, built on top of the C++ core in `fastcarto/fastdb/` and exposed through SWIG.
 
+> **0.2.0:** This document covers the standalone storage API and the official `fastdb4py.payload` projection. `RecordEngine` is the standalone AoS engine name. The C++ Core owns `fastdb.payload.v1` compilation, canonicalization, digest, profile validation, layout and binary decoding. Python supplies language-level authoring and ownership interfaces. See the [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md) and [release status](../docs/releases/0.2.0.md).
+
 This README is the binding-specific companion to the repository root `README.md`. The root document introduces the project as a whole; this document focuses on the Python-facing API, its architecture, and common usage patterns.
 
 ## What `fastdb4py` provides
@@ -30,7 +32,7 @@ The Python stack is layered:
 2. **SWIG/native bridge** — `python/fastdb4py/core/`
    - generated wrappers and compiled native extension
 3. **High-level Python API** — `python/fastdb4py/`
-   - ergonomic `@feature`, `ColumnEngine`, `ObjectEngine`, `Table`, and `FastSerializer` abstractions
+   - standalone `@feature`, `RecordEngine`, `ObjectEngine`, `Table` and `FastSerializer` abstractions, plus the Core-backed `fastdb4py.payload` projection
 
 Important directories:
 
@@ -44,6 +46,43 @@ Important directories:
   - graph serialization on top of `fastdb`
 - `python/fastdb4py/core/`
   - generated binding layer; do not edit manually
+
+## Portable payload projection
+
+`fastdb4py.payload` is the official Python 3.10+ projection of
+`fastdb.payload.v1`. It binds the stable native ABI packaged beside
+`fastdb4py.core`; the C++ Core remains the sole authority for compilation,
+canonical JSON, SHA-256, layout, binary validation, graph identity,
+materialization, and errors.
+
+```python
+from fastdb4py.payload import CompiledSpec, Profile
+
+source = b'{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]}'
+
+with CompiledSpec.compile(source) as spec:
+    assert spec.profile() is Profile.RECORD_V1
+    assert len(spec.sha256()) == 32
+```
+
+Owned payload objects support `close()` and context-manager use. Closure is
+locally idempotent, every Core error preserves `code`, `symbol`, `path`,
+`message`, and exact `details_json`, and safe `str`, `wstr`, and bytes accessors
+copy before their native access guard is released. Checked views are invalid
+after Core invalidation; `materialize()` asks Core for a detached value rather
+than recursively decoding one in Python.
+
+The wheel contains one native FastDB Core and Python projection source, not a
+second Python runtime. Python 3.10 compile/import and installed-wheel execution
+are package gates. `CompiledSpec.generate(...)` returns the same Core-owned
+deterministic C++/Rust/Python/TypeScript ArtifactSet available to the other
+official projections. It never writes a destination tree; the `fdb codegen` CLI publishes the Core-returned artifact set through its filesystem facade.
+
+P4 is locally complete. Python participates in the same hostile all-values,
+recursive-list, identifier-collision, and shared-cycle generation matrix as
+the other official projections, while all parsing, identity, topology, and
+rendering remain in the C++ Core. P5 local clean cut is complete. Hosted
+execution and registry publication are tracked in the [release record](../docs/releases/0.2.0.md).
 
 ## Installation
 
@@ -64,7 +103,7 @@ Prebuilt wheels are expected for the main supported platforms. Source builds req
 ## Quick start
 
 ```python
-from fastdb4py import feature, ColumnEngine, Layout, F64
+from fastdb4py import feature, RecordEngine, Layout, F64
 import numpy as np
 
 
@@ -75,7 +114,7 @@ class Point:
     z: F64
 
 
-db = ColumnEngine.truncate([Layout(Point, 5)])
+db = RecordEngine.truncate([Layout(Point, 5)])
 table = db.table(Point)
 
 table.fill(
@@ -177,7 +216,7 @@ The field order is part of the schema contract. It affects table layout, seriali
 
 ## Database creation patterns
 
-### Fixed-size tables with `ColumnEngine.truncate`
+### Fixed-size tables with `RecordEngine.truncate`
 
 Use `truncate` when the row count is known ahead of time. For fixed-size tables, there are two UTF-8 string-ingest tiers:
 
@@ -187,7 +226,7 @@ Use `truncate` when the row count is known ahead of time. For fixed-size tables,
 If your pipeline starts from Python `str` values, prefer the default raw path. Reach for the prepacked path only when you already have UTF-8 offsets/data buffers from an upstream step.
 
 ```python
-from fastdb4py import feature, ColumnEngine, Layout, F64, F32
+from fastdb4py import feature, RecordEngine, Layout, F64, F32
 import numpy as np
 
 
@@ -201,7 +240,7 @@ class Particle:
 
 
 N = 100_000
-db = ColumnEngine.truncate([Layout(Particle, N)])
+db = RecordEngine.truncate([Layout(Particle, N)])
 tbl = db.table(Particle)
 
 tbl.fill(
@@ -212,45 +251,6 @@ tbl.fill(
     mass=np.ones(N, dtype=np.float32),
 )
 ```
-
-For high-performance RPC call-envelope authoring, prefer the positional requirement API rather than naming physical tables after call slots:
-
-```python
-batch = fdb.require(fdb.batch(Particle, rows=N))
-batch.fill(
-    x=np.random.uniform(-1.0, 1.0, N),
-    y=np.random.uniform(-1.0, 1.0, N),
-    vx=np.zeros(N),
-    vy=np.zeros(N),
-    mass=np.ones(N, dtype=np.float32),
-)
-```
-
-The call-db binding descriptor supplies wire table names internally. User code should not spell `return_0`, parameter names, or slot metadata for the normal direct path.
-
-For integrations that can provide a final backing allocator with a writable buffer, wrap resource execution in the experimental call-db build context. The context lets `fdb.require(...)` return fixed numeric `Batch`/`Array` views mapped over the caller's final DB allocation, and `build_call_db(..., direct_required=True)` commits that same allocation. The initial C++ fixed-layer snapshot writes the zero table section directly to that allocation instead of retaining an equal-size table scratch vector:
-
-`ScratchAllocator` / `HeapScratchAllocator` are exposed separately as the experimental build-time scratch role. They are not the transport/final backing contract, and V1 does not require downstream runtimes to provide scratch memory.
-
-```python
-allocator = fdb.HeapFinalBackingResource()
-with fdb.call_db_build_context(binding, allocator):
-    particles, residual = fdb.require(
-        fdb.batch(Particle, rows=N),
-        fdb.array(fdb.F32, rows=N),
-    )
-    particles.fill(
-        x=np.random.uniform(-1.0, 1.0, N),
-        y=np.random.uniform(-1.0, 1.0, N),
-        vx=np.zeros(N),
-        vy=np.zeros(N),
-        mass=np.ones(N, dtype=np.float32),
-    )
-    residual.fill(np.zeros(N, dtype=np.float32))
-    payload = fdb.build_call_db(binding, (particles, residual), allocator, direct_required=True)
-```
-
-This context is deliberately stricter than ordinary `Batch.allocate(...)`: it rejects strings, bytes, refs, lists, object graphs, and dynamic row counts before allocation because the final byte length must be known before user code writes into the returned views.
 
 Multiple tables can be created in one call:
 
@@ -264,7 +264,7 @@ class Cell:
     temperature: F64
 
 
-db = ColumnEngine.truncate([
+db = RecordEngine.truncate([
     Layout(Particle, 50_000),
     Layout(Cell, 1_000),
 ])
@@ -273,7 +273,7 @@ db = ColumnEngine.truncate([
 For fixed-size tables with string columns, the default batch-ingest API is still `Table.fill(...)`. It batches numeric data and raw Python `STR` values together, the raw-string path routes through the native batch string-column API with upfront length validation, scalar `BOOL` columns use the same explicit bool parser as mutable engine writes before bulk numeric storage, and ordinary `U8` columns remain numeric casts:
 
 ```python
-from fastdb4py import feature, ColumnEngine, Layout, U32, F64, STR, pack_utf8_column
+from fastdb4py import feature, RecordEngine, Layout, U32, F64, STR, pack_utf8_column
 import numpy as np
 
 
@@ -284,7 +284,7 @@ class Sample:
     name: STR
 
 
-db = ColumnEngine.truncate([Layout(Sample, 3)])
+db = RecordEngine.truncate([Layout(Sample, 3)])
 tbl = db.table(Sample)
 tbl.fill(
     row_id=np.array([1, 2, 3], dtype=np.uint32),
@@ -363,7 +363,7 @@ for feat in tbl.iter_reuse():
 
 ## Feature references
 
-Reference fields let one feature point at another feature, possibly in a different table. This is handled by `ObjectEngine`, not `ColumnEngine`.
+Reference fields let one feature point at another feature, possibly in a different table. This is handled by `ObjectEngine`, not `RecordEngine`.
 
 ```python
 from fastdb4py import feature, ObjectEngine, F64
@@ -401,7 +401,7 @@ print(loaded.a.x, loaded.b.x, loaded.c.x)
 ```python
 db.save("simulation_state")
 
-db2 = ColumnEngine.load("simulation_state", from_file=True)
+db2 = RecordEngine.load("simulation_state", from_file=True)
 tbl2 = db2.table(Particle)
 print(tbl2.column.x[:5])
 ```
@@ -597,7 +597,7 @@ shm.unlink()
 
 All returned objects are fully detached from the shared memory segment (pure Python `_cache` mode). Numpy arrays are copied. The shared memory is closed immediately after deserialization.
 
-For large homogeneous numerical datasets, `ColumnEngine.truncate` plus columnar writes is still the preferred path. `FastSerializer` is aimed at trees, graphs, mesh-like structures, and mixed payloads.
+For large homogeneous numerical datasets, `RecordEngine.truncate` plus columnar writes is still the preferred path. `FastSerializer` is aimed at trees, graphs, mesh-like structures, and mixed payloads.
 
 ## Running tests
 
@@ -614,108 +614,28 @@ uv run pytest tests/python/test_column_way.py
 uv run pytest tests/python/test_fast_serializer.py
 uv run pytest tests/python/test_fastser_buffer_layers.py
 uv run pytest tests/python/test_fastser_loads_shm.py
-uv run pytest tests/python/test_codegen.py
+uv run pytest tests/python/payload/test_payload_codegen.py
+uv run pytest tests/python/test_cli_codegen.py
 ```
 
-## CLI tools
+## Core-owned portable artifact CLI
 
-`fastdb4py` registers a `fdb` command-line tool through `[project.scripts]`.
-
-### `fdb codegen --ts` — Generate TypeScript Feature classes
-
-When working with both `fastdb4py` (Python) and `fastdb4ts` (TypeScript), you can use `fdb codegen` to automatically generate TypeScript `Feature` classes from your Python definitions. Python `@feature` classes serve as the single source of truth — similar to how `.proto` files work in Protocol Buffers, but without an intermediate format.
+`fastdb4py` registers `fdb codegen` through `[project.scripts]`. It accepts a
+portable specification, delegates compilation and generation to the C++ Core,
+and writes the returned ArtifactSet to a new destination tree:
 
 ```bash
-fdb codegen --ts ./features/ ./ts-features/
+fdb codegen specification.json \
+  --target python \
+  --output ./generated-fastdb
 ```
 
-The tool:
-
-1. **Scans** all `.py` files in the input directory recursively
-2. **Discovers** all `@feature` classes (ignoring non-feature code)
-3. **Analyzes** dependencies, detects cycles, and topologically sorts
-4. **Generates** one `.ts` file per `.py` file, preserving the directory structure
-
-#### Type mapping
-
-| Python | TypeScript schema | TypeScript type |
-|--------|------------------|-----------------|
-| `F64`, `float` | `F64` | `number` |
-| `I32`, `int` | `I32` | `number` |
-| `STR`, `str` | `STR` | `string` |
-| `BOOL`, `bool` | `BOOL` | `boolean` |
-| `BYTES` | `BYTES` | `Uint8Array` |
-| `OtherFeature` | `ref(OtherFeature)` | `OtherFeature \| null` |
-| `List[F64]` | `listOf(F64)` | `number[]` |
-| `List[OtherFeature]` | `listOf(ref(OtherFeature))` | `OtherFeature[]` |
-
-All 12 TypeVar field types (`U8`, `U16`, `U32`, `I32`, `U8N`, `U16N`, `F32`, `F64`, `STR`, `WSTR`, `BYTES`, `BOOL`) and 4 native Python types (`int`, `float`, `str`, `bool`) are supported.
-
-#### Cross-file references
-
-When a class in `scene.py` references a class defined in `geometry.py`, the generated `scene.ts` will include the appropriate relative import:
-
-```typescript
-import { Point } from './geometry.js';
-```
-
-#### Duplicate class names across files
-
-Each `.py` file is treated as an independent module. The same class name (e.g. `Point`) may appear in multiple files — all are generated in their respective `.ts` files without conflict. Within a single file, Python's last-definition-wins rule applies.
-
-### C-Two integration boundary
-
-`fastdb4py` owns generic feature declarations, schema export, storage engines, binary buffer IO, backed view lifetimes, and generic call-db encode/decode/view runtime. C-Two-specific FastDB call-db planning from CRM annotations, bridge derivation, and TypeScript helper generation live in the C-Two repository, where the CRM contract, route identity, relay behavior, scheduler policy, and memory lease semantics are defined. Use `c3 contract codegen typescript --fastdb-schema` from C-Two for C-Two client/helper generation.
-
-### Generic call-db runtime
-
-`fastdb4py` exposes generic call-db runtime helpers for integrations that already have a call-db binding descriptor:
-
-```python
-payload = fdb.encode_call_db(binding, value)
-owned = fdb.decode_call_db(binding, payload)
-view = fdb.view_call_db(binding, payload, owner=fdb.FdbViewOwner(checked=True))
-exported = fdb.try_export_call_db(binding, value)
-payload = fdb.build_call_db(binding, value, allocator, direct_required=True)
-```
-
-`decode_call_db(...)` returns materialized Python values. `view_call_db(...)` returns owner-bound FastDB values for columnar call-db payloads: `Batch[Feature]` values become FastDB `Table` views, single `Feature` values become mapped feature views, and `Array[Scalar]` values become `FastdbCallDbArrayView`. Both functions accept bytes-like payloads and committed native `FinalBackingAllocation` instances; retained views keep the native allocation owner alive. `try_export_call_db(...)` returns a `memoryview` only when the value is already backed by an exact call-db-compatible buffer, currently the single fixed `Batch[Feature]` case; otherwise it returns `None` so callers can fall back to `encode_call_db(...)`. `prepare_call_db(..., direct_required=True)` only accepts already-backed/importable layers and will not stage temporary call-db layers under a direct label. `build_call_db(...)` is experimental: in strict direct mode it asks the allocator for one final backing allocation and writes the call-db payload without `WxMemoryStream().data().tobytes()`. Fixed numeric values use a mapped final-backing path that avoids a materialized C++ table-buffer scratch vector; prepacked string feature columns still use the C++ final writer. The allocator can be a native `HeapFinalBackingResource`, which returns a committed `FinalBackingAllocation`, or a Python writable allocator whose allocation supports `.buffer`, `.commit(used_size)`, and `.rollback()`. Native final backing resources also work for fallback plans when `direct_required=False`. `call_db_build_context(...)` can also use either allocator shape for fixed numeric `fdb.require(...)` outputs, mapping returned `Batch` / `Array` views directly over the one final backing allocation before commit while avoiding a materialized C++ table-buffer scratch vector for the initial fixed snapshot. The initial strict path supports fixed columnar scalar payloads plus backed `Batch[Feature]` values with prepacked UTF-8 `STR` columns; object graph payloads, REF/list/bytes fields, dynamic push, scalar string arrays, non-columnar `BatchRequirement` profiles, and unknown-size strings fall back or raise `FastdbUnsupportedDirectBuildError` before allocation. Invalidating the supplied owner invalidates retained views; use `fdb.materialize(...)` before keeping data beyond the owner lifetime. Object-graph call-db retained views currently fail deterministically; use materialized decode for object-graph payloads.
-
-#### Circular references
-
-Self-referential and mutually recursive types are detected automatically and use lazy refs:
-
-```python
-from fastdb4py import feature, I32
-
-
-@feature
-class Node:
-    val: I32
-    next: 'Node'  # forward reference
-```
-
-Generates:
-
-```typescript
-export class Node extends Feature {
-  static schema = defineSchema({
-    val: I32,
-    next: ref(() => Node),  // lazy ref for cycle
-  });
-  declare val: number;
-  declare next: Node | null;
-}
-```
-
-#### Error handling
-
-The tool is designed to be robust:
-
-- **Syntax errors** in a `.py` file are reported and skipped; other files are still processed
-- **Import errors** are similarly skipped with a warning
-- **Undeclared type references** produce a warning; the class is still generated
-- **Non-Feature classes** (plain classes, dataclasses, functions) are silently ignored
+Targets are `cpp`, `rust`, `python`, and `typescript`. The command refuses an
+existing output path, unsafe or duplicate artifact paths, unsupported
+artifact kinds, and file/directory conflicts. It uses exclusive staging-file
+creation and no-replace publication. The Python layer does not discover
+classes, parse the portable specification, calculate its digest, or render
+source code.
 
 ## Development notes
 

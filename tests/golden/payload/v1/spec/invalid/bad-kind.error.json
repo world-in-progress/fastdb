@@ -1,0 +1,1 @@
+{"status":1005,"symbol":"INVALID_TYPE","path":"/entries/0/type/items/kind","message":"Payload type kind is invalid","details_json":"{\"actual\":\"text\",\"reason\":\"invalid_type_kind\"}"}

@@ -1,0 +1,28 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {
+      "id": "root",
+      "cardinality": "one",
+      "type": {"kind": "component", "id": "Zed"}
+    }
+  ],
+  "components": [
+    {
+      "id": "Alpha",
+      "kind": "record",
+      "fields": [
+        {"id": "value", "type": {"kind": "str"}}
+      ]
+    },
+    {
+      "id": "Zed",
+      "kind": "record",
+      "fields": [
+        {"id": "second", "type": {"kind": "u8"}},
+        {"id": "first", "type": {"kind": "component", "id": "Alpha"}}
+      ]
+    }
+  ]
+}

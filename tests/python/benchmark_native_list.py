@@ -29,7 +29,7 @@ from typing import List
 
 import numpy as np
 
-from fastdb4py import feature, ColumnEngine
+from fastdb4py import feature, RecordEngine
 from fastdb4py import U32, F64
 
 try:
@@ -89,7 +89,7 @@ def bench_fastdb(N: int, list_len: int, reps: int) -> dict:
 
     # --- build ---
     def do_build():
-        orm = ColumnEngine.create()
+        orm = RecordEngine.create()
         for i in range(N):
             f = BenchListFeature()
             f.row_id = i
@@ -109,11 +109,11 @@ def bench_fastdb(N: int, list_len: int, reps: int) -> dict:
     try:
         # --- deserialize (load) ---
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         # --- read column (access xs for all N features) ---
         def do_read():
@@ -132,7 +132,7 @@ def bench_fastdb(N: int, list_len: int, reps: int) -> dict:
         else:
             # clean up shm even if deserialization failed
             try:
-                h = ColumnEngine.load(shm_name)
+                h = RecordEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass

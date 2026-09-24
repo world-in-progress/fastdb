@@ -6,6 +6,68 @@ project(FastCarto)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+include(CTest)
+
+option(
+    FASTDB_ENABLE_SANITIZERS
+    "Enable address and undefined behavior sanitizers for FastDB native targets"
+    OFF
+)
+option(
+    FASTDB_BUILD_FUZZERS
+    "Build Clang libFuzzer targets and enable ASan+UBSan for native targets"
+    OFF
+)
+
+if(FASTDB_BUILD_FUZZERS AND NOT BUILD_TESTING)
+    message(FATAL_ERROR
+        "FASTDB_BUILD_FUZZERS requires BUILD_TESTING=ON"
+    )
+endif()
+
+if(FASTDB_BUILD_FUZZERS)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang)$" OR
+       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang)$")
+        message(FATAL_ERROR
+            "FASTDB_BUILD_FUZZERS requires Clang or AppleClang for both C "
+            "and C++; got C=${CMAKE_C_COMPILER_ID}, "
+            "CXX=${CMAKE_CXX_COMPILER_ID}"
+        )
+    endif()
+endif()
+
+if(FASTDB_ENABLE_SANITIZERS)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "^(AppleClang|Clang|GNU)$" OR
+       NOT CMAKE_CXX_COMPILER_ID MATCHES "^(AppleClang|Clang|GNU)$")
+        message(FATAL_ERROR
+            "FASTDB_ENABLE_SANITIZERS requires Clang, AppleClang, or GCC "
+            "for both C and C++; got C=${CMAKE_C_COMPILER_ID}, "
+            "CXX=${CMAKE_CXX_COMPILER_ID}"
+        )
+    endif()
+endif()
+
+function(fastdb_apply_sanitizers target_name)
+    if(FASTDB_ENABLE_SANITIZERS OR FASTDB_BUILD_FUZZERS)
+        if(NOT TARGET ${target_name})
+            message(FATAL_ERROR
+                "Cannot apply FastDB sanitizers to missing target ${target_name}"
+            )
+        endif()
+        target_compile_options(
+            ${target_name}
+            PRIVATE
+                -fsanitize=address,undefined
+                -fno-omit-frame-pointer
+        )
+        target_link_options(
+            ${target_name}
+            PRIVATE
+                -fsanitize=address,undefined
+        )
+    endif()
+endfunction()
+
 
 if(WIN32)
     add_compile_options("$<$<CXX_COMPILER_ID:MSVC>:/source-charset:utf-8>")
@@ -39,6 +101,13 @@ option(BUILD_TOOLS "Build CLI tools" ON)
 if (NOT is_emscripten AND BUILD_TOOLS)
     add_subdirectory(make-fastdb)
     add_subdirectory(dump-fastdb)
+endif()
+
+if(BUILD_TESTING)
+    add_subdirectory(
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/cpp
+        ${CMAKE_CURRENT_BINARY_DIR}/tests/cpp
+    )
 endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY   ${CMAKE_SOURCE_DIR}/bin)

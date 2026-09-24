@@ -3,7 +3,7 @@ import secrets
 import numpy as np
 import pytest
 
-from fastdb4py import ColumnEngine, Layout, feature, F64, U32, STR, pack_utf8_column
+from fastdb4py import RecordEngine, Layout, feature, F64, U32, STR, pack_utf8_column
 import fastdb4py.core as core
 import fastdb4py.string_column as string_column_mod
 
@@ -24,8 +24,8 @@ def _pack_utf8(strings: list[str]):
     return np.array(offsets, dtype=np.uint32), np.frombuffer(bytes(raw), dtype=np.uint8)
 
 
-def test_column_engine_truncate_supports_str_fill_utf8():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
+def test_record_engine_truncate_supports_str_fill_utf8():
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 3)])
     tbl = engine.table(CEStringPoint)
     tbl.fill(
         row_id=np.array([1, 2, 3], dtype=np.uint32),
@@ -38,16 +38,16 @@ def test_column_engine_truncate_supports_str_fill_utf8():
     assert tbl[1].name == "be"
 
 
-def test_column_engine_dynamic_push_still_reads_strings():
-    engine = ColumnEngine.create()
+def test_record_engine_dynamic_push_still_reads_strings():
+    engine = RecordEngine.create()
     engine.push(CEStringPoint(row_id=1, x=1.5, name="legacy"))
     engine.combine()
     assert engine.table(CEStringPoint)[0].name == "legacy"
 
 
-def test_column_engine_share_load_keeps_string_column():
+def test_record_engine_share_load_keeps_string_column():
     shm_name = f"fastdb_str_{secrets.token_hex(4)}"
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
     tbl.fill(
         row_id=np.array([10, 11], dtype=np.uint32),
@@ -58,7 +58,7 @@ def test_column_engine_share_load_keeps_string_column():
     engine.share(shm_name)
     loaded = None
     try:
-        loaded = ColumnEngine.load(shm_name)
+        loaded = RecordEngine.load(shm_name)
         assert loaded.table(CEStringPoint).column.name.to_pylist() == ["alpha", "beta"]
     finally:
         if loaded is not None:
@@ -69,14 +69,14 @@ def test_column_engine_share_load_keeps_string_column():
 
 
 def test_table_fill_accepts_string_field_keyword():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 1)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 1)])
     tbl = engine.table(CEStringPoint)
     tbl.fill(name=["bad"])
     assert tbl.column.name.to_pylist() == ["bad"]
 
 
 def test_string_column_fill_coerces_none_to_empty_string():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
     tbl.fill(
         row_id=np.array([1, 2], dtype=np.uint32),
@@ -94,7 +94,7 @@ def test_normalize_string_values_wraps_raw_sequence_payload():
 
 
 def test_string_column_fill_routes_sequence_payload_to_fixed_handler(monkeypatch):
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
     captured = []
     original = engine._fill_fixed_table
@@ -117,7 +117,7 @@ def test_string_column_fill_routes_sequence_payload_to_fixed_handler(monkeypatch
 
 
 def test_string_column_fill_utf8_uses_unified_fixed_writer(monkeypatch):
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
     captured = []
 
@@ -144,7 +144,7 @@ def test_string_column_fill_utf8_uses_unified_fixed_writer(monkeypatch):
 
 def test_loaded_string_column_fill_utf8_rejects_read_only_table():
     shm_name = f"fastdb_str_fill_{secrets.token_hex(4)}"
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
     tbl.fill(
         row_id=np.array([1, 2], dtype=np.uint32),
@@ -156,7 +156,7 @@ def test_loaded_string_column_fill_utf8_rejects_read_only_table():
     loaded = None
     try:
         engine.share(shm_name)
-        loaded = ColumnEngine.load(shm_name)
+        loaded = RecordEngine.load(shm_name)
         with pytest.raises(RuntimeError, match='read-only'):
             loaded.table(CEStringPoint).column.name.fill_utf8(offsets, data)
     finally:
@@ -176,7 +176,7 @@ def test_pack_utf8_column_outputs_expected_dtypes_and_offsets():
 
 
 def test_pack_utf8_column_and_fill_utf8_round_trip():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 3)])
     tbl = engine.table(CEStringPoint)
     tbl.fill(row_id=np.array([1,2,3], dtype=np.uint32), x=np.array([1.0,2.0,3.0], dtype=np.float64))
     offsets, data = pack_utf8_column(['', 'bb', '中'])
@@ -190,7 +190,7 @@ def test_pack_utf8_column_coerces_none_to_empty_string():
     np.testing.assert_array_equal(data, np.frombuffer('x'.encode('utf-8'), dtype=np.uint8))
 
 def test_native_string_column_sequence_setter_round_trips():
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 3)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 3)])
     table_name = CEStringPoint.__name__
     layer_build = engine._fixed_layer_builds[table_name]
     field_index = engine._fixed_table_fields[table_name]["name"]
@@ -202,7 +202,7 @@ def test_native_string_column_sequence_setter_round_trips():
 
 
 def test_table_fill_routes_strings_to_native_sequence_setter(monkeypatch):
-    engine = ColumnEngine.truncate([Layout(CEStringPoint, 2)])
+    engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
     tbl = engine.table(CEStringPoint)
     table_name = CEStringPoint.__name__
     field_index = engine._fixed_table_fields[table_name]["name"]

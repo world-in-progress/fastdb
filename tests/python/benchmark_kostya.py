@@ -15,7 +15,7 @@ Compares three systems:
 Phases measured (milliseconds, median of `reps` runs):
   build      : construct N in-memory records
   encode     : convert to binary wire format
-                 fastdb  → C++ columnar flush (_combine)
+                 fastdb  → C++ record-buffer flush (_combine)
                  fastdb* → included in ORM.truncate() call
                  arrow   → IPC stream encode
                  pickle  → pickle.dumps
@@ -49,7 +49,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
-from fastdb4py import feature, ColumnEngine, Layout
+from fastdb4py import feature, RecordEngine, Layout
 from fastdb4py import F64, U32, STR
 
 try:
@@ -76,7 +76,7 @@ class Coord:
 
 @feature
 class CoordNum:
-    """Numeric-only Coord (no STR) — compatible with ColumnEngine.truncate."""
+    """Numeric-only Coord (no STR) — compatible with RecordEngine.truncate."""
     row_id: U32
     x: F64
     y: F64
@@ -121,7 +121,7 @@ def bench_fastdb(N: int, reps: int) -> dict:
 
     # --- build: push N Coord features into a mutable engine ---
     def do_build():
-        orm = ColumnEngine.create()
+        orm = RecordEngine.create()
         for i in range(N):
             f = Coord()
             f.row_id = i
@@ -170,11 +170,11 @@ def bench_fastdb(N: int, reps: int) -> dict:
     try:
         # --- deserialize: zero-copy load from shm ---
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         # --- read: iterate all N records, sum x+y+z ---
         def do_read():
@@ -190,7 +190,7 @@ def bench_fastdb(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ColumnEngine.load(shm_name)
+                h = RecordEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
@@ -214,7 +214,7 @@ def bench_fastdb(N: int, reps: int) -> dict:
 
 def bench_fastdb_trunc(N: int, reps: int) -> dict:
     """
-    fastdb ColumnEngine.truncate path: pre-allocate fixed-size table, fill columns via
+    fastdb RecordEngine.truncate path: pre-allocate fixed-size table, fill columns via
     numpy slice assignment.  No STR field (truncate does not support variable-
     length types).  This path is fair when the record count is known upfront and
     all fields are numeric.
@@ -230,7 +230,7 @@ def bench_fastdb_trunc(N: int, reps: int) -> dict:
 
     # --- build: truncate + columnar numpy fill (includes combine internally) ---
     def do_build():
-        orm = ColumnEngine.truncate([Layout(CoordNum, N)])
+        orm = RecordEngine.truncate([Layout(CoordNum, N)])
         tbl = orm.table(CoordNum)
         tbl.column.row_id[:] = ids
         tbl.column.x[:]      = xs
@@ -241,7 +241,7 @@ def bench_fastdb_trunc(N: int, reps: int) -> dict:
     build_ms = _median_ms(do_build, reps)
     orm = do_build()
 
-    # encode: already done inside ColumnEngine.truncate (combine is called there)
+    # encode: already done inside RecordEngine.truncate (combine is called there)
     encode_ms = 0.0
 
     # --- shm: write flushed binary to POSIX shared memory ---
@@ -267,11 +267,11 @@ def bench_fastdb_trunc(N: int, reps: int) -> dict:
     orm2 = None
     try:
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         def do_read():
             tbl = orm2.table(CoordNum)
@@ -286,7 +286,7 @@ def bench_fastdb_trunc(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ColumnEngine.load(shm_name); h.unlink()
+                h = RecordEngine.load(shm_name); h.unlink()
             except Exception:
                 pass
 

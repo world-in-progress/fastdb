@@ -1,0 +1,11 @@
+[package]
+name = "fastdb"
+version = "0.2.0"
+edition = "2024"
+description = "Safe Rust projection of the FastDB portable-payload Core"
+license = "MIT"
+repository = "https://github.com/world-in-progress/fastdb"
+readme = "README.md"
+
+[dependencies]
+fastdb-sys = { version = "=0.2.0", path = "../fastdb-sys" }

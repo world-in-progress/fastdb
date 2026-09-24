@@ -1,0 +1,49 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "object_graph.v1",
+  "entries": [
+    {
+      "id": "root",
+      "cardinality": "one",
+      "type": {"kind": "component", "id": "Node", "nullable": false}
+    },
+    {
+      "id": "selected",
+      "cardinality": "many",
+      "type": {"kind": "ref", "target": "Node", "nullable": true}
+    }
+  ],
+  "components": [
+    {
+      "id": "Node",
+      "kind": "record",
+      "fields": [
+        {"id": "value", "type": {"kind": "i32", "nullable": false}},
+        {
+          "id": "next",
+          "type": {"kind": "ref", "target": "Node", "nullable": true}
+        },
+        {
+          "id": "children",
+          "type": {
+            "kind": "list",
+            "nullable": true,
+            "items": {"kind": "ref", "target": "Node", "nullable": false}
+          }
+        },
+        {
+          "id": "labels",
+          "type": {
+            "kind": "list",
+            "nullable": false,
+            "items": {
+              "kind": "list",
+              "nullable": true,
+              "items": {"kind": "wstr", "nullable": true}
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

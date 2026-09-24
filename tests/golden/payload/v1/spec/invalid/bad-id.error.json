@@ -1,0 +1,1 @@
+{"status":1005,"symbol":"INVALID_TYPE","path":"/components/0/fields/0/id","message":"Payload identifier is invalid","details_json":"{\"reason\":\"invalid_id\",\"value\":\"9bad\"}"}

@@ -1,3 +1,5 @@
+"""Standalone table/view lifetime helper; portable callers use fastdb4py.payload."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

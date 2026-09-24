@@ -1,5 +1,10 @@
 # Truncate STR Fill Unification Design
 
+> **Status: historical/superseded.** Retained as migration evidence only.
+> Current authority is the
+> [accepted portable-payload foundation](2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](2026-07-23-portable-payload-clean-cut-design.md).
+
 ## Problem
 
 `ColumnEngine.truncate()` now supports `STR`, but the fixed-table write path is still split:

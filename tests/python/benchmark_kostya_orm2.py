@@ -1,16 +1,16 @@
 """
-Kostya-Style Serialization Benchmark — ColumnEngine vs ObjectEngine vs PyArrow vs pickle
+Kostya-Style Serialization Benchmark — RecordEngine vs ObjectEngine vs PyArrow vs pickle
 ==========================================================================================
 Inspired by Kostya's benchmarks (github.com/kostya/benchmarks).
 
 Data structure: 'Coordinate' records — row_id (u32), x/y/z (float64), name (UTF-8 string).
 
-  Compares fastdb ColumnEngine in multiple modes plus ObjectEngine, PyArrow, and pickle:
-   - fastdb ColumnEngine push path            (OLAP/batch columnar, push + combine)
-    - fastdb ColumnEngine truncate + STR path  (raw strings: known-size truncate + native-backed tbl.fill(..., name=names))
-    - fastdb ColumnEngine truncate + STR path  (prepacked: pack_utf8_column([...]) + tbl.column.name.fill_utf8(...))
-   - fastdb ColumnEngine truncate fast path   (known-size numeric-only apples-to-apples)
-   - fastdb ColumnEngine single-value tables  (CoordId/CoordX/CoordY/CoordZ/CoordName split tables)
+  Compares fastdb RecordEngine in multiple modes plus ObjectEngine, PyArrow, and pickle:
+   - fastdb RecordEngine push path            (AoS records, push + combine)
+    - fastdb RecordEngine truncate + STR path  (raw strings: known-size truncate + native-backed tbl.fill(..., name=names))
+    - fastdb RecordEngine truncate + STR path  (prepacked: pack_utf8_column([...]) + tbl.column.name.fill_utf8(...))
+   - fastdb RecordEngine truncate fast path   (known-size numeric-only apples-to-apples)
+   - fastdb RecordEngine single-value tables  (CoordId/CoordX/CoordY/CoordZ/CoordName split tables)
    - fastdb ObjectEngine                      (OLTP/graph, deferred batch push + combine)
    - PyArrow                                  (columnar IPC)
    - pickle                                   (Python native binary)
@@ -44,7 +44,7 @@ from multiprocessing import shared_memory
 
 import numpy as np
 
-from fastdb4py import feature, ColumnEngine, ObjectEngine, Layout, F64, U32, STR, pack_utf8_column
+from fastdb4py import feature, RecordEngine, ObjectEngine, Layout, F64, U32, STR, pack_utf8_column
 
 try:
     import pyarrow as pa
@@ -61,7 +61,7 @@ except ImportError:
 
 @feature
 class Coord:
-    """Kostya-style coordinate record (ColumnEngine)."""
+    """Kostya-style coordinate record (RecordEngine)."""
     row_id: U32
     x: F64
     y: F64
@@ -427,16 +427,16 @@ def bench_pickle(N: int, reps: int) -> dict:
     }
 
 # ---------------------------------------------------------------------------
-# ColumnEngine benchmarks
+# RecordEngine benchmarks
 # ---------------------------------------------------------------------------
 
 def bench_column_push(N: int, reps: int) -> dict:
-    """ColumnEngine via dynamic create() + per-row push() (handles STR)."""
+    """RecordEngine via dynamic create() + per-row push() (handles STR)."""
     shm_name = f"ce_kostya_{uuid.uuid4().hex[:8]}"
 
     # --- build: push N Coord features ---
     def do_build():
-        orm = ColumnEngine.create()
+        orm = RecordEngine.create()
         for i in range(N):
             f = Coord()
             f.row_id = i
@@ -482,11 +482,11 @@ def bench_column_push(N: int, reps: int) -> dict:
     try:
         # --- deserialize: zero-copy load from shm ---
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         # --- read: sum x+y+z via columnar numpy ---
         def do_read():
@@ -506,7 +506,7 @@ def bench_column_push(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ColumnEngine.load(shm_name)
+                h = RecordEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
@@ -528,12 +528,12 @@ def bench_column_push(N: int, reps: int) -> dict:
 
 
 def bench_column_trunc_str(N: int, reps: int) -> dict:
-    """ColumnEngine via truncate(Layout) + tbl.fill(..., name=names) backed by the native raw-string batch API."""
+    """RecordEngine via truncate(Layout) + tbl.fill(..., name=names) backed by the native raw-string batch API."""
     shm_name = f"cets_kostya_{uuid.uuid4().hex[:8]}"
 
     def do_build():
         ids, xs, ys, zs, names = _make_coord_columns(N)
-        orm = ColumnEngine.truncate([Layout(Coord, N)])
+        orm = RecordEngine.truncate([Layout(Coord, N)])
         tbl = orm.table(Coord)
         tbl.fill(row_id=ids, x=xs, y=ys, z=zs, name=names)
         return orm
@@ -565,11 +565,11 @@ def bench_column_trunc_str(N: int, reps: int) -> dict:
     orm2 = None
     try:
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         def do_read():
             tbl = orm2.table(Coord)
@@ -588,7 +588,7 @@ def bench_column_trunc_str(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ColumnEngine.load(shm_name)
+                h = RecordEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
@@ -610,13 +610,13 @@ def bench_column_trunc_str(N: int, reps: int) -> dict:
 
 
 def bench_column_trunc_str_prepacked(N: int, reps: int) -> dict:
-    """ColumnEngine via truncate(Layout) + pack_utf8_column(...) + fill_utf8(...)."""
+    """RecordEngine via truncate(Layout) + pack_utf8_column(...) + fill_utf8(...)."""
     shm_name = f"cetsp_kostya_{uuid.uuid4().hex[:8]}"
 
     def do_build():
         ids, xs, ys, zs, names = _make_coord_columns(N)
         offsets, data = pack_utf8_column(names)
-        orm = ColumnEngine.truncate([Layout(Coord, N)])
+        orm = RecordEngine.truncate([Layout(Coord, N)])
         tbl = orm.table(Coord)
         tbl.fill(row_id=ids, x=xs, y=ys, z=zs)
         return orm, offsets, data
@@ -652,11 +652,11 @@ def bench_column_trunc_str_prepacked(N: int, reps: int) -> dict:
     orm2 = None
     try:
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         def do_read():
             tbl = orm2.table(Coord)
@@ -675,7 +675,7 @@ def bench_column_trunc_str_prepacked(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ColumnEngine.load(shm_name)
+                h = RecordEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
@@ -697,7 +697,7 @@ def bench_column_trunc_str_prepacked(N: int, reps: int) -> dict:
 
 
 def bench_column_truncate(N: int, reps: int) -> dict:
-    """ColumnEngine via truncate(Layout) + bulk numpy fill() (numeric-only fast path)."""
+    """RecordEngine via truncate(Layout) + bulk numpy fill() (numeric-only fast path)."""
     shm_name = f"cet_kostya_{uuid.uuid4().hex[:8]}"
 
     # --- build: pre-allocate + bulk fill numeric columns from numpy ---
@@ -706,7 +706,7 @@ def bench_column_truncate(N: int, reps: int) -> dict:
         xs = np.arange(N, dtype=np.float64) * 0.1
         ys = np.arange(N, dtype=np.float64) * 0.2
         zs = np.arange(N, dtype=np.float64) * 0.3
-        orm = ColumnEngine.truncate([Layout(CoordNumeric, N)])
+        orm = RecordEngine.truncate([Layout(CoordNumeric, N)])
         tbl = orm.table(CoordNumeric)
         tbl.fill(row_id=ids, x=xs, y=ys, z=zs)
         return orm
@@ -739,11 +739,11 @@ def bench_column_truncate(N: int, reps: int) -> dict:
     orm2 = None
     try:
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         def do_read():
             tbl = orm2.table(CoordNumeric)
@@ -762,7 +762,7 @@ def bench_column_truncate(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ColumnEngine.load(shm_name)
+                h = RecordEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
@@ -784,12 +784,12 @@ def bench_column_truncate(N: int, reps: int) -> dict:
 
 
 def bench_column_single_value(N: int, reps: int) -> dict:
-    """ColumnEngine as five single-field tables, including the STR name table."""
+    """RecordEngine as five single-field tables, including the STR name table."""
     shm_name = f"cesv_kostya_{uuid.uuid4().hex[:8]}"
 
     def do_build():
         ids, xs, ys, zs, names = _make_coord_columns(N)
-        orm = ColumnEngine.truncate([
+        orm = RecordEngine.truncate([
             Layout(CoordId, N),
             Layout(CoordX, N),
             Layout(CoordY, N),
@@ -828,11 +828,11 @@ def bench_column_single_value(N: int, reps: int) -> dict:
     orm2 = None
     try:
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         def do_read():
             cx = orm2.table(CoordX).column.x
@@ -849,7 +849,7 @@ def bench_column_single_value(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ColumnEngine.load(shm_name)
+                h = RecordEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
@@ -871,7 +871,7 @@ def bench_column_single_value(N: int, reps: int) -> dict:
 
 
 def bench_column_single_numeric(N: int, reps: int) -> dict:
-    """ColumnEngine as four single-field numeric tables."""
+    """RecordEngine as four single-field numeric tables."""
     shm_name = f"cesvn_kostya_{uuid.uuid4().hex[:8]}"
 
     def do_build():
@@ -879,7 +879,7 @@ def bench_column_single_numeric(N: int, reps: int) -> dict:
         xs = np.arange(N, dtype=np.float64) * 0.1
         ys = np.arange(N, dtype=np.float64) * 0.2
         zs = np.arange(N, dtype=np.float64) * 0.3
-        orm = ColumnEngine.truncate([
+        orm = RecordEngine.truncate([
             Layout(CoordId, N),
             Layout(CoordX, N),
             Layout(CoordY, N),
@@ -916,11 +916,11 @@ def bench_column_single_numeric(N: int, reps: int) -> dict:
     orm2 = None
     try:
         def do_deserial():
-            h = ColumnEngine.load(shm_name)
+            h = RecordEngine.load(shm_name)
             h.close()
 
         deserial_ms = _median_ms(do_deserial, reps)
-        orm2 = ColumnEngine.load(shm_name)
+        orm2 = RecordEngine.load(shm_name)
 
         def do_read():
             cx = orm2.table(CoordX).column.x
@@ -937,7 +937,7 @@ def bench_column_single_numeric(N: int, reps: int) -> dict:
             orm2.unlink()
         else:
             try:
-                h = ColumnEngine.load(shm_name)
+                h = RecordEngine.load(shm_name)
                 h.unlink()
             except Exception:
                 pass
@@ -1235,11 +1235,11 @@ def main():
     print("  Phases (ms, median): build | encode (combine/dumps) | shm | deserialize | read sum(x+y+z)")
     print("  Throughput: million records/sec; B/rec: wire bytes per record")
     print("  Notes:")
-    print("    column_push            = ColumnEngine.create() + per-row push() + combine()")
-    print("    column_trunc_str_raw      = default raw-string path: ColumnEngine.truncate(Layout) + tbl.fill(..., name=names)")
+    print("    column_push            = RecordEngine.create() + per-row push() + combine()")
+    print("    column_trunc_str_raw      = default raw-string path: RecordEngine.truncate(Layout) + tbl.fill(..., name=names)")
     print("    column_trunc_str_prepacked = advanced prepacked path: pack_utf8_column(names) + tbl.column.name.fill_utf8(...)")
     print("                               (raw build now includes native string packing; prepacked encode isolates fill_utf8(...))")
-    print("    column_truncate   = ColumnEngine.truncate(Layout) + tbl.fill(numpy)  [numeric-only fast path]")
+    print("    column_truncate   = RecordEngine.truncate(Layout) + tbl.fill(numpy)  [numeric-only fast path]")
     print("    single_value      = split tables: CoordId/CoordX/CoordY/CoordZ/CoordName; includes STR storage")
     print("    single_num        = split tables: CoordId/CoordX/CoordY/CoordZ")
     print("    object            = ObjectEngine.create() + per-row push() + combine()")
@@ -1284,7 +1284,7 @@ def main():
             schema_desc="row_id: U32 | x, y, z: F64 | name: STR (single_value uses CoordId/CoordX/CoordY/CoordZ/CoordName)",
         )
 
-        # ---- Section B: numeric-only (apples-to-apples for ColumnEngine truncate) ----
+        # ---- Section B: numeric-only (apples-to-apples for RecordEngine truncate) ----
         print(f"\n  Running N={N:,}  reps={reps}  [Section B — numeric-only] ...", end="", flush=True)
         num_results = []
         for name, fn in numeric_benches:

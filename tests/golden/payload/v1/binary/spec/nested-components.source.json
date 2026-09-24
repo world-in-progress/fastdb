@@ -1,0 +1,30 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {"id": "a_direct", "cardinality": "one", "type": {"kind": "component", "id": "Outer"}},
+    {"id": "b_nullable_many", "cardinality": "many", "type": {"kind": "component", "id": "Outer", "nullable": true}},
+    {"id": "c_empty_many", "cardinality": "many", "type": {"kind": "component", "id": "Empty"}}
+  ],
+  "components": [
+    {"id": "AUnreachable", "kind": "record", "fields": [
+      {"id": "ghost", "type": {"kind": "u8"}}
+    ]},
+    {"id": "Empty", "kind": "record", "fields": []},
+    {"id": "Leaf", "kind": "record", "fields": [
+      {"id": "a_flag", "type": {"kind": "bool", "nullable": true}},
+      {"id": "b_code", "type": {"kind": "u16n", "min": 0, "max": 65535}},
+      {"id": "c_value", "type": {"kind": "f64"}}
+    ]},
+    {"id": "Middle", "kind": "record", "fields": [
+      {"id": "a_leaf", "type": {"kind": "component", "id": "Leaf", "nullable": true}},
+      {"id": "b_leaf_reuse", "type": {"kind": "component", "id": "Leaf"}}
+    ]},
+    {"id": "Outer", "kind": "record", "fields": [
+      {"id": "a_empty", "type": {"kind": "component", "id": "Empty"}},
+      {"id": "b_middle", "type": {"kind": "component", "id": "Middle"}},
+      {"id": "c_leaf", "type": {"kind": "component", "id": "Leaf", "nullable": true}},
+      {"id": "d_u32", "type": {"kind": "u32"}}
+    ]}
+  ]
+}

@@ -1,11 +1,19 @@
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <memory>
+#include <new>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <emscripten/bind.h>
 
 #include "fastdb.h"
+#include "fastdb_payload.h"
 
 using namespace emscripten;
 using namespace wx;
@@ -22,6 +30,266 @@ struct FieldDefView {
     size_t type;
     double vmin;
     double vmax;
+};
+
+struct PayloadBackingStats {
+    uint64_t reservations;
+    uint64_t writes;
+    uint64_t commits;
+    uint64_t rollbacks;
+    uint64_t retains;
+    uint64_t releases;
+};
+
+class WxPayloadBacking {
+private:
+    struct State {
+        explicit State(bool allow_direct_value, bool fail_write_value, bool fail_commit_value)
+            : allow_direct(allow_direct_value),
+              fail_write(fail_write_value),
+              fail_commit(fail_commit_value) {}
+
+        bool allow_direct;
+        bool fail_write;
+        bool fail_commit;
+        std::atomic<uint64_t> reservations{0};
+        std::atomic<uint64_t> writes{0};
+        std::atomic<uint64_t> commits{0};
+        std::atomic<uint64_t> rollbacks{0};
+        std::atomic<uint64_t> retains{0};
+        std::atomic<uint64_t> releases{0};
+    };
+
+    struct Token {
+        Token(std::shared_ptr<State> state_value, void* allocation_value,
+              uint8_t* data_value, uint64_t capacity_value)
+            : state(std::move(state_value)),
+              allocation(allocation_value),
+              data(data_value),
+              capacity(capacity_value) {}
+
+        ~Token() { std::free(allocation); }
+
+        std::shared_ptr<State> state;
+        void* allocation;
+        uint8_t* data;
+        uint64_t capacity;
+        std::atomic<uint64_t> references{1};
+    };
+
+public:
+    WxPayloadBacking(bool allow_direct, bool fail_write, bool fail_commit)
+        : state_(std::make_shared<State>(allow_direct, fail_write, fail_commit)) {
+        fdb_payload_v1_backing_init(&backing_);
+        backing_.context = this;
+        backing_.reserve = &reserve;
+        backing_.write = &write;
+        backing_.commit = &commit;
+        backing_.rollback = &rollback;
+        backing_.retain = &retain;
+        backing_.release = &release;
+    }
+
+    WxPayloadBacking(const WxPayloadBacking&) = delete;
+    WxPayloadBacking& operator=(const WxPayloadBacking&) = delete;
+
+    uintptr_t backingAddress() const {
+        return reinterpret_cast<uintptr_t>(&backing_);
+    }
+
+    PayloadBackingStats stats() const {
+        return PayloadBackingStats{
+            state_->reservations.load(), state_->writes.load(),
+            state_->commits.load(), state_->rollbacks.load(),
+            state_->retains.load(), state_->releases.load(),
+        };
+    }
+
+private:
+    static fdb_payload_v1_status_t reserve(
+        void* context,
+        uint32_t reserve_mode,
+        uint64_t minimum_capacity,
+        uint32_t alignment,
+        void** out_owner_token,
+        uint8_t** out_writable_data,
+        uint64_t* out_capacity) noexcept {
+        if (context == nullptr || out_owner_token == nullptr ||
+            out_writable_data == nullptr || out_capacity == nullptr) {
+            return FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        auto* self = static_cast<WxPayloadBacking*>(context);
+        const auto state = self->state_;
+        state->reservations.fetch_add(1);
+        if (reserve_mode == FDB_PAYLOAD_RESERVE_DIRECT && !state->allow_direct) {
+            return FDB_PAYLOAD_E_DIRECT_UNAVAILABLE;
+        }
+        if (reserve_mode != FDB_PAYLOAD_RESERVE_DIRECT &&
+            reserve_mode != FDB_PAYLOAD_RESERVE_STAGED) {
+            return FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        if (alignment == 0 || (alignment & (alignment - 1)) != 0 ||
+            minimum_capacity > std::numeric_limits<size_t>::max()) {
+            return FDB_PAYLOAD_E_ALLOCATION_FAILED;
+        }
+        const size_t allocation_size =
+            std::max<size_t>(static_cast<size_t>(minimum_capacity), 1);
+        const size_t allocation_alignment =
+            std::max<size_t>(static_cast<size_t>(alignment), sizeof(void*));
+        void* allocation = nullptr;
+        if (posix_memalign(&allocation, allocation_alignment, allocation_size) != 0) {
+            return FDB_PAYLOAD_E_ALLOCATION_FAILED;
+        }
+        std::memset(allocation, 0, allocation_size);
+        auto* token = new (std::nothrow) Token(
+            state, allocation, static_cast<uint8_t*>(allocation), minimum_capacity);
+        if (token == nullptr) {
+            std::free(allocation);
+            return FDB_PAYLOAD_E_ALLOCATION_FAILED;
+        }
+        *out_owner_token = token;
+        *out_writable_data = reserve_mode == FDB_PAYLOAD_RESERVE_DIRECT
+                                 ? token->data
+                                 : nullptr;
+        *out_capacity = minimum_capacity;
+        return 0;
+    }
+
+    static fdb_payload_v1_status_t write(
+        void*, void* owner_token, uint64_t offset, const uint8_t* source,
+        uint64_t source_size) noexcept {
+        auto* token = static_cast<Token*>(owner_token);
+        if (token == nullptr || (source == nullptr && source_size != 0) ||
+            offset > token->capacity || source_size > token->capacity - offset) {
+            return FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        token->state->writes.fetch_add(1);
+        if (token->state->fail_write) {
+            return FDB_PAYLOAD_E_ALLOCATION_FAILED;
+        }
+        if (source_size != 0) {
+            std::memcpy(token->data + offset, source,
+                        static_cast<size_t>(source_size));
+        }
+        return 0;
+    }
+
+    static fdb_payload_v1_status_t commit(
+        void*, void* owner_token, uint64_t used_size,
+        const uint8_t** out_readable_data,
+        uint64_t* out_readable_size) noexcept {
+        auto* token = static_cast<Token*>(owner_token);
+        if (token == nullptr || out_readable_data == nullptr ||
+            out_readable_size == nullptr || used_size > token->capacity) {
+            return FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        token->state->commits.fetch_add(1);
+        if (token->state->fail_commit) {
+            return FDB_PAYLOAD_E_COMMIT_FAILED;
+        }
+        *out_readable_data = token->data;
+        *out_readable_size = used_size;
+        return 0;
+    }
+
+    static fdb_payload_v1_status_t rollback(void*, void* owner_token) noexcept {
+        auto* token = static_cast<Token*>(owner_token);
+        if (token == nullptr) {
+            return FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        token->state->rollbacks.fetch_add(1);
+        delete token;
+        return 0;
+    }
+
+    static fdb_payload_v1_status_t retain(void*, void* owner_token) noexcept {
+        auto* token = static_cast<Token*>(owner_token);
+        if (token == nullptr) {
+            return FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        token->references.fetch_add(1);
+        token->state->retains.fetch_add(1);
+        return 0;
+    }
+
+    static void release(void*, void* owner_token) noexcept {
+        auto* token = static_cast<Token*>(owner_token);
+        if (token == nullptr) {
+            return;
+        }
+        if (token->references.fetch_sub(1) == 1) {
+            token->state->releases.fetch_add(1);
+            delete token;
+        }
+    }
+
+    std::shared_ptr<State> state_;
+    fdb_payload_v1_backing_v1_t backing_{};
+};
+
+class WxPayloadOwnedBytes {
+private:
+    struct State {
+        std::atomic<uint64_t> references{1};
+        std::vector<uint8_t> bytes;
+    };
+
+public:
+    WxPayloadOwnedBytes(uintptr_t source, size_t size) : state_(nullptr) {
+        if (source == 0 && size != 0) {
+            throw std::invalid_argument("non-empty source has null storage");
+        }
+        auto state = std::make_unique<State>();
+        const auto* begin = reinterpret_cast<const uint8_t*>(source);
+        if (size != 0) {
+            state->bytes.assign(begin, begin + size);
+        }
+        state_ = state.release();
+        fdb_payload_v1_backing_init(&backing_);
+        backing_.retain = &retain;
+        backing_.release = &release;
+    }
+
+    ~WxPayloadOwnedBytes() { release(nullptr, state_); }
+
+    WxPayloadOwnedBytes(const WxPayloadOwnedBytes&) = delete;
+    WxPayloadOwnedBytes& operator=(const WxPayloadOwnedBytes&) = delete;
+
+    uintptr_t dataAddress() const {
+        return state_->bytes.empty()
+                   ? 0
+                   : reinterpret_cast<uintptr_t>(state_->bytes.data());
+    }
+
+    size_t size() const { return state_->bytes.size(); }
+
+    uintptr_t backingAddress() const {
+        return reinterpret_cast<uintptr_t>(&backing_);
+    }
+
+    uintptr_t ownerToken() const {
+        return reinterpret_cast<uintptr_t>(state_);
+    }
+
+private:
+    static fdb_payload_v1_status_t retain(void*, void* owner_token) noexcept {
+        auto* state = static_cast<State*>(owner_token);
+        if (state == nullptr) {
+            return FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        state->references.fetch_add(1);
+        return 0;
+    }
+
+    static void release(void*, void* owner_token) noexcept {
+        auto* state = static_cast<State*>(owner_token);
+        if (state != nullptr && state->references.fetch_sub(1) == 1) {
+            delete state;
+        }
+    }
+
+    State* state_;
+    fdb_payload_v1_backing_v1_t backing_{};
 };
 
 ChunkView chunk_to_view(chunk_data_t chunk) {
@@ -343,6 +611,26 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .field("vmin", &FieldDefView::vmin)
         .field("vmax", &FieldDefView::vmax);
 
+    value_object<PayloadBackingStats>("PayloadBackingStats")
+        .field("reservations", &PayloadBackingStats::reservations)
+        .field("writes", &PayloadBackingStats::writes)
+        .field("commits", &PayloadBackingStats::commits)
+        .field("rollbacks", &PayloadBackingStats::rollbacks)
+        .field("retains", &PayloadBackingStats::retains)
+        .field("releases", &PayloadBackingStats::releases);
+
+    class_<WxPayloadBacking>("WxPayloadBacking")
+        .constructor<bool, bool, bool>()
+        .function("backingAddress", &WxPayloadBacking::backingAddress)
+        .function("stats", &WxPayloadBacking::stats);
+
+    class_<WxPayloadOwnedBytes>("WxPayloadOwnedBytes")
+        .constructor<uintptr_t, size_t>()
+        .function("dataAddress", &WxPayloadOwnedBytes::dataAddress)
+        .function("size", &WxPayloadOwnedBytes::size)
+        .function("backingAddress", &WxPayloadOwnedBytes::backingAddress)
+        .function("ownerToken", &WxPayloadOwnedBytes::ownerToken);
+
     constant("gtAny", static_cast<int>(gtAny));
     constant("gtPoint", static_cast<int>(gtPoint));
     constant("gtLineString", static_cast<int>(gtLineString));
@@ -378,7 +666,8 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .constructor<>()
         .function("begin", &db_build_begin)
         .function("truncate", &db_build_truncate)
-        .function("createLayerBegin", &db_build_create_layer_begin, allow_raw_pointers())
+        // The database builder owns its layers until its destructor runs.
+        .function("createLayerBegin", &db_build_create_layer_begin, return_value_policy::reference())
         .function("addField", &db_build_add_field)
         .function("setGeometryType", &db_build_set_geometry_type)
         .function("enableStringTableU32", &FastVectorDbBuild::enableStringTableU32)

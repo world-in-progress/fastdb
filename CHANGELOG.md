@@ -1,13 +1,46 @@
 # Changelog
 
-All notable changes to `fastdb` and its bindings are documented here.  
-Each binding section tracks **unreleased / in-progress** changes for the next version of that binding.  
-When a binding is released (tagged), its section is automatically copied to the GitHub Release notes and then reset.
+All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
+
+## 0.2.0 — release preparation
+
+- Publish the portable `fastdb.payload.v1` foundation across C++/C ABI, Rust `fastdb-sys` and `fastdb`, Python `fastdb4py`, and TypeScript/WASM `fastdb4ts` with coherent 0.2.0 package versions.
+- The C++ Core owns record/object-graph compilation, canonical identity, deterministic binary layout, build/open, checked views, invalidation, materialization, structured errors and four-language code generation. The public ABI remains version 1 with exactly 117 payload symbols.
+- **Breaking:** remove the pre-0.2 portable authority and compatibility aliases; standalone AoS storage uses `RecordEngine`. Existing standalone object storage and the legacy serializer retain their separate documented roles.
+- Distribution uses source-bound artifact manifests and verified installed-package consumers. Published Rust crates link the matching Core/C ABI bundle in system mode; they do not contain a second Core source tree or silently download native code during builds.
+- Native storage builders now own and release their layer builders, including allocation-failure paths. TypeScript treats those layer handles as borrowed and leaves destruction to the parent builder, fixing the leak found by hosted LeakSanitizer without introducing duplicate release.
+- Allocation-failure tests measure the platform's actual allocation count before checking every failure/retry point. Large-graph sanitizer cases retain all 50,000 objects and run as separately bounded tests.
+- Registry and hosted verification status is recorded in [the release record](docs/releases/0.2.0.md). This entry does not mark pending uploads as complete.
 
 ---
 
 <!-- BEGIN:fastdb4py -->
 ## fastdb4py (Python binding)
+
+### Unreleased P5 clean cut
+
+- **BREAKING:** the duplicate Python payload authority, feature-discovery
+  generator, requirement/allocator facade, and pre-0.2 engine spelling are
+  removed without aliases. `RecordEngine` is the final standalone AoS record
+  name; `ObjectEngine`, feature metadata, `FastSerializer`, view ownership, and
+  materialization remain explicitly standalone helpers.
+- `fastdb4py.payload` is the official Python projection of the C++ Core-owned
+  portable compiler/runtime and four-target ArtifactSet generator.
+- `fdb codegen SPEC.json --target cpp|rust|python|typescript --output DIR`
+  writes only Core-returned artifacts into a new destination tree.
+- The destination-path safety check now preserves the same Windows
+  reserved-name, trailing-dot/space, alternate-stream, and forbidden-character
+  rejection on Python 3.10-3.12, where `ntpath.isreserved` is unavailable.
+- Fresh local P5 readiness passes the current and minimum-Python source suites,
+  independently built sdist/wheel inventories, and isolated installed-wheel
+  suites. The exact results and non-SWIG Python 3.10 build warnings are recorded
+  in Issue 0002.
+- The source remains version `0.1.22`. These entries are local, unreleased
+  clean-cut work and do not claim a version bump, tag, publication, hosted
+  pass, or 0.2.0 release.
+- Older entries below are retained as historical 0.1.x evidence. Where their
+  public surfaces conflict with this section, they are superseded rather than
+  current instructions.
 
 ### Removed
 - **BREAKING**: Deleted `Feature` base class, `ORM`, `ORM2`, `TableDefn`, `ClassSchema`, `FeatureRefList`, `BaseFeature`, `parse_defns`, `get_all_defns`, `get_class_schema`, `make_inlined_dispatch`, `make_batch_inlined_dispatch`, and the `orm._graph` module. Use `@feature` decorator with `ColumnEngine` (columnar/truncate workloads) or `ObjectEngine` (object-graph/serializer workloads) instead. The `feature` and `orm` subpackages now expose only the new minimal surface.
@@ -76,6 +109,20 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb4ts -->
 ## fastdb4ts (TypeScript/WASM binding)
 
+### Unreleased P5 clean cut
+
+- The duplicate TypeScript RPC payload authority and its root/package exports
+  are removed without aliases. `fastdb4ts/payload` remains the official
+  WebAssembly projection of the same C++ Core ABI.
+- Standalone schema/feature metadata and `FastSerializer` retain explicit
+  non-portable boundaries.
+- Fresh local P5 readiness passes 57 TypeScript/Wasm tests, the exact 41-file
+  packed-package inventory and smoke, exact ABI-117, and the independent Core
+  Wasm runtime receipts.
+- The source remains version `0.0.3`; no tag, publication, hosted pass, or
+  release is claimed. Older entries below are retained as historical 0.1.x
+  evidence.
+
 ### Performance
 - `FastSerializer` dumps: TypedArray bulk write for numeric lists replaces per-element DataView calls (~15% speedup).
 - `FastSerializer` dumps: pre-allocated `ByteWriter` with `ArrayBuffer` + `DataView` replaces chunked `Uint8Array[]` concatenation.
@@ -95,7 +142,66 @@ When a binding is released (tagged), its section is automatically copied to the 
 <!-- BEGIN:fastdb-core -->
 ## fastdb C++ core
 
+### Unreleased portable-payload foundation
+
+- P4 is locally frozen at the exact 117-symbol portable C ABI with equal
+  C++/Rust/Python/TypeScript-Wasm projections and deterministic Core-owned
+  four-target in-memory code generation.
+- P5 Tasks 1-7 remove duplicate authority, install the exact executable
+  clean-cut policy, and pass the fresh local native, sanitizer/TSan, Rust,
+  Python 3.10/current package, generated-output, TypeScript/Wasm, package, and
+  documentation readiness matrix. The P5 local clean cut is complete; C-Two
+  downstream composition is the next owner slice. Package versions are
+  unchanged, and no hosted pass, push, tag, publication, or 0.2.0 release is
+  claimed.
+- Older entries below remain historical implementation evidence and are not a
+  current public-surface inventory.
+
 ### Added
+- Locally completed and froze the P3 ordinary `object_graph.v1` C++ Core and
+  C/C++ runtime at the exact 105-symbol C ABI. The runtime covers all V1
+  values, graph roots/refs, sharing/cycles, exact profile-2 bytes and hardened
+  open, truthful direct/staged final backing, checked views/invalidation,
+  detached reachable-closure materialization, the 16-seed graph-aware
+  robustness/fuzz corpus, and full Core WebAssembly graph proof. D1 is closed
+  by the executable no-full-image direct evidence. This is unreleased local
+  foundation work: P4 projections/codegen, P5 clean cut, hosted CI, version
+  change, tag, publication, and 0.2.0 release remain open.
+- P1 `fastdb.payload.v1` compile/query support and the P2 record
+  binary/runtime/lifetime implementation in the C++ Core, exposed through an
+  exact 99-symbol pure-C `fdb_payload_v1_*` ABI and a header-only C++17 RAII
+  facade. P2 covers every non-`ref` record value composition, immutable plans,
+  heap/external backing, deterministic build/open, checked access,
+  materialization, and invalidation.
+- Native ABI allowlist, deep object/shared-child lifetime regressions, a
+  Clang/ASan/UBSan libFuzzer compiler harness and seed corpus, and GitHub
+  Actions definitions for Linux x86-64, macOS arm64, and Linux sanitizer/fuzz
+  gates.
+- Workflow definitions for the full native P2 suite, exact native/wasm ABI-99
+  checks, Emscripten Core/C/C++ runtime proofs, and exact sdist/wheel inventory
+  plus seven-diagnostic legacy SWIG checks. The path-aware aggregate is covered
+  by an exhaustive scope/result truth table.
+- A public Emscripten source-build exception contract: the real `fastdb` CMake
+  target compiles Core catch sites and propagates JavaScript-based
+  `-fexceptions` to C++ consumers and final links without adding the C++ flag
+  to pure-C compilation. A single-thread runtime-ABI test proves injected
+  failures return stable C statuses; pthread behavior is not claimed by it.
+- A deterministic public-C binary-open robustness runner, matching
+  coverage-guided `fuzz_payload_open` target, reviewed 10-seed valid/malformed
+  corpus with reproducible hashes, and an executable mapping for all 14
+  mandatory malformed/runtime-lifetime classes.
+
+Task 11 complete fresh local gates are green, and its same-reviewer final P2
+review reports zero Critical, Important, or Minor findings after closing both
+initial Important findings. P2 is locally complete and frozen. Object-graph
+runtime, Rust/Python/TypeScript-WASM portable projections, and payload code
+generation remain open in [Issue
+0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
+The public call-db/`ColumnEngine` surface remains 0.1.x migration input until
+the planned 0.2.0 clean cut; this change does not bump a package version or
+claim a 0.2.0 release. Only capabilities deliberately deferred beyond 0.2.0
+belong to [Issue 0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
+
 - **Native list column support**: `ftList=12` field type with backwards-compatible wire format. New public API on `FastVectorDbLayerBuild`: `add_list_field(name, element_type)`, `set_field_list_numeric(idx, data, nbytes)`, `set_field_list_refs(idx, refs, count)`, `update_feature_ref(feature_idx, field_idx, ref)`, `update_list_ref_at(feature_idx, field_idx, list_idx, ref)`. New public API on `FastVectorDbFeature`: `getFieldAsListView(idx)`, `getFieldListSize(idx)`, `getFieldListRefAt(idx, list_idx)`. Wire format: `element_type` field added in 2 previously-unused padding bytes of `field_desc_ex_t`; `n_list_fields` in `layer_header_t`; list data section appended after wstrings in each layer binary. Fully backwards-compatible — old databases with zero-filled padding read as no list data.
 
 ### Fixed

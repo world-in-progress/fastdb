@@ -1,0 +1,8 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [
+    {"id": "missing_type", "cardinality": "one"}
+  ],
+  "components": []
+}

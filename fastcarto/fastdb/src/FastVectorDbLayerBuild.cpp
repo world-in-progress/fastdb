@@ -179,7 +179,7 @@ namespace wx
     }
     int FastVectorDbLayerBuild::Impl::addField(const char *name, unsigned ft, double vmin, double vmax)
     {
-        field_desc_ex_t fd;
+        field_desc_ex_t fd{};
         memset(fd.name, 0, 16);
         memcpy(fd.name, name, strlen(name));
         fd.type = ft;

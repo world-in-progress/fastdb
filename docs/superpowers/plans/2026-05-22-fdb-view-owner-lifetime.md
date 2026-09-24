@@ -1,5 +1,10 @@
 # FastDB View Owner Lifetime Implementation Plan
 
+> **Status: historical/superseded.** Retained as migration evidence only.
+> Current authority is the
+> [accepted portable-payload foundation](../specs/2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](../specs/2026-07-23-portable-payload-clean-cut-design.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a FastDB-owned lifetime and aliasing model for backed views so stale row, feature, column, string, and bytes views fail after their owner is invalidated, while owned Python feature objects continue to use normal `__dict__` semantics.

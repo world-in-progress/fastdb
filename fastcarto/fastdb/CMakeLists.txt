@@ -20,14 +20,137 @@ add_source_by_dir(${PROJECT_DIR} SOURCES)
 file(GLOB_RECURSE EXCLUED_FILES ${PROJECT_DIR}/swig/*.*)
 list(REMOVE_ITEM SOURCES ${EXCLUED_FILES})
 
+add_library(fastdb_payload_emscripten_exception_model INTERFACE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    # JavaScript-based Emscripten exceptions are the broadly compatible V1
+    # source-build contract. The option is required at compile and final link.
+    target_compile_options(
+        fastdb_payload_emscripten_exception_model
+        INTERFACE "$<$<COMPILE_LANGUAGE:CXX>:-fexceptions>"
+    )
+    target_link_options(
+        fastdb_payload_emscripten_exception_model
+        INTERFACE -fexceptions
+    )
+endif()
+
+file(
+    GLOB_RECURSE FASTDB_PAYLOAD_CORE_SOURCES
+    CONFIGURE_DEPENDS
+    ${PROJECT_DIR}/src/payload/*.cpp
+)
+list(REMOVE_ITEM SOURCES ${FASTDB_PAYLOAD_CORE_SOURCES})
+
+add_library(fastdb_payload_core OBJECT ${FASTDB_PAYLOAD_CORE_SOURCES})
+target_compile_features(fastdb_payload_core PRIVATE cxx_std_17)
+set_target_properties(
+    fastdb_payload_core
+    PROPERTIES
+        CXX_EXTENSIONS OFF
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED ON
+        POSITION_INDEPENDENT_CODE ON
+)
+target_include_directories(
+    fastdb_payload_core
+    PRIVATE
+        ${PROJECT_DIR}/include
+        ${PROJECT_DIR}/src
+)
+target_include_directories(
+    fastdb_payload_core
+    SYSTEM PRIVATE
+        ${LIB_DIR}/yyjson/src
+        ${LIB_DIR}/double-conversion
+        ${LIB_DIR}/picosha2
+)
+target_compile_definitions(
+    fastdb_payload_core
+    PRIVATE
+        FASTDB_PAYLOAD_BUILDING=1
+)
+if(BUILD_TESTING)
+    target_compile_definitions(
+        fastdb_payload_core
+        PRIVATE FASTDB_PAYLOAD_BUILD_TESTING=1
+    )
+endif()
+if(MSVC)
+    target_compile_options(fastdb_payload_core PRIVATE /W4 /WX)
+else()
+    target_compile_options(
+        fastdb_payload_core
+        PRIVATE
+            -Wall
+            -Wextra
+            -Wpedantic
+            -Wconversion
+            -Werror
+    )
+endif()
+target_link_libraries(
+    fastdb_payload_core
+    PRIVATE
+        fastdb_yyjson
+        fastdb_double_conversion
+        fastdb_picosha2
+        fastdb_payload_emscripten_exception_model
+)
+fastdb_apply_sanitizers(fastdb_payload_core)
+
+# A payload-only archive for stable-C-ABI consumers such as the Rust binding.
+# It reuses the exact object files linked into the full FastDB library; no
+# portable-payload source is copied or compiled through a second definition.
+add_library(
+    fastdb_payload_native
+    STATIC
+    $<TARGET_OBJECTS:fastdb_payload_core>
+)
+set_target_properties(
+    fastdb_payload_native
+    PROPERTIES
+        OUTPUT_NAME fastdb_payload
+)
+target_include_directories(
+    fastdb_payload_native
+    PUBLIC
+        ${PROJECT_DIR}/include
+)
+target_link_libraries(
+    fastdb_payload_native
+    PUBLIC
+        fastdb_payload_emscripten_exception_model
+    PRIVATE
+        fastdb_yyjson
+        fastdb_double_conversion
+        fastdb_picosha2
+)
+fastdb_apply_sanitizers(fastdb_payload_native)
+
 if(is_emscripten)
     set(BUILD_TYPE STATIC)
 else()
     set(BUILD_TYPE SHARED)
 endif(is_emscripten)
 
-add_library(${PROJECT_NAME} ${BUILD_TYPE} ${SOURCES})
-target_link_libraries(${PROJECT_NAME} PRIVATE gaiageo Clipper2)
+add_library(
+    ${PROJECT_NAME}
+    ${BUILD_TYPE}
+    ${SOURCES}
+    $<TARGET_OBJECTS:fastdb_payload_core>
+)
+target_link_libraries(
+    ${PROJECT_NAME}
+    PUBLIC
+        fastdb_payload_emscripten_exception_model
+    PRIVATE
+        gaiageo
+        Clipper2
+        fastdb_yyjson
+        fastdb_double_conversion
+        fastdb_picosha2
+)
+fastdb_apply_sanitizers(${PROJECT_NAME})
 
 get_target_property(swig_out_dir ${PROJECT_NAME} SWIG_OUTPUT_DIR)
 
@@ -74,6 +197,21 @@ if (NOT is_emscripten)
         add_library(fastdb4py SHARED ${SWIG_GENERATED_DIR}/fastdb4py_wrap.cxx)
         target_link_libraries(fastdb4py PRIVATE ${PROJECT_NAME})
         target_link_directories(fastdb4py PRIVATE ${Python3_LIBRARY_DIRS})
+
+        # The wheel copies the wrapper and FastDB libraries into one directory.
+        # Use that relative runtime location in the build artifact itself so the
+        # packaged binaries never retain CMake's temporary source/build RPATH.
+        if(APPLE)
+            set_target_properties(fastdb4py PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "@loader_path"
+            )
+        elseif(UNIX)
+            set_target_properties(fastdb4py PROPERTIES
+                BUILD_WITH_INSTALL_RPATH TRUE
+                INSTALL_RPATH "$ORIGIN"
+            )
+        endif()
 
         # Free-threaded Python: define Py_GIL_DISABLED so pyconfig.h's auto-link
         # pragma resolves to the correct library name (e.g. python314t.lib)

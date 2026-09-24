@@ -1,5 +1,6 @@
 #include "FastVectorDb_p.h"
 #include "FastVectorDbLayer_p.h"
+#include <cstring>
 #include <stdlib.h>
 
 #ifdef _WIN32
@@ -13,7 +14,18 @@
 #endif
 
 namespace wx
-{  
+{
+    namespace
+    {
+        template <typename T>
+        T load_unaligned(const void* source)
+        {
+            T value{};
+            std::memcpy(&value, source, sizeof(value));
+            return value;
+        }
+    }
+
     FastVectorDb::Impl::Impl(void *pdata, size_t size, fnFreeDbBuffer fnFreeBuffer, void *cookie)
         : m_pdata(pdata), m_size(size), m_fnFreeBuffer(fnFreeBuffer), m_cookie(cookie)
     {
@@ -22,19 +34,21 @@ namespace wx
         assert(check_mask);
         m_mask_check_ok=check_mask;
         ptr += 16;
-        u32 count = *(u32 *)ptr;
+        const u32 count = load_unaligned<u32>(ptr);
         ptr += sizeof(u32);
-        for (int i = 0; i < count; i++)
+        for (u32 i = 0; i < count; i++)
         {
-            layer_header_t *lh = (layer_header_t *)ptr;
-            auto layerImpl = new FastVectorDbLayer::Impl(ptr, lh->total_size);
+            const layer_header_t layer_header =
+                load_unaligned<layer_header_t>(ptr);
+            auto layerImpl =
+                new FastVectorDbLayer::Impl(ptr, layer_header.total_size);
             
 
             auto layer = new FastVectorDbLayer(layerImpl);
             layerImpl->m_layer= layer;
             layerImpl->m_layer_index=i;
             m_layers.push_back(layer);
-            ptr += lh->total_size;
+            ptr += layer_header.total_size;
         }
     }
     FastVectorDb::Impl::~Impl()

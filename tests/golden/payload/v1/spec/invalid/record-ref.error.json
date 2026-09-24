@@ -1,0 +1,1 @@
+{"status":1008,"symbol":"PROFILE_VIOLATION","path":"/entries/0/type","message":"Payload profile rejects reference type","details_json":"{\"profile\":\"record.v1\",\"reason\":\"ref_not_allowed\"}"}

@@ -33,11 +33,54 @@ Not included in the current TS package:
 
 - shared-memory IPC
 - direct filesystem persistence APIs
-- C-Two-specific CRM, route, relay, or call-db helper generation
+- downstream contract, routing, relay, or transport helper generation
 
 ## Integration boundary
 
 `fastdb4ts` owns generic browser/WASM access to FastDB schemas and binary buffers. External RPC systems may consume those schemas and buffers, but their contract planning, route identity, relay behavior, and generated client helpers belong in those systems rather than in `fastdb4ts`.
+
+## Portable payload subpath
+
+`fastdb4ts/payload` is the official browser-capable WebAssembly projection of
+the stable `fastdb.payload.v1` C ABI:
+
+```ts
+import { CompiledSpec, Profile, initPayload } from 'fastdb4ts/payload';
+
+await initPayload();
+const source = new TextEncoder().encode(
+  '{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]}',
+);
+const spec = CompiledSpec.compile(source);
+try {
+  console.assert(spec.profile() === Profile.RecordV1);
+} finally {
+  spec.dispose();
+}
+```
+
+The packed subpath includes the reviewed Wasm module and works in browser,
+worker, and Node test hosts without a Node-native FastDB projection. It checks
+the Core ABI version and calls only exported `fdb_payload_v1_*` functions. It
+does not parse portable schemas or binaries, compute canonical identity, plan
+layout, walk graphs, or materialize values in TypeScript; the C++ Core remains
+the sole authority.
+
+Owned handles use explicit, idempotent `dispose()` with finalization only as a
+fallback. Safe text and byte methods copy out of scoped Wasm access, graph
+sharing/cycles use Core `(componentIndex, objectId)` coordinates, and detached
+materialization is one Core call. `CompiledSpec.generate(...)` returns an
+explicitly disposable immutable ArtifactSet from the same Core-owned
+C++/Rust/Python/TypeScript generator. Artifact paths, bytes, SHA-256 receipts,
+limits, provenance, and errors come through the Wasm C ABI; TypeScript does not
+render source. The earlier Python-class discovery generator is removed by the
+P5 clean cut rather than extended by this projection.
+
+P4 is locally complete. The official WebAssembly projection type-checks and
+executes the four-shape hostile generated-artifact matrix through the same
+ABI-117 Core; TypeScript gains no private parser or renderer.
+P5 local clean cut is complete.
+Hosted execution, versioning, publication, and release evidence remain open.
 
 ## Installation
 
@@ -84,9 +127,11 @@ console.log(table.get(1).x); // 2.5
 
 ## Defining schemas
 
-Unlike `fastdb4py`, the TypeScript package uses explicit schema definitions rather than Python annotations.
-
-You can write these schemas by hand, or **auto-generate them** from Python Feature classes using the `fdb codegen` CLI (see [Generating schemas from Python](#generating-schemas-from-python) below).
+Unlike `fastdb4py`, the standalone TypeScript feature layer uses explicit
+schema definitions rather than Python annotations. These definitions are
+written by the application and are not portable payload authority. Portable
+TypeScript artifacts instead come from a Core-compiled specification through
+the [portable artifact generator](#generating-portable-payload-artifacts).
 
 ```ts
 import {
@@ -266,21 +311,22 @@ Serializer interop validation is also available:
 npm --prefix ts/fastdb4ts run test:serializer:interop
 ```
 
-## Generating schemas from Python
+## Generating portable payload artifacts
 
-If you define your canonical Feature classes in Python (`fastdb4py`), you can generate the equivalent TypeScript schemas automatically using the `fdb codegen` CLI:
+The `fdb` CLI accepts a portable specification and asks the C++ Core for the
+TypeScript ArtifactSet:
 
 ```bash
 pip install fastdb4py
-fdb codegen --ts ./python_features/ ./ts_features/
+fdb codegen specification.json \
+  --target typescript \
+  --output ./generated-fastdb
 ```
 
-This generates one `.ts` file per `.py` file, with:
-
-- all field types mapped (`F64`, `STR`, `ref(...)`, `listOf(...)`, etc.)
-- cross-file imports resolved to relative paths
-- circular references using lazy refs `ref(() => ClassName)`
-- topological class ordering within each file
+The destination must not already exist. FastDB Core owns the compiled model,
+identifier escaping, source rendering, artifact bytes, and hashes. The Python
+CLI only validates the returned artifact envelope and publishes the complete
+tree with exclusive writes.
 
 See the [Python binding README](../../python/README.md) for full codegen documentation.
 

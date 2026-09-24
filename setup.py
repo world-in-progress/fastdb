@@ -30,6 +30,7 @@ class CMakeBuild(build_ext):
             '-DUSE_SWIG_PYTHON=ON',
             '-DCMAKE_BUILD_TYPE=Release',
             '-DBUILD_TOOLS=OFF',
+            '-DBUILD_TESTING=OFF',
         ]
 
         # Free-threaded Python (PEP 703): pass Py_GIL_DISABLED to C++ compilation

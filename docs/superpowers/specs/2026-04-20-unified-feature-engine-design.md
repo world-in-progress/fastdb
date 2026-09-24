@@ -1,5 +1,10 @@
 # Unified @feature + ColumnEngine / ObjectEngine Design
 
+> **Status: historical/superseded.** Retained as migration evidence only.
+> Current authority is the
+> [accepted portable-payload foundation](2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](2026-07-23-portable-payload-clean-cut-design.md).
+
 ## Problem
 
 fastdb Python binding has two independent ORM systems with separate class definition mechanisms:

@@ -1,0 +1,141 @@
+{
+  "schema": "fastdb.payload.binary-fuzz-corpus.v1",
+  "cases": [
+    {
+      "name": "valid-empty.bin",
+      "class": "valid-empty",
+      "source_hex": "tests/golden/payload/v1/binary/valid/component-list-empty.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "04c62573387235786bb63ff63eb2abd2e6c729d3e1b2f053a857237ae1ed55d6"
+    },
+    {
+      "name": "valid-fixed.bin",
+      "class": "valid-fixed",
+      "source_hex": "tests/golden/payload/v1/binary/valid/component-list-composition.bin.hex",
+      "patches": [
+        {"offset": 2345, "before": "08", "after": "09"}
+      ],
+      "expected": {"status": 0, "path": ""},
+      "sha256": "6baba904ca557809b3551c0df6e197b3f7ade7c3fedb157caf754e2fa4878f71"
+    },
+    {
+      "name": "valid-text.bin",
+      "class": "valid-text",
+      "source_hex": "tests/golden/payload/v1/binary/valid/component-list-composition.bin.hex",
+      "patches": [
+        {"offset": 3476, "before": "63", "after": "43"}
+      ],
+      "expected": {"status": 0, "path": ""},
+      "sha256": "96abffc82a4474c7e04084141505cb6aa44759b0778072aa011aabca1430b1cb"
+    },
+    {
+      "name": "valid-list.bin",
+      "class": "valid-list",
+      "source_hex": "tests/golden/payload/v1/binary/valid/component-list-composition.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "e77d4f3d221a74db0e6d13dd695c4c89a0855ecd2be4ab8c01725e9f897f5993"
+    },
+    {
+      "name": "malformed-magic.bin",
+      "class": "malformed-magic",
+      "source_seed": "valid-empty.bin",
+      "patches": [
+        {"offset": 0, "before": "46", "after": "47"}
+      ],
+      "expected": {"status": 3001, "path": "/binary/header/magic"},
+      "sha256": "3b618d860346777c28b9d70e73287f07c2cd4715c28598b9426e1eeff7ad0b34"
+    },
+    {
+      "name": "malformed-length.bin",
+      "class": "malformed-length",
+      "source_seed": "valid-empty.bin",
+      "patches": [
+        {"offset": 24, "before": "20", "after": "1f"}
+      ],
+      "expected": {"status": 3009, "path": "/binary/header/total_length"},
+      "sha256": "44a9dbc0b97c7efb7586adc8730c38e9dc79037bb4aa28e4e6fabebeabee38a8"
+    },
+    {
+      "name": "malformed-offset.bin",
+      "class": "malformed-offset",
+      "source_seed": "valid-list.bin",
+      "patches": [
+        {"offset": 144, "before": "20", "after": "21"}
+      ],
+      "expected": {"status": 3005, "path": "/binary/regions/0/data_offset"},
+      "sha256": "a71d0b59f9ab730afb03b481553dba4f613614dd56040286ecaef19b820be400"
+    },
+    {
+      "name": "malformed-validity.bin",
+      "class": "malformed-validity",
+      "source_seed": "valid-list.bin",
+      "patches": [
+        {"offset": 3008, "before": "06", "after": "86"}
+      ],
+      "expected": {"status": 3009, "path": "/binary/regions/1/data"},
+      "sha256": "4c1bf9f734663f1fa154e27950cf827abe5c935905045985ed9349c2a96f62af"
+    },
+    {
+      "name": "malformed-text.bin",
+      "class": "malformed-text",
+      "source_seed": "valid-text.bin",
+      "patches": [
+        {"offset": 3476, "before": "43", "after": "80"}
+      ],
+      "expected": {"status": 2010, "path": "/entries/records/0/scalars/j_str"},
+      "sha256": "6670a6162e229a79fe8cef254a02d67f80f2ee64fce43b894d34b5d70e70f6dd"
+    },
+    {
+      "name": "malformed-list.bin",
+      "class": "malformed-list",
+      "source_seed": "valid-list.bin",
+      "patches": [
+        {"offset": 2424, "before": "00", "after": "01"}
+      ],
+      "expected": {"status": 3004, "path": "/entries/records/0/bools"},
+      "sha256": "b38f73b7484055715151eaa593ea0dd2d5adecaaea9b5643818fb2aed761c494"
+    },
+    {
+      "name": "valid-graph-cycle.bin",
+      "class": "valid-graph-cycle",
+      "source_hex": "tests/golden/payload/v1/binary/valid/graph-shared-cycle.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "a6623d795b9fe018942015c04971a4a8f5129483e15d9f2ac1ff9f35b37b8627"
+    },
+    {
+      "name": "valid-graph-variable.bin",
+      "class": "valid-graph-variable",
+      "source_hex": "tests/golden/payload/v1/binary/valid/graph-all-values.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "728c4880df6797954f36e6af1ad0991e739f1c4da93b33e2917cceaac91f866c"
+    },
+    {
+      "name": "valid-graph-null.bin",
+      "class": "valid-graph-null",
+      "source_hex": "tests/golden/payload/v1/binary/valid/graph-null-empty.bin.hex",
+      "expected": {"status": 0, "path": ""},
+      "sha256": "467739a1c928280e2eb57f8acce1bc66df217874f245d57392cf558fee930edc"
+    },
+    {
+      "name": "malformed-graph-object-region.bin",
+      "class": "malformed-graph-object-region",
+      "source_hex": "tests/golden/payload/v1/binary/invalid/graph-object-stride.bin.hex",
+      "expected": {"status": 3009, "path": "/binary/regions/1/stride"},
+      "sha256": "4d56b5ce311cf232e0c45c58fc859152323aa80ce9a0f89a905d12dbedb4aa04"
+    },
+    {
+      "name": "malformed-graph-reference.bin",
+      "class": "malformed-graph-reference",
+      "source_hex": "tests/golden/payload/v1/binary/invalid/graph-ref-id.bin.hex",
+      "expected": {"status": 3007, "path": "/objects/0/0/c_shared"},
+      "sha256": "09ddf4dd482f6dacca1629a15c098ee65786498767de02b44e0358fc36a502cd"
+    },
+    {
+      "name": "malformed-graph-unreachable.bin",
+      "class": "malformed-graph-unreachable",
+      "source_hex": "tests/golden/payload/v1/binary/invalid/graph-unreachable.bin.hex",
+      "expected": {"status": 3009, "path": "/objects/Node/1"},
+      "sha256": "cde0a2fe834cc7f8c08e6bd4fa24da86d26a3a772c50c58a62e2fe5e26869576"
+    }
+  ]
+}

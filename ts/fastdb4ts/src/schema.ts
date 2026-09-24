@@ -1,3 +1,5 @@
+// Standalone schema metadata; not fastdb.payload.v1 authority.
+
 import { FastdbSchemaError } from './errors.js';
 import {
   type FeatureClassLike,

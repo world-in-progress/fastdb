@@ -2,141 +2,72 @@ name: Publish fastdb4ts to npm
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "ts/fastdb4ts/package.json"
+    inputs:
+      candidate_run_id:
+        description: Successful Release Artifacts run ID from main
+        required: true
+        type: string
+      source_sha:
+        description: Exact 40-character tested source SHA
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
+  actions: read
   id-token: write
 
+concurrency:
+  group: fastdb-publish-npm
+  cancel-in-progress: false
+
 jobs:
-  check_version:
-    runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.get_version.outputs.VERSION }}
-      published: ${{ steps.check_npm.outputs.published }}
-      tag_exists: ${{ steps.check_tag.outputs.exists }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22.14.0"
-
-      - name: Get version from ts/fastdb4ts/package.json
-        id: get_version
-        run: |
-          VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('ts/fastdb4ts/package.json', 'utf8')).version)")
-          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Detected fastdb4ts version: $VERSION"
-
-      - name: Check if version is already published on npm
-        id: check_npm
-        run: |
-          if npm view "fastdb4ts@${{ steps.get_version.outputs.VERSION }}" version >/dev/null 2>&1; then
-            echo "fastdb4ts@${{ steps.get_version.outputs.VERSION }} is already published. Skipping build and publish."
-            echo "published=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "fastdb4ts@${{ steps.get_version.outputs.VERSION }} is not published yet. Proceeding."
-            echo "published=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check if git tag exists
-        id: check_tag
-        run: |
-          if git rev-parse "ts/v${{ steps.get_version.outputs.VERSION }}" >/dev/null 2>&1; then
-            echo "Tag ts/v${{ steps.get_version.outputs.VERSION }} already exists."
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Tag ts/v${{ steps.get_version.outputs.VERSION }} does not exist yet."
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  build_package:
-    needs: check_version
-    if: needs.check_version.outputs.published == 'false'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22.14.0"
-
-      - name: Install Emscripten
-        run: |
-          git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
-          cd "$RUNNER_TEMP/emsdk"
-          ./emsdk install latest
-          ./emsdk activate latest
-          echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
-          echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
-
-      - name: Install fastdb4ts dependencies
-        run: npm install --prefix ts/fastdb4ts
-
-      - name: Build WASM module
-        run: bash ts/build-wasm.sh
-
-      - name: Run pure TS test suite
-        run: npm run test:ts
-
-      - name: Pack npm tarball
-        run: |
-          cd ts/fastdb4ts
-          npm pack
-
-      - name: Upload npm package artifact
-        uses: actions/upload-artifact@v7
-        with:
-          name: fastdb4ts-package
-          path: ts/fastdb4ts/*.tgz
-
   publish:
-    needs: [check_version, build_package]
-    if: needs.check_version.outputs.published == 'false'
-    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'world-in-progress/fastdb' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RELEASE_RUN_ID: ${{ inputs.candidate_run_id }}
+      RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+      GH_TOKEN: ${{ github.token }}
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
-          fetch-depth: 0
-
-      - name: Download npm package artifact
-        uses: actions/download-artifact@v8
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
         with:
-          name: fastdb4ts-package
-          path: dist
-
-      - name: Set up Node.js for npm publish
-        uses: actions/setup-node@v6
+          python-version: "3.12"
+      - name: Require complete proof and artifact runs for the exact source
+        run: >-
+          python3 tests/ci/publish_release.py check-ci
+          --run-id "$RELEASE_RUN_ID" --source-sha "$RELEASE_SOURCE_SHA"
+      - uses: actions/download-artifact@v8
         with:
-          node-version: "22.14.0"
-
-      - name: Ensure latest npm (OIDC requires npm >= 11.5.1)
-        run: npm install -g npm@latest
-
-      - name: Publish to npm
-        run: |
-          PACKAGE_TGZ=$(find dist -maxdepth 1 -name '*.tgz' -print -quit)
-          test -n "$PACKAGE_TGZ"
-          npm publish "./$PACKAGE_TGZ" --provenance --access public
-
-      - name: Create release tag
-        if: needs.check_version.outputs.tag_exists == 'false'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh api repos/${{ github.repository }}/git/refs \
-            --method POST \
-            -f ref="refs/tags/ts/v${{ needs.check_version.outputs.version }}" \
-            -f sha="${{ github.sha }}"
+          name: portable-release-${{ inputs.source_sha }}
+          path: release
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.candidate_run_id }}
+      - name: Verify hashes and prepare only missing registry artifacts
+        id: prepare
+        run: >-
+          python3 tests/ci/publish_release.py prepare
+          --directory release --output stage --ecosystem npm
+          --run-id "$RELEASE_RUN_ID" --source-sha "$RELEASE_SOURCE_SHA"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+      - name: Install npm with trusted publishing support
+        run: npm install -g npm@11.6.2
+      - name: Upload tested npm tarball
+        if: steps.prepare.outputs.pending == 'true'
+        run: npm publish ./stage/packages/*.tgz --provenance --access public
+      - name: Verify registry bytes and retain publication receipt
+        run: python3 tests/ci/publish_release.py verify-registry --stage stage
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: npm-publication-${{ inputs.source_sha }}
+          path: |
+            stage/publish-plan.json
+            stage/published.json
+          if-no-files-found: warn

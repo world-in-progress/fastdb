@@ -1,6 +1,13 @@
 # fastdb4py 性能优化计划
 
-> Benchmark 结果见 [benchmark.md](benchmark.md)
+> **Status: historical/superseded.** Retained as standalone-engine
+> optimization evidence only. Current authority is the
+> [accepted portable-payload foundation](docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
+> and its
+> [P5 clean-cut design](docs/superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md).
+>
+> Benchmark 结果见
+> [optimize/o0/benchmark.md](optimize/o0/benchmark.md)。
 
 ---
 

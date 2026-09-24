@@ -1,0 +1,12 @@
+[package]
+name = "fastdb-sys"
+version = "0.2.0"
+edition = "2024"
+links = "fastdb_payload_v1"
+description = "Raw Rust declarations for the FastDB portable-payload C ABI"
+license = "MIT"
+repository = "https://github.com/world-in-progress/fastdb"
+readme = "README.md"
+
+[lib]
+path = "src/lib.rs"

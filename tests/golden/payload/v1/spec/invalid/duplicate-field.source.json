@@ -1,0 +1,15 @@
+{
+  "schema": "fastdb.payload.v1",
+  "profile": "record.v1",
+  "entries": [],
+  "components": [
+    {
+      "id": "Record",
+      "kind": "record",
+      "fields": [
+        {"id": "same", "type": {"kind": "u8"}},
+        {"id": "same", "type": {"kind": "u16"}}
+      ]
+    }
+  ]
+}

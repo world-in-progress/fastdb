@@ -1,5 +1,10 @@
 # FastDB Batch/Array Call-DB Fast Path Design
 
+> **Status: historical/superseded.** Retained as migration evidence only.
+> Current authority is the
+> [accepted portable-payload foundation](../superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
+> and its [P5 clean-cut design](../superpowers/specs/2026-07-23-portable-payload-clean-cut-design.md).
+
 **Date:** 2026-05-26
 **Status:** Partially implemented. Phases 2 and 3 are implemented; Phase 4 has
 an initial Python runtime allocation surface; Phases 9 and 10 have an initial
