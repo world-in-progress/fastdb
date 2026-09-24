@@ -83,7 +83,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake -S fastcarto -B build/release -G Ninja -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF -DCMAKE_BUILD_TYPE=Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          cmake --build build/release --parallel 2
+          # Collect independent compiler failures in one run; Ninja still
+          # returns nonzero when any target fails, checked immediately below.
+          cmake --build build/release --parallel 2 -- -k 0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ctest --test-dir build/release --output-on-failure
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
