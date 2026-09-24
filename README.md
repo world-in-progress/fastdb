@@ -11,10 +11,10 @@ canonical identity (RFC 8785 canonical JSON plus SHA-256) and a deterministic
 binary layout, so the same data means the same bytes in every language.
 
 FastDB is an in-process library, not a database server: there is no network
-protocol, query planner, or SQL surface. One C++ core owns all schema
-compilation, canonicalization, binary layout, and lifetime semantics; the
-Rust, Python, and TypeScript/WASM bindings are thin projections of the same
-core through a stable C ABI.
+protocol, query planner, or SQL surface. One C++ core owns portable-payload
+schema compilation, canonicalization, binary layout, and lifetime semantics.
+The Rust, Python, and TypeScript/WASM portable APIs project that core through
+a stable C ABI.
 
 ## What you can do with it
 
@@ -43,8 +43,8 @@ core through a stable C ABI.
 | Python 3.10+ | [`fastdb4py`](https://pypi.org/project/fastdb4py/) | PyPI |
 | TypeScript / WASM | [`fastdb4ts`](https://www.npmjs.com/package/fastdb4ts) | npm |
 
-The Rust, Python, and TypeScript packages are thin projections of one core;
-none contains an independent parser, layout, or digest implementation
+The Rust, Python, and TypeScript portable APIs are thin projections of one core;
+none contains an independent payload parser, layout, or digest implementation
 ([ADR-0001](docs/decisions/0001-portable-payload-core-authority.md)).
 
 ## Installation
