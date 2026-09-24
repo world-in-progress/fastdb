@@ -1365,9 +1365,23 @@ int test_graph_layout_and_open_allocation_sweeps() {
     auto runtime = RuntimeSchema::compile(compiled.value());
     require(runtime.has_value());
 
+    // The number of allocations depends on the standard library (notably its
+    // string representation). Measure this build's successful path so the
+    // sweep tests every allocation instead of imposing a platform-specific
+    // allocation ceiling.
+    constexpr std::int64_t allocation_budget =
+        std::numeric_limits<std::int64_t>::max();
+    allocation_failure::fail_after = allocation_budget;
+    auto measured_layout = GraphLayout::plan(runtime.value(), values.value());
+    const std::int64_t layout_allocations =
+        allocation_budget - allocation_failure::fail_after;
+    allocation_failure::fail_after = INT64_C(-1);
+    require(measured_layout.has_value());
+    require(layout_allocations > INT64_C(0));
+
     std::int64_t layout_success = INT64_C(-1);
     for (std::int64_t allocation = INT64_C(0);
-         allocation < INT64_C(1024); ++allocation) {
+         allocation <= layout_allocations; ++allocation) {
         allocation_failure::fail_after = allocation;
         auto planned = GraphLayout::plan(runtime.value(), values.value());
         allocation_failure::fail_after = INT64_C(-1);
@@ -1379,13 +1393,25 @@ int test_graph_layout_and_open_allocation_sweeps() {
         auto retry = GraphLayout::plan(runtime.value(), values.value());
         require(retry.has_value());
     }
-    require(layout_success > INT64_C(0));
+    require(layout_success == layout_allocations);
 
     auto encoded = encode_graph_case(*item);
     require(encoded.has_value());
+    allocation_failure::fail_after = allocation_budget;
+    auto measured_open = fastdb::payload::view::open_graph(
+        encoded.value().spec, encoded.value().bytes.data(),
+        encoded.value().bytes.size());
+    const std::int64_t open_allocations =
+        allocation_budget - allocation_failure::fail_after;
+    allocation_failure::fail_after = INT64_C(-1);
+    require(measured_open.has_value());
+    require(open_allocations > INT64_C(0));
+    std::cout << "graph allocation sweep: layout=" << layout_allocations
+              << " open=" << open_allocations << '\n';
+
     std::int64_t open_success = INT64_C(-1);
     for (std::int64_t allocation = INT64_C(0);
-         allocation < INT64_C(1024); ++allocation) {
+         allocation <= open_allocations; ++allocation) {
         allocation_failure::fail_after = allocation;
         auto opened = fastdb::payload::view::open_graph(
             encoded.value().spec, encoded.value().bytes.data(),
@@ -1401,7 +1427,7 @@ int test_graph_layout_and_open_allocation_sweeps() {
             encoded.value().bytes.size());
         require(retry.has_value());
     }
-    require(open_success > INT64_C(0));
+    require(open_success == open_allocations);
     return EXIT_SUCCESS;
 }
 

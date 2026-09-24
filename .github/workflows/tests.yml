@@ -476,6 +476,7 @@ jobs:
       - name: Build Python sdist and wheel
         run: |
           set -o pipefail
+          mkdir -p build
           uv build --out-dir build/package-dist 2>&1 | tee build/package-build.log
 
       - name: Verify Python package inventories

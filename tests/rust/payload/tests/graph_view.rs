@@ -22,7 +22,9 @@ fn decode_hex(source: &str) -> Vec<u8> {
     assert_eq!(source.len() % 2, 0);
     source
         .as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let text = std::str::from_utf8(pair).expect("golden hex is ASCII");
             u8::from_str_radix(text, 16).expect("golden hex is valid")

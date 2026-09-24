@@ -118,7 +118,8 @@ jobs:
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-* cp314t-*"
           CIBW_ENABLE: cpython-freethreading
           CIBW_SKIP: "*musllinux*"
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_ENVIRONMENT_LINUX: "PIP_ONLY_BINARY=numpy"
           CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=11.0"
           CIBW_TEST_REQUIRES: pytest
           CIBW_TEST_COMMAND: "python -m pytest {project}/tests/python/payload -q"
@@ -149,7 +150,7 @@ jobs:
           python-version: "3.12"
       - name: Build and install source distribution in isolation
         run: |
-          uv build --sdist --out-dir dist
+          uv build --sdist --out-dir dist --no-create-gitignore
           uv run --isolated --no-project --with ./dist/fastdb4py-*.tar.gz \
             --with pytest python -m pytest tests/python/payload -q
           python3 tests/ci/release_artifacts.py record --output dist --part sdist
