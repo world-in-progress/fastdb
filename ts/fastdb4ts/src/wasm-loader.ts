@@ -41,6 +41,7 @@ export interface WxPayloadOwnedBytesHandle {
   delete(): void;
 }
 
+/** Borrowed from WxDatabaseBuild; valid only until the database builder is deleted. */
 export interface WxLayerTableBuildHandle {
   name(): string;
   addField(name: string, fieldType: number, vmin?: number, vmax?: number): number;
@@ -62,7 +63,6 @@ export interface WxLayerTableBuildHandle {
   setGeometryWKB(dataPtr: number, size: number): void;
   setGeometryRaw(dataPtr: number, size: number): void;
   addFeatureEnd(): void;
-  delete(): void;
 }
 
 export interface WxLayerTableHandle {

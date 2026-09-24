@@ -1,7 +1,7 @@
 function(add_fastdb_payload_test name)
     set(options)
     set(one_value_args)
-    set(multi_value_args SOURCES EXTRA_LIBRARIES)
+    set(multi_value_args SOURCES EXTRA_LIBRARIES ARGUMENTS)
     cmake_parse_arguments(
         PAYLOAD_TEST
         "${options}"
@@ -50,7 +50,7 @@ function(add_fastdb_payload_test name)
     )
     fastdb_apply_sanitizers(${target_name})
 
-    add_test(NAME payload.${name} COMMAND ${target_name})
+    add_test(NAME payload.${name} COMMAND ${target_name} ${PAYLOAD_TEST_ARGUMENTS})
 endfunction()
 
 add_executable(
@@ -509,6 +509,7 @@ add_fastdb_payload_test(
     graph_builder
     SOURCES payload/test_graph_builder.cpp
     EXTRA_LIBRARIES fastdb_payload_core
+    ARGUMENTS --semantic
 )
 target_include_directories(
     fastdb_payload_test_graph_builder
@@ -517,6 +518,15 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
 )
 set_tests_properties(payload.graph_builder PROPERTIES TIMEOUT 180)
+add_test(
+    NAME payload.graph_builder.allocation_sweeps
+    COMMAND fastdb_payload_test_graph_builder --allocation-sweeps
+)
+add_test(
+    NAME payload.graph_builder.large_cycle
+    COMMAND fastdb_payload_test_graph_builder --large-cycle
+)
+set_tests_properties(payload.graph_builder.allocation_sweeps PROPERTIES TIMEOUT 180)
 
 add_fastdb_payload_test(
     graph_binary
@@ -524,6 +534,7 @@ add_fastdb_payload_test(
         payload/GoldenCorpus.cpp
         payload/test_graph_binary.cpp
     EXTRA_LIBRARIES fastdb_payload_core
+    ARGUMENTS --semantic
 )
 target_include_directories(
     fastdb_payload_test_graph_binary
@@ -537,6 +548,27 @@ target_compile_definitions(
         "FASTDB_PAYLOAD_BINARY_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary\""
 )
 set_tests_properties(payload.graph_binary PROPERTIES TIMEOUT 180)
+add_test(
+    NAME payload.graph_binary.allocation_sweeps
+    COMMAND fastdb_payload_test_graph_binary --allocation-sweeps
+)
+add_test(
+    NAME payload.graph_binary.large_cycle
+    COMMAND fastdb_payload_test_graph_binary --large-cycle
+)
+set_tests_properties(payload.graph_binary.allocation_sweeps PROPERTIES TIMEOUT 180)
+# Keep the full 50,000-object proofs. Instrumented Linux/libstdc++ execution
+# needs more wall time than ordinary native execution; the semantic and
+# every-allocation failure/retry suites retain their own 180-second bounds.
+set(FASTDB_GRAPH_LARGE_CYCLE_TIMEOUT 180)
+if(FASTDB_ENABLE_SANITIZERS OR FASTDB_BUILD_FUZZERS)
+    set(FASTDB_GRAPH_LARGE_CYCLE_TIMEOUT 600)
+endif()
+set_tests_properties(
+    payload.graph_builder.large_cycle
+    payload.graph_binary.large_cycle
+    PROPERTIES TIMEOUT ${FASTDB_GRAPH_LARGE_CYCLE_TIMEOUT}
+)
 
 add_fastdb_payload_test(
     record_binary

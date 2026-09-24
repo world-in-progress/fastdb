@@ -955,14 +955,27 @@ int test_fifty_thousand_object_cycle_is_iterative() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const std::string_view selection = argc == 2 ? argv[1] : "";
+    if (selection == "--allocation-sweeps") {
+        return test_allocation_failures_preserve_retryable_state();
+    }
+    if (selection == "--large-cycle") {
+        return test_fifty_thousand_object_cycle_is_iterative();
+    }
+    const bool semantic_only = selection == "--semantic";
+    if (argc > 2 || (argc == 2 && !semantic_only)) {
+        return EXIT_FAILURE;
+    }
     if (test_allocation_harness_invariants() != EXIT_SUCCESS ||
         test_complete_graph_authoring_and_coordinates() != EXIT_SUCCESS ||
         test_fill_order_is_logically_neutral() != EXIT_SUCCESS ||
         test_handle_scope_state_and_failure_order() != EXIT_SUCCESS ||
         test_limits_terminal_tokens_and_concurrent_builders() != EXIT_SUCCESS ||
-        test_allocation_failures_preserve_retryable_state() != EXIT_SUCCESS) {
+        (!semantic_only &&
+         test_allocation_failures_preserve_retryable_state() != EXIT_SUCCESS)) {
         return EXIT_FAILURE;
     }
-    return test_fifty_thousand_object_cycle_is_iterative();
+    return semantic_only ? EXIT_SUCCESS
+                         : test_fifty_thousand_object_cycle_is_iterative();
 }

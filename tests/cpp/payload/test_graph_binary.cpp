@@ -1609,7 +1609,18 @@ int test_shared_cycle_fill_order_and_declaration_ids() {
 
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    const std::string_view selection = argc == 2 ? argv[1] : "";
+    if (selection == "--allocation-sweeps") {
+        return test_graph_layout_and_open_allocation_sweeps();
+    }
+    if (selection == "--large-cycle") {
+        return test_fifty_thousand_object_binary_cycle_is_iterative();
+    }
+    const bool semantic_only = selection == "--semantic";
+    if (argc > 2 || (argc == 2 && !semantic_only)) {
+        return EXIT_FAILURE;
+    }
     if (test_region_rule_and_public_boundary() != EXIT_SUCCESS ||
         test_complete_graph_values_slice() != EXIT_SUCCESS ||
         test_ordered_graph_goldens_and_strict_open() != EXIT_SUCCESS ||
@@ -1619,9 +1630,11 @@ int main() {
         test_complete_graph_malformed_field_matrix() != EXIT_SUCCESS ||
         test_graph_resource_boundaries_and_empty_target_pool() !=
             EXIT_SUCCESS ||
-        test_graph_layout_and_open_allocation_sweeps() != EXIT_SUCCESS ||
-        test_fifty_thousand_object_binary_cycle_is_iterative() !=
-            EXIT_SUCCESS ||
+        (!semantic_only &&
+         test_graph_layout_and_open_allocation_sweeps() != EXIT_SUCCESS) ||
+        (!semantic_only &&
+         test_fifty_thousand_object_binary_cycle_is_iterative() !=
+             EXIT_SUCCESS) ||
         test_empty_zero_count_identity_pool() != EXIT_SUCCESS ||
         test_object_zero_null_and_component_record_layout() != EXIT_SUCCESS) {
         return EXIT_FAILURE;

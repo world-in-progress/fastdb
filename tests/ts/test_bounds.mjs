@@ -182,8 +182,28 @@ test('ORM.close() is idempotent', () => {
 test('ORM.close() works on dynamic ORM', () => {
   const orm = ORM.create();
   orm.push(new Point({ x: 1, y: 2 }));
+  orm.push(new Named({ name: 'retained bytes', score: 3 }));
   orm.combine();
+  assert.equal(orm.table(Point).get(0).y, 2);
+  assert.equal(orm.table(Named).get(0).name, 'retained bytes');
   assert.doesNotThrow(() => orm.close());
+});
+
+test('uncombined ORM close releases its builders while copied bytes remain readable', () => {
+  const orm = ORM.create();
+  orm.push(new Point({ x: 4, y: 5 }));
+  orm.push(new Named({ name: 'copied before close', score: 6 }));
+  const bytes = orm.toBuffer();
+  orm.close();
+  orm.close();
+
+  const copy = ORM.fromBuffer(bytes);
+  try {
+    assert.equal(copy.table(Point).get(0).x, 4);
+    assert.equal(copy.table(Named).get(0).name, 'copied before close');
+  } finally {
+    copy.close();
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -218,4 +238,3 @@ test('writing ref field to db-mapped feature stores in cache', () => {
   restored.next = n2;
   assert.equal(restored.next.val, 20);
 });
-

@@ -152,6 +152,7 @@ namespace wx
         //!
         void begin(const char *cfg);
         void truncate(const char *layerName, unsigned nfeatures);
+        // Borrowed layer; owned by this builder through its destruction.
         FastVectorDbLayerBuild*  createLayerBegin(const char *layerName);
         int  addField(const char *name, unsigned ft, double vmin = 0, double vmax = 1.0);
         void setGeometryType(GeometryLikeEnum gt, CoordinateFormatEnum ct=cfDefault, bool aabboxEnabled = false);

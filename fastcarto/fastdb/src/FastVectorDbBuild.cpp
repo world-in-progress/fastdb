@@ -112,7 +112,7 @@ namespace wx
 
     FastVectorDbLayerBuild*  FastVectorDbBuild::Impl::createLayerBegin(const char *layerName)
     {
-        auto layer = new FastVectorDbLayerBuild(m_thiz,layerName);
+        auto layer = std::make_unique<FastVectorDbLayerBuild>(m_thiz, layerName);
         layer->enableStringTableU32(m_string_table_u32);
         layer->setExtent(m_extent.minEdge.x, m_extent.minEdge.y, m_extent.maxEdge.x, m_extent.maxEdge.y);
         layer->setGeometryType(m_gt, m_ct, m_aabbox_enable);
@@ -133,14 +133,15 @@ you should check and reset them before adding any feature!!\n",
                 m_string_table_u32?"u32":"u16");
 #endif
 
-        m_layers.push_back(layer);
-        m_current_layer = layer;
-        return layer;
+        auto* borrowed = layer.get();
+        m_layers.push_back(std::move(layer));
+        m_current_layer = borrowed;
+        return borrowed;
     }
 
     void FastVectorDbBuild::Impl::truncate(const char *layerName, unsigned nfeatures)
     {
-        for(auto layer:m_layers)
+        for(const auto& layer:m_layers)
         {
             if(strcmp(layer->name(), layerName) == 0)
             {
@@ -230,7 +231,7 @@ you should check and reset them before adding any feature!!\n",
     size_t FastVectorDbBuild::Impl::byteLength()
     {
         size_t total = 16 + sizeof(u32);
-        for (auto layer : m_layers)
+        for (const auto& layer : m_layers)
         {
             total += layer->impl->get_total_size();
         }
@@ -239,7 +240,7 @@ you should check and reset them before adding any feature!!\n",
     size_t FastVectorDbBuild::Impl::tableBufferBytes()
     {
         size_t total = 0;
-        for (auto layer : m_layers)
+        for (const auto& layer : m_layers)
         {
             total += layer->impl->tableBufferBytes();
         }
@@ -262,7 +263,7 @@ you should check and reset them before adding any feature!!\n",
         stream->write((void*)magic, 16);
         u32 layer_count = (u32)m_layers.size();
         stream->write((void*)&layer_count, sizeof(layer_count));
-        for (auto layer : m_layers)
+        for (const auto& layer : m_layers)
         {   
             layer->impl->write(stream);
         }

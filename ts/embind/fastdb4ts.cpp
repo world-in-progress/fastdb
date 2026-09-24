@@ -666,7 +666,8 @@ EMSCRIPTEN_BINDINGS(fastdb4ts) {
         .constructor<>()
         .function("begin", &db_build_begin)
         .function("truncate", &db_build_truncate)
-        .function("createLayerBegin", &db_build_create_layer_begin, allow_raw_pointers())
+        // The database builder owns its layers until its destructor runs.
+        .function("createLayerBegin", &db_build_create_layer_begin, return_value_policy::reference())
         .function("addField", &db_build_add_field)
         .function("setGeometryType", &db_build_set_geometry_type)
         .function("enableStringTableU32", &FastVectorDbBuild::enableStringTableU32)
