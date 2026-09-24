@@ -641,6 +641,30 @@ def check_extracted_system_consumer(
     )
 
 
+def windows_runtime_dll(
+    import_library: Path, platform: str = sys.platform
+) -> Path | None:
+    """Return the runtime DLL that must ship beside the Windows import library.
+
+    Rust system linkage compiles and links against fastdb.lib, but the
+    packaged consumer's test binary loads fastdb.dll at run time; relocating
+    only the import library would produce a package that cannot execute.
+    """
+    if platform != "win32":
+        return None
+    if import_library.suffix.lower() != ".lib":
+        raise CheckError(
+            "Windows system link requires the fastdb.lib import library, "
+            f"received {import_library.name}"
+        )
+    runtime = import_library.with_suffix(".dll")
+    if not runtime.is_file():
+        raise CheckError(
+            f"Windows import library is missing its runtime DLL: {runtime}"
+        )
+    return runtime
+
+
 def check_relocated_system_consumer(
     library: Path, package_dir: Path | None = None,
 ) -> None:
@@ -657,6 +681,9 @@ def check_relocated_system_consumer(
         bundle.mkdir(parents=True)
         relocated = bundle / library.name
         shutil.copy2(library, relocated)
+        runtime = windows_runtime_dll(library)
+        if runtime is not None:
+            shutil.copy2(runtime, bundle / runtime.name)
         check_extracted_system_consumer(
             extracted, relocated, root / "consumer"
         )

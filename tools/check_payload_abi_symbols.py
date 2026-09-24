@@ -15,6 +15,15 @@ import sys
 
 SYMBOL_PREFIX = "fdb_payload_v1_"
 SYMBOL_PATTERN = re.compile(r"^fdb_payload_v1_[A-Za-z0-9_]+$")
+WINDOWS_LIBRARY_NAME = "fastdb.dll"
+DUMPBIN_EXPORTS_HEADER = re.compile(
+    r"Section contains the following exports for\b"
+)
+# dumpbin /exports rows: "<ordinal> <hint> <RVA> <name>"; exports by ordinal
+# without a name, section headers, and the Summary table never match.
+DUMPBIN_EXPORT_ROW = re.compile(
+    r"^\s*\d+\s+[0-9A-Fa-f]+\s+[0-9A-Fa-f]+\s+(\S+)$"
+)
 ALLOWLIST = (
     Path(__file__).resolve().parent.parent
     / "tests"
@@ -46,14 +55,89 @@ def parse_arguments() -> argparse.Namespace:
 
 
 def platform_configuration() -> tuple[str, list[str], bool]:
+    if sys.platform == "win32":
+        raise CheckError(
+            "Windows uses dumpbin export extraction, not the nm platform "
+            "configuration"
+        )
     if sys.platform == "darwin":
         return "libfastdb.dylib", ["nm", "-gU"], True
     if sys.platform.startswith("linux"):
         return "libfastdb.so", ["nm", "-D", "--defined-only"], False
     raise CheckError(
         "unsupported platform for payload ABI inspection: "
-        f"{sys.platform!r}; expected Darwin or Linux"
+        f"{sys.platform!r}; expected Darwin, Linux, or Windows"
     )
+
+
+def run_symbol_tool(command: list[str], library: Path) -> str:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="strict",
+        )
+    except OSError as error:
+        raise CheckError(
+            f"symbol inspection tool could not run: {command[0]!r}: {error}"
+        ) from error
+    except UnicodeError as error:
+        raise CheckError(
+            f"symbol inspection output was not valid UTF-8 for {library}"
+        ) from error
+
+    if result.returncode != 0:
+        diagnostic = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
+        raise CheckError(
+            f"symbol inspection failed with exit {result.returncode}: "
+            f"{' '.join(command)}\n{diagnostic}"
+        )
+    return result.stdout
+
+
+def parse_dumpbin_exports(text: str) -> list[str]:
+    """Extract exported symbol names from dumpbin /exports output."""
+    lines = text.splitlines()
+    headers = [
+        index
+        for index, line in enumerate(lines)
+        if DUMPBIN_EXPORTS_HEADER.search(line)
+    ]
+    if len(headers) != 1:
+        raise CheckError(
+            "dumpbin output must contain exactly one export section header, "
+            f"found {len(headers)}; refusing to accept ambiguous output"
+        )
+    names: list[str] = []
+    for line in lines[headers[0] + 1 :]:
+        row = DUMPBIN_EXPORT_ROW.match(line)
+        if row is not None:
+            names.append(row.group(1))
+        elif SYMBOL_PREFIX in line:
+            raise CheckError(
+                "dumpbin emitted a payload-named export line that the row "
+                f"parser rejects (forwards/decorations are not accepted): {line!r}"
+            )
+    return names
+
+
+def dumpbin_exported_payload_symbols(library: Path) -> list[str]:
+    dumpbin = shutil.which("dumpbin") or shutil.which("dumpbin.exe")
+    if dumpbin is None:
+        raise CheckError(
+            "dumpbin is required for Windows payload ABI inspection; run "
+            "from an MSVC developer environment (for example "
+            "ilammy/msvc-dev-cmd) so dumpbin is on PATH"
+        )
+    stdout = run_symbol_tool([dumpbin, "/exports", os.fspath(library)], library)
+    symbols = {
+        name for name in parse_dumpbin_exports(stdout) if name.startswith(SYMBOL_PREFIX)
+    }
+    return sorted(symbols)
 
 
 def resolved_build_directory(path: Path) -> Path:
@@ -134,35 +218,10 @@ def exported_payload_symbols(
     nm_command: list[str],
     strip_platform_underscore: bool,
 ) -> list[str]:
-    command = [*nm_command, os.fspath(library)]
-    try:
-        result = subprocess.run(
-            command,
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="strict",
-        )
-    except OSError as error:
-        raise CheckError(
-            f"symbol inspection tool could not run: {nm_command[0]!r}: {error}"
-        ) from error
-    except UnicodeError as error:
-        raise CheckError(
-            f"symbol inspection output was not valid UTF-8 for {library}"
-        ) from error
-
-    if result.returncode != 0:
-        diagnostic = result.stderr.strip() or result.stdout.strip() or "no diagnostic"
-        raise CheckError(
-            f"symbol inspection failed with exit {result.returncode}: "
-            f"{' '.join(command)}\n{diagnostic}"
-        )
+    stdout = run_symbol_tool([*nm_command, os.fspath(library)], library)
 
     symbols: set[str] = set()
-    for line in result.stdout.splitlines():
+    for line in stdout.splitlines():
         fields = line.split()
         if not fields:
             continue
@@ -217,17 +276,22 @@ def main() -> int:
             if emnm is None:
                 raise CheckError("emnm is required for wasm ABI inspection")
             library = candidates[0]
-            nm_command = [emnm, "--defined-only"]
-            strip_platform_underscore = False
+            actual = exported_payload_symbols(
+                library, [emnm, "--defined-only"], False
+            )
         else:
             build_directory = resolved_build_directory(arguments.build_dir)
-            library_name, nm_command, strip_platform_underscore = (
-                platform_configuration()
-            )
-            library = locate_library(build_directory, library_name)
-        actual = exported_payload_symbols(
-            library, nm_command, strip_platform_underscore
-        )
+            if sys.platform == "win32":
+                library = locate_library(build_directory, WINDOWS_LIBRARY_NAME)
+                actual = dumpbin_exported_payload_symbols(library)
+            else:
+                library_name, nm_command, strip_platform_underscore = (
+                    platform_configuration()
+                )
+                library = locate_library(build_directory, library_name)
+                actual = exported_payload_symbols(
+                    library, nm_command, strip_platform_underscore
+                )
         if actual != expected:
             raise CheckError(
                 "portable payload ABI symbol set differs from the reviewed allowlist\n"

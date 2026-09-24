@@ -22,9 +22,36 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[2]
 SCHEMA = "fastdb.release-manifest.v1"
 FRAGMENT_SCHEMA = "fastdb.release-fragment.v1"
-TARGETS = ("x86_64-unknown-linux-gnu", "aarch64-apple-darwin")
+TARGETS = (
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+)
+MACOS_TARGET = TARGETS[1]
+WINDOWS_TARGET = TARGETS[2]
+TARGET_MACHINES = {
+    "x86_64-unknown-linux-gnu": frozenset({"x86_64"}),
+    "aarch64-apple-darwin": frozenset({"arm64"}),
+    # Windows reports AMD64 for the x86_64 MSVC target.
+    "x86_64-pc-windows-msvc": frozenset({"amd64", "x86_64"}),
+}
 PYTHON_ABIS = ("cp310", "cp311", "cp312", "cp313", "cp314", "cp314t")
-PARTS = ("core-linux", "core-macos", "wheels-linux", "wheels-macos", "sdist", "typescript")
+PARTS = (
+    "core-linux",
+    "core-macos",
+    "core-windows",
+    "wheels-linux",
+    "wheels-macos",
+    "wheels-windows",
+    "sdist",
+    "typescript",
+)
+# Wheel platform tag prefix -> the release target it must be recorded under.
+WHEEL_PLATFORM_TARGETS = {
+    "manylinux": "x86_64-unknown-linux-gnu",
+    "macosx_": "aarch64-apple-darwin",
+    "win_amd64": "x86_64-pc-windows-msvc",
+}
 
 
 class ReleaseError(RuntimeError):
@@ -67,12 +94,33 @@ def file_record(path: Path, *, kind: str, target: str | None = None) -> dict:
     return {"name": path.name, "kind": kind, "target": target, "bytes": path.stat().st_size, "sha256": digest(path)}
 
 
+def compiler_identity(build_dir: Path, *, msvc: bool = False) -> str:
+    if not msvc:
+        return subprocess.check_output(["c++", "--version"], text=True).strip()
+    # MSVC cl has no --version flag; use the compiler identity CMake recorded
+    # during configure instead of inventing or approximating one.
+    caches = sorted(build_dir.glob("CMakeFiles/*/CMakeCXXCompiler.cmake"))
+    if len(caches) != 1:
+        raise ReleaseError(
+            f"Windows Core bundle requires exactly one CMakeCXXCompiler.cmake record, found {len(caches)}"
+        )
+    contents = caches[0].read_text(encoding="utf-8")
+    fields = {}
+    for key in ("CMAKE_CXX_COMPILER", "CMAKE_CXX_COMPILER_ID", "CMAKE_CXX_COMPILER_VERSION"):
+        match = re.search(rf'set\({key} "([^"]+)"\)', contents)
+        if match is None:
+            raise ReleaseError(f"Windows CMake compiler record omits {key}")
+        fields[key] = match.group(1)
+    return f"{fields['CMAKE_CXX_COMPILER_ID']} {fields['CMAKE_CXX_COMPILER_VERSION']} {fields['CMAKE_CXX_COMPILER']}"
+
+
 def make_core(build_dir: Path, output: Path, target: str) -> None:
     from check_rust_payload_package import locate_system_library
 
-    expected_machine = "arm64" if target == TARGETS[1] else "x86_64"
-    if platform.machine().lower() != expected_machine:
-        raise ReleaseError(f"Target {target} requires a native {expected_machine} builder")
+    if platform.machine().lower() not in TARGET_MACHINES[target]:
+        raise ReleaseError(
+            f"Target {target} requires a native {sorted(TARGET_MACHINES[target])} builder; found {platform.machine()!r}"
+        )
     commit = source_sha()
     marker = json.loads((build_dir / "release-build-source.json").read_text())
     if marker != {"source_sha": commit, "source_root": str(ROOT.resolve())}:
@@ -80,6 +128,15 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
     output.mkdir(parents=True, exist_ok=True)
     library = locate_system_library(build_dir)
     release_version = version()
+    runtime_library = None
+    if target == WINDOWS_TARGET:
+        # Rust system linkage consumes fastdb.lib while the process loads
+        # fastdb.dll; a Windows Core bundle without both halves is unusable.
+        runtime_library = library.with_suffix(".dll")
+        if not runtime_library.is_file():
+            raise ReleaseError(
+                f"Windows Core bundle requires {runtime_library.name} beside the import library {library.name}"
+            )
     with tempfile.TemporaryDirectory(prefix="fastdb-core-release-") as directory:
         bundle = Path(directory)
         (bundle / "include").mkdir()
@@ -87,6 +144,8 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
         for header in ("fastdb_payload.h", "fastdb_payload.hpp"):
             shutil.copy2(ROOT / "fastcarto/fastdb/include" / header, bundle / "include" / header)
         shutil.copy2(library, bundle / "lib" / library.name)
+        if runtime_library is not None:
+            shutil.copy2(runtime_library, bundle / "lib" / runtime_library.name)
         shutil.copy2(ROOT / "LICENSE", bundle / "LICENSE")
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.txt", bundle / "THIRD_PARTY_NOTICES.txt")
         for dependency in ("yyjson", "double-conversion", "picosha2"):
@@ -116,12 +175,15 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
             "schema": "fastdb.core-bundle.v1", "version": release_version,
             "source_sha": source_sha(), "target": target,
             "platform": platform.platform(), "libc": list(platform.libc_ver()),
-            "macos_deployment_target": os.environ.get("MACOSX_DEPLOYMENT_TARGET") if target == TARGETS[1] else None,
-            "compiler": subprocess.check_output(["c++", "--version"], text=True).strip(),
+            "macos_deployment_target": os.environ.get("MACOSX_DEPLOYMENT_TARGET") if target == MACOS_TARGET else None,
+            "compiler": compiler_identity(build_dir, msvc=target == WINDOWS_TARGET),
             "link_mode": "system", "system_lib_dir": "<absolute bundle path>/lib",
             "abi": "fdb_payload_v1", "abi_symbol_count": 117,
             "files": [{"path": file.relative_to(bundle).as_posix(), "bytes": file.stat().st_size, "sha256": digest(file)} for file in members],
         }
+        if runtime_library is not None:
+            manifest["windows_import_library"] = (bundle / "lib" / library.name).relative_to(bundle).as_posix()
+            manifest["windows_runtime_dll"] = (bundle / "lib" / runtime_library.name).relative_to(bundle).as_posix()
         write_json(bundle / "manifest.json", manifest)
         destination = output / f"fastdb-core-{release_version}-{target}.tar.gz"
         with tarfile.open(destination, "w:gz") as archive:
@@ -163,9 +225,13 @@ def record_part(output: Path, part: str, target: str | None) -> None:
                 raise ReleaseError(f"Linux release wheel is not manylinux x86_64: {path.name}")
             if part == "wheels-macos" and (not platform_tag.startswith("macosx_") or not platform_tag.endswith("arm64")):
                 raise ReleaseError(f"macOS release wheel is not arm64: {path.name}")
+            if part == "wheels-windows" and not platform_tag.endswith("win_amd64"):
+                raise ReleaseError(f"Windows release wheel is not win_amd64: {path.name}")
             item = file_record(path, kind="python-wheel", target=target)
             item["python_abi"] = abi
         elif path.name.startswith("fastdb-core-") and path.name.endswith(".tar.gz"):
+            if path.name != f"fastdb-core-{release_version}-{target}.tar.gz":
+                raise ReleaseError(f"Core bundle name does not match its recorded target {target}: {path.name}")
             item = file_record(path, kind="core-bundle", target=target)
         elif path.name.endswith(".crate"):
             item = file_record(path, kind="rust-crate")
@@ -184,6 +250,21 @@ def record_part(output: Path, part: str, target: str | None) -> None:
     })
 
 
+def wheel_platform_target(name: str) -> str:
+    platform_tag = name[: -len(".whl")].split("-")[-1]
+    if platform_tag.startswith("manylinux"):
+        if not platform_tag.endswith("x86_64"):
+            raise ReleaseError(f"Unsupported manylinux wheel tag: {name}")
+        return WHEEL_PLATFORM_TARGETS["manylinux"]
+    if platform_tag.startswith("macosx_"):
+        if not platform_tag.endswith("arm64"):
+            raise ReleaseError(f"Unsupported macOS wheel tag: {name}")
+        return WHEEL_PLATFORM_TARGETS["macosx_"]
+    if platform_tag == "win_amd64":
+        return WHEEL_PLATFORM_TARGETS["win_amd64"]
+    raise ReleaseError(f"Unknown release wheel platform tag: {name}")
+
+
 def check_complete(records: list[dict], release_version: str) -> None:
     expected_fixed = {
         *(f"fastdb-core-{release_version}-{target}.tar.gz" for target in TARGETS),
@@ -193,6 +274,13 @@ def check_complete(records: list[dict], release_version: str) -> None:
     fixed = {item["name"] for item in records if item["kind"] != "python-wheel"}
     if fixed != expected_fixed:
         raise ReleaseError(f"Incomplete fixed release artifacts: {fixed ^ expected_fixed}")
+    for item in records:
+        if item["kind"] != "python-wheel":
+            continue
+        if item["target"] != wheel_platform_target(item["name"]):
+            raise ReleaseError(
+                f"Mistagged Python wheel recorded under {item['target']}: {item['name']}"
+            )
     for target in TARGETS:
         wheels = [item for item in records if item["kind"] == "python-wheel" and item["target"] == target]
         if sorted(item["python_abi"] for item in wheels) != sorted(PYTHON_ABIS):
