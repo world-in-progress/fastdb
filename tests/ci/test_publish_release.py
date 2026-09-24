@@ -17,6 +17,13 @@ import test_release_artifacts
 
 
 class PublicationTests(unittest.TestCase):
+    def test_empty_publish_inputs_fail_before_api_or_artifact_access(self):
+        for run_id, commit in (("", ""), ("", "a" * 40), ("123", "")):
+            with self.subTest(run_id=run_id, source_sha=commit), patch.object(publish, "github") as api:
+                with self.assertRaisesRegex(release.ReleaseError, "full source SHA and numeric artifact run ID"):
+                    publish.check_ci(run_id, commit)
+                api.assert_not_called()
+
     def test_retry_skips_only_identical_registry_bytes(self):
         record = {"name": "fastdb-0.2.0.crate", "sha256": "a" * 64}
         self.assertEqual(publish.pending_records([record], {record["name"]: record["sha256"]}), [])

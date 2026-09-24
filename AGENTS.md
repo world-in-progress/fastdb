@@ -100,15 +100,30 @@ fallbacks, or new users; ADR-0001 requires the single Core authority.
 
 ## Release Process
 
-For a Python package release:
+Python, Rust, TypeScript and the Core bundle share one version and source
+commit. Update all package metadata and lockfiles together, and run the
+relevant local checks before opening the release PR. The exact merged source
+must pass both `tests.yml` and `release-artifacts.yml` on `main`.
 
-1. Bump `[project].version` in `pyproject.toml`.
-2. Refresh `uv.lock` so the editable `fastdb4py` package version matches.
-3. Update the `fastdb4py` section in `CHANGELOG.md`.
-4. Verify the tag `py/v<version>` does not already exist.
-5. Run `uv run pytest tests/python -q`, `uv run python -m compileall -q python/fastdb4py tests/python`, `git diff --check`, and `uv build`.
+Publication is a manual workflow dispatch from that source on `main`, or from
+its matching `v<version>` tag when retrying after `main` advances. Supply the
+successful Release Artifacts run ID and full source SHA. The publishing
+helpers validate the proof run, source identity, manifest and artifact hashes;
+they upload the tested archives and only accept existing registry versions
+whose hashes match. Do not rebuild packages inside publication jobs or move
+an existing release tag. See the [0.2.0 release record](docs/releases/0.2.0.md)
+for the complete package inventory and verified evidence.
 
-The PyPI workflow publishes only when `pyproject.toml` changes and the target `py/v<version>` tag is absent. Avoid mixing unrelated benchmark or exploratory changes into a release PR unless the user explicitly wants them included.
+Rust publication uses GitHub OIDC in `crates_publish.yml`, operation `publish`.
+Both crates must have a Trusted Publisher for that workflow with no environment
+configured. Operation `verify-oidc`, dispatched from `main`, exchanges and
+revokes a temporary token without uploading packages. Publication has no
+long-lived `CARGO_REGISTRY_TOKEN` secret fallback.
+
+These operations apply to `main` after the OIDC change and later tags containing
+that workflow. The immutable `v0.2.0` tag retains its original workflow with no
+`operation` input and with token-secret authentication; do not move that tag to
+retrofit OIDC. Its complete publication is already verified.
 
 ## Working Rules
 
