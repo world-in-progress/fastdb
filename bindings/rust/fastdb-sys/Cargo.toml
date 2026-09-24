@@ -1,9 +1,8 @@
 [package]
 name = "fastdb-sys"
-version = "0.1.22"
+version = "0.2.0"
 edition = "2024"
 links = "fastdb_payload_v1"
-publish = false
 description = "Raw Rust declarations for the FastDB portable-payload C ABI"
 license = "MIT"
 repository = "https://github.com/world-in-progress/fastdb"

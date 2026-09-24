@@ -80,6 +80,9 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
             "import": "./dist/payload/index.js",
         }
         accepted = {
+            "name": "fastdb4ts",
+            "version": "0.2.0",
+            "private": False,
             "type": "module",
             "files": ["dist", "README.md"],
             "exports": {
@@ -89,6 +92,9 @@ class TypeScriptPayloadPackageTests(unittest.TestCase):
         }
         MODULE.check_package_json(accepted)
         for changed in (
+            {**accepted, "name": "some-other-package"},
+            {**accepted, "version": "0.0.3"},
+            {**accepted, "private": True},
             {**accepted, "type": "commonjs"},
             {**accepted, "files": ["dist"]},
             {**accepted, "exports": {}},

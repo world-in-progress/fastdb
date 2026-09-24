@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path, PurePosixPath
-import shutil
 import subprocess
 import sys
 import tarfile
@@ -14,6 +13,8 @@ import tempfile
 from typing import Any
 
 
+PACKAGE_NAME = "fastdb4ts"
+PACKAGE_VERSION = "0.2.0"
 REQUIRED = {
     "README.md",
     "package.json",
@@ -190,6 +191,13 @@ def reject_special_members(members: list[tarfile.TarInfo]) -> None:
 def check_package_json(document: Any) -> None:
     if not isinstance(document, dict):
         raise CheckError("package.json root must be an object")
+    if (
+        document.get("name") != PACKAGE_NAME
+        or document.get("version") != PACKAGE_VERSION
+    ):
+        raise CheckError(f"package.json must identify {PACKAGE_NAME}@{PACKAGE_VERSION}")
+    if document.get("private") is not False:
+        raise CheckError("fastdb4ts release package must set private to false")
     expected_root = {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js",
@@ -220,17 +228,41 @@ def run_smoke(package: Path) -> None:
             names = [member.name for member in members]
             check_inventory(strip_root(names))
             reject_special_members(members)
-            archive.extractall(root)
-        node_modules = root / "node_modules"
-        node_modules.mkdir()
-        shutil.move(str(root / "package"), str(node_modules / "fastdb4ts"))
+        (root / "package.json").write_text(
+            json.dumps({
+                "name": "fastdb-package-consumer", "private": True,
+                "type": "module",
+            }),
+            encoding="utf-8",
+        )
+        installed = subprocess.run(
+            [
+                "npm", "install", "--offline", "--ignore-scripts",
+                "--no-audit", "--no-fund", str(package.resolve()),
+            ],
+            cwd=root, check=False, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="strict", timeout=120,
+        )
+        if installed.returncode != 0:
+            raise CheckError(f"npm install of packed release failed:\n{installed.stdout}")
+        installed_manifest = root / "node_modules/fastdb4ts/package.json"
+        check_package_json(load_json_no_duplicates(
+            installed_manifest.read_text(encoding="utf-8"),
+            "installed package.json",
+        ))
         smoke = root / "smoke.mjs"
         smoke.write_text(
-            """import * as fastdb from 'fastdb4ts';
+            """import assert from 'node:assert/strict';
+import * as fastdb from 'fastdb4ts';
 import {
   ArtifactKind,
+  BuildPolicy,
+  Builder,
   CodegenTarget,
   CompiledSpec,
+  OpenOptions,
+  Payload,
   Profile,
   initPayload,
 } from 'fastdb4ts/payload';
@@ -253,13 +285,13 @@ for (const name of ['Feature', 'ORM', 'FastSerializer']) {
 
 await initPayload();
 const source = new TextEncoder().encode(
-  '{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]}',
+  '{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"value","cardinality":"one","type":{"kind":"u8","nullable":false}}],"components":[]}',
 );
 const spec = CompiledSpec.compile(source);
 try {
   if (spec.profile() !== Profile.RecordV1) throw new Error('profile mismatch');
-  if (spec.entryCount() !== 0 || spec.componentCount() !== 0) {
-    throw new Error('empty spec indexes mismatch');
+  if (spec.entryCount() !== 1 || spec.componentCount() !== 0) {
+    throw new Error('spec indexes mismatch');
   }
   if (spec.sha256().byteLength !== 32) throw new Error('digest mismatch');
   const generated = spec.generate(CodegenTarget.TypeScript);
@@ -277,6 +309,34 @@ try {
   } finally {
     generated.dispose();
   }
+  const builder = Builder.create(spec);
+  let plan;
+  let payload;
+  let opened;
+  let entry;
+  let view;
+  let detached;
+  try {
+    plan = builder.entryBegin(0, 1n).valueU8(37).freeze();
+    payload = plan.execute(BuildPolicy.AllowStaging).payload;
+    opened = Payload.openCopy(spec, payload.binaryBytes(), new OpenOptions());
+    payload.dispose();
+    entry = opened.entryView(0);
+    view = entry.at(0n);
+    assert.equal(view.getU8(), 37);
+    detached = view.materialize();
+    opened.invalidate();
+    assert.throws(() => view.kind(), (error) => error.symbol === 'VIEW_INVALIDATED');
+    assert.equal(detached.getU8(), 37);
+  } finally {
+    detached?.dispose();
+    view?.dispose();
+    entry?.dispose();
+    opened?.dispose();
+    payload?.dispose();
+    plan?.dispose();
+    builder.dispose();
+  }
 } finally {
   spec.dispose();
 }
@@ -292,6 +352,7 @@ try {
             text=True,
             encoding="utf-8",
             errors="strict",
+            timeout=120,
         )
         if completed.returncode != 0:
             raise CheckError(
@@ -336,6 +397,7 @@ def main() -> int:
         UnicodeError,
         json.JSONDecodeError,
         tarfile.TarError,
+        subprocess.SubprocessError,
     ) as error:
         print(f"TypeScript payload package check failed: {error}", file=sys.stderr)
         return 1

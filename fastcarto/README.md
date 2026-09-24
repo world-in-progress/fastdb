@@ -18,7 +18,7 @@ This directory contains the native implementation that the higher-level bindings
 > P4 is locally complete at exact ABI-117, including exact output ceilings,
 > concurrent deterministic generation, and the four-shape hostile
 > cross-toolchain matrix. P5 local clean cut is complete at exact ABI-117.
-> Hosted CI, versioning, publication, and the 0.2.0 release remain open.
+> Package version 0.2.0 is prepared; hosted verification and publication are tracked in the [release record](../docs/releases/0.2.0.md).
 > See the [current status
 > issue](../docs/issues/0002-portable-payload-foundation-implementation-status.md)
 > and [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
@@ -63,7 +63,7 @@ belong in the core.
 
 ## Public API shape
 
-The current 0.1.x storage API lives in:
+The standalone storage API lives in:
 
 - `fastcarto/fastdb/include/fastdb.h`
 - `fastcarto/fastdb/include/fastdb-config.h`

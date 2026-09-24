@@ -41,8 +41,7 @@ agent performed the final P3 review with no unresolved Critical, Important, or
 material Minor finding; by explicit user direction it was not delegated, so
 no independent/subagent review is claimed. WebAssembly pthread behavior is not
 inferred from the single-thread proof; native tests plus ThreadSanitizer remain
-the concurrency authority. Hosted Linux/macOS results remain pending because
-this branch has not been pushed.
+the concurrency authority. Current hosted execution and publication are tracked in the [0.2.0 release record](docs/releases/0.2.0.md).
 
 P4 is locally complete through Tasks 1-9. Those tasks provide safe Rust,
 Python 3.10+, and official TypeScript/WASM portable projections over the
@@ -70,10 +69,7 @@ over tracked plus untracked/non-ignored files, and pass the fresh local
 release-readiness matrix. FastDB implementation commit
 `7eb74734926bd8fe911229eee9744a6dd8172487` packages that frozen owner
 boundary into a seven-artifact local candidate at unchanged ABI-117 and
-unchanged package versions. C-Two implementation commit
-`bf6f5c950959bcd2723cf3c7bfe772c9ee91dc02` consumes those exact hashes in
-isolated Rust, Python 3.10/current, and Node environments and passes its
-18-row Rust/Python and 12-row generated TypeScript local matrices. The retained
+unchanged package versions. Downstream isolated Rust, Python 3.10/current, and Node consumers exercised those exact artifact hashes. The retained
 FastDB manifest has SHA-256
 `9a1c7c83dca16237257dcc50d5917f10d032e02ffceae1278ae331d101b69d32`;
 see the [local-candidate evidence](docs/issues/evidence/README.md).
@@ -84,10 +80,7 @@ composition remain open. Those external facts are tracked in [Issue
 No local result or workflow definition is represented as a hosted pass; the
 new projection jobs are definitions until an authorized hosted run exists.
 
-The source package version remains 0.1.x after local release readiness.
-Previously published 0.1.x artifacts are migration inputs, not APIs to extend,
-and no version change, tag, publication, or release is implied. This source
-tree exposes `RecordEngine` without a compatibility alias. Capabilities
+The source package versions are now 0.2.0 for release preparation. Registry publication remains pending until the [release record](docs/releases/0.2.0.md) links the successful hosted run and verifies the registry artifact hashes. Previously published 0.1.x artifacts are migration inputs. This source tree exposes `RecordEngine` without a compatibility alias. Capabilities
 deliberately deferred beyond 0.2.0 are tracked separately in [Issue
 0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
 
@@ -109,7 +102,7 @@ This repository now contains three closely related layers:
 - **Compact binary transport** — save/load databases as binary buffers or files; shared-memory deserialization for zero-copy IPC
 - **Cross-binding consistency** — the 0.2.0 target makes the C++ Core, rather than a language binding, the semantic authority
 - **Schema-driven codegen** — the target Core returns deterministic C++/Rust/Python/TypeScript payload artifacts in memory
-- **Portable record, object-graph runtime, codegen, and clean cut** — P1 provides canonical identity, P2 provides the frozen record path, P3 provides the frozen C/C++ graph build/open/view/materialize/invalidate path at the historical 105-symbol boundary, P4 provides equal language projections plus Core-owned four-target codegen at the exact 117-symbol boundary, and P5 is locally complete without a version or release claim
+- **Portable record, object-graph runtime, codegen, and clean cut** — P1 provides canonical identity, P2 provides the frozen record path, P3 provides the C/C++ graph runtime, P4 provides equal language projections and four-target codegen at exact ABI-117, and P5 removes duplicate authority. Publication status is tracked separately in the release record.
 
 ## Documentation map
 

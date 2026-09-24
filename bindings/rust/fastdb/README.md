@@ -10,17 +10,33 @@ binary parser, canonicalizer, digest implementation, layout planner, graph
 algorithm, materializer, or codegen implementation. Its behavior must remain
 in parity with the C++, Python, and TypeScript/WebAssembly projections.
 
-Repository builds use `fastdb-sys` source mode by default. A relocated
-consumer can select the documented `FASTDB_PAYLOAD_LINK_MODE=system` boundary
-and point `FASTDB_PAYLOAD_SYSTEM_LIB_DIR` at a compatible shared FastDB
-library. `CompiledSpec::compile` checks the real Core ABI version before
-publishing a safe handle.
+Add the safe crate with an exact release dependency:
+
+```toml
+[dependencies]
+fastdb = "=0.2.0"
+```
+
+Install the matching `fastdb-core-0.2.0-<target>.tar.gz` asset from the
+[FastDB v0.2.0 release](https://github.com/world-in-progress/fastdb/releases/tag/v0.2.0).
+Set `FASTDB_PAYLOAD_LINK_MODE=system` and set
+`FASTDB_PAYLOAD_SYSTEM_LIB_DIR` to the absolute extracted `lib` directory.
+Configure `LD_LIBRARY_PATH` on Linux or `DYLD_LIBRARY_PATH` on macOS to load
+that directory when running the consumer. The native release targets are
+`x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`.
+
+The safe crate requires the exact `fastdb-sys 0.2.0` projection. Both crates
+use the released Core/C ABI bundle and contain no duplicate Core source tree.
+Repository builds use checkout-only source mode by default.
+`CompiledSpec::compile` checks the real Core ABI version before publishing a
+safe handle. See the [raw binding's linking contract](https://github.com/world-in-progress/fastdb/blob/v0.2.0/bindings/rust/fastdb-sys/README.md)
+for linker and loader setup.
 
 `CompiledSpec::generate` projects Core-owned deterministic C++/Rust/Python/
 TypeScript artifacts as an immutable `ArtifactSet`. Artifact paths, bytes,
 SHA-256 receipts, limits, provenance, and errors all come from the stable C
 ABI. Rust contains no generator or privileged private-Core route.
 
-P4 is locally complete: this projection participates in the same four-shape
-generated-artifact execution matrix as C++, Python, and TypeScript/Wasm while
-the C++ Core remains the sole authority. P5 and hosted execution remain open.
+Release validation executes extracted crate archives outside the source
+checkout against the matching native bundle. It covers compilation, codegen,
+build/open, checked views, invalidation, and detached materialization.

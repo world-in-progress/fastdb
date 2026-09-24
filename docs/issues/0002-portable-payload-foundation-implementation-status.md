@@ -15,6 +15,8 @@
 
 ## Purpose
 
+Current release work is tracked in the [0.2.0 release record](../releases/0.2.0.md). On 2026-09-24 the user authorized the version change, PR to main and complete Python/Rust/TypeScript publication. The historical phase evidence below preserves its original local-only limits; current push, hosted, tag and registry outcomes are recorded separately and only after verification.
+
 The accepted 0.2.0 design defines a complete portable-payload foundation. The
 current repository now has locally frozen P1 compiler/query, P2
 `record.v1`, and P3 ordinary `object_graph.v1` Core/runtime slices. P3 Tasks

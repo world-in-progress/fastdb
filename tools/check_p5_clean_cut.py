@@ -252,10 +252,10 @@ def validate_policy(root: Path, policy: dict[str, object]) -> list[str]:
         violations.append(f"policy schema must be {SCHEMA!r}")
     if policy["native_abi_symbol_count"] != 117:
         violations.append("policy native ABI symbol count must remain exactly 117")
-    if policy["python_version"] != "0.1.22":
-        violations.append("policy Python package version must remain 0.1.22")
-    if policy["typescript_version"] != "0.0.3":
-        violations.append("policy TypeScript package version must remain 0.0.3")
+    if policy["python_version"] != "0.2.0":
+        violations.append("policy Python package version must match release 0.2.0")
+    if policy["typescript_version"] != "0.2.0":
+        violations.append("policy TypeScript package version must match release 0.2.0")
 
     removed = _validate_string_list(
         policy, "removed_paths", violations, paths=True
@@ -1219,8 +1219,7 @@ def _check_issues(root: Path) -> list[str]:
     else:
         index_markers = (
             "| [0002](0002-portable-payload-foundation-implementation-status.md) "
-            "| Open (P1-P5 locally frozen; hosted/release/C-"
-            "Two evidence pending) |",
+            "| Open (P1-P5 locally frozen; hosted/release evidence pending) |",
             "| [0003](0003-legacy-swig-diagnostics.md) | Closed |",
         )
         for marker in index_markers:

@@ -50,7 +50,7 @@ class RustPayloadPackageTests(unittest.TestCase):
                 MODULE.locate_system_library(root, "plan9")
 
     def test_archive_paths_are_rooted_canonical_and_unique(self) -> None:
-        root = "fastdb-sys-0.1.22"
+        root = "fastdb-sys-0.2.0"
         self.assertEqual(
             MODULE.strip_archive_root(
                 [
@@ -75,13 +75,13 @@ class RustPayloadPackageTests(unittest.TestCase):
                 MODULE.strip_archive_root(names, root)
 
     def test_archive_rejects_links_and_other_special_members(self) -> None:
-        regular = tarfile.TarInfo("fastdb-0.1.22/src/lib.rs")
+        regular = tarfile.TarInfo("fastdb-0.2.0/src/lib.rs")
         regular.size = 0
-        directory = tarfile.TarInfo("fastdb-0.1.22/src")
+        directory = tarfile.TarInfo("fastdb-0.2.0/src")
         directory.type = tarfile.DIRTYPE
         MODULE.reject_special_members([regular, directory])
 
-        link = tarfile.TarInfo("fastdb-0.1.22/src/link.rs")
+        link = tarfile.TarInfo("fastdb-0.2.0/src/link.rs")
         link.type = tarfile.SYMTYPE
         link.linkname = "lib.rs"
         with self.assertRaises(MODULE.CheckError):
@@ -98,30 +98,38 @@ class RustPayloadPackageTests(unittest.TestCase):
             "fastdb",
             b"""[package]
 name = "fastdb"
-version = "0.1.22"
+version = "0.2.0"
 
 [dependencies.fastdb-sys]
-version = "0.1.22"
+version = "=0.2.0"
 """,
         )
         for invalid in (
             b"""[package]
 name = "fastdb"
-version = "0.1.22"
+version = "0.2.0"
 
 [dependencies.fastdb-sys]
 path = "../fastdb-sys"
 """,
             b"""[package]
 name = "fastdb"
-version = "0.1.22"
+version = "0.2.0"
 
 [dependencies.fastdb-sys]
-version = "0.1.21"
+version = "=0.1.22"
 """,
         ):
             with self.assertRaises(MODULE.CheckError):
                 MODULE.check_normalized_manifest("fastdb", invalid)
+
+    def test_release_manifest_cannot_disable_publication(self) -> None:
+        for restriction in ("false", "[]"):
+            with self.subTest(restriction=restriction), self.assertRaises(MODULE.CheckError):
+                MODULE.check_normalized_manifest(
+                    "fastdb-sys",
+                    f'[package]\nname = "fastdb-sys"\nversion = "0.2.0"\npublish = {restriction}\n'.encode(),
+                )
 
 
 if __name__ == "__main__":

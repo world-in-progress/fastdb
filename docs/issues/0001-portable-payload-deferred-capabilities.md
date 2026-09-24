@@ -174,6 +174,8 @@ The required initial consumers are C++, Rust, Python, and browser-capable TypeSc
 
 ## D6. Published and multi-platform portable-payload release artifacts
 
+Release preparation began on 2026-09-24 with coherent 0.2.0 metadata for the Python, Rust and TypeScript packages. The [release record](../releases/0.2.0.md) owns current hosted/registry state and artifact identities. D6 remains open until those uploads and their verification complete. The Phase 0B details below describe the earlier local candidate and retain its original 0.1.22/0.0.3 identity; they are not the version policy for the new release.
+
 ### Current limit
 
 The Phase 0B artifact set is a FastDB-owned **local release candidate**, not a

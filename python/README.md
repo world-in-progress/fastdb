@@ -2,14 +2,7 @@
 
 Python bindings for `fastdb`, built on top of the C++ core in `fastcarto/fastdb/` and exposed through SWIG.
 
-> **0.2.0 direction:** This document describes the standalone Python binding
-> while the package version remains 0.1.x. The source tree now exposes
-> `RecordEngine` directly without an alias for the pre-0.2 engine name. The
-> accepted portable payload target makes the C++ Core the sole
-> `fastdb.payload.v1` authority; Python annotations may remain an authoring
-> frontend, but Python does not own canonicalization, digest, profile
-> validation, layout, or binary decoding. See the
-> [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md).
+> **0.2.0:** This document covers the standalone storage API and the official `fastdb4py.payload` projection. `RecordEngine` is the standalone AoS engine name. The C++ Core owns `fastdb.payload.v1` compilation, canonicalization, digest, profile validation, layout and binary decoding. Python supplies language-level authoring and ownership interfaces. See the [accepted design](../docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md) and [release status](../docs/releases/0.2.0.md).
 
 This README is the binding-specific companion to the repository root `README.md`. The root document introduces the project as a whole; this document focuses on the Python-facing API, its architecture, and common usage patterns.
 
@@ -39,7 +32,7 @@ The Python stack is layered:
 2. **SWIG/native bridge** — `python/fastdb4py/core/`
    - generated wrappers and compiled native extension
 3. **High-level Python API** — `python/fastdb4py/`
-   - current 0.1.x ergonomic `@feature`, `RecordEngine`, `ObjectEngine`, `Table`, and `FastSerializer` abstractions; the 0.2.0 portable projection is defined by the accepted design
+   - standalone `@feature`, `RecordEngine`, `ObjectEngine`, `Table` and `FastSerializer` abstractions, plus the Core-backed `fastdb4py.payload` projection
 
 Important directories:
 
@@ -83,15 +76,13 @@ The wheel contains one native FastDB Core and Python projection source, not a
 second Python runtime. Python 3.10 compile/import and installed-wheel execution
 are package gates. `CompiledSpec.generate(...)` returns the same Core-owned
 deterministic C++/Rust/Python/TypeScript ArtifactSet available to the other
-official projections. It never writes a destination tree. The historical
-Python-to-TypeScript generator described later in this document is a 0.1.x
-migration input, not portable-payload authority.
+official projections. It never writes a destination tree; the `fdb codegen` CLI publishes the Core-returned artifact set through its filesystem facade.
 
 P4 is locally complete. Python participates in the same hostile all-values,
 recursive-list, identifier-collision, and shared-cycle generation matrix as
 the other official projections, while all parsing, identity, topology, and
 rendering remain in the C++ Core. P5 local clean cut is complete. Hosted
-execution, versioning, publication, and release evidence remain open.
+execution and registry publication are tracked in the [release record](../docs/releases/0.2.0.md).
 
 ## Installation
 

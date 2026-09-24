@@ -39,10 +39,12 @@ fn repository_root() -> PathBuf {
 }
 
 fn packaged_source_mode_boundary() -> ! {
+    let version = env!("CARGO_PKG_VERSION");
     panic!(
         "{LINK_MODE_ENV}=source is checkout-only; packaged consumers must use \
          {LINK_MODE_ENV}=system with {SYSTEM_LIB_DIR_ENV} set to the absolute \
-         directory containing the platform FastDB shared library"
+         lib directory from fastdb-core-{version}-<target>.tar.gz at \
+         https://github.com/world-in-progress/fastdb/releases/tag/v{version}"
     )
 }
 

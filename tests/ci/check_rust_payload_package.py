@@ -18,7 +18,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST_ROOT = ROOT / "bindings/rust"
-PACKAGE_VERSION = "0.1.22"
+PACKAGE_VERSION = "0.2.0"
 PACKAGE_REQUIRED = {
     "fastdb-sys": {
         ".cargo_vcs_info.json",
@@ -196,6 +196,8 @@ def check_normalized_manifest(package: str, contents: bytes) -> None:
         raise CheckError(
             f"{package} normalized Cargo.toml has the wrong package version"
         )
+    if re.search(r"(?m)^publish\s*=\s*(?:false|\[\s*\])\s*$", source):
+        raise CheckError(f"{package} archive disables registry publication")
     if package == "fastdb":
         dependency = re.search(
             r"(?ms)^\[dependencies\.fastdb-sys\]\s*$"
@@ -208,12 +210,12 @@ def check_normalized_manifest(package: str, contents: bytes) -> None:
             )
         body = dependency.group("body")
         if not re.search(
-            rf"(?m)^version\s*=\s*\"{re.escape(PACKAGE_VERSION)}\"\s*$",
+            rf"(?m)^version\s*=\s*\"={re.escape(PACKAGE_VERSION)}\"\s*$",
             body,
         ):
             raise CheckError(
                 "fastdb packaged dependency must require "
-                f"fastdb-sys {PACKAGE_VERSION}"
+                f"fastdb-sys ={PACKAGE_VERSION}"
             )
         if re.search(r"(?m)^path\s*=", body):
             raise CheckError(
@@ -532,13 +534,16 @@ fastdb-sys = {{ path = {_toml_path(sys_crate)} }}
         encoding="utf-8",
     )
     (consumer / "src/main.rs").write_text(
-        r'''use fastdb::{ArtifactKind, CodegenOptions, CodegenTarget, CompiledSpec, Profile};
+        r'''use fastdb::{
+    ArtifactKind, BuildPolicy, Builder, CodegenOptions, CodegenTarget,
+    CompiledSpec, OpenOptions, Payload, Profile,
+};
 
 fn main() {
-    let source = br#"{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[],"components":[]}"#;
+    let source = br#"{"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"value","cardinality":"one","type":{"kind":"u8","nullable":false}}],"components":[]}"#;
     let spec = CompiledSpec::compile(source).expect("system Core compile");
     assert_eq!(spec.profile().expect("profile"), Profile::RecordV1);
-    assert_eq!(spec.entry_count().expect("entry count"), 0);
+    assert_eq!(spec.entry_count().expect("entry count"), 1);
     assert_eq!(spec.component_count().expect("component count"), 0);
     assert_eq!(spec.sha256().expect("digest").len(), 32);
     let generated = spec
@@ -550,6 +555,21 @@ fn main() {
     assert!(artifact.relative_path.ends_with(".rs"));
     assert!(!artifact.bytes.is_empty());
     assert!(artifact.sha256.iter().any(|byte| *byte != 0));
+
+    let mut builder = Builder::create(&spec).expect("system Core builder");
+    builder.entry_begin(0, 1).expect("entry").value_u8(37).expect("value");
+    let plan = builder.freeze().expect("freeze");
+    let payload = plan.execute(BuildPolicy::AllowStaging).expect("execute").payload;
+    let bytes = payload.binary_bytes().expect("binary bytes");
+    let opened = Payload::open_copy(&spec, &bytes, &OpenOptions::default()).expect("open copy");
+    drop(payload);
+    let view = opened.entry_view(0).expect("entry view").at(0).expect("value view");
+    assert_eq!(view.get_u8().expect("checked value"), 37);
+    let detached = view.materialize().expect("materialize");
+    opened.invalidate().expect("invalidate");
+    assert_eq!(view.kind().expect_err("checked view must reject stale use").symbol(), "VIEW_INVALIDATED");
+    assert_eq!(detached.get_u8().expect("detached value survives"), 37);
+    println!("FastDB 0.2.0 packaged system consumer: compile/codegen/build/open/view/materialize/invalidate passed");
 }
 ''',
         encoding="utf-8",
@@ -559,8 +579,14 @@ fn main() {
 
 def _loader_environment(library: Path, target_dir: Path) -> dict[str, str]:
     environment = os.environ.copy()
+    for key in (
+        "RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS",
+        "RUSTC_WRAPPER", "RUSTC_WORKSPACE_WRAPPER",
+    ):
+        environment.pop(key, None)
     environment.update(
         {
+            "CARGO_HOME": str(target_dir.parent / "cargo-home"),
             "CARGO_TARGET_DIR": str(target_dir),
             "FASTDB_PAYLOAD_LINK_MODE": "system",
             "FASTDB_PAYLOAD_SYSTEM_LIB_DIR": str(library.parent),
@@ -615,12 +641,15 @@ def check_extracted_system_consumer(
     )
 
 
-def check_relocated_system_consumer(library: Path) -> None:
+def check_relocated_system_consumer(
+    library: Path, package_dir: Path | None = None,
+) -> None:
     with tempfile.TemporaryDirectory(
         prefix="fastdb-rust-system-"
     ) as temporary:
         root = Path(temporary)
-        archives = package_archives(root / "packages")
+        destination = package_dir if package_dir is not None else root / "packages"
+        archives = package_archives(destination)
         extracted = extract_package_archives(
             archives, root / "extracted"
         )
@@ -636,6 +665,10 @@ def check_relocated_system_consumer(library: Path) -> None:
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--build-dir", required=True, type=Path)
+    parser.add_argument(
+        "--package-dir", type=Path,
+        help="Retain the exact validated crate archives in this new directory.",
+    )
     return parser.parse_args()
 
 
@@ -643,7 +676,7 @@ def main() -> int:
     arguments = parse_arguments()
     try:
         library = locate_system_library(arguments.build_dir)
-        check_relocated_system_consumer(library)
+        check_relocated_system_consumer(library, arguments.package_dir)
     except (CheckError, OSError, UnicodeError) as error:
         print(f"Rust payload package check failed: {error}", file=sys.stderr)
         return 1

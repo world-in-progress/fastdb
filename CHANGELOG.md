@@ -1,8 +1,14 @@
 # Changelog
 
-All notable changes to `fastdb` and its bindings are documented here.  
-Each binding section tracks **unreleased / in-progress** changes for the next version of that binding.  
-When a binding is released (tagged), its section is automatically copied to the GitHub Release notes and then reset.
+All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
+
+## 0.2.0 — release preparation
+
+- Publish the portable `fastdb.payload.v1` foundation across C++/C ABI, Rust `fastdb-sys` and `fastdb`, Python `fastdb4py`, and TypeScript/WASM `fastdb4ts` with coherent 0.2.0 package versions.
+- The C++ Core owns record/object-graph compilation, canonical identity, deterministic binary layout, build/open, checked views, invalidation, materialization, structured errors and four-language code generation. The public ABI remains version 1 with exactly 117 payload symbols.
+- **Breaking:** remove the pre-0.2 portable authority and compatibility aliases; standalone AoS storage uses `RecordEngine`. Existing standalone object storage and the legacy serializer retain their separate documented roles.
+- Distribution uses source-bound artifact manifests and verified installed-package consumers. Published Rust crates link the matching Core/C ABI bundle in system mode; they do not contain a second Core source tree or silently download native code during builds.
+- Registry and hosted verification status is recorded in [the release record](docs/releases/0.2.0.md). This entry does not mark pending uploads as complete.
 
 ---
 

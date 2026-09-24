@@ -27,8 +27,8 @@ MANIFEST_SCHEMA = "fastdb.local-candidate-manifest.v1"
 MANIFEST_FILENAME = "fastdb-local-candidate-manifest.v1.json"
 ABI_VERSION = 1
 ABI_SYMBOL_COUNT = 117
-FASTDB_VERSION = "0.1.22"
-FASTDB4TS_VERSION = "0.0.3"
+FASTDB_VERSION = "0.2.0"
+FASTDB4TS_VERSION = "0.2.0"
 EXPECTED_ARTIFACT_KINDS = {
     "core-c-abi-bundle",
     "rust-fastdb-sys-crate",
