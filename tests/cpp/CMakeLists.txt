@@ -48,6 +48,14 @@ function(add_fastdb_payload_test name)
         PRIVATE
             ${PAYLOAD_TEST_EXTRA_LIBRARIES}
     )
+    # TestSupport.hpp forwards require(...) through a __VA_ARGS__ selecting
+    # macro; MSVC's traditional preprocessor mis-splits that forwarding, so
+    # opt C++ test compilations into the standards-conforming preprocessor.
+    target_compile_options(
+        ${target_name}
+        PRIVATE
+            $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:preprocessor>
+    )
     fastdb_apply_sanitizers(${target_name})
 
     add_test(NAME payload.${name} COMMAND ${target_name} ${PAYLOAD_TEST_ARGUMENTS})
@@ -65,6 +73,12 @@ target_include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/payload
 )
 target_link_libraries(fastdb_legacy_descriptor_determinism PRIVATE fastdb)
+# Conforming MSVC preprocessor for TestSupport.hpp, as in the payload tests.
+target_compile_options(
+    fastdb_legacy_descriptor_determinism
+    PRIVATE
+        $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:preprocessor>
+)
 fastdb_apply_sanitizers(fastdb_legacy_descriptor_determinism)
 add_test(
     NAME legacy.descriptor_determinism
@@ -788,6 +802,12 @@ target_link_libraries(
     PRIVATE
         fastdb_payload_core
         Threads::Threads
+)
+# Conforming MSVC preprocessor for TestSupport.hpp, as in the payload tests.
+target_compile_options(
+    fastdb_payload_test_json_depth
+    PRIVATE
+        $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:preprocessor>
 )
 fastdb_apply_sanitizers(fastdb_payload_test_json_depth)
 
