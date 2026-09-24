@@ -6,7 +6,7 @@
 
 `fastdb` is a C++ local database library designed as a fast, lightweight, and easy-to-use data communication layer for RPC and coupled modeling in scientific computing.
 
-## Portable payload status and 0.2.0 direction
+## Portable payload status and 0.2.0 release
 
 The current tree implements the P1 `fastdb.payload.v1` compiler/query Core,
 the P2 non-reference `record.v1` runtime, the complete ordinary P3
@@ -74,13 +74,13 @@ FastDB manifest has SHA-256
 `9a1c7c83dca16237257dcc50d5917f10d032e02ffceae1278ae331d101b69d32`;
 see the [local-candidate evidence](docs/issues/evidence/README.md).
 
-Hosted execution, versioning, publication, and official downstream package
-composition remain open. Those external facts are tracked in [Issue
-0002](docs/issues/0002-portable-payload-foundation-implementation-status.md).
-No local result or workflow definition is represented as a hosted pass; the
-new projection jobs are definitions until an authorized hosted run exists.
+At that historical local-candidate checkpoint, hosted execution, versioning,
+publication, and official downstream package composition remained open. That
+checkpoint applied the rule that workflows are definitions until an authorized hosted run exists.
+Those local evidence records remain unchanged. Current release outcomes are
+recorded separately below; downstream package composition remains open.
 
-The source package versions are now 0.2.0 for release preparation. Registry publication remains pending until the [release record](docs/releases/0.2.0.md) links the successful hosted run and verifies the registry artifact hashes. Previously published 0.1.x artifacts are migration inputs. This source tree exposes `RecordEngine` without a compatibility alias. Capabilities
+FastDB 0.2.0 is now [published](https://github.com/world-in-progress/fastdb/releases/tag/v0.2.0) for Python, Rust and TypeScript, with Linux x86-64 and macOS arm64 Core bundles. The [release record](docs/releases/0.2.0.md) links the successful hosted runs, exact source commit, verified registry hashes and fresh public-package consumers. Previously published 0.1.x artifacts are migration inputs. This source tree exposes `RecordEngine` without a compatibility alias. Capabilities
 deliberately deferred beyond 0.2.0 are tracked separately in [Issue
 0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
 
