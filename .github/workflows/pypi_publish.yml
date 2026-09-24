@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   publish:
-    if: ${{ github.repository == 'world-in-progress/fastdb' && github.ref == 'refs/heads/main' }}
+    if: ${{ github.repository == 'world-in-progress/fastdb' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:

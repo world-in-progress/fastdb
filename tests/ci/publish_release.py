@@ -66,11 +66,22 @@ def assert_source_run(run: dict, commit: str, workflow: str) -> None:
         raise ReleaseError(f"Run {run.get('id')} is not a successful exact-source main run of {workflow}")
 
 
+def assert_dispatch_ref(version: str | None = None) -> None:
+    reference = os.environ.get("GITHUB_REF")
+    if reference is None or reference == "refs/heads/main":
+        return
+    if re.fullmatch(r"refs/tags/v\d+\.\d+\.\d+", reference) is None:
+        raise ReleaseError("Publication must run from main or a versioned release tag")
+    if version is not None and reference != f"refs/tags/v{version}":
+        raise ReleaseError("Release tag must match the verified manifest version")
+
+
 def check_ci(run_id: str, commit: str) -> dict:
     if re.fullmatch(r"[0-9a-f]{40}", commit) is None or not run_id.isdigit():
         raise ReleaseError("A full source SHA and numeric artifact run ID are required")
     if os.environ.get("GITHUB_SHA") is not None and os.environ["GITHUB_SHA"] != commit:
         raise ReleaseError("Publication workflow SHA must equal the artifact source SHA for registry provenance")
+    assert_dispatch_ref()
     run = github(f"actions/runs/{run_id}")
     assert_source_run(run, commit, "release-artifacts.yml")
     query = urlencode({"head_sha": commit, "event": "push", "branch": "main", "per_page": 100})
@@ -162,6 +173,7 @@ def wait_for_crate_index(name: str, version: str, checksum: str, *, attempts: in
 def prepare(directory: Path, output: Path, ecosystem: str, run_id: str, commit: str) -> dict:
     ci = check_ci(run_id, commit)
     document = verify(directory, commit)
+    assert_dispatch_ref(document["version"])
     if document.get("repository") != REPOSITORY or str(document.get("build_run_id")) != run_id or str(document.get("build_run_attempt")) != str(ci["artifact_run_attempt"]):
         raise ReleaseError("Downloaded manifest does not belong to the verified artifact run/attempt")
     records = select_records(document, ecosystem)
@@ -171,7 +183,7 @@ def prepare(directory: Path, output: Path, ecosystem: str, run_id: str, commit: 
     packages.mkdir()
     for record in pending:
         shutil.copy2(directory / record["name"], packages / record["name"])
-    plan = {"schema": "fastdb.registry-publish-plan.v1", "ecosystem": ecosystem, "version": document["version"], "source_sha": commit, "manifest_sha256": digest(directory / "release-manifest.json"), "ci": ci, "artifacts": records, "pending": [record["name"] for record in pending]}
+    plan = {"schema": "fastdb.registry-publish-plan.v1", "ecosystem": ecosystem, "version": document["version"], "source_sha": commit, "dispatch_ref": os.environ.get("GITHUB_REF"), "manifest_sha256": digest(directory / "release-manifest.json"), "ci": ci, "artifacts": records, "pending": [record["name"] for record in pending]}
     write_json(output / "publish-plan.json", plan)
     github_output = os.environ.get("GITHUB_OUTPUT")
     if github_output:

@@ -32,6 +32,55 @@ class PublicationTests(unittest.TestCase):
                 publish.check_ci("123", "a" * 40)
             api.assert_not_called()
 
+    def test_tag_retry_uses_original_main_proofs_after_main_advances(self):
+        commit = "a" * 40
+        successful = {"head_sha": commit, "head_branch": "main", "event": "push", "conclusion": "success", "status": "completed", "head_repository": {"full_name": publish.REPOSITORY}}
+
+        def api(path):
+            if path == "actions/runs/123":
+                return {**successful, "id": 123, "run_attempt": 1, "path": ".github/workflows/release-artifacts.yml"}
+            if path.startswith("actions/workflows/tests.yml/runs?"):
+                self.assertIn(f"head_sha={commit}", path)
+                return {"workflow_runs": [{**successful, "id": 456, "path": ".github/workflows/tests.yml"}]}
+            if path == "actions/runs/456/jobs?per_page=100":
+                return {"jobs": [{"name": f"{name} ({index})", "conclusion": "success"} for name, count in publish.REQUIRED_PROOFS.items() for index in range(count)]}
+            if path == "git/ref/heads/main":
+                return {"object": {"sha": "b" * 40}}
+            self.fail(f"Unexpected API request: {path}")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = root / "candidate"
+            candidate.mkdir()
+            document = test_release_artifacts.ReleaseInventoryTests().candidate(candidate)
+            document.update({"repository": publish.REPOSITORY, "build_run_id": "123", "build_run_attempt": "1"})
+            release.write_json(candidate / "release-manifest.json", document)
+            published = next(record for record in document["artifacts"] if record["kind"] == "python-sdist")
+            with patch.dict(os.environ, {"GITHUB_SHA": commit, "GITHUB_REF": "refs/tags/v0.2.0"}), patch.object(publish, "github", side_effect=api), patch.object(publish, "existing_hashes", return_value={published["name"]: published["sha256"]}):
+                plan = publish.prepare(candidate, root / "stage", "pypi", "123", commit)
+            self.assertEqual(plan["source_sha"], commit)
+            self.assertEqual(plan["dispatch_ref"], "refs/tags/v0.2.0")
+            self.assertNotIn(published["name"], plan["pending"])
+            self.assertEqual(len(plan["pending"]), 12)
+
+    def test_wrong_release_tag_is_rejected_before_registry_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            candidate = root / "candidate"
+            candidate.mkdir()
+            test_release_artifacts.ReleaseInventoryTests().candidate(candidate)
+            with patch.dict(os.environ, {"GITHUB_REF": "refs/tags/v0.3.0"}), patch.object(publish, "check_ci", return_value={"artifact_run_attempt": 1}), patch.object(publish, "existing_hashes") as registry:
+                with self.assertRaisesRegex(release.ReleaseError, "manifest version"):
+                    publish.prepare(candidate, root / "stage", "pypi", "123", "a" * 40)
+                registry.assert_not_called()
+
+    def test_feature_branch_and_unversioned_tag_fail_before_network(self):
+        for reference in ("refs/heads/feature", "refs/tags/latest", "refs/tags/v0.2.0-unreviewed"):
+            with self.subTest(reference=reference), patch.dict(os.environ, {"GITHUB_SHA": "a" * 40, "GITHUB_REF": reference}), patch.object(publish, "github") as api:
+                with self.assertRaisesRegex(release.ReleaseError, "versioned release tag"):
+                    publish.check_ci("123", "a" * 40)
+                api.assert_not_called()
+
     def test_pr_or_failed_artifact_run_is_not_publishable(self):
         run = {"id": 1, "head_sha": "a" * 40, "head_branch": "main", "event": "push", "conclusion": "success", "status": "completed", "path": ".github/workflows/release-artifacts.yml", "head_repository": {"full_name": publish.REPOSITORY}}
         publish.assert_source_run(run, "a" * 40, "release-artifacts.yml")
@@ -47,7 +96,7 @@ class PublicationTests(unittest.TestCase):
             document = test_release_artifacts.ReleaseInventoryTests().candidate(candidate)
             document.update({"repository": publish.REPOSITORY, "build_run_id": "123", "build_run_attempt": "1"})
             release.write_json(candidate / "release-manifest.json", document)
-            with patch.object(publish, "check_ci", return_value={"artifact_run_attempt": 2}), patch.object(publish, "existing_hashes") as registry:
+            with patch.dict(os.environ, {"GITHUB_REF": "refs/heads/main"}), patch.object(publish, "check_ci", return_value={"artifact_run_attempt": 2}), patch.object(publish, "existing_hashes") as registry:
                 with self.assertRaisesRegex(release.ReleaseError, "run/attempt"):
                     publish.prepare(candidate, root / "stage", "pypi", "123", "a" * 40)
                 registry.assert_not_called()
