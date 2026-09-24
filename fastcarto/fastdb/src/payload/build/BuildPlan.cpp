@@ -316,8 +316,9 @@ Result<BuildPlan> BuildPlan::create(LogicalPayload&& values) try {
         const std::uint64_t graph_object_count = [&] {
             if constexpr (std::is_same_v<Layout, GraphLayout>) {
                 return selected_layout.graph_object_count();
+            } else {
+                return UINT64_C(0);
             }
-            return UINT64_C(0);
         }();
         PlanInfo info{
             selected_layout.total_length(),
