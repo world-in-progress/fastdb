@@ -123,11 +123,11 @@ Deterministic layout, null validity, list offsets, normalized values, object ide
 - Backpressure and resource limits work in C++, Rust, Python, and TypeScript/WASM without binding-owned layout logic.
 - Direct/staged reporting remains truthful.
 
-## D4. Guaranteed platforms beyond Linux x86-64, macOS arm64, and wasm32
+## D4. Guaranteed platforms beyond Linux x86-64, macOS arm64, Windows x64, and wasm32
 
 ### Current limit
 
-The 0.2.0 support claim and release gates cover Linux x86-64, macOS arm64, and WebAssembly `wasm32`. The fixed-width/little-endian format is designed for portability, but other native targets are not guaranteed until tested.
+The 0.2.0 release gates covered Linux x86-64, macOS arm64, and WebAssembly `wasm32`. [Release 0.2.1](../releases/0.2.1.md) adds Windows x64 Core and Python distributions, with native C++ tests, ABI inspection, isolated Rust consumption, and installed-wheel tests on Windows Server 2022 CI. This does not establish Windows 11 desktop or Windows ARM64 coverage. Other native targets remain unguaranteed until equivalent evidence exists; the format's fixed-width/little-endian design alone is insufficient.
 
 ### Why it is deferred
 
