@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -22,7 +23,6 @@
 #include <string>
 #include <string_view>
 #include <thread>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -947,6 +947,64 @@ int test_plan_allocation_retryability() {
     return EXIT_SUCCESS;
 }
 
+int test_plan_ownership_moves_are_allocation_free() {
+    // BuildPlan's move is explicitly noexcept and a frozen plan is moved across
+    // Result<BuildPlan> while ownership changes hands, so a member move that
+    // allocates turns an injected std::bad_alloc into std::terminate.  The
+    // armed moves below reject the very next allocation, so any allocating
+    // member fails this test on every standard library.
+    auto planned = make_bytes_plan(UINT64_C(70001));
+    require(planned.has_value(), planned.has_value()
+                                     ? std::string_view{}
+                                     : planned.error().details_json());
+    const std::uint64_t total = planned.value().info().total_bytes;
+    std::vector<std::uint8_t> expected;
+    {
+        auto executed = planned.value().execute(require_direct, nullptr);
+        require(executed.has_value());
+        expected.assign(
+            owner_data(executed.value()),
+            owner_data(executed.value()) + owner_size(executed.value()));
+    }
+
+    bool moves_completed = false;
+    try {
+        // Arm the injector to reject the very next allocation: none of the
+        // ownership transfers below may allocate.
+        allocation_failure::fail_after.store(INT64_C(0),
+                                              std::memory_order_relaxed);
+        Result<BuildPlan> relocated = std::move(planned);
+        Result<BuildPlan> twice_relocated = std::move(relocated);
+        planned = std::move(twice_relocated);
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                              std::memory_order_relaxed);
+        moves_completed = true;
+    } catch (const std::bad_alloc&) {
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                              std::memory_order_relaxed);
+        std::fprintf(stderr,
+                     "[fastdb-diag] payload_backing plan move allocated\n");
+        std::fflush(stderr);
+        require(false, "portable payload plan ownership move allocated");
+    }
+    allocation_failure::fail_after.store(INT64_C(-1),
+                                          std::memory_order_relaxed);
+    require(moves_completed);
+    require(planned.has_value());
+    require(planned.value().info().total_bytes == total);
+
+    // A relocated frozen plan stays reusable: repeated executions must keep
+    // producing the identical image.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        auto executed = planned.value().execute(require_direct, nullptr);
+        require(executed.has_value());
+        require(owner_size(executed.value()) == expected.size());
+        require(std::equal(expected.begin(), expected.end(),
+                           owner_data(executed.value())));
+    }
+    return EXIT_SUCCESS;
+}
+
 bool reports_equal(
     const fastdb::payload::build::ExecutionReport& left,
     const fastdb::payload::build::ExecutionReport& right) noexcept {
@@ -1659,6 +1717,11 @@ int main() {
     }
     fastdb::test::diag::test_marker("test_plan_allocation_retryability");
     if (test_plan_allocation_retryability() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    fastdb::test::diag::test_marker(
+        "test_plan_ownership_moves_are_allocation_free");
+    if (test_plan_ownership_moves_are_allocation_free() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     fastdb::test::diag::test_marker("test_execution_allocation_sweeps");

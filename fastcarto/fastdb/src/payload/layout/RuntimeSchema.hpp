@@ -5,6 +5,7 @@
 #include "payload/spec/RuntimeTopology.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 #include <vector>
@@ -112,6 +113,20 @@ private:
     friend class RecordLayout;
     friend struct RuntimeSchemaTestAccess;
 
+    // Index from a compiled-spec type node to its runtime identifier.  It is
+    // built once by assign_topology and never mutated afterwards, so it is
+    // published behind a shared_ptr to const: moving a RuntimeSchema (across
+    // Result, the ProfileLayout variant and BuildPlan) then moves only a
+    // shared_ptr, and copying one shares the index instead of deep cloning it.
+    // A directly owned std::unordered_map would instead make those moves
+    // allocate: MSVC's _Hash move constructor has no noexcept specification and
+    // allocates a fresh list head node plus the bucket array, and an injected
+    // std::bad_alloc escaping a noexcept BuildPlan transfer terminates the
+    // process.  Keys point into the type nodes of spec_'s shared CompiledSpec
+    // state, so they stay valid for every copy of this schema.
+    using TypeIds =
+        std::unordered_map<const spec::TypeNode*, std::uint32_t>;
+
     explicit RuntimeSchema(spec::CompiledSpec spec)
         : spec_(std::move(spec)) {}
 
@@ -122,7 +137,7 @@ private:
 
     spec::CompiledSpec spec_;
     std::vector<RuntimeType> types_;
-    std::unordered_map<const spec::TypeNode*, std::uint32_t> type_ids_;
+    std::shared_ptr<const TypeIds> type_ids_;
     std::vector<ComponentLayout> components_;
     std::vector<std::uint32_t> component_layout_indexes_;
     std::vector<std::uint8_t> reachable_components_;

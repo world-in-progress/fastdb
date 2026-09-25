@@ -12,6 +12,7 @@
 #include <limits>
 #include <new>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 
@@ -890,3 +891,15 @@ Result<RecordLayout> RecordLayout::plan(
 }
 
 }  // namespace fastdb::payload::layout
+
+// A RecordLayout travels through the noexcept plan ownership transfers
+// (ProfileLayout, Result<BuildPlan>), so its move must not allocate or throw;
+// see RuntimeSchema.cpp for the failure this guards against.
+static_assert(
+    std::is_nothrow_move_constructible_v<
+        fastdb::payload::layout::RecordLayout>,
+    "RecordLayout must be nothrow move constructible");
+static_assert(
+    std::is_nothrow_move_assignable_v<
+        fastdb::payload::layout::RecordLayout>,
+    "RecordLayout must be nothrow move assignable");

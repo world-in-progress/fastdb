@@ -8,6 +8,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <map>
 #include <string>
@@ -240,7 +241,10 @@ Result<void> audit_document(yyjson_val* root, const JsonParseLimits& limits) {
         return root_check;
     }
 
-    std::vector<AuditFrame> pending;
+    // A chunked stack avoids the repeated reallocation of a growing vector:
+    // deep documents otherwise churn close to twice the peak frame count in
+    // cumulative allocation before the first frame is popped.
+    std::deque<AuditFrame> pending;
     if (yyjson_is_ctn(root)) {
         pending.push_back(make_audit_frame(root, path.mark(), UINT64_C(1)));
     }

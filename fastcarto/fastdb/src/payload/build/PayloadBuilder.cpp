@@ -83,6 +83,23 @@ Error allocation_error() {
                         "allocation_failed");
 }
 
+#if defined(FASTDB_PAYLOAD_BUILD_TESTING)
+// One-shot scratch/reserve failpoint driven only by the payload_builder test.
+// It fires at the mutation stage itself, so it observes builder ordering
+// without depending on any platform allocator size.
+thread_local bool scratch_reserve_armed = false;
+thread_local bool scratch_reserve_triggered = false;
+
+bool consume_scratch_reserve_failure() noexcept {
+    if (!scratch_reserve_armed) {
+        return false;
+    }
+    scratch_reserve_armed = false;
+    scratch_reserve_triggered = true;
+    return true;
+}
+#endif
+
 const char* type_name(TypeKind kind) noexcept {
     switch (kind) {
     case TypeKind::boolean:
@@ -571,6 +588,11 @@ struct PayloadBuilder::State final {
                 error_path, "path_tokens", UINT64_MAX,
                 static_cast<std::uint64_t>(path.max_size())));
         }
+#if defined(FASTDB_PAYLOAD_BUILD_TESTING)
+        if (consume_scratch_reserve_failure()) {
+            throw std::bad_alloc();
+        }
+#endif
         arena.nodes_.reserve(arena.nodes_.size() +
                              static_cast<std::size_t>(added_nodes));
         arena.byte_storage_.reserve(
@@ -1865,5 +1887,24 @@ bool PayloadBuilderTestAccess::use_object_handle_sequence(
            GraphAuthoringTestAccess::use_object_handle_sequence(
                state->graph, next);
 }
+
+#if defined(FASTDB_PAYLOAD_BUILD_TESTING)
+namespace builder_test_hooks {
+
+void arm_scratch_reserve_failure() noexcept {
+    scratch_reserve_armed = true;
+    scratch_reserve_triggered = false;
+}
+
+void disarm_scratch_reserve_failure() noexcept {
+    scratch_reserve_armed = false;
+}
+
+bool scratch_reserve_failure_triggered() noexcept {
+    return scratch_reserve_triggered;
+}
+
+}  // namespace builder_test_hooks
+#endif
 
 }  // namespace fastdb::payload::build

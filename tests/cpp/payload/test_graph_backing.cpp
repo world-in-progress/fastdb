@@ -715,6 +715,106 @@ int test_graph_plan_allocation_failure_is_retryable() {
     return EXIT_SUCCESS;
 }
 
+int test_graph_plan_ownership_moves_are_allocation_free() {
+    // Graph plans travel through the same noexcept ownership transfers as
+    // record plans: Result<GraphLayout>, the ProfileLayout variant and
+    // Result<BuildPlan>.  The armed moves below reject the very next
+    // allocation, so a member move that allocates turns an injected
+    // std::bad_alloc into std::terminate and fails this test.
+    auto builder = make_retry_builder();
+    require(builder.has_value());
+    auto planned = builder.value().freeze_plan();
+    require(planned.has_value(), planned.has_value()
+                                     ? std::string_view{}
+                                     : planned.error().details_json());
+    const std::uint64_t total = planned.value().info().total_bytes;
+    const std::uint64_t objects =
+        planned.value().info().graph_object_count;
+    std::vector<std::uint8_t> expected;
+    {
+        auto executed = planned.value().execute(require_direct, nullptr);
+        require(executed.has_value());
+        expected.assign(
+            owner_data(executed.value()),
+            owner_data(executed.value()) + owner_size(executed.value()));
+    }
+
+    bool moves_completed = false;
+    try {
+        // Arm the injector to reject the very next allocation: none of the
+        // ownership transfers below may allocate.
+        allocation_guard::fail_after = INT64_C(0);
+        Result<BuildPlan> relocated = std::move(planned);
+        Result<BuildPlan> twice_relocated = std::move(relocated);
+        planned = std::move(twice_relocated);
+        allocation_guard::fail_after = INT64_C(-1);
+        moves_completed = true;
+    } catch (const std::bad_alloc&) {
+        allocation_guard::fail_after = INT64_C(-1);
+        std::fprintf(stderr,
+                     "[fastdb-diag] graph_backing plan move allocated\n");
+        std::fflush(stderr);
+        require(false, "graph plan ownership move allocated");
+    }
+    allocation_guard::fail_after = INT64_C(-1);
+    require(moves_completed);
+    require(planned.has_value());
+    require(planned.value().info().total_bytes == total);
+    require(planned.value().info().graph_object_count == objects);
+
+    // The relocated graph plan stays reusable and byte identical.
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        auto executed = planned.value().execute(require_direct, nullptr);
+        require(executed.has_value());
+        require(owner_size(executed.value()) == expected.size());
+        require(std::equal(expected.begin(), expected.end(),
+                           owner_data(executed.value())));
+    }
+
+    // A GraphLayout crosses Result and is moved directly as well; keep that
+    // transfer armed on its own so a layout-local regression cannot hide
+    // behind the plan.
+    auto layout_builder = make_retry_builder();
+    require(layout_builder.has_value());
+    auto layout_spec = CompiledSpec::compile(large_graph_spec);
+    require(layout_spec.has_value());
+    auto layout_values = layout_builder.value().freeze();
+    require(layout_values.has_value());
+    auto layout_runtime =
+        fastdb::payload::layout::RuntimeSchema::compile(layout_spec.value());
+    require(layout_runtime.has_value());
+    auto graph_layout = fastdb::payload::layout::GraphLayout::plan(
+        layout_runtime.value(), layout_values.value());
+    require(graph_layout.has_value());
+    const std::uint64_t layout_total = graph_layout.value().total_length();
+    const std::uint32_t layout_regions = graph_layout.value().region_count();
+
+    bool layout_moves_completed = false;
+    try {
+        allocation_guard::fail_after = INT64_C(0);
+        auto relocated_layout = std::move(graph_layout);
+        auto twice_relocated_layout = std::move(relocated_layout);
+        fastdb::payload::layout::GraphLayout direct_layout =
+            std::move(twice_relocated_layout).value();
+        graph_layout = Result<fastdb::payload::layout::GraphLayout>::success(
+            std::move(direct_layout));
+        allocation_guard::fail_after = INT64_C(-1);
+        layout_moves_completed = true;
+    } catch (const std::bad_alloc&) {
+        allocation_guard::fail_after = INT64_C(-1);
+        std::fprintf(stderr,
+                     "[fastdb-diag] graph_backing layout move allocated\n");
+        std::fflush(stderr);
+        require(false, "graph layout ownership move allocated");
+    }
+    allocation_guard::fail_after = INT64_C(-1);
+    require(layout_moves_completed);
+    require(graph_layout.has_value());
+    require(graph_layout.value().total_length() == layout_total);
+    require(graph_layout.value().region_count() == layout_regions);
+    return EXIT_SUCCESS;
+}
+
 int test_graph_execution_allocation_cleanup() {
     auto planned = make_all_values_plan();
     require(planned.has_value());
@@ -823,6 +923,12 @@ int main() {
     fastdb::test::diag::test_marker(
         "test_graph_plan_allocation_failure_is_retryable");
     if (test_graph_plan_allocation_failure_is_retryable() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    fastdb::test::diag::test_marker(
+        "test_graph_plan_ownership_moves_are_allocation_free");
+    if (test_graph_plan_ownership_moves_are_allocation_free() !=
+        EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     fastdb::test::diag::test_marker(
