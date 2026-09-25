@@ -1,5 +1,6 @@
 #include "TestSupport.hpp"
 #include "BackingTestSupport.hpp"
+#include "WindowsDiagnosticSupport.hpp"
 
 #include "payload/build/PayloadBuilder.hpp"
 #include "payload/spec/CompiledSpec.hpp"
@@ -44,11 +45,13 @@ static_assert((alignof(AllocationHeader) &
 
 void* allocate(std::size_t size,
                std::size_t alignment = kDefaultNewAlignment) {
+    fastdb::test::diag::note_allocation();
     const std::int64_t remaining =
         fail_after.load(std::memory_order_relaxed);
     if (remaining >= INT64_C(0) &&
         fail_after.fetch_sub(INT64_C(1), std::memory_order_relaxed) ==
             INT64_C(0)) {
+        fastdb::test::diag::note_injected(size);
         throw std::bad_alloc();
     }
     if (alignment == 0U || (alignment & (alignment - 1U)) != 0U) {
@@ -457,7 +460,8 @@ fastdb::payload::backing::CallbackOperation production_operation(
         case CallbackKind::release:
             break;
     }
-    std::abort();
+    fastdb::test::diag::abort_marker(
+        "test_payload_backing.cpp:production_operation unreachable callback");
 }
 
 int test_callback_status_classification() {
@@ -1555,7 +1559,9 @@ int test_callback_requirements_and_prefix_copy() {
                 break;
             case CallbackKind::write:
             case CallbackKind::retain:
-                std::abort();
+                fastdb::test::diag::abort_marker(
+                    "test_payload_backing.cpp:callback requirements "
+                    "unexpected missing callback");
         }
         auto result = planned.value().execute(require_direct, &callbacks);
         require(!result.has_value());
@@ -1611,40 +1617,56 @@ int test_callback_requirements_and_prefix_copy() {
 }  // namespace
 
 int main() {
+    fastdb::test::diag::install_terminate_handler();
+    fastdb::test::diag::test_marker("verify_fixture_and_matrix_skeleton");
     if (verify_fixture_and_matrix_skeleton() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker("test_missing_task6_capability");
     if (test_missing_task6_capability() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
 #if FASTDB_TASK6_HAS_BACKING_CALLBACKS
+    fastdb::test::diag::test_marker("test_callback_status_classification");
     if (test_callback_status_classification() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker("test_retained_backing_acquisition");
     if (test_retained_backing_acquisition() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker(
+        "test_heap_container_limit_failure_is_structured");
     if (test_heap_container_limit_failure_is_structured() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker("test_range_staged_and_policy");
     if (test_range_staged_and_policy() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker("test_state_status_and_cleanup");
     if (test_state_status_and_cleanup() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker("test_executed_unknown_statuses");
     if (test_executed_unknown_statuses() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker(
+        "test_callback_requirements_and_prefix_copy");
     if (test_callback_requirements_and_prefix_copy() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker("test_plan_allocation_retryability");
     if (test_plan_allocation_retryability() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker("test_execution_allocation_sweeps");
     if (test_execution_allocation_sweeps() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker(
+        "test_repeatable_concurrent_and_reentrant_execution");
     return test_repeatable_concurrent_and_reentrant_execution();
 #else
     return EXIT_FAILURE;

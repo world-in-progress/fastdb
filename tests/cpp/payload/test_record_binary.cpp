@@ -1,5 +1,6 @@
 #include "GoldenCorpus.hpp"
 #include "TestSupport.hpp"
+#include "WindowsDiagnosticSupport.hpp"
 
 #include "payload/build/PayloadBuilder.hpp"
 #include "payload/build/RecordEncoder.hpp"
@@ -17,6 +18,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -64,6 +66,7 @@ void* allocate(std::size_t size,
     if (remaining >= INT64_C(0)) {
         if (fail_after.fetch_sub(INT64_C(1), std::memory_order_relaxed) ==
             INT64_C(0)) {
+            fastdb::test::diag::note_injected(size);
             throw std::bad_alloc();
         }
     }
@@ -3470,18 +3473,43 @@ int test_task5_list_allocation_failure_sweeps() {
         fastdb::payload::error::Error::from_details(
             FDB_PAYLOAD_E_INTERNAL, JsonPointer{}, "uninitialized",
             fastdb::payload::json::JsonValue::object({})));
+    // Diagnostic phase marker for the injected-bad_alloc catch below:
+    // 0 = armed, 1 = inside RecordLayout::plan, 2 = plan returned and the
+    // original move assignment is running with injection still armed,
+    // 3 = assignment completed.  Scalars only; no allocation involved.
+    int diagnostic_phase = 0;
     std::uint64_t layout_failures = UINT64_C(0);
     for (std::int64_t allocation = INT64_C(0); allocation < INT64_C(8192);
          ++allocation) {
         allocation_failure::fail_after.store(allocation,
                                               std::memory_order_relaxed);
+        diagnostic_phase = 1;
         try {
-            planned = RecordLayout::plan(runtime.value(), values.value());
+            // Direct-initialized local keeps the original single result object
+            // (guaranteed elision) and the original move assignment, which
+            // still executes while injection is armed.
+            Result<RecordLayout> plan_result =
+                RecordLayout::plan(runtime.value(), values.value());
+            diagnostic_phase = 2;
+            planned = std::move(plan_result);
+            diagnostic_phase = 3;
         } catch (const std::bad_alloc&) {
+            const int failed_phase = diagnostic_phase;
+            const std::size_t injected_size =
+                fastdb::test::diag::last_injected_size;
             allocation_failure::fail_after.store(INT64_C(-1),
                                                   std::memory_order_relaxed);
+            std::fprintf(stderr,
+                         "[fastdb-diag] record_binary layout sweep escaped "
+                         "bad_alloc index=%lld phase=%d injected_size=%zu\n",
+                         static_cast<long long>(allocation), failed_phase,
+                         injected_size);
+            std::fflush(stderr);
             require(false, "list layout escaped bad_alloc at " +
-                               std::to_string(allocation));
+                               std::to_string(allocation) + " phase=" +
+                               std::to_string(failed_phase) +
+                               " injected_size=" +
+                               std::to_string(injected_size));
         }
         allocation_failure::fail_after.store(INT64_C(-1),
                                               std::memory_order_relaxed);

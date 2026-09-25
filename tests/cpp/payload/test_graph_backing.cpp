@@ -1,5 +1,6 @@
 #include "BackingTestSupport.hpp"
 #include "TestSupport.hpp"
+#include "WindowsDiagnosticSupport.hpp"
 
 #include "payload/backing/HeapBacking.hpp"
 #include "payload/build/PayloadBuilder.hpp"
@@ -39,14 +40,17 @@ constexpr std::size_t default_new_alignment =
 
 void* allocate(std::size_t size,
                std::size_t alignment = default_new_alignment) {
+    fastdb::test::diag::note_allocation();
     if (fail_after >= INT64_C(0)) {
         if (fail_after == INT64_C(0)) {
             fail_after = INT64_C(-1);
+            fastdb::test::diag::note_injected(size);
             throw std::bad_alloc();
         }
         --fail_after;
     }
     if (size >= reject_at_or_above) {
+        fastdb::test::diag::note_injected(size);
         throw std::bad_alloc();
     }
     if (alignment == 0U || (alignment & (alignment - 1U)) != 0U) {
@@ -223,7 +227,8 @@ std::uint32_t component_index(const CompiledSpec& spec,
                               std::string_view id) {
     const auto index = spec.component_index(id);
     if (!index.has_value()) {
-        std::abort();
+        fastdb::test::diag::abort_marker(
+            "test_graph_backing.cpp:component_index missing component");
     }
     return *index;
 }
@@ -800,20 +805,32 @@ int test_direct_graph_has_no_full_image_allocation() {
 }  // namespace
 
 int main() {
+    fastdb::test::diag::install_terminate_handler();
+    fastdb::test::diag::test_marker(
+        "test_graph_plan_facts_and_backing_identity");
     if (test_graph_plan_facts_and_backing_identity() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker("test_graph_staging_policy_and_cleanup");
     if (test_graph_staging_policy_and_cleanup() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker(
+        "test_repeatable_concurrent_graph_execution");
     if (test_repeatable_concurrent_graph_execution() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker(
+        "test_graph_plan_allocation_failure_is_retryable");
     if (test_graph_plan_allocation_failure_is_retryable() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker(
+        "test_graph_execution_allocation_cleanup");
     if (test_graph_execution_allocation_cleanup() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
+    fastdb::test::diag::test_marker(
+        "test_direct_graph_has_no_full_image_allocation");
     return test_direct_graph_has_no_full_image_allocation();
 }

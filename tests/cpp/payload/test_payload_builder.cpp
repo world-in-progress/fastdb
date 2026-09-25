@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -28,6 +29,8 @@ thread_local bool fail_next = false;
 thread_local std::size_t fail_next_at_least = 0U;
 thread_local std::size_t fail_next_below = 0U;
 thread_local bool failure_triggered = false;
+// Diagnostic scalar only: requested size of the allocation that was injected.
+thread_local std::size_t last_injected_size = 0U;
 
 void* allocate(std::size_t size) {
     if (fail_next ||
@@ -37,6 +40,7 @@ void* allocate(std::size_t size) {
         fail_next_at_least = 0U;
         fail_next_below = 0U;
         failure_triggered = true;
+        last_injected_size = size;
         throw std::bad_alloc();
     }
     void* const pointer = std::malloc(size == 0U ? 1U : size);
@@ -725,6 +729,43 @@ int require_logical_limit_precedes_scratch(Operation&& operation,
     const auto limited = std::forward<Operation>(operation)();
     allocation_failure::fail_next_at_least = 0U;
     allocation_failure::fail_next_below = 0U;
+    // Diagnostics run only after the original disarm, so they can neither be
+    // injected into nor charge the failure window.
+    if (!exact_error(limited, FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, path,
+                     details)) {
+        std::fprintf(stderr,
+                     "[fastdb-diag] payload_builder logical-limit mismatch: "
+                     "injected=%d injected_size=%zu expected_code=%u "
+                     "expected_path=%.*s expected_details=%.*s\n",
+                     allocation_failure::failure_triggered ? 1 : 0,
+                     allocation_failure::last_injected_size,
+                     FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT,
+                     static_cast<int>(path.size()),
+                     path.empty() ? "" : path.data(),
+                     static_cast<int>(details.size()),
+                     details.empty() ? "" : details.data());
+        if (limited.has_value()) {
+            std::fputs(
+                "[fastdb-diag] payload_builder actual=<success>\n", stderr);
+        } else {
+            const Error& actual = limited.error();
+            const std::string_view actual_path = actual.path();
+            const std::string_view actual_message = actual.message();
+            const std::string_view actual_details = actual.details_json();
+            std::fprintf(stderr,
+                         "[fastdb-diag] payload_builder actual_code=%u "
+                         "actual_path=%.*s actual_message=%.*s "
+                         "actual_details=%.*s\n",
+                         actual.code(),
+                         static_cast<int>(actual_path.size()),
+                         actual_path.empty() ? "" : actual_path.data(),
+                         static_cast<int>(actual_message.size()),
+                         actual_message.empty() ? "" : actual_message.data(),
+                         static_cast<int>(actual_details.size()),
+                         actual_details.empty() ? "" : actual_details.data());
+        }
+        std::fflush(stderr);
+    }
     require(exact_error(limited, FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, path,
                         details));
     require(!allocation_failure::failure_triggered);
