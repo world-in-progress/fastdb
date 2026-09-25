@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -491,7 +492,9 @@ Result<ParsedTypeLevel> parse_type_level(const JsonCursor& value,
 Result<TypeNode> parse_type(const JsonCursor& value,
                             JsonPointerBuilder& path) {
     JsonCursor current_value = value;
-    std::vector<TypeNode> parents;
+    // Chunked parents: a list type nests as deep as the source, and vector
+    // growth would reallocate every live parent on the way down.
+    std::deque<TypeNode> parents;
 
     while (true) {
         auto parsed_level = parse_type_level(current_value, path);

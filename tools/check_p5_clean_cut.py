@@ -78,7 +78,7 @@ ISSUE_0002 = (
 ISSUE_0003 = "docs/issues/0003-legacy-swig-diagnostics.md"
 ISSUE_INDEX = "docs/issues/README.md"
 CURRENT_READINESS_MARKERS = {
-    "README.md": "P5 local clean cut is complete at exact ABI-117.",
+    ISSUE_0002: "The **P5 local clean cut is complete** at exact ABI-117.",
     "python/README.md": "P5 local clean cut is complete.",
     "fastcarto/README.md": (
         "P5 local clean cut is complete at exact ABI-117."
@@ -252,10 +252,10 @@ def validate_policy(root: Path, policy: dict[str, object]) -> list[str]:
         violations.append(f"policy schema must be {SCHEMA!r}")
     if policy["native_abi_symbol_count"] != 117:
         violations.append("policy native ABI symbol count must remain exactly 117")
-    if policy["python_version"] != "0.2.0":
-        violations.append("policy Python package version must match release 0.2.0")
-    if policy["typescript_version"] != "0.2.0":
-        violations.append("policy TypeScript package version must match release 0.2.0")
+    if policy["python_version"] != "0.2.1":
+        violations.append("policy Python package version must match release 0.2.1")
+    if policy["typescript_version"] != "0.2.1":
+        violations.append("policy TypeScript package version must match release 0.2.1")
 
     removed = _validate_string_list(
         policy, "removed_paths", violations, paths=True

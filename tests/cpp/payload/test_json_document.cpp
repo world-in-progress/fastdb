@@ -158,10 +158,10 @@ int test_strict_syntax_and_numbers() {
     require(has_error(parse(invalid_utf8), FDB_PAYLOAD_E_INVALID_JSON, "",
                       "Invalid JSON source",
                       R"({"reason":"invalid_string"})"));
-    require(has_error(parse(R"({"x":"\x"})"),
+    require(has_error(parse("{\"x\":\"\\x\"}"),
                       FDB_PAYLOAD_E_INVALID_JSON, "", "Invalid JSON source",
                       R"({"reason":"invalid_string"})"));
-    require(has_error(parse(R"({"x":"\uD800"})"),
+    require(has_error(parse("{\"x\":\"\\uD800\"}"),
                       FDB_PAYLOAD_E_INVALID_JSON, "", "Invalid JSON source",
                       R"({"reason":"invalid_string"})"));
     require(has_error(parse("1e9999"), FDB_PAYLOAD_E_INVALID_NUMBER, "",

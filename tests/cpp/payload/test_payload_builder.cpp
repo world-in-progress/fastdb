@@ -1,3 +1,11 @@
+// Core compiles its payload-builder test hooks only for the BUILD_TESTING
+// configuration that builds this executable, so this translation unit opts
+// into the same macro-guarded declarations. Regular Core builds never see
+// them.
+#if !defined(FASTDB_PAYLOAD_BUILD_TESTING)
+#define FASTDB_PAYLOAD_BUILD_TESTING 1
+#endif
+
 #include "TestSupport.hpp"
 
 #include "payload/build/PayloadBuilder.hpp"
@@ -12,6 +20,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -73,6 +82,10 @@ using fastdb::payload::build::LogicalPayload;
 using fastdb::payload::build::PayloadBuilder;
 using fastdb::payload::build::ValueNode;
 using fastdb::payload::build::ValueTag;
+using fastdb::payload::build::builder_test_hooks::arm_scratch_reserve_failure;
+using fastdb::payload::build::builder_test_hooks::disarm_scratch_reserve_failure;
+using fastdb::payload::build::builder_test_hooks::
+    scratch_reserve_failure_triggered;
 using fastdb::payload::build::default_builder_limits;
 using fastdb::payload::error::Error;
 using fastdb::payload::error::Result;
@@ -713,116 +726,235 @@ int test_fixed_run_exact_final_frame_accounting() {
     return EXIT_SUCCESS;
 }
 
-template <typename Operation>
-int require_logical_limit_precedes_scratch(Operation&& operation,
-                                            std::string_view path,
-                                            std::string_view details) {
-    allocation_failure::failure_triggered = false;
-    // Target the former copied-frame scratch allocation while leaving the
-    // larger allocation needed to materialize the expected 2013 diagnostic.
-    allocation_failure::fail_next_at_least = 64U;
-    allocation_failure::fail_next_below = 96U;
-    const auto limited = std::forward<Operation>(operation)();
-    allocation_failure::fail_next_at_least = 0U;
-    allocation_failure::fail_next_below = 0U;
+// Diagnostic only: reports the observed outcome of one scratch-ordering
+// expectation with the canonical code/path/details facts, so a platform
+// failure stays actionable without deciding pass/fail by allocation size.
+void report_builder_ordering_mismatch(const char* expectation,
+                                      bool scratch_stage_triggered,
+                                      const Result<void>& observed) {
+    std::fprintf(stderr,
+                 "[fastdb-diag] payload_builder %s mismatch: "
+                 "scratch_stage_triggered=%d\n",
+                 expectation, scratch_stage_triggered ? 1 : 0);
+    if (observed.has_value()) {
+        std::fputs("[fastdb-diag] payload_builder actual=<success>\n", stderr);
+    } else {
+        const Error& actual = observed.error();
+        const std::string_view actual_path = actual.path();
+        const std::string_view actual_message = actual.message();
+        const std::string_view actual_details = actual.details_json();
+        std::fprintf(stderr,
+                     "[fastdb-diag] payload_builder actual_code=%u "
+                     "actual_path=%.*s actual_message=%.*s "
+                     "actual_details=%.*s\n",
+                     actual.code(),
+                     static_cast<int>(actual_path.size()),
+                     actual_path.empty() ? "" : actual_path.data(),
+                     static_cast<int>(actual_message.size()),
+                     actual_message.empty() ? "" : actual_message.data(),
+                     static_cast<int>(actual_details.size()),
+                     actual_details.empty() ? "" : actual_details.data());
+    }
+    std::fflush(stderr);
+}
+
+// Proves one authoring mutation decides its logical resource limits before it
+// touches the builder's scratch/reserve stage:
+//   * the limit-denied mutation returns the exact canonical RESOURCE_LIMIT
+//     error while the armed scratch-stage failpoint stays untouched, so no
+//     scratch/reserve mutation was attempted for it;
+//   * the denied mutation is retryable and published nothing;
+//   * the identical mutation under the smallest limit that passes the logical
+//     check fails through that same armed failpoint with the canonical
+//     ALLOCATION_FAILED error, which proves the armed stage really sits on
+//     the mutation path and makes the ordering assertion meaningful;
+//   * disarming the failpoint lets the same mutation succeed, which proves the
+//     failed reservation published nothing.
+// The observation is a builder-stage failpoint, so the proof never depends on
+// a platform-specific allocator size or on relative heap growth.
+template <typename DeniedOperation, typename AllowingOperation>
+int require_logical_limit_precedes_scratch(DeniedOperation&& denied,
+                                           AllowingOperation&& allowing,
+                                           std::string_view path,
+                                           std::string_view details) {
+    arm_scratch_reserve_failure();
+    const auto limited = denied();
+    disarm_scratch_reserve_failure();
+    if (!exact_error(limited, FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, path,
+                     details)) {
+        report_builder_ordering_mismatch("logical-limit",
+                                         scratch_reserve_failure_triggered(),
+                                         limited);
+    }
     require(exact_error(limited, FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, path,
                         details));
-    require(!allocation_failure::failure_triggered);
+    require(!scratch_reserve_failure_triggered(),
+            "a denied logical limit must not reach the scratch/reserve stage");
 
-    const auto retry = std::forward<Operation>(operation)();
+    const auto retry = denied();
     require(exact_error(retry, FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT, path,
                         details));
+    require(!scratch_reserve_failure_triggered());
+
+    arm_scratch_reserve_failure();
+    const auto control = allowing();
+    disarm_scratch_reserve_failure();
+    const bool control_triggered = scratch_reserve_failure_triggered();
+    if (!exact_error(control, FDB_PAYLOAD_E_ALLOCATION_FAILED,
+                     std::string_view{},
+                     R"({"reason":"allocation_failed"})")) {
+        report_builder_ordering_mismatch("scratch-stage control",
+                                         control_triggered, control);
+    }
+    require(exact_error(control, FDB_PAYLOAD_E_ALLOCATION_FAILED,
+                        std::string_view{},
+                        R"({"reason":"allocation_failed"})"),
+            "the armed scratch/reserve stage must fail an allowed mutation");
+    require(control_triggered,
+            "the armed scratch/reserve stage must report that it was reached");
+
+    const auto recovered = allowing();
+    require(recovered.has_value(),
+            "a failed scratch/reserve stage must leave the builder retryable");
     return EXIT_SUCCESS;
 }
 
 int test_all_mutations_preflight_before_scratch_allocation() {
-    const auto limits_at = [](std::uint64_t maximum) {
+    const auto create_at = [](std::string_view source,
+                              std::uint64_t maximum) -> Result<PayloadBuilder> {
+        auto compiled = compile(source);
+        if (!compiled.has_value()) {
+            return Result<PayloadBuilder>::failure(
+                std::move(compiled).error());
+        }
         BuilderLimits limits = default_builder_limits();
         limits.max_total_builder_bytes = maximum;
-        return limits;
+        return PayloadBuilder::create(std::move(compiled).value(), limits);
     };
+    const std::string_view scalar_source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"u8"}}],"components":[]})";
+    const std::string_view bytes_source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"bytes"}}],"components":[]})";
+    const std::string_view wstr_source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"wstr"}}],"components":[]})";
+    const std::string_view component_source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"component","id":"Row"}}],"components":[{"id":"Row","kind":"record","fields":[{"id":"x","type":{"kind":"u8"}}]}]})";
+    const std::string_view empty_component_source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"component","id":"Empty"}}],"components":[{"id":"Empty","kind":"record","fields":[]}]})";
+    const std::string_view list_source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})";
 
-    auto scalar_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"u8"}}],"components":[]})");
-    require(scalar_spec.has_value());
-    auto scalar = PayloadBuilder::create(std::move(scalar_spec).value(),
-                                         limits_at(UINT64_C(199)));
-    require(scalar.has_value());
-    require(scalar.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    // Every case pairs the smallest limit that denies the mutation with the
+    // smallest limit that allows it, so the armed scratch-stage control runs
+    // the identical inputs one byte of logical accounting apart.
+    auto scalar_denied = create_at(scalar_source, UINT64_C(199));
+    auto scalar_allowing = create_at(scalar_source, UINT64_C(200));
+    require(scalar_denied.has_value() && scalar_allowing.has_value());
+    require(scalar_denied.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(scalar_allowing.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
     require(require_logical_limit_precedes_scratch(
-        [&scalar]() { return scalar.value().push_u8(UINT8_C(7)); },
+        [&scalar_denied]() {
+            return scalar_denied.value().push_u8(UINT8_C(7));
+        },
+        [&scalar_allowing]() {
+            return scalar_allowing.value().push_u8(UINT8_C(7));
+        },
         "/entries/v/0",
         R"({"actual":"200","limit":"199","resource":"total_builder_bytes"})") ==
             EXIT_SUCCESS);
 
-    auto bytes_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"bytes"}}],"components":[]})");
-    require(bytes_spec.has_value());
-    auto bytes = PayloadBuilder::create(std::move(bytes_spec).value(),
-                                        limits_at(UINT64_C(200)));
-    require(bytes.has_value());
-    require(bytes.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    auto bytes_denied = create_at(bytes_source, UINT64_C(200));
+    auto bytes_allowing = create_at(bytes_source, UINT64_C(201));
+    require(bytes_denied.has_value() && bytes_allowing.has_value());
+    require(bytes_denied.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(bytes_allowing.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
     const std::uint8_t opaque = UINT8_C(11);
     require(require_logical_limit_precedes_scratch(
-        [&bytes, &opaque]() {
-            return bytes.value().push_bytes(&opaque, UINT64_C(1));
+        [&bytes_denied, &opaque]() {
+            return bytes_denied.value().push_bytes(&opaque, UINT64_C(1));
+        },
+        [&bytes_allowing, &opaque]() {
+            return bytes_allowing.value().push_bytes(&opaque, UINT64_C(1));
         },
         "/entries/v/0",
         R"({"actual":"201","limit":"200","resource":"total_builder_bytes"})") ==
             EXIT_SUCCESS);
 
-    auto wstr_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"wstr"}}],"components":[]})");
-    require(wstr_spec.has_value());
-    auto wstr = PayloadBuilder::create(std::move(wstr_spec).value(),
-                                       limits_at(UINT64_C(201)));
-    require(wstr.has_value());
-    require(wstr.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    auto wstr_denied = create_at(wstr_source, UINT64_C(201));
+    auto wstr_allowing = create_at(wstr_source, UINT64_C(202));
+    require(wstr_denied.has_value() && wstr_allowing.has_value());
+    require(wstr_denied.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(wstr_allowing.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
     const std::uint16_t wide = UINT16_C(0x61);
     require(require_logical_limit_precedes_scratch(
-        [&wstr, &wide]() {
-            return wstr.value().push_wstr(&wide, UINT64_C(1));
+        [&wstr_denied, &wide]() {
+            return wstr_denied.value().push_wstr(&wide, UINT64_C(1));
+        },
+        [&wstr_allowing, &wide]() {
+            return wstr_allowing.value().push_wstr(&wide, UINT64_C(1));
         },
         "/entries/v/0",
         R"({"actual":"202","limit":"201","resource":"total_builder_bytes"})") ==
             EXIT_SUCCESS);
 
-    auto component_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"component","id":"Row"}}],"components":[{"id":"Row","kind":"record","fields":[{"id":"x","type":{"kind":"u8"}}]}]})");
-    require(component_spec.has_value());
-    auto component = PayloadBuilder::create(std::move(component_spec).value(),
-                                            limits_at(UINT64_C(263)));
-    require(component.has_value());
-    require(component.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    auto component_denied = create_at(component_source, UINT64_C(263));
+    auto component_allowing = create_at(component_source, UINT64_C(264));
+    require(component_denied.has_value() && component_allowing.has_value());
+    require(component_denied.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(component_allowing.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
     require(require_logical_limit_precedes_scratch(
-        [&component]() { return component.value().begin_component(); },
+        [&component_denied]() {
+            return component_denied.value().begin_component();
+        },
+        [&component_allowing]() {
+            return component_allowing.value().begin_component();
+        },
         "/entries/v/0",
         R"({"actual":"264","limit":"263","resource":"total_builder_bytes"})") ==
             EXIT_SUCCESS);
 
-    auto empty_component_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"component","id":"Empty"}}],"components":[{"id":"Empty","kind":"record","fields":[]}]})");
-    require(empty_component_spec.has_value());
-    auto empty_component = PayloadBuilder::create(
-        std::move(empty_component_spec).value(), limits_at(UINT64_C(199)));
-    require(empty_component.has_value());
-    require(empty_component.value()
+    auto empty_component_denied =
+        create_at(empty_component_source, UINT64_C(199));
+    auto empty_component_allowing =
+        create_at(empty_component_source, UINT64_C(200));
+    require(empty_component_denied.has_value() &&
+            empty_component_allowing.has_value());
+    require(empty_component_denied.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(empty_component_allowing.value()
                 .begin_entry(UINT32_C(0), UINT64_C(2))
                 .has_value());
     require(require_logical_limit_precedes_scratch(
-        [&empty_component]() {
-            return empty_component.value().begin_component();
+        [&empty_component_denied]() {
+            return empty_component_denied.value().begin_component();
+        },
+        [&empty_component_allowing]() {
+            return empty_component_allowing.value().begin_component();
         },
         "/entries/v/0",
         R"({"actual":"200","limit":"199","resource":"total_builder_bytes"})") ==
             EXIT_SUCCESS);
 
-    auto empty_component_cascade_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"component","id":"Empty"}}],"components":[{"id":"Empty","kind":"record","fields":[]}]})");
-    require(empty_component_cascade_spec.has_value());
-    auto empty_component_cascade = PayloadBuilder::create(
-        std::move(empty_component_cascade_spec).value(),
-        limits_at(UINT64_C(136)));
+    auto empty_component_cascade = create_at(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"component","id":"Empty"}}],"components":[{"id":"Empty","kind":"record","fields":[]}]})",
+        UINT64_C(136));
     require(empty_component_cascade.has_value());
     require(empty_component_cascade.value()
                 .begin_entry(UINT32_C(0), UINT64_C(1))
@@ -830,37 +962,49 @@ int test_all_mutations_preflight_before_scratch_allocation() {
     require(empty_component_cascade.value().begin_component().has_value());
     require(empty_component_cascade.value().freeze().has_value());
 
-    auto list_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})");
-    require(list_spec.has_value());
-    auto list = PayloadBuilder::create(std::move(list_spec).value(),
-                                       limits_at(UINT64_C(263)));
-    require(list.has_value());
-    require(list.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    auto list_denied = create_at(list_source, UINT64_C(263));
+    auto list_allowing = create_at(list_source, UINT64_C(264));
+    require(list_denied.has_value() && list_allowing.has_value());
+    require(list_denied.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(list_allowing.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
     require(require_logical_limit_precedes_scratch(
-        [&list]() { return list.value().begin_list(UINT64_C(1)); },
+        [&list_denied]() {
+            return list_denied.value().begin_list(UINT64_C(1));
+        },
+        [&list_allowing]() {
+            return list_allowing.value().begin_list(UINT64_C(1));
+        },
         "/entries/v/0",
         R"({"actual":"264","limit":"263","resource":"total_builder_bytes"})") ==
             EXIT_SUCCESS);
 
-    auto empty_list_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"many","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})");
-    require(empty_list_spec.has_value());
-    auto empty_list = PayloadBuilder::create(std::move(empty_list_spec).value(),
-                                             limits_at(UINT64_C(199)));
-    require(empty_list.has_value());
-    require(empty_list.value().begin_entry(UINT32_C(0), UINT64_C(2)).has_value());
+    auto empty_list_denied = create_at(list_source, UINT64_C(199));
+    auto empty_list_allowing = create_at(list_source, UINT64_C(200));
+    require(empty_list_denied.has_value() && empty_list_allowing.has_value());
+    require(empty_list_denied.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
+    require(empty_list_allowing.value()
+                .begin_entry(UINT32_C(0), UINT64_C(2))
+                .has_value());
     require(require_logical_limit_precedes_scratch(
-        [&empty_list]() { return empty_list.value().begin_list(UINT64_C(0)); },
+        [&empty_list_denied]() {
+            return empty_list_denied.value().begin_list(UINT64_C(0));
+        },
+        [&empty_list_allowing]() {
+            return empty_list_allowing.value().begin_list(UINT64_C(0));
+        },
         "/entries/v/0",
         R"({"actual":"200","limit":"199","resource":"total_builder_bytes"})") ==
             EXIT_SUCCESS);
 
-    auto empty_list_cascade_spec = compile(
-        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})");
-    require(empty_list_cascade_spec.has_value());
-    auto empty_list_cascade = PayloadBuilder::create(
-        std::move(empty_list_cascade_spec).value(), limits_at(UINT64_C(136)));
+    auto empty_list_cascade = create_at(
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"list","items":{"kind":"u8"}}}],"components":[]})",
+        UINT64_C(136));
     require(empty_list_cascade.has_value());
     require(empty_list_cascade.value()
                 .begin_entry(UINT32_C(0), UINT64_C(1))

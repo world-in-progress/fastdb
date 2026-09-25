@@ -5,23 +5,35 @@ portable-payload C ABI. The C++ Core remains the only semantic authority; this
 crate does not parse schemas, canonicalize JSON, plan layouts, read binaries,
 walk graphs, materialize values, or generate code.
 
-Install the `fastdb-core-0.2.0-<target>.tar.gz` Core/C ABI bundle from the
-[FastDB v0.2.0 release](https://github.com/world-in-progress/fastdb/releases/tag/v0.2.0)
+Install the `fastdb-core-0.2.1-<target>.tar.gz` Core/C ABI bundle from the
+[FastDB v0.2.1 release](https://github.com/world-in-progress/fastdb/releases/tag/v0.2.1)
 and verify it against that release's artifact manifest. The native release
-targets are `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`. The extracted
-bundle contains `include/fastdb_payload.h` and `lib/libfastdb.so` (Linux) or
-`lib/libfastdb.dylib` (macOS).
+targets are `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and
+`x86_64-pc-windows-msvc`. The extracted bundle contains
+`include/fastdb_payload.h` and `lib/libfastdb.so` (Linux),
+`lib/libfastdb.dylib` (macOS), or both `lib/fastdb.lib` and
+`lib/fastdb.dll` (Windows).
 
 Registry consumers select the `system` link mode and use the extracted `lib`
 directory. For example, after extracting the bundle under
-`/opt/fastdb/0.2.0/<target>`:
+`/opt/fastdb/0.2.1/<target>`:
 
 ```sh
 export FASTDB_PAYLOAD_LINK_MODE=system
-export FASTDB_PAYLOAD_SYSTEM_LIB_DIR=/opt/fastdb/0.2.0/x86_64-unknown-linux-gnu/lib
+export FASTDB_PAYLOAD_SYSTEM_LIB_DIR=/opt/fastdb/0.2.1/x86_64-unknown-linux-gnu/lib
 # Linux runtime loader:
 export LD_LIBRARY_PATH="$FASTDB_PAYLOAD_SYSTEM_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # On macOS, use DYLD_LIBRARY_PATH with the same directory instead.
+cargo run
+```
+
+For Windows x64, use the matching MSVC bundle and add its DLL directory to
+the process loader path:
+
+```powershell
+$env:FASTDB_PAYLOAD_LINK_MODE = "system"
+$env:FASTDB_PAYLOAD_SYSTEM_LIB_DIR = "C:\fastdb\0.2.1\x86_64-pc-windows-msvc\lib"
+$env:PATH = "$env:FASTDB_PAYLOAD_SYSTEM_LIB_DIR;$env:PATH"
 cargo run
 ```
 

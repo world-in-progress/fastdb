@@ -124,4 +124,22 @@ struct PayloadBuilderTestAccess final {
                                            ObjectHandle next) noexcept;
 };
 
+#if defined(FASTDB_PAYLOAD_BUILD_TESTING)
+namespace builder_test_hooks {
+
+// Test-only one-shot failpoint on the builder's scratch/reserve mutation
+// stage: the capacity growth that every mutation performs only after its
+// logical node/storage/frame/path limits are decided. Arm it, run one
+// authoring operation, and observe whether the stage was reached. The hook
+// exists only in FASTDB_PAYLOAD_BUILD_TESTING builds, is defined in the same
+// macro-guarded Core translation unit, and is never part of the production or
+// public surface. It lets the payload_builder test prove ordering with a
+// builder-stage observation instead of a platform-specific allocator size.
+void arm_scratch_reserve_failure() noexcept;
+void disarm_scratch_reserve_failure() noexcept;
+bool scratch_reserve_failure_triggered() noexcept;
+
+}  // namespace builder_test_hooks
+#endif
+
 }  // namespace fastdb::payload::build

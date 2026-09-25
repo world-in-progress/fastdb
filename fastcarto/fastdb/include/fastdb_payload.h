@@ -4,8 +4,19 @@
 #include <stdint.h>
 
 #if defined(_WIN32) || defined(__CYGWIN__)
+/* Windows annotation modes:
+   - FASTDB_PAYLOAD_BUILDING: the shared producer that defines this ABI and
+     therefore exports it.
+   - FASTDB_PAYLOAD_STATIC: a consumer linking the static fastdb_payload
+     archive; the ABI is neither imported from nor exported to a DLL.
+   - neither: a consumer of the shared fastdb library, which imports the ABI. */
+#if defined(FASTDB_PAYLOAD_BUILDING) && defined(FASTDB_PAYLOAD_STATIC)
+#error "define at most one of FASTDB_PAYLOAD_BUILDING / FASTDB_PAYLOAD_STATIC"
+#endif
 #if defined(FASTDB_PAYLOAD_BUILDING)
 #define FDB_PAYLOAD_API __declspec(dllexport)
+#elif defined(FASTDB_PAYLOAD_STATIC)
+#define FDB_PAYLOAD_API
 #else
 #define FDB_PAYLOAD_API __declspec(dllimport)
 #endif

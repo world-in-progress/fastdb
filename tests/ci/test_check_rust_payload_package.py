@@ -49,6 +49,29 @@ class RustPayloadPackageTests(unittest.TestCase):
             with self.assertRaises(MODULE.CheckError):
                 MODULE.locate_system_library(root, "plan9")
 
+    def test_windows_runtime_dll_must_accompany_import_library(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            import_library = root / "fastdb.lib"
+            import_library.write_bytes(b"import library")
+            with self.assertRaisesRegex(MODULE.CheckError, "runtime DLL"):
+                MODULE.windows_runtime_dll(import_library, "win32")
+            runtime = root / "fastdb.dll"
+            runtime.write_bytes(b"runtime library")
+            self.assertEqual(
+                MODULE.windows_runtime_dll(import_library, "win32"), runtime
+            )
+            # Non-Windows platforms never relocate a separate runtime binary.
+            self.assertIsNone(
+                MODULE.windows_runtime_dll(import_library, "darwin")
+            )
+            self.assertIsNone(
+                MODULE.windows_runtime_dll(import_library, "linux")
+            )
+            # A DLL passed where the import library belongs is rejected.
+            with self.assertRaisesRegex(MODULE.CheckError, "fastdb.lib"):
+                MODULE.windows_runtime_dll(runtime, "win32")
+
     def test_archive_paths_are_rooted_canonical_and_unique(self) -> None:
         root = "fastdb-sys-0.2.0"
         self.assertEqual(
@@ -96,39 +119,76 @@ class RustPayloadPackageTests(unittest.TestCase):
     def test_safe_manifest_requires_versioned_sys_dependency(self) -> None:
         MODULE.check_normalized_manifest(
             "fastdb",
-            b"""[package]
+            f"""[package]
 name = "fastdb"
-version = "0.2.0"
+version = "{MODULE.PACKAGE_VERSION}"
 
 [dependencies.fastdb-sys]
-version = "=0.2.0"
-""",
+version = "={MODULE.PACKAGE_VERSION}"
+""".encode(),
         )
         for invalid in (
-            b"""[package]
+            f"""[package]
 name = "fastdb"
-version = "0.2.0"
+version = "{MODULE.PACKAGE_VERSION}"
 
 [dependencies.fastdb-sys]
 path = "../fastdb-sys"
-""",
-            b"""[package]
+""".encode(),
+            f"""[package]
 name = "fastdb"
-version = "0.2.0"
+version = "{MODULE.PACKAGE_VERSION}"
 
 [dependencies.fastdb-sys]
-version = "=0.1.22"
-""",
+version = "={MODULE.PACKAGE_VERSION}-wrong"
+""".encode(),
         ):
             with self.assertRaises(MODULE.CheckError):
                 MODULE.check_normalized_manifest("fastdb", invalid)
+
+    def test_release_version_tracks_authoritative_crate_manifests(self) -> None:
+        self.assertEqual(
+            MODULE.crate_manifest_version(
+                "fastdb-sys",
+                '[package]\nname = "fastdb-sys"\nversion = "9.9.9"\n',
+            ),
+            "9.9.9",
+        )
+        for invalid in (
+            '[package]\nname = "fastdb-sys"\nversion = "invalid"\n',
+            '[package]\nname = "fastdb-sys"\n',
+            '[package]\nname = "fastdb-sys"\nversion = "9.9.9-rc.1"\n',
+            '[package]\nname = "fastdb-sys"\nversion = ""\n',
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(MODULE.CheckError):
+                    MODULE.crate_manifest_version("fastdb-sys", invalid)
+        self.assertEqual(
+            MODULE.coherent_release_version(
+                {"fastdb-sys": "9.9.9", "fastdb": "9.9.9"}
+            ),
+            "9.9.9",
+        )
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.coherent_release_version(
+                {"fastdb-sys": "9.9.9", "fastdb": "9.9.10"}
+            )
+        for package in sorted(MODULE.PACKAGE_REQUIRED):
+            source = (
+                (MODULE.RUST_ROOT / package / "Cargo.toml")
+                .read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                MODULE.crate_manifest_version(package, source),
+                MODULE.PACKAGE_VERSION,
+            )
 
     def test_release_manifest_cannot_disable_publication(self) -> None:
         for restriction in ("false", "[]"):
             with self.subTest(restriction=restriction), self.assertRaises(MODULE.CheckError):
                 MODULE.check_normalized_manifest(
                     "fastdb-sys",
-                    f'[package]\nname = "fastdb-sys"\nversion = "0.2.0"\npublish = {restriction}\n'.encode(),
+                    f'[package]\nname = "fastdb-sys"\nversion = "{MODULE.PACKAGE_VERSION}"\npublish = {restriction}\n'.encode(),
                 )
 
 

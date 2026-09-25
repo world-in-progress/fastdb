@@ -16,6 +16,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <limits>
@@ -33,10 +34,22 @@ namespace allocation_guard {
 
 thread_local bool enabled = false;
 thread_local std::size_t remaining = 0;
+// Diagnostic scalars only; they never participate in budget accounting.
+thread_local std::size_t budget_bytes = 0;
+thread_local std::size_t requested_total = 0;
+thread_local std::size_t allocation_count = 0;
+thread_local std::size_t rejected_count = 0;
+thread_local std::size_t first_rejected_size = 0;
 
 void* allocate(std::size_t size) {
     if (enabled) {
+        ++allocation_count;
+        requested_total += size;
         if (size > remaining) {
+            if (rejected_count == 0U) {
+                first_rejected_size = size;
+            }
+            ++rejected_count;
             throw std::bad_alloc();
         }
         remaining -= size;
@@ -51,6 +64,11 @@ void* allocate(std::size_t size) {
 class Budget final {
 public:
     explicit Budget(std::size_t bytes) {
+        budget_bytes = bytes;
+        requested_total = 0;
+        allocation_count = 0;
+        rejected_count = 0;
+        first_rejected_size = 0;
         remaining = bytes;
         enabled = true;
     }
@@ -744,14 +762,41 @@ int test_deep_manifest_allocation() {
     limits.json.max_nesting_depth = depth + UINT32_C(16);
 
     bool compiled = false;
+    const char* outcome = "ok";
+    std::uint32_t failure_code = UINT32_C(0);
     try {
         allocation_guard::Budget budget(64U * 1024U * 1024U);
         auto result = compile(source, limits);
-        compiled = result.has_value() &&
-                   result.value().manifest_bytes().find(
-                       "record_layout_exact") != std::string::npos;
+        if (!result.has_value()) {
+            outcome = "failed_result";
+            failure_code = result.error().code();
+        } else if (result.value().manifest_bytes().find(
+                       "record_layout_exact") == std::string::npos) {
+            outcome = "manifest_missing_record_layout_exact";
+        } else {
+            compiled = true;
+        }
     } catch (const std::bad_alloc&) {
-        compiled = false;
+        outcome = "caught_bad_alloc";
+    }
+    // Printed after the guard scope has ended, so no diagnostic allocation is
+    // ever charged to the 64 MiB budget.
+    if (!compiled) {
+        const std::size_t remaining = allocation_guard::remaining;
+        const std::size_t budget = allocation_guard::budget_bytes;
+        std::fprintf(
+            stderr,
+            "[fastdb-diag] compiled_spec deep_manifest_allocation failed: "
+            "outcome=%s error_code=%u budget=%zu requested=%zu consumed=%zu "
+            "remaining=%zu allocations=%zu rejected=%zu "
+            "first_rejected_size=%zu\n",
+            outcome, failure_code, budget,
+            allocation_guard::requested_total,
+            budget > remaining ? budget - remaining : 0U, remaining,
+            allocation_guard::allocation_count,
+            allocation_guard::rejected_count,
+            allocation_guard::first_rejected_size);
+        std::fflush(stderr);
     }
     require(compiled);
     return EXIT_SUCCESS;

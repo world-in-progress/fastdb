@@ -1,5 +1,6 @@
 #include "GoldenCorpus.hpp"
 #include "TestSupport.hpp"
+#include "WindowsDiagnosticSupport.hpp"
 
 #include "payload/build/PayloadBuilder.hpp"
 #include "payload/build/RecordEncoder.hpp"
@@ -17,6 +18,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -64,6 +66,7 @@ void* allocate(std::size_t size,
     if (remaining >= INT64_C(0)) {
         if (fail_after.fetch_sub(INT64_C(1), std::memory_order_relaxed) ==
             INT64_C(0)) {
+            fastdb::test::diag::note_injected(size);
             throw std::bad_alloc();
         }
     }
@@ -189,6 +192,7 @@ using fastdb::payload::error::Result;
 using fastdb::payload::json::JsonPointer;
 using fastdb::payload::layout::RecordLayout;
 using fastdb::payload::layout::RuntimeSchema;
+using fastdb::payload::layout::RuntimeType;
 using fastdb::payload::spec::CompiledSpec;
 using fastdb::test::payload::BinaryGoldenCase;
 
@@ -3470,18 +3474,43 @@ int test_task5_list_allocation_failure_sweeps() {
         fastdb::payload::error::Error::from_details(
             FDB_PAYLOAD_E_INTERNAL, JsonPointer{}, "uninitialized",
             fastdb::payload::json::JsonValue::object({})));
+    // Diagnostic phase marker for the injected-bad_alloc catch below:
+    // 0 = armed, 1 = inside RecordLayout::plan, 2 = plan returned and the
+    // original move assignment is running with injection still armed,
+    // 3 = assignment completed.  Scalars only; no allocation involved.
+    int diagnostic_phase = 0;
     std::uint64_t layout_failures = UINT64_C(0);
     for (std::int64_t allocation = INT64_C(0); allocation < INT64_C(8192);
          ++allocation) {
         allocation_failure::fail_after.store(allocation,
                                               std::memory_order_relaxed);
+        diagnostic_phase = 1;
         try {
-            planned = RecordLayout::plan(runtime.value(), values.value());
+            // Direct-initialized local keeps the original single result object
+            // (guaranteed elision) and the original move assignment, which
+            // still executes while injection is armed.
+            Result<RecordLayout> plan_result =
+                RecordLayout::plan(runtime.value(), values.value());
+            diagnostic_phase = 2;
+            planned = std::move(plan_result);
+            diagnostic_phase = 3;
         } catch (const std::bad_alloc&) {
+            const int failed_phase = diagnostic_phase;
+            const std::size_t injected_size =
+                fastdb::test::diag::last_injected_size;
             allocation_failure::fail_after.store(INT64_C(-1),
                                                   std::memory_order_relaxed);
+            std::fprintf(stderr,
+                         "[fastdb-diag] record_binary layout sweep escaped "
+                         "bad_alloc index=%lld phase=%d injected_size=%zu\n",
+                         static_cast<long long>(allocation), failed_phase,
+                         injected_size);
+            std::fflush(stderr);
             require(false, "list layout escaped bad_alloc at " +
-                               std::to_string(allocation));
+                               std::to_string(allocation) + " phase=" +
+                               std::to_string(failed_phase) +
+                               " injected_size=" +
+                               std::to_string(injected_size));
         }
         allocation_failure::fail_after.store(INT64_C(-1),
                                               std::memory_order_relaxed);
@@ -3605,6 +3634,105 @@ int test_task5_list_allocation_failure_sweeps() {
     return EXIT_SUCCESS;
 }
 
+int test_layout_ownership_moves_do_not_allocate() {
+    // The plan path hands a planned layout between Result, variant and BuildPlan
+    // owners while allocation failure is injected.  Those transfers are
+    // noexcept, so a move that allocates turns an injected std::bad_alloc into
+    // std::terminate.  The armed moves below reject the very next allocation,
+    // so any allocating member fails this test on every standard library.
+    const std::string source =
+        read_binary_fixture("spec/component-list-composition.source.json");
+    auto compiled = CompiledSpec::compile(source);
+    require(compiled.has_value());
+    auto values = build_scenario(compiled.value(), "component_list_composition");
+    require(values.has_value());
+    auto runtime = RuntimeSchema::compile(compiled.value());
+    require(runtime.has_value());
+    auto planned = RecordLayout::plan(runtime.value(), values.value());
+    require(planned.has_value());
+
+    const std::uint64_t total_length = planned.value().total_length();
+    const std::uint32_t region_count = planned.value().region_count();
+    const std::uint32_t entry_count = planned.value().entry_count();
+    const std::uint32_t type_count = runtime.value().type_count();
+    const std::uint32_t root_type_count = static_cast<std::uint32_t>(
+        compiled.value().resolved().entries().size());
+
+    bool moves_completed = false;
+    try {
+        // Arm the injector to reject the very next allocation: none of the
+        // ownership transfers below may allocate.
+        allocation_failure::fail_after.store(INT64_C(0),
+                                              std::memory_order_relaxed);
+        Result<RecordLayout> relocated = std::move(planned);
+        Result<RecordLayout> twice_relocated = std::move(relocated);
+        RecordLayout relocated_layout = std::move(twice_relocated).value();
+        planned = Result<RecordLayout>::success(std::move(relocated_layout));
+        RuntimeSchema relocated_schema = std::move(runtime).value();
+        runtime = Result<RuntimeSchema>::success(std::move(relocated_schema));
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                              std::memory_order_relaxed);
+        moves_completed = true;
+    } catch (const std::bad_alloc&) {
+        allocation_failure::fail_after.store(INT64_C(-1),
+                                              std::memory_order_relaxed);
+        std::fprintf(stderr,
+                     "[fastdb-diag] record_binary layout move allocated\n");
+        std::fflush(stderr);
+        require(false, "record layout ownership move allocated");
+    }
+    allocation_failure::fail_after.store(INT64_C(-1),
+                                          std::memory_order_relaxed);
+    require(moves_completed);
+    require(planned.has_value());
+    require(runtime.has_value());
+    require(planned.value().total_length() == total_length);
+    require(planned.value().region_count() == region_count);
+    require(planned.value().entry_count() == entry_count);
+    require(runtime.value().type_count() == type_count);
+
+    // The shared index is published, not owned: the schema left behind inside
+    // the moved-from Result holds no index and must answer lookups as "unknown"
+    // instead of dereferencing it.
+    RuntimeSchema donor = std::move(runtime).value();
+    require(runtime.value().runtime_id(
+                compiled.value().resolved().entries().front().type) ==
+            UINT32_MAX);
+    runtime = Result<RuntimeSchema>::success(std::move(donor));
+
+    // Every resolved type must still round-trip through the relocated runtime
+    // schema: the identifier must resolve back to the same source node.
+    std::uint32_t checked_types = UINT32_C(0);
+    for (const auto& entry : compiled.value().resolved().entries()) {
+        const std::uint32_t type_id = runtime.value().runtime_id(entry.type);
+        require(type_id != UINT32_MAX);
+        const RuntimeType* const type = runtime.value().find_type(type_id);
+        require(type != nullptr && type->source == &entry.type);
+        ++checked_types;
+    }
+    for (const auto& component : compiled.value().resolved().components()) {
+        for (const auto& field : component.fields) {
+            const std::uint32_t type_id = runtime.value().runtime_id(field.type);
+            require(type_id != UINT32_MAX);
+            const RuntimeType* const type =
+                runtime.value().find_type(type_id);
+            require(type != nullptr && type->source == &field.type);
+            ++checked_types;
+        }
+    }
+    require(checked_types >= root_type_count);
+    require(checked_types > UINT32_C(0));
+
+    // The relocated layout must still describe and encode the same bytes.
+    VectorSink sink(planned.value().total_length());
+    require(fastdb::payload::build::encode_record(
+                planned.value(), values.value(), sink)
+                .has_value());
+    require(sink.next_offset() == total_length);
+    require(planned.value().validation_work() > UINT64_C(0));
+    return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main() {
@@ -3623,6 +3751,9 @@ int main() {
         return EXIT_FAILURE;
     }
     if (test_task5_list_allocation_failure_sweeps() != EXIT_SUCCESS) {
+        return EXIT_FAILURE;
+    }
+    if (test_layout_ownership_moves_do_not_allocate() != EXIT_SUCCESS) {
         return EXIT_FAILURE;
     }
     if (test_binary_goldens_determinism_hash_and_headers() != EXIT_SUCCESS) {

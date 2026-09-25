@@ -460,17 +460,15 @@ class ProjectionMapTests(unittest.TestCase):
             relative: "\n".join(markers)
             for relative, markers in MODULE.DOCUMENTATION_MARKERS.items()
         }
-        sources["README.md"] = sources["README.md"].replace(
-            "P5 clean cut remains open",
-            "P5 local clean cut is complete at exact ABI-117.",
-        )
-        self.assertNotIn("P5 clean cut remains open", sources["README.md"])
-        self.assertIn(
-            "P5 local clean cut is complete at exact ABI-117.",
-            sources["README.md"],
-        )
-
+        status = "docs/issues/0002-portable-payload-foundation-implementation-status.md"
+        self.assertNotIn("P4 is locally complete", sources["README.md"])
+        self.assertNotIn("P5 local clean cut is complete", sources["README.md"])
         MODULE.check_documentation(sources.__getitem__)
+        for marker in ("P4 is locally complete", "exact ABI-117"):
+            changed = dict(sources)
+            changed[status] = changed[status].replace(marker, "missing readiness proof")
+            with self.assertRaises(MODULE.QualityError):
+                MODULE.check_documentation(changed.__getitem__)
 
     def test_rejects_abi_count_order_or_shape_drift(self) -> None:
         exact = [f"fdb_payload_v1_symbol_{index:03d}" for index in range(117)]

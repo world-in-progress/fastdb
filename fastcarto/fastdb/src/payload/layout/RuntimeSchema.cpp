@@ -9,6 +9,8 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -119,13 +121,21 @@ Result<RuntimeSchema> RuntimeSchema::compile(
 }
 
 std::uint32_t RuntimeSchema::runtime_id(const TypeNode& type) const noexcept {
-    const auto found = type_ids_.find(&type);
-    return found == type_ids_.end() ? UINT32_MAX : found->second;
+    if (type_ids_ == nullptr) {
+        // A moved-from schema owns no index; report an unknown type instead of
+        // dereferencing the empty publication.
+        return UINT32_MAX;
+    }
+    const auto found = type_ids_->find(&type);
+    return found == type_ids_->end() ? UINT32_MAX : found->second;
 }
 
 Result<void> RuntimeSchema::assign_topology(RuntimeTopology topology) {
     types_.reserve(topology.types.size());
-    type_ids_.reserve(topology.types.size());
+    // Fill a mutable local while a failed allocation can still be reported
+    // through the Result, then publish it as the immutable shared index.
+    TypeIds type_ids;
+    type_ids.reserve(topology.types.size());
     for (std::size_t index = 0U; index < topology.types.size(); ++index) {
         const spec::RuntimeTypeTopology& source = topology.types[index];
         if (source.source == nullptr ||
@@ -137,7 +147,7 @@ Result<void> RuntimeSchema::assign_topology(RuntimeTopology topology) {
                 "invalid_runtime_topology"));
         }
         const auto id = static_cast<std::uint32_t>(index);
-        const auto inserted = type_ids_.emplace(source.source, id);
+        const auto inserted = type_ids.emplace(source.source, id);
         if (!inserted.second) {
             return Result<void>::failure(runtime_error(
                 JsonPointer{}.append("runtime").append("types"),
@@ -150,6 +160,7 @@ Result<void> RuntimeSchema::assign_topology(RuntimeTopology topology) {
             topology_slot(source.source->kind, source.storage_role),
             source.storage_role, source.reachable});
     }
+    type_ids_ = std::make_shared<const TypeIds>(std::move(type_ids));
     reachable_components_ = std::move(topology.reachable_components);
     identity_component_flags_ = std::move(topology.identity_components);
     if (reachable_components_.size() !=
@@ -524,3 +535,15 @@ Result<void> RuntimeSchema::validate_list_metadata() const {
 }
 
 }  // namespace fastdb::payload::layout
+
+// A RuntimeSchema moves inside every plan ownership transfer (Result, the
+// ProfileLayout variant, BuildPlan).  Those transfers are noexcept, so a move
+// that allocated would turn an injected std::bad_alloc into std::terminate.
+// This assertion fails to compile if an allocating member is reintroduced.
+static_assert(
+    std::is_nothrow_move_constructible_v<
+        fastdb::payload::layout::RuntimeSchema>,
+    "RuntimeSchema must be nothrow move constructible");
+static_assert(
+    std::is_nothrow_move_assignable_v<fastdb::payload::layout::RuntimeSchema>,
+    "RuntimeSchema must be nothrow move assignable");

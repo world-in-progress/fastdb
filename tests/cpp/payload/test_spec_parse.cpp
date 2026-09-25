@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -441,10 +442,43 @@ int test_field_types_ids_cardinality_nullable_and_bounds() {
          "Normalized integer bounds are invalid",
          R"({"max":1,"min":2,"reason":"min_not_less_than_max"})"},
     }};
-    for (const ErrorCase& expected : cases) {
-        require(has_error(parse_source(expected.source), expected.code,
-                          expected.path, expected.message,
-                          expected.details));
+    // One parse per row; the failed-row diagnostic never re-parses.
+    for (std::size_t row = 0; row < cases.size(); ++row) {
+        const ErrorCase& expected = cases[row];
+        const Result<SourceSpec> parsed = parse_source(expected.source);
+        if (!has_error(parsed, expected.code, expected.path, expected.message,
+                       expected.details)) {
+            std::fprintf(stderr,
+                         "[fastdb-diag] spec_parse failed row=%zu "
+                         "expected_code=%u expected_path=%.*s\n",
+                         row, expected.code,
+                         static_cast<int>(expected.path.size()),
+                         expected.path.empty() ? "" : expected.path.data());
+            if (parsed.has_value()) {
+                std::fputs(
+                    "[fastdb-diag] spec_parse actual=<parsed successfully>\n",
+                    stderr);
+            } else {
+                const Error& actual = parsed.error();
+                const std::string_view actual_path = actual.path();
+                const std::string_view actual_message = actual.message();
+                const std::string_view actual_details = actual.details_json();
+                std::fprintf(
+                    stderr,
+                    "[fastdb-diag] spec_parse actual_code=%u "
+                    "actual_path=%.*s actual_message=%.*s "
+                    "actual_details=%.*s\n",
+                    actual.code(), static_cast<int>(actual_path.size()),
+                    actual_path.empty() ? "" : actual_path.data(),
+                    static_cast<int>(actual_message.size()),
+                    actual_message.empty() ? "" : actual_message.data(),
+                    static_cast<int>(actual_details.size()),
+                    actual_details.empty() ? "" : actual_details.data());
+            }
+            std::fflush(stderr);
+        }
+        require(has_error(parsed, expected.code, expected.path,
+                          expected.message, expected.details));
     }
 
     auto valid_ids = parse_source(R"({

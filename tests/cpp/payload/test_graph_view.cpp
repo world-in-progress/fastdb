@@ -789,7 +789,7 @@ int test_lifetime_invalidation_and_concurrency(
     readers.reserve(thread_count);
     for (std::uint32_t thread = UINT32_C(0); thread < thread_count;
          ++thread) {
-        readers.emplace_back([root, reference, &failures] {
+        readers.emplace_back([root, reference, &failures, iterations = iterations] {
             for (std::uint32_t iteration = UINT32_C(0);
                  iteration < iterations; ++iteration) {
                 auto target = reference.ref_target();

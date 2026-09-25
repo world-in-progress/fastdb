@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -258,7 +259,9 @@ struct SerializationFrame final {
 
 std::optional<JcsFailure> serialize_value(const JsonValue& value,
                                           std::string& output) {
-    std::vector<SerializationFrame> frames;
+    // Chunked frames keep one live frame per open container without the
+    // doubling reallocation churn of a vector on deeply nested values.
+    std::deque<SerializationFrame> frames;
     frames.emplace_back(value);
 
     while (!frames.empty()) {

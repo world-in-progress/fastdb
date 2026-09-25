@@ -12,6 +12,7 @@
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -1136,3 +1137,13 @@ Result<GraphLayout> GraphLayout::plan(
 }
 
 }  // namespace fastdb::payload::layout
+
+// A GraphLayout travels through the same noexcept ownership transfers as
+// RecordLayout; see RuntimeSchema.cpp for the failure this guards against.
+static_assert(
+    std::is_nothrow_move_constructible_v<
+        fastdb::payload::layout::GraphLayout>,
+    "GraphLayout must be nothrow move constructible");
+static_assert(
+    std::is_nothrow_move_assignable_v<fastdb::payload::layout::GraphLayout>,
+    "GraphLayout must be nothrow move assignable");

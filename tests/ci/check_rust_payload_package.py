@@ -18,7 +18,6 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 RUST_ROOT = ROOT / "bindings/rust"
-PACKAGE_VERSION = "0.2.0"
 PACKAGE_REQUIRED = {
     "fastdb-sys": {
         ".cargo_vcs_info.json",
@@ -57,6 +56,60 @@ FORBIDDEN_PARTS = {
 
 class CheckError(RuntimeError):
     """The Rust package/link boundary is incomplete."""
+
+
+def read_owner_manifest(package: str) -> str:
+    manifest = RUST_ROOT / package / "Cargo.toml"
+    try:
+        return manifest.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        raise CheckError(
+            f"cannot read authoritative {package} manifest {manifest}: {error}"
+        ) from error
+
+
+def crate_manifest_version(package: str, source: str) -> str:
+    """Extract the final release version from an authoritative crate manifest."""
+    section = re.search(r"(?ms)^\[package\]\s*$(.*?)(?=^\[|\Z)", source)
+    if section is None:
+        raise CheckError(f"{package} crate manifest lacks a [package] section")
+    version = re.search(
+        r'(?m)^version\s*=\s*"([^"]+)"\s*$', section.group(1)
+    )
+    if version is None:
+        raise CheckError(
+            f"{package} crate manifest does not declare a version"
+        )
+    release = version.group(1)
+    if re.fullmatch(r"\d+\.\d+\.\d+", release) is None:
+        raise CheckError(
+            f"{package} crate version must be a final release: {release!r}"
+        )
+    return release
+
+
+def coherent_release_version(versions: dict[str, str]) -> str:
+    unique = set(versions.values())
+    if len(unique) != 1:
+        rendered = ", ".join(
+            f"{package}={version}"
+            for package, version in sorted(versions.items())
+        )
+        raise CheckError(
+            f"Rust release crates must share one version: {rendered}"
+        )
+    (version,) = unique
+    return version
+
+
+# The release identity must track the authoritative crate manifests instead of
+# a checker-local literal, so version bumps never desynchronize the gate.
+PACKAGE_VERSION = coherent_release_version(
+    {
+        package: crate_manifest_version(package, read_owner_manifest(package))
+        for package in sorted(PACKAGE_REQUIRED)
+    }
+)
 
 
 def run(
@@ -569,7 +622,7 @@ fn main() {
     opened.invalidate().expect("invalidate");
     assert_eq!(view.kind().expect_err("checked view must reject stale use").symbol(), "VIEW_INVALIDATED");
     assert_eq!(detached.get_u8().expect("detached value survives"), 37);
-    println!("FastDB 0.2.0 packaged system consumer: compile/codegen/build/open/view/materialize/invalidate passed");
+    println!("FastDB ''' + PACKAGE_VERSION + r''' packaged system consumer: compile/codegen/build/open/view/materialize/invalidate passed");
 }
 ''',
         encoding="utf-8",
@@ -641,6 +694,30 @@ def check_extracted_system_consumer(
     )
 
 
+def windows_runtime_dll(
+    import_library: Path, platform: str = sys.platform
+) -> Path | None:
+    """Return the runtime DLL that must ship beside the Windows import library.
+
+    Rust system linkage compiles and links against fastdb.lib, but the
+    packaged consumer's test binary loads fastdb.dll at run time; relocating
+    only the import library would produce a package that cannot execute.
+    """
+    if platform != "win32":
+        return None
+    if import_library.suffix.lower() != ".lib":
+        raise CheckError(
+            "Windows system link requires the fastdb.lib import library, "
+            f"received {import_library.name}"
+        )
+    runtime = import_library.with_suffix(".dll")
+    if not runtime.is_file():
+        raise CheckError(
+            f"Windows import library is missing its runtime DLL: {runtime}"
+        )
+    return runtime
+
+
 def check_relocated_system_consumer(
     library: Path, package_dir: Path | None = None,
 ) -> None:
@@ -657,6 +734,9 @@ def check_relocated_system_consumer(
         bundle.mkdir(parents=True)
         relocated = bundle / library.name
         shutil.copy2(library, relocated)
+        runtime = windows_runtime_dll(library)
+        if runtime is not None:
+            shutil.copy2(runtime, bundle / runtime.name)
         check_extracted_system_consumer(
             extracted, relocated, root / "consumer"
         )
