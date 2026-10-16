@@ -8,6 +8,7 @@ All notable changes to `fastdb` and its bindings are documented here. Release en
 - Publish through GitHub OIDC from version tags. Manual tag backfills upload only missing filenames and reject known-expired PyPI releases before building and before staging; PyPI's 14-day limit prevents supplementing 0.2.1.
 - Keep the existing Core implementation, portable format and ABI-117 unchanged while synchronizing the Python, Rust, TypeScript and Core release version.
 - Publication evidence is tracked in [the 0.2.2 release record](docs/releases/0.2.2.md).
+- Keep Rust's checked atomic retain compatible with older edition-2024 compilers while allowing the strict-warning build on Rust 1.99, which deprecated the original method name.
 
 ## 0.2.0 — release preparation
 
