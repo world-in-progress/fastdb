@@ -2,7 +2,7 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
-## 0.2.2 — release preparation
+## 0.2.2 — 2026-10-16
 
 - Build and test Python wheels for macOS arm64/x86_64, manylinux_2_28 x86_64/aarch64 and Windows amd64 on CPython 3.12, 3.13, 3.14 and 3.14 free-threaded. Require all 20 wheels plus the sdist before publication.
 - Publish through GitHub OIDC from version tags. Manual tag backfills upload only missing filenames and reject known-expired PyPI releases before building and before staging; PyPI's 14-day limit prevents supplementing 0.2.1.
