@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing version tag to backfill (for example v0.2.1)
+        description: Existing version tag still within PyPI's 14-day upload window
         required: true
         type: string
 
@@ -41,6 +41,11 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: python tests/ci/python_distributions.py resolve --tag "$RELEASE_TAG"
+      - name: Reject expired PyPI backfills before building distributions
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          RELEASE_VERSION: ${{ steps.source.outputs.version }}
+        run: python tests/ci/python_distributions.py check-backfill --version "$RELEASE_VERSION"
       - name: Require complete CI evidence for the tag's exact source
         env:
           RELEASE_SOURCE_SHA: ${{ steps.source.outputs.source_sha }}

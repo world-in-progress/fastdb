@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
 import io
 import json
 import os
@@ -113,9 +114,9 @@ class PythonDistributionTests(unittest.TestCase):
         records = self.inventory()
         missing = [item for item in records if item.get("platform") in {"manylinux_aarch64", "macosx_x86_64"}]
         missing_names = {item["name"] for item in missing}
-        existing = [{"filename": item["name"], "digests": {"sha256": "old, independently built bytes"}} for item in records if item["name"] not in missing_names]
+        existing = [{"filename": item["name"], "digests": {"sha256": "old, independently built bytes"}, "upload_time_iso_8601": datetime.now(timezone.utc).isoformat()} for item in records if item["name"] not in missing_names]
         # Historical 3.10/3.11 files remain published, outside the new matrix.
-        existing.append({"filename": "fastdb4py-0.2.1-cp310-cp310-win_amd64.whl"})
+        existing.append({"filename": "fastdb4py-0.2.1-cp310-cp310-win_amd64.whl", "upload_time_iso_8601": datetime.now(timezone.utc).isoformat()})
         with patch("publish_release.request_json", return_value={"urls": existing}):
             pending = distributions.stage(records, self.dist, self.root / "upload", "0.2.1", True)
         self.assertEqual(len(pending), 8)
@@ -175,6 +176,39 @@ class PythonDistributionTests(unittest.TestCase):
         selected_tests.mkdir(parents=True)
         self.assertEqual(actual, selected_tests)
         self.assertTrue(actual.is_dir())
+
+
+class PyPIBackfillWindowTests(unittest.TestCase):
+    def test_expired_release_is_rejected_before_staging_missing_files(self):
+        registry = {"urls": [{"filename": "existing.whl", "upload_time_iso_8601": "2000-01-01T00:00:00Z"}]}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "missing.whl").write_bytes(b"new wheel")
+            with patch("publish_release.request_json", return_value=registry):
+                with self.assertRaisesRegex(ReleaseError, "14-day upload window"):
+                    distributions.stage([{"name": "missing.whl"}], root, root / "upload", "0.2.1", True)
+            self.assertFalse((root / "upload").exists())
+
+    def test_old_release_without_missing_files_remains_a_noop(self):
+        registry = {"urls": [{"filename": "existing.whl", "upload_time_iso_8601": "2000-01-01T00:00:00Z"}]}
+        with tempfile.TemporaryDirectory() as temporary, patch("publish_release.request_json", return_value=registry):
+            root = Path(temporary)
+            self.assertEqual(distributions.stage([{"name": "existing.whl"}], root, root / "upload", "0.2.1", True), [])
+
+    def test_window_boundary_and_oldest_surviving_upload(self):
+        first = datetime(2026, 9, 25, 3, 21, 33, 33058, tzinfo=timezone.utc)
+        registry = {"urls": [{"upload_time_iso_8601": (first + timedelta(days=13)).isoformat()}, {"upload_time_iso_8601": first.isoformat()}]}
+        for age in (timedelta(days=13), timedelta(days=14)):
+            with self.subTest(age=age):
+                result = distributions.check_backfill_window("0.2.1", now=first + age, registry=registry)
+                self.assertEqual(result["first_existing_upload"], first.isoformat())
+        with self.assertRaisesRegex(ReleaseError, "14-day upload window"):
+            distributions.check_backfill_window("0.2.1", now=first + timedelta(days=14, seconds=1), registry=registry)
+
+    def test_missing_or_invalid_timestamps_fail_clearly(self):
+        for urls in ([], [{}], [{"upload_time_iso_8601": "invalid"}], [{"upload_time_iso_8601": "2026-10-16T00:00:00"}]):
+            with self.subTest(urls=urls), self.assertRaisesRegex(ReleaseError, "upload timestamps"):
+                distributions.check_backfill_window("0.2.1", registry={"urls": urls})
 
 
 if __name__ == "__main__":

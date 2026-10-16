@@ -113,7 +113,10 @@ uses a native runner; macOS Intel cross-builds on arm64 and tests with Rosetta.
 The publishing job uses GitHub OIDC with no environment declared. A manual
 dispatch from `main` takes an existing `tag`, uses the current workflow with
 that tag's exact source and CI proofs, compares its published sdist source,
-and uploads only missing filenames with `skip-existing`. Do not move old tags.
+and uploads only missing filenames with `skip-existing`. PyPI rejects new
+files for releases older than 14 days; manual backfills check this before
+building and again before staging missing files. Expired releases need a new
+version. Do not move old tags.
 
 Rust and npm publication is a manual workflow dispatch from that source on
 `main`, or from its matching `v<version>` tag after `main` advances. Supply the
