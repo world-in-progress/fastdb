@@ -76,10 +76,10 @@ def assert_dispatch_ref(version: str | None = None) -> None:
         raise ReleaseError("Release tag must match the verified manifest version")
 
 
-def check_ci(run_id: str, commit: str) -> dict:
+def check_ci(run_id: str, commit: str, *, require_workflow_source: bool = True) -> dict:
     if re.fullmatch(r"[0-9a-f]{40}", commit) is None or not run_id.isdigit():
         raise ReleaseError("A full source SHA and numeric artifact run ID are required")
-    if os.environ.get("GITHUB_SHA") is not None and os.environ["GITHUB_SHA"] != commit:
+    if require_workflow_source and os.environ.get("GITHUB_SHA") is not None and os.environ["GITHUB_SHA"] != commit:
         raise ReleaseError("Publication workflow SHA must equal the artifact source SHA for registry provenance")
     assert_dispatch_ref()
     run = github(f"actions/runs/{run_id}")

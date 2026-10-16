@@ -19,7 +19,7 @@ import tomllib
 import zipfile
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(os.environ.get("FASTDB_RELEASE_SOURCE", Path(__file__).resolve().parents[2])).resolve()
 SCHEMA = "fastdb.release-manifest.v1"
 FRAGMENT_SCHEMA = "fastdb.release-fragment.v1"
 TARGETS = (
@@ -35,27 +35,56 @@ TARGET_MACHINES = {
     # Windows reports AMD64 for the x86_64 MSVC target.
     "x86_64-pc-windows-msvc": frozenset({"amd64", "x86_64"}),
 }
-PYTHON_ABIS = ("cp310", "cp311", "cp312", "cp313", "cp314", "cp314t")
+PYTHON_ABIS = ("cp312", "cp313", "cp314", "cp314t")
+WHEEL_TARGETS = (*TARGETS, "aarch64-unknown-linux-gnu", "x86_64-apple-darwin")
 PARTS = (
     "core-linux",
     "core-macos",
     "core-windows",
-    "wheels-linux",
-    "wheels-macos",
-    "wheels-windows",
-    "sdist",
+    "python",
     "typescript",
 )
-# Wheel platform tag prefix -> the release target it must be recorded under.
+# Wheel platform -> the release target it must be recorded under.
 WHEEL_PLATFORM_TARGETS = {
-    "manylinux": "x86_64-unknown-linux-gnu",
-    "macosx_": "aarch64-apple-darwin",
+    "manylinux_x86_64": "x86_64-unknown-linux-gnu",
+    "manylinux_aarch64": "aarch64-unknown-linux-gnu",
+    "macosx_arm64": "aarch64-apple-darwin",
+    "macosx_x86_64": "x86_64-apple-darwin",
     "win_amd64": "x86_64-pc-windows-msvc",
 }
 
 
 class ReleaseError(RuntimeError):
     pass
+
+
+def wheel_identity(name: str, version: str) -> tuple[str, str]:
+    match = re.fullmatch(rf"fastdb4py-{re.escape(version)}-(cp\d+)-(cp\d+t?)-(.+)\.whl", name)
+    if match is None:
+        raise ReleaseError(f"Unexpected wheel name/version: {name}")
+    python, abi, platforms = match.groups()
+    if abi not in {python, python + "t"}:
+        raise ReleaseError(f"Unexpected Python/ABI pair: {name}")
+    identities = set()
+    for tag in platforms.split("."):
+        if tag == "win_amd64":
+            identities.add(tag)
+        elif linux := re.fullmatch(r"manylinux_2_(\d+)_(x86_64|aarch64)", tag):
+            if int(linux[1]) > 28:
+                raise ReleaseError(f"Wheel exceeds the manylinux 2_28 baseline: {name}")
+            identities.add("manylinux_" + linux[2])
+        elif macos := re.fullmatch(r"macosx_(\d+)_(\d+)_(arm64|x86_64)", tag):
+            if (int(macos[1]), int(macos[2])) > (11, 0):
+                raise ReleaseError(f"Wheel exceeds the macOS 11 deployment target: {name}")
+            identities.add("macosx_" + macos[3])
+        else:
+            raise ReleaseError(f"Unexpected wheel platform (manylinux must be 2_28): {name}")
+    if len(identities) != 1:
+        raise ReleaseError(f"Mixed wheel architectures/platforms: {name}")
+    identity = identities.pop()
+    if identity.startswith("manylinux_") and f"manylinux_2_28_{identity[10:]}" not in platforms.split("."):
+        raise ReleaseError(f"Wheel omits the manylinux 2_28 tag: {name}")
+    return abi, identity
 
 
 def digest(path: Path) -> str:
@@ -220,13 +249,8 @@ def record_part(output: Path, part: str, target: str | None) -> None:
             continue
         if path.name.endswith(".whl"):
             abi = inspect_wheel(path, release_version)
-            platform_tag = path.stem.split("-")[-1]
-            if part == "wheels-linux" and ("manylinux" not in platform_tag or not platform_tag.endswith("x86_64")):
-                raise ReleaseError(f"Linux release wheel is not manylinux x86_64: {path.name}")
-            if part == "wheels-macos" and (not platform_tag.startswith("macosx_") or not platform_tag.endswith("arm64")):
-                raise ReleaseError(f"macOS release wheel is not arm64: {path.name}")
-            if part == "wheels-windows" and not platform_tag.endswith("win_amd64"):
-                raise ReleaseError(f"Windows release wheel is not win_amd64: {path.name}")
+            if part == "python":
+                target = wheel_platform_target(path.name)
             item = file_record(path, kind="python-wheel", target=target)
             item["python_abi"] = abi
         elif path.name.startswith("fastdb-core-") and path.name.endswith(".tar.gz"):
@@ -251,18 +275,8 @@ def record_part(output: Path, part: str, target: str | None) -> None:
 
 
 def wheel_platform_target(name: str) -> str:
-    platform_tag = name[: -len(".whl")].split("-")[-1]
-    if platform_tag.startswith("manylinux"):
-        if not platform_tag.endswith("x86_64"):
-            raise ReleaseError(f"Unsupported manylinux wheel tag: {name}")
-        return WHEEL_PLATFORM_TARGETS["manylinux"]
-    if platform_tag.startswith("macosx_"):
-        if not platform_tag.endswith("arm64"):
-            raise ReleaseError(f"Unsupported macOS wheel tag: {name}")
-        return WHEEL_PLATFORM_TARGETS["macosx_"]
-    if platform_tag == "win_amd64":
-        return WHEEL_PLATFORM_TARGETS["win_amd64"]
-    raise ReleaseError(f"Unknown release wheel platform tag: {name}")
+    _, platform = wheel_identity(name, name.split("-")[1])
+    return WHEEL_PLATFORM_TARGETS[platform]
 
 
 def check_complete(records: list[dict], release_version: str) -> None:
@@ -277,11 +291,15 @@ def check_complete(records: list[dict], release_version: str) -> None:
     for item in records:
         if item["kind"] != "python-wheel":
             continue
+        # Do not trust the fragment's version/ABI declaration over its filename.
+        abi, _ = wheel_identity(item["name"], release_version)
+        if item["python_abi"] != abi:
+            raise ReleaseError(f"Python ABI differs from the wheel filename: {item['name']}")
         if item["target"] != wheel_platform_target(item["name"]):
             raise ReleaseError(
                 f"Mistagged Python wheel recorded under {item['target']}: {item['name']}"
             )
-    for target in TARGETS:
+    for target in WHEEL_TARGETS:
         wheels = [item for item in records if item["kind"] == "python-wheel" and item["target"] == target]
         if sorted(item["python_abi"] for item in wheels) != sorted(PYTHON_ABIS):
             raise ReleaseError(f"Incomplete Python ABI wheel set for {target}")

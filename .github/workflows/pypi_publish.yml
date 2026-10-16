@@ -1,14 +1,12 @@
 name: Publish to PyPI
 
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
-      candidate_run_id:
-        description: Successful Release Artifacts run ID from main
-        required: true
-        type: string
-      source_sha:
-        description: Exact 40-character tested source SHA
+      tag:
+        description: Existing version tag to backfill (for example v0.2.1)
         required: true
         type: string
 
@@ -21,50 +19,98 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    if: ${{ github.repository == 'world-in-progress/fastdb' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) }}
+  source:
+    if: >-
+      github.repository == 'world-in-progress/fastdb' &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      RELEASE_RUN_ID: ${{ inputs.candidate_run_id }}
-      RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
-      GH_TOKEN: ${{ github.token }}
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Require complete proof and artifact runs for the exact source
-        run: >-
-          python3 tests/ci/publish_release.py check-ci
-          --run-id "$RELEASE_RUN_ID" --source-sha "$RELEASE_SOURCE_SHA"
+      - name: Resolve an existing version tag on main
+        id: source
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: python tests/ci/python_distributions.py resolve --tag "$RELEASE_TAG"
+      - name: Require complete CI evidence for the tag's exact source
+        env:
+          RELEASE_SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: python tests/ci/python_distributions.py check-ci --source-sha "$RELEASE_SOURCE_SHA"
+
+  distributions:
+    needs: source
+    uses: ./.github/workflows/python-distributions.yml
+    with:
+      source_sha: ${{ needs.source.outputs.source_sha }}
+
+  prepare:
+    needs: [source, distributions]
+    runs-on: ubuntu-24.04
+    outputs:
+      pending: ${{ steps.stage.outputs.pending }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.source.outputs.source_sha }}
+          path: source
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
       - uses: actions/download-artifact@v8
         with:
-          name: portable-release-${{ inputs.source_sha }}
-          path: release
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.candidate_run_id }}
-      - name: Verify hashes and prepare only missing registry artifacts
-        id: prepare
-        run: >-
-          python3 tests/ci/publish_release.py prepare
-          --directory release --output stage --ecosystem pypi
-          --run-id "$RELEASE_RUN_ID" --source-sha "$RELEASE_SOURCE_SHA"
-      - uses: astral-sh/setup-uv@v6
-      - name: Upload tested Python distributions
-        if: steps.prepare.outputs.pending == 'true'
+          name: release-part-python
+          path: dist
+      - name: Recheck the complete inventory, then select upload files
+        id: stage
         env:
-          UV_PUBLISH_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: uv publish stage/packages/*
-      - name: Verify registry bytes and retain publication receipt
-        run: python3 tests/ci/publish_release.py verify-registry --stage stage
+          PYTHON_BUILD: ${{ needs.distributions.outputs.build }}
+          WHEEL_PLATFORMS: ${{ needs.distributions.outputs.platforms }}
+          BACKFILL: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          extra=()
+          if [ "$BACKFILL" = true ]; then extra+=(--backfill); fi
+          python release-tools/tests/ci/python_distributions.py stage \
+            --directory dist --source source --output upload \
+            --build "$PYTHON_BUILD" --platforms "$WHEEL_PLATFORMS" "${extra[@]}"
       - uses: actions/upload-artifact@v7
-        if: always()
+        if: steps.stage.outputs.pending == 'true'
         with:
-          name: pypi-publication-${{ inputs.source_sha }}
-          path: |
-            stage/publish-plan.json
-            stage/published.json
-          if-no-files-found: warn
+          name: pypi-upload
+          path: upload/
+          if-no-files-found: error
+
+  publish:
+    needs: prepare
+    if: needs.prepare.outputs.pending == 'true'
+    runs-on: ubuntu-24.04
+    # Preserve this workflow filename and the publisher's environment identity.
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: pypi-upload
+          path: dist
+      - name: Publish through the existing PyPI trusted publisher
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          skip-existing: ${{ github.event_name == 'workflow_dispatch' }}
+          # Backfills build a tag using a newer controller; do not attest that
+          # the controller's main SHA is the package's source revision.
+          attestations: ${{ github.event_name != 'workflow_dispatch' }}
+          print-hash: true

@@ -105,12 +105,22 @@ commit. Update all package metadata and lockfiles together, and run the
 relevant local checks before opening the release PR. The exact merged source
 must pass both `tests.yml` and `release-artifacts.yml` on `main`.
 
-Publication is a manual workflow dispatch from that source on `main`, or from
-its matching `v<version>` tag when retrying after `main` advances. Supply the
+Python publication uses `pypi_publish.yml`: a `v<version>` tag push builds all
+five wheel platforms for cp312, cp313, cp314 and cp314t, plus an sdist, using
+`python-distributions.yml`. All installed wheels run read/write and payload
+checks, and the complete inventory is checked before PyPI upload. Linux arm64
+uses a native runner; macOS Intel cross-builds on arm64 and tests with Rosetta.
+The publishing job uses GitHub OIDC with no environment declared. A manual
+dispatch from `main` takes an existing `tag`, uses the current workflow with
+that tag's exact source and CI proofs, compares its published sdist source,
+and uploads only missing filenames with `skip-existing`. Do not move old tags.
+
+Rust and npm publication is a manual workflow dispatch from that source on
+`main`, or from its matching `v<version>` tag after `main` advances. Supply the
 successful Release Artifacts run ID and full source SHA. The publishing
 helpers validate the proof run, source identity, manifest and artifact hashes;
 they upload the tested archives and only accept existing registry versions
-whose hashes match. Do not rebuild packages inside publication jobs or move
+whose hashes match. Do not rebuild packages inside upload jobs or move
 an existing release tag. See the [0.2.0 release record](docs/releases/0.2.0.md)
 for the complete package inventory and verified evidence.
 

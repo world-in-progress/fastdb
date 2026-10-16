@@ -25,6 +25,7 @@ jobs:
           python3 tests/ci/release_artifacts.py version
           python3 tests/ci/test_release_artifacts.py
           python3 tests/ci/test_publish_release.py
+          python3 tests/ci/test_python_distributions.py
           python3 tests/ci/test_check_payload_abi_symbols.py
 
   native:
@@ -141,91 +142,11 @@ jobs:
           name: native-logs-${{ matrix.part }}
           path: build/release/Testing/Temporary/
 
-  wheels:
+  python:
     needs: metadata
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            arch: x86_64
-            part: wheels-linux
-          - os: macos-15
-            target: aarch64-apple-darwin
-            arch: arm64
-            part: wheels-macos
-          - os: windows-2022
-            target: x86_64-pc-windows-msvc
-            arch: AMD64
-            part: wheels-windows
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Build repaired wheels and test installed payload projections
-        uses: pypa/cibuildwheel@v3.4.0
-        env:
-          CIBW_ARCHS: ${{ matrix.arch }}
-          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-* cp314t-*"
-          CIBW_ENABLE: cpython-freethreading
-          CIBW_SKIP: "*musllinux*"
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_ENVIRONMENT_LINUX: "PIP_ONLY_BINARY=numpy"
-          CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=11.0"
-          CIBW_TEST_REQUIRES: pytest
-          CIBW_TEST_COMMAND: "python -m pytest {project}/tests/python/payload -q"
-      - name: Verify release wheel identities and record bytes
-        if: runner.os != 'Windows'
-        env:
-          RELEASE_TARGET: ${{ matrix.target }}
-          RELEASE_PART: ${{ matrix.part }}
-        run: >-
-          python3 tests/ci/release_artifacts.py record
-          --output wheelhouse --part "$RELEASE_PART" --target "$RELEASE_TARGET"
-      - name: Verify release wheel identities and record bytes (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        env:
-          RELEASE_TARGET: ${{ matrix.target }}
-          RELEASE_PART: ${{ matrix.part }}
-        run: >-
-          python tests/ci/release_artifacts.py record
-          --output wheelhouse --part "$env:RELEASE_PART" --target "$env:RELEASE_TARGET"
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-part-${{ matrix.part }}
-          path: wheelhouse/
-          if-no-files-found: error
-
-  sdist:
-    needs: metadata
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.sha }}
-      - uses: astral-sh/setup-uv@v6
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.12"
-      - name: Build and install source distribution in isolation
-        run: |
-          uv build --sdist --out-dir dist --no-create-gitignore
-          uv run --isolated --no-project --with ./dist/fastdb4py-*.tar.gz \
-            --with pytest python -m pytest tests/python/payload -q
-          python3 tests/ci/release_artifacts.py record --output dist --part sdist
-      - uses: actions/upload-artifact@v7
-        with:
-          name: release-part-sdist
-          path: dist/
-          if-no-files-found: error
+    uses: ./.github/workflows/python-distributions.yml
+    with:
+      source_sha: ${{ github.sha }}
 
   typescript:
     needs: metadata
@@ -261,7 +182,7 @@ jobs:
           if-no-files-found: error
 
   candidate:
-    needs: [native, wheels, sdist, typescript]
+    needs: [native, python, typescript]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6

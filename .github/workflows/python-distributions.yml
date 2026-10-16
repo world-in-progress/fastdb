@@ -1,0 +1,152 @@
+name: Python distributions
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact source commit to build, independent of the workflow revision
+        required: true
+        type: string
+    outputs:
+      build:
+        value: ${{ jobs.inventory.outputs.build }}
+      platforms:
+        value: ${{ jobs.inventory.outputs.platforms }}
+
+permissions:
+  contents: read
+
+# Keep release policy here, outside the package and the selected source tag.
+env:
+  CIBW_BUILD: "cp312-* cp313-* cp314-* cp314t-*"
+  CIBW_ENABLE: cpython-freethreading
+  CIBW_SKIP: "*musllinux*"
+  CIBW_TEST_SKIP: ""
+  CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+  CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+  CIBW_ENVIRONMENT_LINUX: "PIP_ONLY_BINARY=numpy"
+  CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=11.0"
+  CIBW_TEST_REQUIRES: pytest
+  CIBW_TEST_COMMAND: >-
+    python -c "import json; import fastdb4py; from fastdb4py.payload import CompiledSpec, Builder, BuildPolicy, Payload; spec = CompiledSpec.compile(json.dumps(dict(schema='fastdb.payload.v1', profile='record.v1', entries=[dict(id='value', cardinality='one', type=dict(kind='u32'))], components=[])).encode()); builder = Builder.create(spec); builder.entry_begin(0, 1).value_u32(42); plan = builder.freeze(); payload = plan.execute(BuildPolicy.ALLOW_STAGING).payload; decoded = Payload.open_copy(spec, payload.binary_bytes()); assert decoded.entry_view(0).at(0).get_u32() == 42; print('fastdb4py installed wheel read/write OK')"
+    && python -m pytest "{package}/tests/python/payload" -q
+  FASTDB_WHEEL_PLATFORMS: "macosx_arm64 macosx_x86_64 manylinux_x86_64 manylinux_aarch64 win_amd64"
+
+jobs:
+  wheels:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            platform: macosx_arm64
+            arch: arm64
+          # Cross-build on Apple Silicon; cibuildwheel tests x86_64 via Rosetta.
+          # This matches local validation and uses the same runner image as arm64.
+          - os: macos-15
+            platform: macosx_x86_64
+            arch: x86_64
+          - os: ubuntu-24.04
+            platform: manylinux_x86_64
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            platform: manylinux_aarch64
+            arch: aarch64
+          - os: windows-2022
+            platform: win_amd64
+            arch: AMD64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Require a native Linux runner of the selected architecture
+        if: runner.os == 'Linux'
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - name: Require Apple Silicon for both macOS builds and their tests
+        if: runner.os == 'macOS'
+        run: test "$(uname -m)" = arm64
+      - name: Require Rosetta execution for Intel macOS wheel tests
+        if: matrix.platform == 'macosx_x86_64'
+        run: arch -x86_64 /bin/bash -c 'echo Rosetta execution available'
+      - name: Build, repair and test each installed wheel
+        uses: pypa/cibuildwheel@v3.4.0
+        with:
+          package-dir: source
+          output-dir: wheelhouse
+        env:
+          CIBW_ARCHS: ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-wheels-${{ matrix.platform }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  sdist:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Build the tagged source distribution
+        run: uv build source --sdist --out-dir "$GITHUB_WORKSPACE/dist" --no-create-gitignore
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  inventory:
+    needs: [wheels, sdist]
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.policy.outputs.build }}
+      platforms: ${{ steps.policy.outputs.platforms }}
+    steps:
+      # Tooling comes from the calling workflow revision, even for an old tag.
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: python-*
+          path: dist
+          merge-multiple: true
+      - name: Require all 20 wheels and the sdist before retaining a release part
+        id: policy
+        env:
+          FASTDB_RELEASE_SOURCE: ${{ github.workspace }}/source
+        run: |
+          python release-tools/tests/ci/python_distributions.py inventory \
+            --directory dist --source source \
+            --build "$CIBW_BUILD" --platforms "$FASTDB_WHEEL_PLATFORMS"
+          python release-tools/tests/ci/release_artifacts.py record --output dist --part python
+          echo "build=$CIBW_BUILD" >> "$GITHUB_OUTPUT"
+          echo "platforms=$FASTDB_WHEEL_PLATFORMS" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-part-python
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30

@@ -79,13 +79,17 @@ class ReleaseInventoryTests(unittest.TestCase):
             "x86_64-unknown-linux-gnu": "manylinux_2_28_x86_64",
             "aarch64-apple-darwin": "macosx_11_0_arm64",
             "x86_64-pc-windows-msvc": "win_amd64",
+            "aarch64-unknown-linux-gnu": "manylinux_2_28_aarch64",
+            "x86_64-apple-darwin": "macosx_11_0_x86_64",
         }
         for target in release.TARGETS:
             core = root / f"fastdb-core-0.2.0-{target}.tar.gz"
             core.write_bytes(b"tested core")
             records.append(release.file_record(core, kind="core-bundle", target=target))
+        for target in release.WHEEL_TARGETS:
             for abi in release.PYTHON_ABIS:
-                wheel = root / f"fastdb4py-0.2.0-{abi}-{abi}-{platform_tags[target]}.whl"
+                python = abi.removesuffix("t")
+                wheel = root / f"fastdb4py-0.2.0-{python}-{abi}-{platform_tags[target]}.whl"
                 wheel.write_bytes(b"tested wheel")
                 record = release.file_record(wheel, kind="python-wheel", target=target)
                 record["python_abi"] = abi
@@ -113,10 +117,23 @@ class ReleaseInventoryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             document = self.candidate(root)
-            document["artifacts"] = [record for record in document["artifacts"] if record.get("python_abi") != "cp310"]
+            document["artifacts"] = [record for record in document["artifacts"] if record.get("python_abi") != "cp312"]
             release.write_json(root / "release-manifest.json", document)
             with self.assertRaisesRegex(release.ReleaseError, "Incomplete Python ABI"):
                 release.verify(root, "a" * 40)
+
+    def test_manifest_cannot_override_a_wheel_filename_version_or_abi(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for wrong in ("version", "abi"):
+                document = self.candidate(root)
+                record = next(item for item in document["artifacts"] if item["kind"] == "python-wheel")
+                if wrong == "version":
+                    record["name"] = record["name"].replace("-0.2.0-", "-0.2.1-")
+                else:
+                    record["python_abi"] = "cp314t"
+                with self.subTest(wrong=wrong), self.assertRaises(release.ReleaseError):
+                    release.check_complete(document["artifacts"], "0.2.0")
 
     def test_duplicate_and_escaping_artifact_names_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -191,7 +208,7 @@ class ReleaseInventoryTests(unittest.TestCase):
                 with self.assertRaisesRegex(release.ReleaseError, "native"):
                     release.make_core(build.parent.parent, root / "dist3", release.WINDOWS_TARGET)
 
-    def test_windows_wheel_part_requires_win_amd64_tag(self):
+    def test_python_part_records_platform_and_real_freethreaded_abi(self):
         def write_wheel(directory: Path, name: str) -> None:
             with zipfile.ZipFile(directory / name, "w") as archive:
                 archive.writestr("fastdb4py-0.2.0.dist-info/METADATA", "Name: fastdb4py\nVersion: 0.2.0\n")
@@ -200,18 +217,19 @@ class ReleaseInventoryTests(unittest.TestCase):
                 archive.writestr("fastdb4py-0.2.0.dist-info/licenses/THIRD_PARTY_NOTICES.txt", (release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes())
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
-            write_wheel(output, "fastdb4py-0.2.0-cp312-cp312-win_amd64.whl")
+            write_wheel(output, "fastdb4py-0.2.0-cp314-cp314t-win_amd64.whl")
             with patch.object(release, "source_sha", return_value="a" * 40), patch.object(release, "version", return_value="0.2.0"):
-                release.record_part(output, "wheels-windows", release.WINDOWS_TARGET)
-            document = json.loads((output / "wheels-windows.json").read_text())
-            self.assertEqual(document["artifacts"][0]["python_abi"], "cp312")
+                release.record_part(output, "python", None)
+            document = json.loads((output / "python.json").read_text())
+            self.assertEqual(document["artifacts"][0]["python_abi"], "cp314t")
             self.assertEqual(document["artifacts"][0]["target"], release.WINDOWS_TARGET)
-            (output / "wheels-windows.json").unlink()
-            (output / "fastdb4py-0.2.0-cp312-cp312-win_amd64.whl").unlink()
-            write_wheel(output, "fastdb4py-0.2.0-cp312-cp312-manylinux_2_28_x86_64.whl")
+            (output / "python.json").unlink()
+            (output / "fastdb4py-0.2.0-cp314-cp314t-win_amd64.whl").unlink()
+            write_wheel(output, "fastdb4py-0.2.0-cp312-cp312-manylinux_2_28_aarch64.whl")
             with patch.object(release, "source_sha", return_value="a" * 40), patch.object(release, "version", return_value="0.2.0"):
-                with self.assertRaisesRegex(release.ReleaseError, "win_amd64"):
-                    release.record_part(output, "wheels-windows", release.WINDOWS_TARGET)
+                release.record_part(output, "python", None)
+            document = json.loads((output / "python.json").read_text())
+            self.assertEqual(document["artifacts"][0]["target"], "aarch64-unknown-linux-gnu")
 
     def test_manifest_rejects_mistagged_or_missing_windows_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:

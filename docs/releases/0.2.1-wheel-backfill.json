@@ -1,0 +1,158 @@
+{
+  "schema": "fastdb.python-wheel-backfill.local.v1",
+  "status": "locally-validated-not-published",
+  "date": "2026-10-16",
+  "source_tag": "v0.2.1",
+  "source_sha": "4f99f86a662b0e950a0dd29800c25a1c9fca4def",
+  "source_comparison": {
+    "source_sha": "4f99f86a662b0e950a0dd29800c25a1c9fca4def",
+    "original_files": 318,
+    "rebuilt_files": 318,
+    "only_original": [],
+    "only_rebuilt": [],
+    "different_source": [],
+    "different_generated_metadata": []
+  },
+  "published_sdist": {
+    "bytes": 1063796,
+    "matched_source_files": 309,
+    "sdist": "fastdb4py-0.2.1.tar.gz",
+    "sha256": "c2d2d2db8d764350d3c0824f6beaa0ba636b56a1212cdce5bc6ca30eee781b27"
+  },
+  "cibuildwheel_version": "3.4.0",
+  "workflow": {
+    "path": ".github/workflows/python-distributions.yml",
+    "sha256": "87b61bf026bfc25d83b9151f1db885e19a05b4786de8f840e6d6a3bb525a5cff"
+  },
+  "original_ci_proof": {
+    "artifact_run_id": 36088365193,
+    "artifact_run_attempt": 1,
+    "proof_run_id": 36088365077,
+    "source_sha": "4f99f86a662b0e950a0dd29800c25a1c9fca4def"
+  },
+  "validation": {
+    "ci_tool_tests": 34,
+    "actionlint": "passed",
+    "selected_build_identifiers": [
+      {
+        "os": "macos-15",
+        "platform": "macosx_arm64",
+        "arch": "arm64",
+        "identifiers": [
+          "cp312-macosx_arm64",
+          "cp313-macosx_arm64",
+          "cp314-macosx_arm64",
+          "cp314t-macosx_arm64"
+        ]
+      },
+      {
+        "os": "macos-15",
+        "platform": "macosx_x86_64",
+        "arch": "x86_64",
+        "identifiers": [
+          "cp312-macosx_x86_64",
+          "cp313-macosx_x86_64",
+          "cp314-macosx_x86_64",
+          "cp314t-macosx_x86_64"
+        ]
+      },
+      {
+        "os": "ubuntu-24.04",
+        "platform": "manylinux_x86_64",
+        "arch": "x86_64",
+        "identifiers": [
+          "cp312-manylinux_x86_64",
+          "cp313-manylinux_x86_64",
+          "cp314-manylinux_x86_64",
+          "cp314t-manylinux_x86_64"
+        ]
+      },
+      {
+        "os": "ubuntu-24.04-arm",
+        "platform": "manylinux_aarch64",
+        "arch": "aarch64",
+        "identifiers": [
+          "cp312-manylinux_aarch64",
+          "cp313-manylinux_aarch64",
+          "cp314-manylinux_aarch64",
+          "cp314t-manylinux_aarch64"
+        ]
+      },
+      {
+        "os": "windows-2022",
+        "platform": "win_amd64",
+        "arch": "AMD64",
+        "identifiers": [
+          "cp312-win_amd64",
+          "cp313-win_amd64",
+          "cp314-win_amd64",
+          "cp314t-win_amd64"
+        ]
+      }
+    ],
+    "linux_aarch64": {
+      "mode": "native arm64 Docker",
+      "image": "quay.io/pypa/manylinux_2_28_aarch64:2026.03.01-1",
+      "image_digest": "sha256:34368babc008d6405b4b74c77868d6a5d15b6010cb953574d1f2bb9184392a9b",
+      "smoke_wheels_passed": 4,
+      "payload_tests_per_wheel": 34
+    },
+    "macos_x86_64": {
+      "mode": "cross-compile on arm64; arch -x86_64 Rosetta execution",
+      "sdk": "macOS 27.0",
+      "smoke_wheels_passed": 4,
+      "payload_tests_per_wheel": 34,
+      "final_shared_test_command": "passed for all four wheels against the tag checkout"
+    },
+    "complete_distribution_inventory": "20 wheels + 1 sdist passed",
+    "backfill_selection": "exactly 8 missing filenames; nothing uploaded"
+  },
+  "publisher": {
+    "provider": "GitHub",
+    "repository": "world-in-progress/fastdb",
+    "workflow_filename": "pypi_publish.yml",
+    "environment": null
+  },
+  "backfill_wheels": [
+    {
+      "name": "fastdb4py-0.2.1-cp312-cp312-macosx_11_0_x86_64.whl",
+      "bytes": 1222615,
+      "sha256": "881fbe825cab9315695738bdc268ddfd5b3c4fb29ac8e043cf0824df4be4280e"
+    },
+    {
+      "name": "fastdb4py-0.2.1-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl",
+      "bytes": 1347615,
+      "sha256": "6a03bcfa0527a91a7b9103a38e6d2390a00f9e5191e86c4f9ff216034abf9c77"
+    },
+    {
+      "name": "fastdb4py-0.2.1-cp313-cp313-macosx_11_0_x86_64.whl",
+      "bytes": 1222193,
+      "sha256": "bc2cd70315e20ab31f1d66f6611de526faed1407f396abe9e182966c9646d97b"
+    },
+    {
+      "name": "fastdb4py-0.2.1-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl",
+      "bytes": 1347242,
+      "sha256": "2fa6453c6bcec1a697f8e3c21b3c3891dfc29cfeaa238ac3c1c8839fbaa36b5c"
+    },
+    {
+      "name": "fastdb4py-0.2.1-cp314-cp314-macosx_11_0_x86_64.whl",
+      "bytes": 1222546,
+      "sha256": "5806c8b590c45961927c4b3dfda829ef5271f1aed688bedfb2670b6eaaa6d7ec"
+    },
+    {
+      "name": "fastdb4py-0.2.1-cp314-cp314-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl",
+      "bytes": 1347431,
+      "sha256": "27fa6f7d1e74e68aff1cf05ade26a51aee32a62d4002f921ce4bfd0efe02efb5"
+    },
+    {
+      "name": "fastdb4py-0.2.1-cp314-cp314t-macosx_11_0_x86_64.whl",
+      "bytes": 1226056,
+      "sha256": "25baeea37382db33c689336edf3e1d19fbcd2ef79f5e8e06f9e615696899c164"
+    },
+    {
+      "name": "fastdb4py-0.2.1-cp314-cp314t-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl",
+      "bytes": 1345952,
+      "sha256": "45b374688c9672b61a579547a687c29274db83461ad3960bf2de1cd7fa7553d7"
+    }
+  ]
+}
