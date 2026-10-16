@@ -106,7 +106,7 @@ relevant local checks before opening the release PR. The exact merged source
 must pass both `tests.yml` and `release-artifacts.yml` on `main`.
 
 Python publication uses `pypi_publish.yml`: a `v<version>` tag push builds all
-five wheel platforms for cp312, cp313, cp314 and cp314t, plus an sdist, using
+five wheel platforms for cp310, cp311, cp312, cp313, cp314 and cp314t, plus an sdist, using
 `python-distributions.yml`. All installed wheels run read/write and payload
 checks, and the complete inventory is checked before PyPI upload. Linux arm64
 uses a native runner; macOS Intel cross-builds on arm64 and tests with Rosetta.

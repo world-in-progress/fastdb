@@ -35,7 +35,7 @@ TARGET_MACHINES = {
     # Windows reports AMD64 for the x86_64 MSVC target.
     "x86_64-pc-windows-msvc": frozenset({"amd64", "x86_64"}),
 }
-PYTHON_ABIS = ("cp312", "cp313", "cp314", "cp314t")
+PYTHON_ABIS = ("cp310", "cp311", "cp312", "cp313", "cp314", "cp314t")
 WHEEL_TARGETS = (*TARGETS, "aarch64-unknown-linux-gnu", "x86_64-apple-darwin")
 PARTS = (
     "core-linux",
