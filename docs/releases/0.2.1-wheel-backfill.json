@@ -1,6 +1,6 @@
 {
   "schema": "fastdb.python-wheel-backfill.local.v1",
-  "status": "locally-validated-not-published",
+  "status": "locally-validated-pypi-backfill-blocked",
   "date": "2026-10-16",
   "source_tag": "v0.2.1",
   "source_sha": "4f99f86a662b0e950a0dd29800c25a1c9fca4def",
@@ -154,5 +154,17 @@
       "bytes": 1345952,
       "sha256": "45b374688c9672b61a579547a687c29274db83461ad3960bf2de1cd7fa7553d7"
     }
-  ]
+  ],
+  "hosted_backfill_attempt": {
+    "run_id": 38894234842,
+    "source_sha": "4beedd6ae38e7298985b58549d7125ec3c4f5eb2",
+    "date": "2026-10-16",
+    "builds_and_inventory": "passed: 20 wheels + 1 sdist",
+    "upload_status": "rejected before any file was accepted",
+    "http_status": 400,
+    "reason": "Uploading new files to releases older than 14 days is not allowed.",
+    "pypi_file_count_after_attempt": 19,
+    "replacement_version": "0.2.2",
+    "policy_url": "https://blog.pypi.org/posts/2026-07-22-releases-now-reject-new-files-after-14-days/"
+  }
 }

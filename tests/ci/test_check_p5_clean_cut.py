@@ -70,8 +70,8 @@ def valid_policy() -> dict[str, object]:
     return {
         "schema": "fastdb.p5-clean-cut-policy.v1",
         "native_abi_symbol_count": 117,
-        "python_version": "0.2.1",
-        "typescript_version": "0.2.1",
+        "python_version": "0.2.2",
+        "typescript_version": "0.2.2",
         "removed_paths": list(PRODUCTION_POLICY["removed_paths"]),
         "required_paths": [
             "src/standalone.py",
@@ -161,12 +161,12 @@ def create_repository(root: Path) -> dict[str, object]:
     write(
         root,
         "pyproject.toml",
-        '[project]\nname = "fixture"\nversion = "0.2.1"\n',
+        '[project]\nname = "fixture"\nversion = "0.2.2"\n',
     )
     write(
         root,
         "ts/fastdb4ts/package.json",
-        '{"name":"fixture","version":"0.2.1"}\n',
+        '{"name":"fixture","version":"0.2.2"}\n',
     )
     write(root, "tests/abi/fastdb_payload_v1_symbols.txt", abi_symbols())
     write(
@@ -345,8 +345,8 @@ class PolicyTests(RepositoryFixture):
         policy = PRODUCTION_POLICY
         self.assertEqual(policy["schema"], "fastdb.p5-clean-cut-policy.v1")
         self.assertEqual(policy["native_abi_symbol_count"], 117)
-        self.assertEqual(policy["python_version"], "0.2.1")
-        self.assertEqual(policy["typescript_version"], "0.2.1")
+        self.assertEqual(policy["python_version"], "0.2.2")
+        self.assertEqual(policy["typescript_version"], "0.2.2")
         self.assertEqual(len(policy["removed_paths"]), 14)
         self.assertEqual(len(policy["required_paths"]), 10)
         self.assertEqual(len(policy["historical_allowlist"]), 27)
@@ -521,7 +521,7 @@ class GovernanceSurfaceTests(RepositoryFixture):
         write(
             self.root,
             "pyproject.toml",
-            '[project]\nname = "fixture"\nversion = "0.2.1"\n',
+            '[project]\nname = "fixture"\nversion = "0.2.2"\n',
         )
         write(
             self.root,

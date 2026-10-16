@@ -2,6 +2,14 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
+## 0.2.2 — release preparation
+
+- Build and test Python wheels for macOS arm64/x86_64, manylinux_2_28 x86_64/aarch64 and Windows amd64 on CPython 3.12, 3.13, 3.14 and 3.14 free-threaded. Require all 20 wheels plus the sdist before publication.
+- Publish through GitHub OIDC from version tags. Manual tag backfills upload only missing filenames and reject known-expired PyPI releases before building and before staging; PyPI's 14-day limit prevents supplementing 0.2.1.
+- Keep the existing Core implementation, portable format and ABI-117 unchanged while synchronizing the Python, Rust, TypeScript and Core release version.
+- Publication evidence is tracked in [the 0.2.2 release record](docs/releases/0.2.2.md).
+- Keep Rust's checked atomic retain compatible with older edition-2024 compilers while allowing the strict-warning build on Rust 1.99, which deprecated the original method name.
+
 ## 0.2.0 — release preparation
 
 - Publish the portable `fastdb.payload.v1` foundation across C++/C ABI, Rust `fastdb-sys` and `fastdb`, Python `fastdb4py`, and TypeScript/WASM `fastdb4ts` with coherent 0.2.0 package versions.

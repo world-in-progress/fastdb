@@ -452,13 +452,15 @@ unsafe extern "C" fn memory_retain(_context: *mut c_void, owner_token: *mut c_vo
         let Some(token) = token_ref(owner_token) else {
             return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
         };
-        if token
-            .references
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                count.checked_add(1)
-            })
-            .is_err()
-        {
+        // Keep the edition-2024 baseline: try_update requires Rust 1.95.
+        #[allow(deprecated)]
+        let retained =
+            token
+                .references
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
+                    count.checked_add(1)
+                });
+        if retained.is_err() {
             return sys::FDB_PAYLOAD_E_ALLOCATION_FAILED;
         }
         0

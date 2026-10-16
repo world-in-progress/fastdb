@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta, timezone
 from email.parser import BytesParser
 import json
 import os
@@ -146,6 +147,30 @@ def check_ci_source(commit: str) -> dict:
     raise ReleaseError("No successful complete main CI evidence exists for the selected tag source")
 
 
+def check_backfill_window(version: str, *, now: datetime | None = None, registry: dict | None = None) -> dict:
+    from publish_release import request_json
+    if registry is None:
+        registry = request_json(f"https://pypi.org/pypi/fastdb4py/{version}/json")
+    try:
+        uploads = [datetime.fromisoformat(item["upload_time_iso_8601"].replace("Z", "+00:00")) for item in registry["urls"]]
+        if not uploads or any(value.tzinfo is None for value in uploads):
+            raise ValueError("Missing timezone-aware timestamps")
+    except (KeyError, TypeError, ValueError) as error:
+        raise ReleaseError("Cannot check PyPI backfill age: valid upload timestamps are required") from error
+    first = min(uploads).astimezone(timezone.utc)
+    # PyPI exposes surviving file times, not release creation time. An old
+    # file proves expiry; recent files cannot prove a release is still open.
+    # https://blog.pypi.org/posts/2026-07-22-releases-now-reject-new-files-after-14-days/
+    deadline = first + timedelta(days=14)
+    if (now or datetime.now(timezone.utc)) > deadline:
+        raise ReleaseError(
+            f"PyPI's 14-day upload window is closed for fastdb4py {version} "
+            f"(first existing file: {first.isoformat()}). Publish a new version; "
+            "skip-existing cannot extend the upload window."
+        )
+    return {"version": version, "first_existing_upload": first.isoformat(), "observed_upload_deadline": deadline.isoformat()}
+
+
 def stage(records: list[dict], directory: Path, output: Path, version: str, backfill: bool) -> list[dict]:
     from publish_release import request_json
     existing = set()
@@ -153,6 +178,8 @@ def stage(records: list[dict], directory: Path, output: Path, version: str, back
         registry = request_json(f"https://pypi.org/pypi/fastdb4py/{version}/json")
         existing = {item["filename"] for item in registry["urls"]}
     pending = [item for item in records if item["name"] not in existing]
+    if backfill and pending:
+        check_backfill_window(version, registry=registry)
     output.mkdir(parents=True, exist_ok=False)
     for item in pending:
         shutil.copy2(directory / item["name"], output / item["name"])
@@ -184,6 +211,8 @@ def main() -> None:
     resolve.add_argument("--root", type=Path, default=Path.cwd())
     proof = sub.add_parser("check-ci")
     proof.add_argument("--source-sha", required=True)
+    window = sub.add_parser("check-backfill")
+    window.add_argument("--version", required=True)
     compare = sub.add_parser("compare-sdist")
     compare.add_argument("--source", type=Path, required=True)
     compare.add_argument("--sdist", type=Path, required=True)
@@ -207,6 +236,8 @@ def main() -> None:
         print(json.dumps(result))
     elif args.command == "check-ci":
         print(json.dumps(check_ci_source(args.source_sha)))
+    elif args.command == "check-backfill":
+        print(json.dumps(check_backfill_window(args.version)))
     elif args.command == "compare-sdist":
         result = compare_sdist(args.source, args.sdist)
         write_json(args.output, result)
