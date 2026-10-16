@@ -116,11 +116,12 @@ class ReleaseInventoryTests(unittest.TestCase):
     def test_incomplete_abi_matrix_cannot_be_published(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            document = self.candidate(root)
-            document["artifacts"] = [record for record in document["artifacts"] if record.get("python_abi") != "cp312"]
-            release.write_json(root / "release-manifest.json", document)
-            with self.assertRaisesRegex(release.ReleaseError, "Incomplete Python ABI"):
-                release.verify(root, "a" * 40)
+            for abi in release.PYTHON_ABIS:
+                document = self.candidate(root)
+                document["artifacts"] = [record for record in document["artifacts"] if record.get("python_abi") != abi]
+                release.write_json(root / "release-manifest.json", document)
+                with self.subTest(missing=abi), self.assertRaisesRegex(release.ReleaseError, "Incomplete Python ABI"):
+                    release.verify(root, "a" * 40)
 
     def test_manifest_cannot_override_a_wheel_filename_version_or_abi(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -16,10 +16,11 @@ from unittest.mock import patch
 import zipfile
 
 import python_distributions as distributions
+import release_artifacts as release
 from release_artifacts import ReleaseError
 
 
-BUILD = "cp312-* cp313-* cp314-* cp314t-*"
+BUILD = "cp310-* cp311-* cp312-* cp313-* cp314-* cp314t-*"
 PLATFORMS = "macosx_arm64 macosx_x86_64 manylinux_x86_64 manylinux_aarch64 win_amd64"
 
 
@@ -39,7 +40,7 @@ class PythonDistributionTests(unittest.TestCase):
                 tag = platform.replace("macosx_", "macosx_11_0_", 1)
             elif platform.startswith("manylinux_"):
                 tag = platform.replace("manylinux_", "manylinux_2_28_", 1)
-            for abi in ("cp312", "cp313", "cp314", "cp314t"):
+            for abi in ("cp310", "cp311", "cp312", "cp313", "cp314", "cp314t"):
                 name = f"fastdb4py-0.2.1-{abi.removesuffix('t')}-{abi}-{tag}.whl"
                 self.wheel(self.dist / name)
         self.sdist = self.dist / "fastdb4py-0.2.1.tar.gz"
@@ -62,7 +63,7 @@ class PythonDistributionTests(unittest.TestCase):
             return distributions.inventory(self.dist, self.source, BUILD, PLATFORMS)
 
     def test_complete_inventory_and_every_missing_wheel_slot(self):
-        self.assertEqual(len(self.inventory()), 21)
+        self.assertEqual(len(self.inventory()), 31)
         for path in sorted(self.dist.glob("*.whl")):
             with self.subTest(missing=path.name):
                 data = path.read_bytes()
@@ -70,6 +71,14 @@ class PythonDistributionTests(unittest.TestCase):
                 with self.assertRaisesRegex(ReleaseError, "Incomplete Python distributions"):
                     self.inventory()
                 path.write_bytes(data)
+
+    def test_workflow_and_release_manifest_require_the_same_python_versions(self):
+        root = Path(__file__).resolve().parents[2]
+        workflow = (root / ".github/workflows/python-distributions.yml").read_text()
+        build = re.search(r'^  CIBW_BUILD: "([^"]+)"$', workflow, re.MULTILINE)
+        self.assertIsNotNone(build)
+        self.assertEqual(build[1], BUILD)
+        self.assertEqual(tuple(selector[:-2] for selector in BUILD.split()), release.PYTHON_ABIS)
 
     def test_missing_sdist_blocks_publication(self):
         self.sdist.unlink()
@@ -79,7 +88,7 @@ class PythonDistributionTests(unittest.TestCase):
     def test_compressed_auditwheel_tags_keep_one_slot(self):
         path = self.dist / "fastdb4py-0.2.1-cp312-cp312-manylinux_2_28_aarch64.whl"
         path.rename(path.with_name(path.name.replace("manylinux_2_28_", "manylinux_2_24_aarch64.manylinux_2_28_")))
-        self.assertEqual(len(self.inventory()), 21)
+        self.assertEqual(len(self.inventory()), 31)
 
     def test_wrong_abi_platform_version_and_duplicate_slot_are_rejected(self):
         for name in (
@@ -91,7 +100,7 @@ class PythonDistributionTests(unittest.TestCase):
             "fastdb4py-0.2.1-cp312-cp312-macosx_11_0_arm64.macosx_11_0_x86_64.whl",
             "fastdb4py-0.2.2-cp312-cp312-win_amd64.whl",
             "fastdb4py-0.2.1-cp312-cp312-macosx_10_15_x86_64.whl",
-            "fastdb4py-0.2.1-cp311-cp311-win_amd64.whl",
+            "fastdb4py-0.2.1-cp39-cp39-win_amd64.whl",
         ):
             with self.subTest(name=name):
                 path = self.dist / name
@@ -110,22 +119,32 @@ class PythonDistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "Unexpected distribution"):
             self.inventory()
 
-    def test_backfill_stages_only_eight_missing_names_and_leaves_existing_bytes(self):
+    def test_backfill_stages_only_missing_platforms_and_leaves_existing_bytes(self):
         records = self.inventory()
         missing = [item for item in records if item.get("platform") in {"manylinux_aarch64", "macosx_x86_64"}]
         missing_names = {item["name"] for item in missing}
         existing = [{"filename": item["name"], "digests": {"sha256": "old, independently built bytes"}, "upload_time_iso_8601": datetime.now(timezone.utc).isoformat()} for item in records if item["name"] not in missing_names]
-        # Historical 3.10/3.11 files remain published, outside the new matrix.
-        existing.append({"filename": "fastdb4py-0.2.1-cp310-cp310-win_amd64.whl", "upload_time_iso_8601": datetime.now(timezone.utc).isoformat()})
+        # Historical files outside the current matrix remain published.
+        existing.append({"filename": "fastdb4py-0.2.1-cp39-cp39-win_amd64.whl", "upload_time_iso_8601": datetime.now(timezone.utc).isoformat()})
         with patch("publish_release.request_json", return_value={"urls": existing}):
             pending = distributions.stage(records, self.dist, self.root / "upload", "0.2.1", True)
-        self.assertEqual(len(pending), 8)
+        self.assertEqual(len(pending), 12)
         self.assertEqual({path.name for path in (self.root / "upload").iterdir()}, missing_names)
         for item in pending:
             self.assertEqual((self.root / "upload" / item["name"]).read_bytes(), (self.dist / item["name"]).read_bytes())
         with patch("publish_release.request_json") as registry:
-            self.assertEqual(len(distributions.stage(records, self.dist, self.root / "normal", "0.2.1", False)), 21)
+            self.assertEqual(len(distributions.stage(records, self.dist, self.root / "normal", "0.2.1", False)), 31)
             registry.assert_not_called()
+
+    def test_backfill_stages_only_ten_python_310_and_311_wheels(self):
+        records = self.inventory()
+        missing = {item["name"] for item in records if item.get("python_abi") in {"cp310", "cp311"}}
+        existing = [{"filename": item["name"], "upload_time_iso_8601": datetime.now(timezone.utc).isoformat()}
+                    for item in records if item["name"] not in missing]
+        with patch("publish_release.request_json", return_value={"urls": existing}):
+            pending = distributions.stage(records, self.dist, self.root / "old-python", "0.2.1", True)
+        self.assertEqual(len(pending), 10)
+        self.assertEqual({path.name for path in (self.root / "old-python").iterdir()}, missing)
 
     def test_published_source_comparison_rejects_changed_source_and_extra_code(self):
         required = ("setup.py", "MANIFEST.in", "fastcarto/CMakeLists.txt", "LICENSE", "THIRD_PARTY_NOTICES.txt")

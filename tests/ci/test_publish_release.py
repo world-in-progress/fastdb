@@ -68,8 +68,8 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(plan["source_sha"], commit)
             self.assertEqual(plan["dispatch_ref"], "refs/tags/v0.2.0")
             self.assertNotIn(published["name"], plan["pending"])
-            # 20 wheels (four ABIs x five platforms) + sdist - 1 published.
-            self.assertEqual(len(plan["pending"]), 20)
+            # 30 wheels (six ABIs x five platforms) + sdist - 1 published.
+            self.assertEqual(len(plan["pending"]), 30)
 
     def test_wrong_release_tag_is_rejected_before_registry_access(self):
         with tempfile.TemporaryDirectory() as directory:

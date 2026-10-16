@@ -73,7 +73,7 @@ CMake (see [fastcarto/README.md](fastcarto/README.md)).
 
 The [0.2.2 release record](docs/releases/0.2.2.md) lists Python wheels for
 macOS arm64/x86_64, manylinux_2_28 x86_64/aarch64 and Windows amd64 on
-CPython 3.12, 3.13, 3.14 and free-threaded 3.14. Native Core bundles cover
+CPython 3.10, 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14. Native Core bundles cover
 Linux x86_64, macOS arm64 and Windows x64. Remaining platform work is tracked
 in [Issue 0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
 For platforms without a published wheel or Core bundle, Python builds from

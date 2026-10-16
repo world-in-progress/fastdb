@@ -18,7 +18,7 @@ permissions:
 
 # Keep release policy here, outside the package and the selected source tag.
 env:
-  CIBW_BUILD: "cp312-* cp313-* cp314-* cp314t-*"
+  CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-* cp314t-*"
   CIBW_ENABLE: cpython-freethreading
   CIBW_SKIP: "*musllinux*"
   CIBW_TEST_SKIP: ""
@@ -133,7 +133,7 @@ jobs:
           pattern: python-*
           path: dist
           merge-multiple: true
-      - name: Require all 20 wheels and the sdist before retaining a release part
+      - name: Require all 30 wheels and the sdist before retaining a release part
         id: policy
         env:
           FASTDB_RELEASE_SOURCE: ${{ github.workspace }}/source
