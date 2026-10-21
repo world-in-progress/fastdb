@@ -71,10 +71,12 @@ set `FASTDB_PAYLOAD_LINK_MODE=system` and set
 **C++** — use a Core bundle from a tagged release, or build from source with
 CMake (see [fastcarto/README.md](fastcarto/README.md)).
 
-The [0.2.2 release record](docs/releases/0.2.2.md) lists Python wheels for
+The [0.2.3 release record](docs/releases/0.2.3.md) lists Python wheels for
 macOS arm64/x86_64, manylinux_2_28 x86_64/aarch64 and Windows amd64 on
-CPython 3.10, 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14. Native Core bundles cover
-Linux x86_64, macOS arm64 and Windows x64. Remaining platform work is tracked
+CPython 3.10, 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14. Windows ARM64 adds
+wheels for Python 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14; its NumPy binary
+dependencies require Python 3.11+. Native Core bundles cover
+Linux x86_64, macOS arm64 and Windows x64/ARM64. Remaining platform work is tracked
 in [Issue 0001](docs/issues/0001-portable-payload-deferred-capabilities.md).
 For platforms without a published wheel or Core bundle, Python builds from
 source need a C++17 compiler, CMake, SWIG, and NumPy.

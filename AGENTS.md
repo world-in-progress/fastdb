@@ -133,8 +133,9 @@ The 0.2.3 Windows ARM64 matrix uses `windows-11-arm`, five Python ABIs
 (`cp311`, `cp312`, `cp313`, `cp314`, `cp314t`) and an
 `aarch64-pc-windows-msvc` Core bundle. NumPy's Windows ARM64 binary packages
 require Python 3.11+, so the existing five platforms retain Python 3.10.
-Native C++/ABI/Rust and installed-wheel tests are required before claiming
-Windows ARM64 support. The original `v0.2.2` source forces CMake `-A x64`;
+Native C++/ABI/Rust and installed-wheel tests passed for the exact 0.2.3
+source; see the [release record](docs/releases/0.2.3.md). Those tests remain
+required for future releases. The original `v0.2.2` source forces CMake `-A x64`;
 its ARM64 backfill is rejected before building. Do not alter that tag or
 build a patched source under its version. The architecture fix requires a
 new release; the user selected 0.2.3 for all ecosystems. See

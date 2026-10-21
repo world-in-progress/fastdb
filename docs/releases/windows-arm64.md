@@ -1,8 +1,13 @@
 # Windows ARM64 preparation (2026-10-21)
 
-This is a local preparation record. Windows ARM64 native execution and
-publication have not occurred. Version metadata and the immutable `v0.2.2`
-tag remain unchanged.
+This preserves the local preparation evidence collected before 0.2.3.
+The native Windows ARM64 gates subsequently passed for source
+`abba785ef2a7d3fbee1bbc608393a3e6c7b042c4`: 40 C++ tests, 117 C ABI exports,
+native Rust source/package/system linkage, and five installed wheels with
+five read/write smoke checks and 170 payload tests. See the
+[0.2.3 release record](0.2.3.md) for hosted CI and publication evidence.
+The immutable `v0.2.2` tag remains unchanged. Statements below about pending
+execution describe the preparation stage.
 
 ## Pending build and validation
 
