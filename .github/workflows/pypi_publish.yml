@@ -122,7 +122,9 @@ jobs:
 
   publish:
     needs: prepare
-    if: needs.prepare.outputs.pending == 'true'
+    # The publish path deliberately skips the transitive distributions job.
+    # Override GitHub's implicit success() while requiring a successful stage.
+    if: always() && needs.prepare.result == 'success' && needs.prepare.outputs.pending == 'true'
     runs-on: ubuntu-24.04
     # Preserve this workflow filename and the publisher's environment identity.
     permissions:

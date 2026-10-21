@@ -117,7 +117,10 @@ class CIBuildScopeTests(unittest.TestCase):
         self.assertEqual(jobs["sdist"]["if"], "needs.plan.outputs.build_sdist == 'true'")
         self.assertIn("needs.plan.outputs.pending == 'true'", jobs["inventory"]["if"])
         self.assertIn("needs.distributions.outputs.pending == 'true'", self.publish["jobs"]["prepare"]["if"])
-        self.assertEqual(self.publish["jobs"]["publish"]["if"], "needs.prepare.outputs.pending == 'true'")
+        condition = self.publish["jobs"]["publish"]["if"]
+        self.assertIn("always()", condition)
+        self.assertIn("needs.prepare.result == 'success'", condition)
+        self.assertIn("needs.prepare.outputs.pending == 'true'", condition)
 
     def test_release_matrix_and_local_validation_share_the_same_policy(self):
         import python_distributions as distributions

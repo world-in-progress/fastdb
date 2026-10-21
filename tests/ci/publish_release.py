@@ -111,10 +111,10 @@ def select_records(document: dict, ecosystem: str) -> list[dict]:
 
 def existing_hashes(ecosystem: str, version: str) -> dict[str, str]:
     if ecosystem == "pypi":
-        result = request_json(f"https://pypi.org/pypi/fastdb4py/{version}/json", missing_ok=True)
+        result = request_json(f"https://pypi.org/pypi/fastdb4py/{version}/json", missing_ok=True, no_cache=True)
         return {} if result is None else {item["filename"]: item["digests"]["sha256"] for item in result["urls"]}
     if ecosystem == "npm":
-        result = request_json(f"https://registry.npmjs.org/fastdb4ts/{version}", missing_ok=True)
+        result = request_json(f"https://registry.npmjs.org/fastdb4ts/{version}", missing_ok=True, no_cache=True)
         if result is None:
             return {}
         # npm exposes SHA-512 integrity; compare the actual published tarball SHA-256.
@@ -125,7 +125,7 @@ def existing_hashes(ecosystem: str, version: str) -> dict[str, str]:
         return {f"fastdb4ts-{version}.tgz": checksum}
     result = {}
     for name in ("fastdb-sys", "fastdb"):
-        package = request_json(f"https://crates.io/api/v1/crates/{name}/{version}", missing_ok=True)
+        package = request_json(f"https://crates.io/api/v1/crates/{name}/{version}", missing_ok=True, no_cache=True)
         if package is not None:
             if package["version"].get("yanked"):
                 raise ReleaseError(f"Published crate is yanked: {name} {version}")
@@ -230,7 +230,9 @@ def crate_upload_body(path: Path, commit: str) -> bytes:
     return struct.pack("<I", len(metadata_bytes)) + metadata_bytes + struct.pack("<I", len(archive_bytes)) + archive_bytes
 
 
-def verify_registry(plan: dict, *, attempts: int = 12) -> None:
+def verify_registry(plan: dict, *, attempts: int = 120) -> None:
+    # npm can accept an upload before its asynchronous processing exposes the
+    # new version. Poll public bytes for up to ten minutes without republishing.
     for attempt in range(attempts):
         pending = pending_records(plan["artifacts"], existing_hashes(plan["ecosystem"], plan["version"]))
         if not pending:

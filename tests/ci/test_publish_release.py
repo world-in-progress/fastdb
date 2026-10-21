@@ -33,6 +33,30 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "differs"):
             publish.pending_records([record], {"unrecorded.crate": "a" * 64})
 
+    def test_accepted_npm_upload_can_become_visible_after_one_minute(self):
+        record = {"name": "fastdb4ts-0.2.3.tgz", "sha256": "a" * 64}
+        plan = {"ecosystem": "npm", "version": "0.2.3", "artifacts": [record]}
+        responses = [{}] * 13 + [{record["name"]: record["sha256"]}]
+        with patch.object(publish, "existing_hashes", side_effect=responses) as registry, \
+                patch.object(publish.time, "sleep") as sleep:
+            publish.verify_registry(plan)
+        self.assertEqual(registry.call_count, 14)
+        self.assertEqual(sleep.call_count, 13)
+
+    def test_registry_hash_mismatch_fails_without_waiting_or_republishing(self):
+        record = {"name": "fastdb4ts-0.2.3.tgz", "sha256": "a" * 64}
+        plan = {"ecosystem": "npm", "version": "0.2.3", "artifacts": [record]}
+        with patch.object(publish, "existing_hashes", return_value={record["name"]: "b" * 64}), \
+                patch.object(publish.time, "sleep") as sleep:
+            with self.assertRaisesRegex(release.ReleaseError, "differs"):
+                publish.verify_registry(plan)
+        sleep.assert_not_called()
+
+    def test_version_metadata_refreshes_cached_registry_misses(self):
+        with patch.object(publish, "request_json", return_value=None) as request:
+            self.assertEqual(publish.existing_hashes("npm", "0.2.3"), {})
+        request.assert_called_once_with("https://registry.npmjs.org/fastdb4ts/0.2.3", missing_ok=True, no_cache=True)
+
     def test_wrong_dispatch_source_fails_before_network(self):
         with patch.dict(os.environ, {"GITHUB_SHA": "b" * 40}), patch.object(publish, "github") as api:
             with self.assertRaisesRegex(release.ReleaseError, "workflow SHA"):
