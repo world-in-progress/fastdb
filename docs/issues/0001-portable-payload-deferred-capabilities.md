@@ -131,6 +131,14 @@ The 0.2.0 release gates covered Linux x86-64, macOS arm64, and WebAssembly `wasm
 
 [Release 0.2.2](../releases/0.2.2.md) extends the Python installed-wheel matrix to Linux aarch64 and macOS x86_64 for CPython 3.10, 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14. The 3.10/3.11 wheels are an additive backfill from the original 0.2.2 tag. Linux arm64 runs natively in manylinux_2_28; Intel macOS cross-builds and tests through Rosetta. Every wheel runs a native payload write/read smoke and the payload suite, and publication requires all 30 wheels plus the sdist. The Core SDK/Rust system-link release matrix still has the three native targets above; D4 retains the remaining SDK, ABI, C++ conformance and sanitizer coverage work for additional native targets.
 
+The pending [Windows ARM64 preparation](../releases/windows-arm64.md) adds
+native `windows-11-arm` Core/C ABI/Rust validation and Python 3.11+ wheel
+jobs, plus binary architecture checks. It does not establish support until
+those native jobs pass. Python 3.10 remains available on the original five
+platforms; Windows ARM64 NumPy wheels require Python 3.11+. The original
+0.2.2 `setup.py` forces x64, so ARM64 requires the new architecture fix and
+a new source release; no tag or published sdist is patched for backfill.
+
 ### Why it is deferred
 
 ABI calling convention, alignment, compiler behavior, sanitizers, text encoding bridges, packaging, and endianness need real target verification. Declaring support from format intent alone would overstate shipped behavior.

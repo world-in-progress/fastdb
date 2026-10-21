@@ -105,18 +105,40 @@ commit. Update all package metadata and lockfiles together, and run the
 relevant local checks before opening the release PR. The exact merged source
 must pass both `tests.yml` and `release-artifacts.yml` on `main`.
 
-Python publication uses `pypi_publish.yml`: a `v<version>` tag push builds all
-five wheel platforms for cp310, cp311, cp312, cp313, cp314 and cp314t, plus an sdist, using
-`python-distributions.yml`. All installed wheels run read/write and payload
-checks, and the complete inventory is checked before PyPI upload. Linux arm64
-uses a native runner; macOS Intel cross-builds on arm64 and tests with Rosetta.
-The publishing job uses GitHub OIDC with no environment declared. A manual
-dispatch from `main` takes an existing `tag`, uses the current workflow with
-that tag's exact source and CI proofs, compares its published sdist source,
-and uploads only missing filenames with `skip-existing`. PyPI rejects new
-files for releases older than 14 days; manual backfills check this before
-building and again before staging missing files. Expired releases need a new
-version. Do not move old tags.
+Python publication uses `pypi_publish.yml`. A `v<version>` tag push, or manual
+`operation=publish` from `main`, downloads the exact tag source's unexpired
+`release-part-python` artifact from a complete successful main CI run. It
+checks the source-bound fragment hashes and the complete 35-wheel-plus-sdist
+inventory before upload. Publication never rebuilds missing or expired CI
+artifacts. The publishing job uses GitHub OIDC with no environment declared.
+
+Release Artifacts builds candidates on `main` when package inputs change;
+PRs and changes limited to release tooling or documentation run lightweight
+checks. The runtime CI workflow retains its required validation gates. A
+release source must still have both complete CI proofs and its own candidate;
+a metadata-only run cannot serve as release evidence.
+
+Manual `operation=backfill` from `main` takes an existing `tag` and uses the
+current workflow with that tag's exact source and CI proofs. Before allocating
+builders, it compares the published sdist source, verifies reusable PyPI
+files by size and SHA-256, and selects only missing wheel slots. It reuses the
+sdist, checks the combined complete inventory, then uploads only missing
+filenames with `skip-existing`. A complete release allocates no builders or
+upload job. PyPI's 14-day upload window is checked before building missing
+files and again before staging; expired partial releases need a new version.
+Do not move old tags. See [publishing and local validation](docs/releases/publishing.md)
+for the matrix, guards and dispatch inputs.
+
+The 0.2.3 Windows ARM64 matrix uses `windows-11-arm`, five Python ABIs
+(`cp311`, `cp312`, `cp313`, `cp314`, `cp314t`) and an
+`aarch64-pc-windows-msvc` Core bundle. NumPy's Windows ARM64 binary packages
+require Python 3.11+, so the existing five platforms retain Python 3.10.
+Native C++/ABI/Rust and installed-wheel tests are required before claiming
+Windows ARM64 support. The original `v0.2.2` source forces CMake `-A x64`;
+its ARM64 backfill is rejected before building. Do not alter that tag or
+build a patched source under its version. The architecture fix requires a
+new release; the user selected 0.2.3 for all ecosystems. See
+[Windows ARM64 preparation](docs/releases/windows-arm64.md).
 
 Rust and npm publication is a manual workflow dispatch from that source on
 `main`, or from its matching `v<version>` tag after `main` advances. Supply the

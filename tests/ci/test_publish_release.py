@@ -68,8 +68,9 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(plan["source_sha"], commit)
             self.assertEqual(plan["dispatch_ref"], "refs/tags/v0.2.0")
             self.assertNotIn(published["name"], plan["pending"])
-            # 30 wheels (six ABIs x five platforms) + sdist - 1 published.
-            self.assertEqual(len(plan["pending"]), 30)
+            # 30 original-platform wheels + five Windows ARM64 wheels;
+            # the published sdist is excluded from upload.
+            self.assertEqual(len(plan["pending"]), 35)
 
     def test_wrong_release_tag_is_rejected_before_registry_access(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -5,8 +5,14 @@ on:
     tags: ["v*"]
   workflow_dispatch:
     inputs:
+      operation:
+        description: Publish tested CI files, or build only missing wheels for an existing release
+        required: true
+        type: choice
+        options: [backfill, publish]
+        default: backfill
       tag:
-        description: Existing version tag still within PyPI's 14-day upload window
+        description: Existing version tag; backfills must remain within PyPI's upload window
         required: true
         type: string
 
@@ -28,6 +34,9 @@ jobs:
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       version: ${{ steps.source.outputs.version }}
+      operation: ${{ inputs.operation || 'publish' }}
+      artifact_run_id: ${{ steps.proof.outputs.artifact_run_id }}
+      python_artifact_id: ${{ steps.proof.outputs.python_artifact_id }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -41,25 +50,32 @@ jobs:
         env:
           RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: python tests/ci/python_distributions.py resolve --tag "$RELEASE_TAG"
-      - name: Reject expired PyPI backfills before building distributions
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          RELEASE_VERSION: ${{ steps.source.outputs.version }}
-        run: python tests/ci/python_distributions.py check-backfill --version "$RELEASE_VERSION"
       - name: Require complete CI evidence for the tag's exact source
+        id: proof
         env:
           RELEASE_SOURCE_SHA: ${{ steps.source.outputs.source_sha }}
+          OPERATION: ${{ inputs.operation || 'publish' }}
           GH_TOKEN: ${{ github.token }}
-        run: python tests/ci/python_distributions.py check-ci --source-sha "$RELEASE_SOURCE_SHA"
+        run: |
+          extra=()
+          if [ "$OPERATION" = publish ]; then extra+=(--require-artifact); fi
+          python tests/ci/python_distributions.py check-ci \
+            --source-sha "$RELEASE_SOURCE_SHA" "${extra[@]}"
 
   distributions:
     needs: source
+    if: needs.source.outputs.operation == 'backfill'
     uses: ./.github/workflows/python-distributions.yml
     with:
       source_sha: ${{ needs.source.outputs.source_sha }}
+      backfill: true
 
   prepare:
     needs: [source, distributions]
+    if: >-
+      always() && needs.source.result == 'success' &&
+      (needs.source.outputs.operation == 'publish' ||
+       (needs.distributions.result == 'success' && needs.distributions.outputs.pending == 'true'))
     runs-on: ubuntu-24.04
     outputs:
       pending: ${{ steps.stage.outputs.pending }}
@@ -76,21 +92,27 @@ jobs:
         with:
           python-version: "3.12"
       - uses: actions/download-artifact@v8
+        if: needs.source.outputs.operation == 'publish'
+        with:
+          artifact-ids: ${{ needs.source.outputs.python_artifact_id }}
+          run-id: ${{ needs.source.outputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@v8
+        if: needs.source.outputs.operation == 'backfill'
         with:
           name: release-part-python
           path: dist
       - name: Recheck the complete inventory, then select upload files
         id: stage
         env:
-          PYTHON_BUILD: ${{ needs.distributions.outputs.build }}
-          WHEEL_PLATFORMS: ${{ needs.distributions.outputs.platforms }}
-          BACKFILL: ${{ github.event_name == 'workflow_dispatch' }}
+          BACKFILL: ${{ needs.source.outputs.operation == 'backfill' }}
         run: |
           extra=()
           if [ "$BACKFILL" = true ]; then extra+=(--backfill); fi
           python release-tools/tests/ci/python_distributions.py stage \
-            --directory dist --source source --output upload \
-            --build "$PYTHON_BUILD" --platforms "$WHEEL_PLATFORMS" "${extra[@]}"
+            --directory dist --source source --output upload "${extra[@]}"
       - uses: actions/upload-artifact@v7
         if: steps.stage.outputs.pending == 'true'
         with:

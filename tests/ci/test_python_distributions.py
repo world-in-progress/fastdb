@@ -18,10 +18,11 @@ import zipfile
 import python_distributions as distributions
 import release_artifacts as release
 from release_artifacts import ReleaseError
+from test_release_artifacts import windows_image
 
 
 BUILD = "cp310-* cp311-* cp312-* cp313-* cp314-* cp314t-*"
-PLATFORMS = "macosx_arm64 macosx_x86_64 manylinux_x86_64 manylinux_aarch64 win_amd64"
+PLATFORMS = "macosx_arm64 macosx_x86_64 manylinux_x86_64 manylinux_aarch64 win_amd64 win_arm64"
 
 
 class PythonDistributionTests(unittest.TestCase):
@@ -41,15 +42,21 @@ class PythonDistributionTests(unittest.TestCase):
             elif platform.startswith("manylinux_"):
                 tag = platform.replace("manylinux_", "manylinux_2_28_", 1)
             for abi in ("cp310", "cp311", "cp312", "cp313", "cp314", "cp314t"):
+                if platform == "win_arm64" and abi == "cp310":
+                    continue
                 name = f"fastdb4py-0.2.1-{abi.removesuffix('t')}-{abi}-{tag}.whl"
                 self.wheel(self.dist / name)
         self.sdist = self.dist / "fastdb4py-0.2.1.tar.gz"
         self.archive({"PKG-INFO": b"Name: fastdb4py\nVersion: 0.2.1\n"})
 
-    def wheel(self, path, *, metadata_version="0.2.1"):
+    def wheel(self, path, *, metadata_version="0.2.1", binary_machine=None):
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr("fastdb4py-0.2.1.dist-info/METADATA", f"Name: fastdb4py\nVersion: {metadata_version}\n")
-            archive.writestr("fastdb4py/core/_fastdb4py.so", b"native fixture")
+            if "win_" in path.name:
+                machine = binary_machine if binary_machine is not None else (0xAA64 if "win_arm64" in path.name else 0x8664)
+                archive.writestr("fastdb4py/core/_fastdb4py.pyd", windows_image(machine))
+            else:
+                archive.writestr("fastdb4py/core/_fastdb4py.so", b"native fixture")
 
     def archive(self, members):
         with tarfile.open(self.sdist, "w:gz") as archive:
@@ -63,7 +70,7 @@ class PythonDistributionTests(unittest.TestCase):
             return distributions.inventory(self.dist, self.source, BUILD, PLATFORMS)
 
     def test_complete_inventory_and_every_missing_wheel_slot(self):
-        self.assertEqual(len(self.inventory()), 31)
+        self.assertEqual(len(self.inventory()), 36)
         for path in sorted(self.dist.glob("*.whl")):
             with self.subTest(missing=path.name):
                 data = path.read_bytes()
@@ -85,10 +92,24 @@ class PythonDistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "missing sdist: True"):
             self.inventory()
 
+    def test_windows_arm64_wheel_cannot_contain_an_x64_extension(self):
+        path = self.dist / "fastdb4py-0.2.1-cp312-cp312-win_arm64.whl"
+        self.wheel(path, binary_machine=0x8664)
+        with self.assertRaisesRegex(ReleaseError, "binary architecture"):
+            self.inventory()
+
+    def test_windows_arm64_has_no_unsupported_cpython_310_slot(self):
+        slots = distributions.expected_slots(BUILD, PLATFORMS)
+        self.assertEqual(len(slots), 35)
+        self.assertNotIn(("cp310", "win_arm64"), slots)
+        self.assertIn(("cp310", "win_amd64"), slots)
+        with self.assertRaisesRegex(ReleaseError, "No supported"):
+            distributions.expected_slots("cp310-*", "win_arm64")
+
     def test_compressed_auditwheel_tags_keep_one_slot(self):
         path = self.dist / "fastdb4py-0.2.1-cp312-cp312-manylinux_2_28_aarch64.whl"
         path.rename(path.with_name(path.name.replace("manylinux_2_28_", "manylinux_2_24_aarch64.manylinux_2_28_")))
-        self.assertEqual(len(self.inventory()), 31)
+        self.assertEqual(len(self.inventory()), 36)
 
     def test_wrong_abi_platform_version_and_duplicate_slot_are_rejected(self):
         for name in (
@@ -101,6 +122,7 @@ class PythonDistributionTests(unittest.TestCase):
             "fastdb4py-0.2.2-cp312-cp312-win_amd64.whl",
             "fastdb4py-0.2.1-cp312-cp312-macosx_10_15_x86_64.whl",
             "fastdb4py-0.2.1-cp39-cp39-win_amd64.whl",
+            "fastdb4py-0.2.1-cp310-cp310-win_arm64.whl",
         ):
             with self.subTest(name=name):
                 path = self.dist / name
@@ -133,17 +155,17 @@ class PythonDistributionTests(unittest.TestCase):
         for item in pending:
             self.assertEqual((self.root / "upload" / item["name"]).read_bytes(), (self.dist / item["name"]).read_bytes())
         with patch("publish_release.request_json") as registry:
-            self.assertEqual(len(distributions.stage(records, self.dist, self.root / "normal", "0.2.1", False)), 31)
+            self.assertEqual(len(distributions.stage(records, self.dist, self.root / "normal", "0.2.1", False)), 36)
             registry.assert_not_called()
 
-    def test_backfill_stages_only_ten_python_310_and_311_wheels(self):
+    def test_backfill_stages_only_missing_python_310_and_311_wheels(self):
         records = self.inventory()
         missing = {item["name"] for item in records if item.get("python_abi") in {"cp310", "cp311"}}
         existing = [{"filename": item["name"], "upload_time_iso_8601": datetime.now(timezone.utc).isoformat()}
                     for item in records if item["name"] not in missing]
         with patch("publish_release.request_json", return_value={"urls": existing}):
             pending = distributions.stage(records, self.dist, self.root / "old-python", "0.2.1", True)
-        self.assertEqual(len(pending), 10)
+        self.assertEqual(len(pending), 11)
         self.assertEqual({path.name for path in (self.root / "old-python").iterdir()}, missing)
 
     def test_published_source_comparison_rejects_changed_source_and_extra_code(self):

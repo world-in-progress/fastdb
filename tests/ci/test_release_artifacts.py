@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import struct
 from pathlib import Path
 import subprocess
 import sys
@@ -12,6 +13,15 @@ import zipfile
 from unittest.mock import patch
 
 import release_artifacts as release
+
+
+def windows_image(machine=0x8664):
+    header = bytearray(134)
+    header[:2] = b"MZ"
+    struct.pack_into("<I", header, 0x3C, 128)
+    header[128:132] = b"PE\0\0"
+    struct.pack_into("<H", header, 132, machine)
+    return bytes(header)
 
 
 class ReleaseInventoryTests(unittest.TestCase):
@@ -79,6 +89,7 @@ class ReleaseInventoryTests(unittest.TestCase):
             "x86_64-unknown-linux-gnu": "manylinux_2_28_x86_64",
             "aarch64-apple-darwin": "macosx_11_0_arm64",
             "x86_64-pc-windows-msvc": "win_amd64",
+            "aarch64-pc-windows-msvc": "win_arm64",
             "aarch64-unknown-linux-gnu": "manylinux_2_28_aarch64",
             "x86_64-apple-darwin": "macosx_11_0_x86_64",
         }
@@ -87,7 +98,7 @@ class ReleaseInventoryTests(unittest.TestCase):
             core.write_bytes(b"tested core")
             records.append(release.file_record(core, kind="core-bundle", target=target))
         for target in release.WHEEL_TARGETS:
-            for abi in release.PYTHON_ABIS:
+            for abi in release.WHEEL_PYTHON_ABIS[target]:
                 python = abi.removesuffix("t")
                 wheel = root / f"fastdb4py-0.2.0-{python}-{abi}-{platform_tags[target]}.whl"
                 wheel.write_bytes(b"tested wheel")
@@ -159,7 +170,7 @@ class ReleaseInventoryTests(unittest.TestCase):
             library = build / "fastcarto" / "fastdb" / "fastdb.lib"
             library.write_bytes(b"import library")
             runtime = build / "fastcarto" / "fastdb" / "fastdb.dll"
-            runtime.write_bytes(b"runtime library")
+            runtime.write_bytes(windows_image())
             release.write_json(build / "release-build-source.json", {"source_sha": "a" * 40, "source_root": str(release.ROOT.resolve())})
             cache = build / "CMakeFiles" / "3.30" / "CMakeCXXCompiler.cmake"
             cache.parent.mkdir(parents=True)
@@ -202,18 +213,38 @@ class ReleaseInventoryTests(unittest.TestCase):
             with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
                 with self.assertRaisesRegex(release.ReleaseError, "fastdb.dll"):
                     release.make_core(build.parent.parent, root / "dist", release.WINDOWS_TARGET)
-                (build / "fastdb.dll").write_bytes(b"runtime library")
+                (build / "fastdb.dll").write_bytes(windows_image())
                 with self.assertRaisesRegex(release.ReleaseError, "CMakeCXXCompiler.cmake"):
                     release.make_core(build.parent.parent, root / "dist2", release.WINDOWS_TARGET)
             with patch.object(release, "source_sha", return_value="a" * 40), patch.object(release, "version", return_value="0.2.0"), patch.object(release.platform, "machine", return_value="arm64"), patch.object(release.platform, "platform", return_value="Windows-10"), patch.object(release.platform, "libc_ver", return_value=("", "")):
                 with self.assertRaisesRegex(release.ReleaseError, "native"):
                     release.make_core(build.parent.parent, root / "dist3", release.WINDOWS_TARGET)
 
+    def test_windows_binary_machine_is_checked_independently_of_filename(self):
+        for target, machine in ((release.WINDOWS_TARGET, 0x8664), (release.WINDOWS_ARM64_TARGET, 0xAA64)):
+            with self.subTest(target=target):
+                release.check_windows_binary(windows_image(machine), target, "fastdb.dll")
+                for bad in (windows_image(0x8664 if machine == 0xAA64 else 0xAA64), b"not a PE binary"):
+                    with self.assertRaisesRegex(release.ReleaseError, "binary architecture"):
+                        release.check_windows_binary(bad, target, "fastdb.dll")
+
+    def test_windows_arm64_core_and_each_wheel_are_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            document = self.candidate(Path(directory))
+            records = document["artifacts"]
+            arm = [item for item in records if item.get("target") == release.WINDOWS_ARM64_TARGET]
+            self.assertEqual(len(arm), 6)  # One Core archive plus five Python ABIs.
+            for missing in arm:
+                with self.subTest(missing=missing["name"]), self.assertRaises(release.ReleaseError):
+                    release.check_complete([item for item in records if item != missing], "0.2.0")
+
     def test_python_part_records_platform_and_real_freethreaded_abi(self):
         def write_wheel(directory: Path, name: str) -> None:
             with zipfile.ZipFile(directory / name, "w") as archive:
                 archive.writestr("fastdb4py-0.2.0.dist-info/METADATA", "Name: fastdb4py\nVersion: 0.2.0\n")
                 archive.writestr("fastdb4py/payload/__init__.py", "")
+                if "win_" in name:
+                    archive.writestr("fastdb4py/core/_fastdb4py.pyd", windows_image(0xAA64 if "win_arm64" in name else 0x8664))
                 archive.writestr("fastdb4py-0.2.0.dist-info/licenses/LICENSE", (release.ROOT / "LICENSE").read_bytes())
                 archive.writestr("fastdb4py-0.2.0.dist-info/licenses/THIRD_PARTY_NOTICES.txt", (release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes())
         with tempfile.TemporaryDirectory() as directory:

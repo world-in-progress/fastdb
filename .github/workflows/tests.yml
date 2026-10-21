@@ -11,12 +11,16 @@ on:
 jobs:
   detect_changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       core: ${{ steps.filter.outputs.core }}
       rust: ${{ steps.filter.outputs.rust }}
       python: ${{ steps.filter.outputs.python }}
       ts: ${{ steps.filter.outputs.ts }}
       workflow: ${{ steps.filter.outputs.workflow }}
+      release: ${{ steps.filter.outputs.release }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -62,15 +66,42 @@ jobs:
               - 'tests/ts/**'
               - 'package.json'
             workflow:
+              - '.github/workflows/tests.yml'
+              - 'tests/ci/check_*'
+              - 'tests/ci/test_check_*'
+              - 'tests/ci/*generated*'
+              - 'tests/ci/p[234]_*.json'
+            release:
               - '.github/workflows/**'
               - '.github/copilot-instructions.md'
               - 'tests/ci/**'
+              - 'pyproject.toml'
               - 'tools/check_p5_clean_cut.py'
               - 'README.md'
               - 'AGENTS.md'
               - 'CHANGELOG.md'
               - 'docs/**'
               - 'docs/issues/0002-portable-payload-foundation-implementation-status.md'
+
+  release_tools:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.release == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check release planning and CI contracts without native builds
+        run: |
+          python3 tests/ci/release_artifacts.py version
+          python3 tests/ci/test_release_artifacts.py
+          python3 tests/ci/test_publish_release.py
+          python3 tests/ci/test_python_distributions.py
+          python3 tests/ci/test_python_release_reuse.py
+          python3 tests/ci/test_ci_build_scope.py
+          python3 -m pip install setuptools
+          python3 tests/ci/test_windows_python_build.py
+          ruby tests/ci/check_p2_task11_quality.rb
+          python3 tests/ci/test_check_p4_projection_codegen_quality.py
+          python3 tests/ci/check_p4_projection_codegen_quality.py --check-repository
 
   clean_cut:
     runs-on: ubuntu-24.04
@@ -499,6 +530,7 @@ jobs:
     name: test
     needs:
       - detect_changes
+      - release_tools
       - python_tests
       - rust_payload
       - ts_tests
@@ -522,6 +554,8 @@ jobs:
           PYTHON_SCOPE: ${{ needs.detect_changes.outputs.python }}
           TS_SCOPE: ${{ needs.detect_changes.outputs.ts }}
           WORKFLOW_SCOPE: ${{ needs.detect_changes.outputs.workflow }}
+          RELEASE_SCOPE: ${{ needs.detect_changes.outputs.release }}
+          RELEASE_TOOLS_RESULT: ${{ needs.release_tools.result }}
           PYTHON_TESTS_RESULT: ${{ needs.python_tests.result }}
           TS_TESTS_RESULT: ${{ needs.ts_tests.result }}
           NATIVE_TESTS_RESULT: ${{ needs.native_tests.result }}

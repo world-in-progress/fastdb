@@ -2,6 +2,13 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
+## 0.2.3 — 2026-10-21
+
+- Add native Windows ARM64 Python wheels for CPython 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14, plus an ARM64 Core SDK with C++/ABI/Rust validation on `windows-11-arm`.
+- Select the Windows compiler architecture from the target Python; reject mismatched PE binaries and require all 35 wheels plus the sdist before publication. Existing platforms retain Python 3.10 support; Windows ARM64 NumPy wheels require Python 3.11+.
+- Publish Python, npm and Rust directly from the same verified main CI archives. Missing-wheel backfills build only absent slots and reuse existing files; complete releases do no build or upload work.
+- Keep portable payload semantics and ABI-117 unchanged. Release evidence is tracked in [the 0.2.3 release record](docs/releases/0.2.3.md).
+
 ## 0.2.2 — 2026-10-16
 
 - Build and test Python wheels for macOS arm64/x86_64, manylinux_2_28 x86_64/aarch64 and Windows amd64 on CPython 3.10, 3.11, 3.12, 3.13, 3.14 and 3.14 free-threaded. Require all 30 wheels plus the sdist before publication; supplement 0.2.2 with the ten 3.10/3.11 wheels from its original source tag.

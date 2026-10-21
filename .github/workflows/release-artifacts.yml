@@ -16,20 +16,58 @@ concurrency:
 jobs:
   metadata:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      build: ${{ github.event_name == 'push' && steps.filter.outputs.packages == 'true' }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            packages:
+              - 'fastcarto/**'
+              - 'schemas/**'
+              - 'python/**'
+              - 'bindings/rust/**'
+              - 'ts/**'
+              - 'tests/cpp/**'
+              - 'tests/abi/**'
+              - 'tests/fuzz/**'
+              - 'tests/python/payload/**'
+              - 'tests/rust/**'
+              - 'tests/ts/**'
+              - 'tests/golden/**'
+              - 'pyproject.toml'
+              - 'setup.py'
+              - 'MANIFEST.in'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'LICENSE'
+              - 'THIRD_PARTY_NOTICES.txt'
+              - 'tools/vendor_portable_payload_deps.sh'
+              - 'tools/generate_embedded_payload_schemas.py'
+              - 'tools/generate_third_party_notices.py'
       - name: Verify coherent release versions and release tooling
         run: |
           python3 tests/ci/release_artifacts.py version
           python3 tests/ci/test_release_artifacts.py
           python3 tests/ci/test_publish_release.py
           python3 tests/ci/test_python_distributions.py
+          python3 tests/ci/test_python_release_reuse.py
+          python3 tests/ci/test_ci_build_scope.py
+          python3 -m pip install setuptools
+          python3 tests/ci/test_windows_python_build.py
           python3 tests/ci/test_check_payload_abi_symbols.py
 
   native:
     needs: metadata
+    if: needs.metadata.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -43,6 +81,11 @@ jobs:
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             part: core-windows
+            msvc_arch: x64
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            part: core-windows-arm64
+            msvc_arch: arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     env:
@@ -52,14 +95,26 @@ jobs:
         with:
           ref: ${{ github.sha }}
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-${{ matrix.target }}
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Set up MSVC x64 developer environment
+      - name: Set up the native MSVC developer environment
         if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x64
+          arch: ${{ matrix.msvc_arch }}
+      - name: Require native Windows and Rust architecture
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+          EXPECTED_ARCH: ${{ matrix.msvc_arch == 'arm64' && 'ARM64' || 'AMD64' }}
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne $env:EXPECTED_ARCH) { throw "Unexpected Windows runner architecture" }
+          if ((rustc -vV) -notcontains "host: $env:RELEASE_TARGET") { throw "Rust must run natively for $env:RELEASE_TARGET" }
+          "CMAKE_GENERATOR=Ninja" >> $env:GITHUB_ENV
       - name: Install Ninja for the single-config MSVC build
         if: runner.os == 'Windows'
         shell: pwsh
@@ -76,7 +131,7 @@ jobs:
           ctest --test-dir build/release --output-on-failure
           python3 tools/check_payload_abi_symbols.py --build-dir build/release
           cargo test --manifest-path bindings/rust/Cargo.toml --workspace --all-features
-      - name: Build and test native release Core (Windows MSVC x64)
+      - name: Build and test native release Core (Windows MSVC)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -121,7 +176,7 @@ jobs:
           fi
           python3 tests/ci/release_artifacts.py record \
             --output dist --part "$RELEASE_PART" --target "$RELEASE_TARGET"
-      - name: Package Core archive (Windows MSVC x64)
+      - name: Package Core archive (Windows MSVC)
         if: runner.os == 'Windows'
         shell: pwsh
         env:
@@ -144,12 +199,14 @@ jobs:
 
   python:
     needs: metadata
+    if: needs.metadata.outputs.build == 'true'
     uses: ./.github/workflows/python-distributions.yml
     with:
       source_sha: ${{ github.sha }}
 
   typescript:
     needs: metadata
+    if: needs.metadata.outputs.build == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -182,7 +239,8 @@ jobs:
           if-no-files-found: error
 
   candidate:
-    needs: [native, python, typescript]
+    needs: [metadata, native, python, typescript]
+    if: needs.metadata.outputs.build == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6

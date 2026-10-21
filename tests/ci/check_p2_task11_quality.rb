@@ -13,6 +13,7 @@ MALFORMED_CLASS_MAP = ROOT.join("tests/ci/p2_malformed_class_map.json")
 class QualityError < StandardError; end
 
 JOBS = {
+  "release_tools" => %w[release],
   "python_tests" => %w[core python workflow],
   "ts_tests" => %w[core ts workflow],
   "native_tests" => %w[core workflow],
@@ -116,7 +117,7 @@ def expected_to_run?(job, scopes)
 end
 
 def validate_results(values)
-  scopes = %w[core python ts workflow].to_h do |scope|
+  scopes = %w[core python ts workflow release].to_h do |scope|
     value = values.fetch("#{scope.upcase}_SCOPE")
     require_quality(%w[true false].include?(value),
                     "#{scope} scope has unexpected value: #{value.inspect}")
@@ -143,7 +144,7 @@ def require_results_rejected(values, description)
 end
 
 def self_test_results
-  scope_names = %w[core python ts workflow]
+  scope_names = %w[core python ts workflow release]
   result_values = %w[success skipped failure cancelled neutral timed_out
                      action_required stale startup_failure]
   (0...(1 << scope_names.length)).each do |bits|
@@ -176,7 +177,8 @@ def self_test_results
     "CORE_SCOPE" => "false",
     "PYTHON_SCOPE" => "false",
     "TS_SCOPE" => "false",
-    "WORKFLOW_SCOPE" => "false"
+    "WORKFLOW_SCOPE" => "false",
+    "RELEASE_SCOPE" => "false"
   }
   JOBS.each_key { |job| baseline["#{job.upcase}_RESULT"] = "skipped" }
   (result_values - ["success"]).each do |wrong_result|
@@ -185,7 +187,7 @@ def self_test_results
       "detect_changes result #{wrong_result.inspect}"
     )
   end
-  %w[CORE_SCOPE PYTHON_SCOPE TS_SCOPE WORKFLOW_SCOPE].each do |scope|
+  %w[CORE_SCOPE PYTHON_SCOPE TS_SCOPE WORKFLOW_SCOPE RELEASE_SCOPE].each do |scope|
     %w[TRUE FALSE unknown].each do |wrong_value|
       require_results_rejected(
         baseline.merge(scope => wrong_value),
@@ -213,7 +215,7 @@ def check_workflow
   jobs = workflow.fetch("jobs")
   detect = jobs.fetch("detect_changes")
   require_quality(detect.fetch("outputs").keys.sort ==
-                    %w[core python rust ts workflow],
+                    %w[core python release rust ts workflow],
                   "detect_changes outputs are not exact")
   filter_step = detect.fetch("steps").find { |step| step["id"] == "filter" }
   require_quality(!filter_step.nil?, "detect_changes lacks its path filter")
@@ -225,7 +227,8 @@ def check_workflow
                  tools/check_payload_binary_corpus.py],
     "python" => %w[tools/check_python_package_inventory.py],
     "rust" => %w[bindings/rust/** tests/rust/**],
-    "workflow" => %w[tests/ci/**]
+    "workflow" => %w[.github/workflows/tests.yml tests/ci/check_* tests/ci/test_check_*],
+    "release" => %w[.github/workflows/** tests/ci/** README.md AGENTS.md CHANGELOG.md docs/**]
   }.each do |scope, required_paths|
     missing_paths = required_paths - filters.fetch(scope)
     require_quality(missing_paths.empty?,
@@ -236,6 +239,12 @@ def check_workflow
     require_quality(jobs.key?(name), "missing workflow job #{name}")
     require_quality(expression_scopes(jobs.fetch(name)) == scopes.sort,
                     "#{name} path scope does not match #{scopes.sort.inspect}")
+  end
+  release_tools = jobs.fetch("release_tools")
+  release_checks = release_tools.fetch("steps").map { |step| step.fetch("run", "") }.join("\n")
+  %w[test_release_artifacts.py test_publish_release.py test_python_distributions.py
+     test_python_release_reuse.py test_ci_build_scope.py].each do |test|
+    require_quality(release_checks.include?("tests/ci/#{test}"), "release_tools omits #{test}")
   end
   POST_P2_JOBS.each do |name, scopes|
     require_quality(jobs.key?(name), "missing post-P2 workflow job #{name}")
@@ -409,6 +418,8 @@ def check_workflow
   aggregate_env = aggregate_step.fetch("env")
   {
     "RUST_SCOPE" => "${{ needs.detect_changes.outputs.rust }}",
+    "RELEASE_SCOPE" => "${{ needs.detect_changes.outputs.release }}",
+    "RELEASE_TOOLS_RESULT" => "${{ needs.release_tools.result }}",
     "RUST_PAYLOAD_RESULT" => "${{ needs.rust_payload.result }}",
     "PROJECTION_PARITY_RESULT" => "${{ needs.projection_parity.result }}"
   }.each do |name, expected|

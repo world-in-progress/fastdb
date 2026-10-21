@@ -75,7 +75,15 @@ class CMakeBuild(build_ext):
 
         if sys.platform == 'win32':
             cmake_args += ['-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE=' + extdir]
-            cmake_args += ['-A', 'x64']
+            platform_name = (self.plat_name or sysconfig.get_platform()).replace('_', '-').lower()
+            architectures = {'win-amd64': 'x64', 'win-arm64': 'ARM64', 'win32': 'Win32'}
+            if platform_name not in architectures:
+                raise RuntimeError(f'Unsupported Windows Python platform: {platform_name}')
+            # Match the target Python, including ARM64. Ninja selects its
+            # compiler from the developer environment and does not accept -A.
+            generator = os.environ.get('CMAKE_GENERATOR', '')
+            if not generator or generator.startswith('Visual Studio'):
+                cmake_args += ['-A', architectures[platform_name]]
 
         subprocess.check_call(['cmake', ext.sourcedir + '/fastcarto'] + cmake_args, cwd=self.build_temp)
         subprocess.check_call(['cmake', '--build', '.', '--config', 'Release', '--parallel', str(num_jobs)], cwd=self.build_temp)

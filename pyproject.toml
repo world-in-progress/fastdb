@@ -1,6 +1,6 @@
 [project]
 name = "fastdb4py"
-version = "0.2.2"
+version = "0.2.3"
 description = "FastCarto database bindings"
 readme = "README.md"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.txt"]

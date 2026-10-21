@@ -7,11 +7,17 @@ on:
         description: Exact source commit to build, independent of the workflow revision
         required: true
         type: string
+      backfill:
+        description: Reuse published files and build only missing wheel slots
+        type: boolean
+        default: false
     outputs:
       build:
         value: ${{ jobs.inventory.outputs.build }}
       platforms:
         value: ${{ jobs.inventory.outputs.platforms }}
+      pending:
+        value: ${{ jobs.plan.outputs.pending }}
 
 permissions:
   contents: read
@@ -20,41 +26,75 @@ permissions:
 env:
   CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-* cp314-* cp314t-*"
   CIBW_ENABLE: cpython-freethreading
-  CIBW_SKIP: "*musllinux*"
+  CIBW_SKIP: "*musllinux* cp310-win_arm64"
   CIBW_TEST_SKIP: ""
   CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
   CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
   CIBW_ENVIRONMENT_LINUX: "PIP_ONLY_BINARY=numpy"
   CIBW_ENVIRONMENT_MACOS: "MACOSX_DEPLOYMENT_TARGET=11.0"
+  CIBW_ENVIRONMENT_WINDOWS: "PIP_ONLY_BINARY=numpy"
   CIBW_TEST_REQUIRES: pytest
   CIBW_TEST_COMMAND: >-
     python -c "import json; import fastdb4py; from fastdb4py.payload import CompiledSpec, Builder, BuildPolicy, Payload; spec = CompiledSpec.compile(json.dumps(dict(schema='fastdb.payload.v1', profile='record.v1', entries=[dict(id='value', cardinality='one', type=dict(kind='u32'))], components=[])).encode()); builder = Builder.create(spec); builder.entry_begin(0, 1).value_u32(42); plan = builder.freeze(); payload = plan.execute(BuildPolicy.ALLOW_STAGING).payload; decoded = Payload.open_copy(spec, payload.binary_bytes()); assert decoded.entry_view(0).at(0).get_u32() == 42; print('fastdb4py installed wheel read/write OK')"
     && python -m pytest "{package}/tests/python/payload" -q
-  FASTDB_WHEEL_PLATFORMS: "macosx_arm64 macosx_x86_64 manylinux_x86_64 manylinux_aarch64 win_amd64"
+  FASTDB_WHEEL_PLATFORMS: "macosx_arm64 macosx_x86_64 manylinux_x86_64 manylinux_aarch64 win_amd64 win_arm64"
+  FASTDB_WHEEL_RUNNERS: >-
+    {"macosx_arm64":{"os":"macos-15","arch":"arm64"},
+    "macosx_x86_64":{"os":"macos-15","arch":"x86_64"},
+    "manylinux_x86_64":{"os":"ubuntu-24.04","arch":"x86_64"},
+    "manylinux_aarch64":{"os":"ubuntu-24.04-arm","arch":"aarch64"},
+    "win_amd64":{"os":"windows-2022","arch":"AMD64"},
+    "win_arm64":{"os":"windows-11-arm","arch":"ARM64"}}
 
 jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      pending: ${{ steps.plan.outputs.pending }}
+      build_sdist: ${{ steps.plan.outputs.build_sdist }}
+      reused: ${{ steps.plan.outputs.reused }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          path: source
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Plan exact wheel slots and verify reusable published files
+        id: plan
+        env:
+          BACKFILL: ${{ inputs.backfill }}
+        run: |
+          extra=()
+          if [ "$BACKFILL" = true ]; then extra+=(--backfill); fi
+          python release-tools/tests/ci/python_distributions.py plan \
+            --source source --build "$CIBW_BUILD" --platforms "$FASTDB_WHEEL_PLATFORMS" \
+            --runners "$FASTDB_WHEEL_RUNNERS" --reused reused --output plan.json "${extra[@]}"
+      - uses: actions/upload-artifact@v7
+        if: steps.plan.outputs.pending == 'true'
+        with:
+          name: python-build-plan
+          path: plan.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: steps.plan.outputs.reused == 'true'
+        with:
+          name: python-reused
+          path: reused/
+          if-no-files-found: error
+
   wheels:
+    needs: plan
+    if: needs.plan.outputs.pending == 'true'
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: macos-15
-            platform: macosx_arm64
-            arch: arm64
-          # Cross-build on Apple Silicon; cibuildwheel tests x86_64 via Rosetta.
-          # This matches local validation and uses the same runner image as arm64.
-          - os: macos-15
-            platform: macosx_x86_64
-            arch: x86_64
-          - os: ubuntu-24.04
-            platform: manylinux_x86_64
-            arch: x86_64
-          - os: ubuntu-24.04-arm
-            platform: manylinux_aarch64
-            arch: aarch64
-          - os: windows-2022
-            platform: win_amd64
-            arch: AMD64
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
@@ -70,6 +110,15 @@ jobs:
         env:
           EXPECTED_ARCH: ${{ matrix.arch }}
         run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - name: Require the native Windows architecture for wheel builds and tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne $env:EXPECTED_ARCH) {
+            throw "Expected native $env:EXPECTED_ARCH, found $env:PROCESSOR_ARCHITECTURE"
+          }
       - name: Require Apple Silicon for both macOS builds and their tests
         if: runner.os == 'macOS'
         run: test "$(uname -m)" = arm64
@@ -83,6 +132,7 @@ jobs:
           output-dir: wheelhouse
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_BUILD: ${{ matrix.build }}
       - uses: actions/upload-artifact@v7
         with:
           name: python-wheels-${{ matrix.platform }}
@@ -90,6 +140,8 @@ jobs:
           if-no-files-found: error
 
   sdist:
+    needs: plan
+    if: needs.plan.outputs.build_sdist == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -110,7 +162,12 @@ jobs:
           if-no-files-found: error
 
   inventory:
-    needs: [wheels, sdist]
+    needs: [plan, wheels, sdist]
+    if: >-
+      always() && needs.plan.result == 'success' && needs.plan.outputs.pending == 'true' &&
+      needs.wheels.result == 'success' &&
+      (needs.sdist.result == 'success' ||
+       (needs.plan.outputs.build_sdist == 'false' && needs.sdist.result == 'skipped'))
     runs-on: ubuntu-24.04
     outputs:
       build: ${{ steps.policy.outputs.build }}
@@ -130,16 +187,30 @@ jobs:
           python-version: "3.12"
       - uses: actions/download-artifact@v8
         with:
-          pattern: python-*
-          path: dist
+          name: python-build-plan
+          path: plan
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: python-wheels-*
+          path: built
           merge-multiple: true
-      - name: Require all 30 wheels and the sdist before retaining a release part
+      - uses: actions/download-artifact@v8
+        if: needs.sdist.result == 'success'
+        with:
+          name: python-sdist
+          path: built
+      - uses: actions/download-artifact@v8
+        if: needs.plan.outputs.reused == 'true'
+        with:
+          name: python-reused
+          path: reused
+      - name: Require all 35 wheels and the sdist before retaining a release part
         id: policy
         env:
           FASTDB_RELEASE_SOURCE: ${{ github.workspace }}/source
         run: |
-          python release-tools/tests/ci/python_distributions.py inventory \
-            --directory dist --source source \
+          python release-tools/tests/ci/python_distributions.py complete \
+            --plan plan/plan.json --source source --built built --reused reused --output dist \
             --build "$CIBW_BUILD" --platforms "$FASTDB_WHEEL_PLATFORMS"
           python release-tools/tests/ci/release_artifacts.py record --output dist --part python
           echo "build=$CIBW_BUILD" >> "$GITHUB_OUTPUT"

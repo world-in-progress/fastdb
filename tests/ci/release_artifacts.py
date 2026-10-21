@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 import platform
 import re
 import shutil
+import struct
 import subprocess
 import tarfile
 import tempfile
@@ -26,14 +27,18 @@ TARGETS = (
     "x86_64-unknown-linux-gnu",
     "aarch64-apple-darwin",
     "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
 )
 MACOS_TARGET = TARGETS[1]
 WINDOWS_TARGET = TARGETS[2]
+WINDOWS_ARM64_TARGET = TARGETS[3]
+WINDOWS_TARGETS = {WINDOWS_TARGET, WINDOWS_ARM64_TARGET}
 TARGET_MACHINES = {
     "x86_64-unknown-linux-gnu": frozenset({"x86_64"}),
     "aarch64-apple-darwin": frozenset({"arm64"}),
     # Windows reports AMD64 for the x86_64 MSVC target.
     "x86_64-pc-windows-msvc": frozenset({"amd64", "x86_64"}),
+    "aarch64-pc-windows-msvc": frozenset({"arm64", "aarch64"}),
 }
 PYTHON_ABIS = ("cp310", "cp311", "cp312", "cp313", "cp314", "cp314t")
 WHEEL_TARGETS = (*TARGETS, "aarch64-unknown-linux-gnu", "x86_64-apple-darwin")
@@ -41,6 +46,7 @@ PARTS = (
     "core-linux",
     "core-macos",
     "core-windows",
+    "core-windows-arm64",
     "python",
     "typescript",
 )
@@ -51,7 +57,11 @@ WHEEL_PLATFORM_TARGETS = {
     "macosx_arm64": "aarch64-apple-darwin",
     "macosx_x86_64": "x86_64-apple-darwin",
     "win_amd64": "x86_64-pc-windows-msvc",
+    "win_arm64": "aarch64-pc-windows-msvc",
 }
+# NumPy's Windows ARM64 wheels start in the Python 3.11+ release line.
+WHEEL_PYTHON_ABIS = {target: PYTHON_ABIS[1:] if target == WINDOWS_ARM64_TARGET else PYTHON_ABIS
+                     for target in WHEEL_TARGETS}
 
 
 class ReleaseError(RuntimeError):
@@ -67,7 +77,7 @@ def wheel_identity(name: str, version: str) -> tuple[str, str]:
         raise ReleaseError(f"Unexpected Python/ABI pair: {name}")
     identities = set()
     for tag in platforms.split("."):
-        if tag == "win_amd64":
+        if tag in {"win_amd64", "win_arm64"}:
             identities.add(tag)
         elif linux := re.fullmatch(r"manylinux_2_(\d+)_(x86_64|aarch64)", tag):
             if int(linux[1]) > 28:
@@ -93,6 +103,16 @@ def digest(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             value.update(chunk)
     return value.hexdigest()
+
+
+def check_windows_binary(data: bytes, target: str, name: str) -> None:
+    machine = {WINDOWS_TARGET: 0x8664, WINDOWS_ARM64_TARGET: 0xAA64}[target]
+    if len(data) >= 64 and data[:2] == b"MZ":
+        offset = struct.unpack_from("<I", data, 0x3C)[0]
+        if (offset + 6 <= len(data) and data[offset:offset + 4] == b"PE\0\0"
+                and struct.unpack_from("<H", data, offset + 4)[0] == machine):
+            return
+    raise ReleaseError(f"Windows binary architecture does not match {target}: {name}")
 
 
 def source_sha() -> str:
@@ -158,7 +178,7 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
     library = locate_system_library(build_dir)
     release_version = version()
     runtime_library = None
-    if target == WINDOWS_TARGET:
+    if target in WINDOWS_TARGETS:
         # Rust system linkage consumes fastdb.lib while the process loads
         # fastdb.dll; a Windows Core bundle without both halves is unusable.
         runtime_library = library.with_suffix(".dll")
@@ -166,6 +186,7 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
             raise ReleaseError(
                 f"Windows Core bundle requires {runtime_library.name} beside the import library {library.name}"
             )
+        check_windows_binary(runtime_library.read_bytes(), target, runtime_library.name)
     with tempfile.TemporaryDirectory(prefix="fastdb-core-release-") as directory:
         bundle = Path(directory)
         (bundle / "include").mkdir()
@@ -205,7 +226,7 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
             "source_sha": source_sha(), "target": target,
             "platform": platform.platform(), "libc": list(platform.libc_ver()),
             "macos_deployment_target": os.environ.get("MACOSX_DEPLOYMENT_TARGET") if target == MACOS_TARGET else None,
-            "compiler": compiler_identity(build_dir, msvc=target == WINDOWS_TARGET),
+            "compiler": compiler_identity(build_dir, msvc=target in WINDOWS_TARGETS),
             "link_mode": "system", "system_lib_dir": "<absolute bundle path>/lib",
             "abi": "fdb_payload_v1", "abi_symbol_count": 117,
             "files": [{"path": file.relative_to(bundle).as_posix(), "bytes": file.stat().st_size, "sha256": digest(file)} for file in members],
@@ -237,6 +258,13 @@ def inspect_wheel(path: Path, release_version: str) -> str:
                 raise ReleaseError(f"Wheel does not retain original {filename}: {path.name}")
         if not any(name.startswith("fastdb4py/payload/") for name in archive.namelist()):
             raise ReleaseError(f"Wheel omits the portable payload API: {path.name}")
+        wheel_platform = path.stem.rsplit("-", 1)[-1]
+        if wheel_platform.startswith("win_"):
+            extensions = [name for name in archive.namelist()
+                          if name.startswith("fastdb4py/core/_fastdb4py") and name.endswith(".pyd")]
+            if len(extensions) != 1:
+                raise ReleaseError(f"Windows wheel requires one native extension: {path.name}")
+            check_windows_binary(archive.read(extensions[0]), WHEEL_PLATFORM_TARGETS[wheel_platform], path.name)
     pieces = path.stem.split("-")
     return "cp314t" if pieces[-2] == "cp314t" else pieces[-3]
 
@@ -301,7 +329,7 @@ def check_complete(records: list[dict], release_version: str) -> None:
             )
     for target in WHEEL_TARGETS:
         wheels = [item for item in records if item["kind"] == "python-wheel" and item["target"] == target]
-        if sorted(item["python_abi"] for item in wheels) != sorted(PYTHON_ABIS):
+        if sorted(item["python_abi"] for item in wheels) != sorted(WHEEL_PYTHON_ABIS[target]):
             raise ReleaseError(f"Incomplete Python ABI wheel set for {target}")
 
 

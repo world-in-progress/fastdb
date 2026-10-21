@@ -28,8 +28,10 @@ REQUIRED_PROOFS = {
 }
 
 
-def request_json(url: str, *, token: str | None = None, missing_ok: bool = False, data: bytes | None = None) -> dict | None:
+def request_json(url: str, *, token: str | None = None, missing_ok: bool = False, data: bytes | None = None, no_cache: bool = False) -> dict | None:
     headers = {"User-Agent": "fastdb-release/0.2.0 (https://github.com/world-in-progress/fastdb)", "Accept": "application/json"}
+    if no_cache:
+        headers["Cache-Control"] = "no-cache"
     if token:
         headers["Authorization"] = token if data is not None else f"Bearer {token}"
     if data is not None:
