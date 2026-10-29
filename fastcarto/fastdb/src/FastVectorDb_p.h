@@ -20,7 +20,6 @@ namespace wx{
         size_t  m_size;
         fnFreeDbBuffer m_fnFreeBuffer;
         void* m_cookie;
-        bool    m_mask_check_ok;
         friend class FastVectorDb;
     };
 }

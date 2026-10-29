@@ -132,7 +132,6 @@ class ObjectEngine:
     def __init__(self):
         self._db_build: Optional[core.WxDatabaseBuild] = None
         self._db: Optional[core.WxDatabase] = None
-        self._buffer: Optional[bytes] = None
         self._layers: Dict[Type, LayerState] = {}
         self._layer_order: List[Type] = []
         self._built = False
@@ -170,10 +169,10 @@ class ObjectEngine:
         engine._db_build.post(mem)
         buf = mem.data().as_array(np.uint8).tobytes()
         engine._db = core.WxDatabase.load_xbuffer(buf)
-        engine._db._buffer = buf
-        engine._buffer = buf
         engine._built = True
         engine._db_build = None
+        for state in engine._layers.values():
+            state.build = None
         return engine
 
     def push(self, obj: Any) -> None:
@@ -237,10 +236,10 @@ class ObjectEngine:
         self._db_build.post(mem)
         buf = mem.data().as_array(np.uint8).tobytes()
         self._db = core.WxDatabase.load_xbuffer(buf)
-        self._db._buffer = buf
-        self._buffer = buf
         self._built = True
         self._db_build = None
+        for state in self._layers.values():
+            state.build = None
         self._pending.clear()
         self._pushed_ids.clear()
         self._pending_counts.clear()
@@ -393,9 +392,9 @@ class ObjectEngine:
         if not self._built:
             raise RuntimeError("Call combine() before sharing")
         import multiprocessing.shared_memory as shm_mod
-        data = self._buffer
-        seg = shm_mod.SharedMemory(name=name, create=True, size=len(data))
-        seg.buf[:len(data)] = data
+        chunk = self._db.buffer()
+        seg = shm_mod.SharedMemory(name=name, create=True, size=chunk.size)
+        chunk.copy_to_buffer(seg.buf)
         seg.close()
 
     @classmethod
@@ -408,8 +407,6 @@ class ObjectEngine:
 
         orm = cls()
         orm._db = core.WxDatabase.load_xbuffer(buf)
-        orm._db._buffer = buf
-        orm._buffer = buf
         orm._built = True
 
         for i in range(orm._db.get_layer_count()):

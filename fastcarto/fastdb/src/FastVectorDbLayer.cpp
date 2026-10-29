@@ -727,6 +727,10 @@ namespace wx
     {
         return m_table_line_size;
     }
+    void* FastVectorDbLayer::Impl::getTableDataAddress()
+    {
+        return m_table_data_ptr0;
+    }
     ///////////////////////////////////////////
 
     FastVectorDbLayer::FastVectorDbLayer(Impl *_impl) : impl(_impl) {}
@@ -841,6 +845,10 @@ namespace wx
     size_t  FastVectorDbLayer::getFeatureByteSize()
     {
         return impl->getFeatureByteSize();
+    }
+    void* FastVectorDbLayer::getTableDataAddress()
+    {
+        return impl->getTableDataAddress();
     }
 
     // ---- List column read helpers ----

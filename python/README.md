@@ -129,6 +129,27 @@ print(table.column.x.mean())
 
 ## Backed View Lifetimes
 
+`RecordEngine.close()` releases the engine's own references and may be called
+repeatedly. Tables retain their engine, and cached column accessors and views
+share backing state that does not reference the table. Their last reference
+releases the native database immediately, without waiting for cyclic garbage
+collection. `ObjectEngine` releases its references when the engine itself is
+no longer referenced; it has no `close()` method. Closing a RecordEngine does
+not invalidate a caller's `FdbViewOwner`; the caller ends a lease with
+`fdb.invalidate(owner_or_view)`.
+
+After `RecordEngine.close()`, writes that require the engine, including
+`Table.fill()` and string-column fills, raise `RuntimeError: RecordEngine is
+closed.` Direct writes to retained writable NumPy views still update the
+memory those views retain.
+
+`core.WxDatabase.load_xbuffer(buffer)` pins a contiguous buffer export until
+the native database is destroyed. This includes borrowed `bytes`, `bytearray`,
+NumPy and `mmap` storage. Resizing or closing an exported buffer raises
+`BufferError` while a table, row, or column still keeps the database alive.
+Shared-memory mappings close after native layers and the buffer export are
+released.
+
 FastDB Python values have two lifetime modes. A plain `@feature` instance is owned Python data: its fields live in `__dict__`, it can be kept indefinitely, and assigning `point.x = 1.0` is ordinary Python object mutation. A row returned from a mapped `Table` is a backed feature view: schema fields read from the native table row, scalar numeric writes go back to native storage when the view is writeable, and the view is tied to a `FdbViewOwner`.
 
 Standalone FastDB tables use a trusted unchecked owner by default, so existing high-performance workflows keep raw NumPy column access:

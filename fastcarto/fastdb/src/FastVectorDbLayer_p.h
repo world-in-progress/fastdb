@@ -65,6 +65,7 @@ namespace wx
 
         size_t          getFieldOffset(unsigned ix);
         size_t          getFeatureByteSize();
+        void*           getTableDataAddress();
     private:
         void            move_next_geometry_ptr();
         size_t          get_geometry_like_size(const u8* pdata);

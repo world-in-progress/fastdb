@@ -4,10 +4,74 @@
     #include "fastdb.h"
     #include "fastdb-geometry-utils.h"
     using namespace wx;
+
+    struct PythonDbBacking {
+        Py_buffer buffer;
+        PyObject* mapping;
+    };
+
+    static void release_python_db_backing(void*, size_t, void* cookie) {
+        auto* backing = static_cast<PythonDbBacking*>(cookie);
+        PyGILState_STATE state = PyGILState_Ensure();
+        PyBuffer_Release(&backing->buffer);
+        if (backing->mapping) {
+            PyObject* result = PyObject_CallMethod(backing->mapping, "close", NULL);
+            if (result)
+                Py_DECREF(result);
+            else
+                PyErr_WriteUnraisable(backing->mapping);
+            Py_DECREF(backing->mapping);
+        }
+        PyMem_Free(backing);
+        PyGILState_Release(state);
+    }
 %}
 
 // Tell SWIG to ignore fastdb_api when parsing headers
 #define fastdb_api
+
+// These factories transfer a newly allocated object to their caller. Layers,
+// cached features and builder-created refs remain owned by their parent.
+%newobject wx::FastVectorDb::load(const char *filename);
+%newobject wx::FastVectorDb::load_python_buffer;
+%rename(load_xbuffer) wx::FastVectorDb::load_python_buffer;
+%newobject wx::FastVectorDbFeatureRef::make_ref;
+
+%define BORROWED_RESULT(method)
+%pythonappend method %{
+    if val is not None:
+        val._fdb_parent = self
+%}
+%enddef
+BORROWED_RESULT(wx::FastVectorDbBuild::createLayerBegin)
+BORROWED_RESULT(wx::FastVectorDbLayerBuild::createFeatureRef)
+BORROWED_RESULT(wx::FastVectorDb::getLayer)
+BORROWED_RESULT(wx::FastVectorDb::tryGetFeature)
+BORROWED_RESULT(wx::FastVectorDb::buffer)
+BORROWED_RESULT(wx::FastVectorDbLayer::tryGetFeatureAt)
+BORROWED_RESULT(wx::FastVectorDbLayer::getGeometryLikeChunk)
+BORROWED_RESULT(wx::FastVectorDbLayer::getFieldAsStringView)
+BORROWED_RESULT(wx::FastVectorDbLayer::getStringColumnOffsets)
+BORROWED_RESULT(wx::FastVectorDbLayer::getStringColumnData)
+BORROWED_RESULT(wx::FastVectorDbLayer::getFieldAsFeatureRef)
+BORROWED_RESULT(wx::FastVectorDbFeature::layer)
+BORROWED_RESULT(wx::FastVectorDbFeature::getGeometryLikeChunk)
+BORROWED_RESULT(wx::FastVectorDbFeature::getFieldAsStringView)
+BORROWED_RESULT(wx::FastVectorDbFeature::getFieldAsListView)
+BORROWED_RESULT(wx::FastVectorDbFeature::getFieldAsFeatureRef)
+BORROWED_RESULT(wx::FastVectorDbFeature::getFieldListRefAt)
+BORROWED_RESULT(wx::MemoryStream::data)
+
+%define DATABASE_RESULT(method)
+%exception method {
+    $action
+    if (PyErr_Occurred()) SWIG_fail;
+    if (!result)
+        SWIG_exception_fail(SWIG_ValueError, "Invalid FastDB database buffer.");
+}
+%enddef
+DATABASE_RESULT(wx::FastVectorDb::load)
+DATABASE_RESULT(wx::FastVectorDb::load_python_buffer)
 
 // Release the GIL for pure C++ operations that do not touch Python objects.
 // This benefits both standard Python (better multi-threaded throughput) and
@@ -32,7 +96,33 @@
     // When built on free-threaded Python, SWIG automatically declares Py_MOD_GIL_NOT_USED.
 %}
 
-//%array_class(point2_t, LineString);
+%extend wx::FastVectorDb {
+    static wx::FastVectorDb* load_python_buffer(PyObject* pdata, PyObject* mapping = Py_None) {
+        // Independent view: callers may release their view after this call.
+        PyObject* view = PyMemoryView_FromObject(pdata);
+        if (!view) return NULL;
+        auto* backing = static_cast<PythonDbBacking*>(PyMem_Calloc(1, sizeof(PythonDbBacking)));
+        if (!backing) {
+            Py_DECREF(view);
+            PyErr_NoMemory();
+            return NULL;
+        }
+        int status = PyObject_GetBuffer(view, &backing->buffer, PyBUF_SIMPLE);
+        Py_DECREF(view);
+        if (status != 0) {
+            PyMem_Free(backing);
+            return NULL;
+        }
+        wx::FastVectorDb* db = wx::FastVectorDb::load(
+            backing->buffer.buf, (size_t)backing->buffer.len,
+            release_python_db_backing, backing);
+        if (db && mapping != Py_None) {
+            Py_INCREF(mapping);
+            backing->mapping = mapping;
+        }
+        return db;
+    }
+}
 
 %typemap(in) const wchar_t * (wchar_t *temp = NULL) {
     if ($input == Py_None) {
@@ -101,26 +191,19 @@
 }
 
 %typemap(default) (const u8* data,size_t size) {};
-// 在你的 .i 文件中对目标函数应用此类型映射
-%typemap(in) (void* pdata, size_t size) (Py_buffer view) {
-    // 检查输入对象是否支持缓冲区接口
-    if (PyObject_CheckBuffer($input) == 0) {
-        SWIG_exception_fail(SWIG_TypeError, "Expected a bufferable object (e.g., bytes, bytearray)");
-    }
-    // 获取缓冲区视图，PyBUF_SIMPLE 请求一个简单的连续字节缓冲区
-    if (PyObject_GetBuffer($input, &view, PyBUF_SIMPLE) != 0) {
-        SWIG_exception_fail(SWIG_TypeError, "Failed to get buffer from object.");
-    }
-    // 将获取到的缓冲区地址和长度赋给参数
-    $1 = view.buf;  // void* pdata 指向数据
-    $2 = view.len;  // size_t size 设置数据长度
-}
 
-// 定义 freearg 类型映射，在函数调用后释放缓冲区
-%typemap(freearg) (void* pdata, size_t size) {
-    if (view$argnum.obj) {
-        PyBuffer_Release(&view$argnum);
+// Copying stream writes borrow their input only for this C call. Retained
+// database buffers use load_python_buffer's native lifetime cookie instead.
+%typemap(in) (void* pdata, size_t size) (Py_buffer view) {
+    memset(&view, 0, sizeof(view));
+    if (PyObject_GetBuffer($input, &view, PyBUF_SIMPLE) < 0) {
+        SWIG_fail;
     }
+    $1 = view.buf;
+    $2 = (size_t)view.len;
+}
+%typemap(freearg) (void* pdata, size_t size) {
+    if (view$argnum.obj) PyBuffer_Release(&view$argnum);
 }
 
 // Typemap for set_field_list_numeric: accepts any buffer object; nbytes = byte length of buffer
@@ -191,6 +274,13 @@
 %ignore wx::FastVectorDbFeature::FastVectorDbFeature();
 %ignore wx::FastVectorDbFeature::~FastVectorDbFeature();
 %ignore wx::FastVectorDb::load(void *pdata, size_t size, fnFreeDbBuffer fnFreeBuffer, void *cookie);
+%ignore wx::FastVectorDb::load_xbuffer;
+%ignore wx::FixedBufferWriteStream::FixedBufferWriteStream;
+%nodefaultctor wx::FixedBufferWriteStream;
+%ignore wx::aabbox_t::minEdge;
+%ignore wx::aabbox_t::maxEdge;
+%ignore wx::GeometryUtils::get_point_at;
+%ignore wx::GeometryUtils::part_data;
 %ignore wx::FastVectorDbBuild::postToBuffer;
 %ignore wx::FastVectorDbLayerBuild::setNumericColumnBulk;
 %nodefaultctor FastVectorDbLayerBuild;
@@ -228,6 +318,7 @@
 %rename(get_field_defn)        getFieldDefn_p;
 %rename(get_extent)            getExtent_p;
 %rename(get_feature_count)     getFeatureCount;       
+%rename(get_table_data_address) getTableDataAddress;
 %rename(get_geometry_like_chunk) getGeometryLikeChunk;       
 %rename(get_field_as_float)     getFieldAsFloat;       
 %rename(get_field_as_int)       getFieldAsInt;       
@@ -261,11 +352,10 @@
 %rename(get_field_list_ref_at)  getFieldListRefAt;
 
 %extend wx::chunk_data_t {
-    PyObject *as_array(PyObject* npType) {
+    PyObject *as_array(PyObject* npType, PyObject** PYTHON_SELF) {
         int typenum;
         PyArray_Descr* descr = PyArray_DescrFromTypeObject(npType);
         if (descr == NULL) { 
-            PyErr_Clear(); // 或进行其他错误处理
             return NULL;
         } else { 
             typenum = descr->type_num;
@@ -281,21 +371,22 @@
 
         Py_DECREF(descr);
         
-        npy_intp num_elements = $self->size / item_size;
-        
-        if ($self->size % item_size != 0) {
+        if (item_size == 0 || $self->size % item_size != 0) {
             PyErr_SetString(PyExc_ValueError, "Buffer size does not match an integer number of elements for the given data type.");
             return NULL;
         }
+        npy_intp num_elements = $self->size / item_size;
         npy_intp dims[1] = {num_elements}; 
         PyObject *array = PyArray_SimpleNewFromData(1, dims, typenum, (void*)($self->pdata));
         if (!array) {
             PyErr_SetString(PyExc_RuntimeError, "Failed to create NumPy array");
             return NULL;
         }
-        PyArray_ENABLEFLAGS((PyArrayObject*)array, NPY_ARRAY_C_CONTIGUOUS);
-        PyArray_ENABLEFLAGS((PyArrayObject*)array, NPY_ARRAY_WRITEABLE);
-        PyArray_CLEARFLAGS((PyArrayObject*)array, NPY_ARRAY_OWNDATA);
+        Py_INCREF(*PYTHON_SELF);
+        if (PyArray_SetBaseObject((PyArrayObject*)array, *PYTHON_SELF) < 0) {
+            Py_DECREF(array);
+            return NULL;
+        }
         return array;
     }
     
@@ -333,6 +424,7 @@
 
 %pythoncode %{
     import numpy as np
+
 %}
 %extend wx::FastVectorDbLayer {
    %pythoncode %{
@@ -379,7 +471,7 @@
 
                     if(not tystr):
                         return None
-                    ptr = _fastdb4py.get_swig_ptr_as_long(table.tryGetFeature(0).get_address())
+                    ptr = _fastdb4py.get_swig_ptr_as_long(table.get_table_data_address())
                     offset = table.get_field_offset(index)
                     ptr+=offset
                     return __column_np_interface__(

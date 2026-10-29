@@ -95,15 +95,15 @@ def test_normalize_string_values_wraps_raw_sequence_payload():
 
 def test_string_column_fill_routes_sequence_payload_to_fixed_handler(monkeypatch):
     engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
-    tbl = engine.table(CEStringPoint)
     captured = []
     original = engine._fill_fixed_table
 
-    def capture_fill(table_name, writes):
-        captured.append((table_name, writes))
-        return original(table_name, writes)
+    def capture_fill(state, writes):
+        captured.append((state._table_name, writes))
+        return original(state, writes)
 
     monkeypatch.setattr(engine, '_fill_fixed_table', capture_fill)
+    tbl = engine.table(CEStringPoint)
 
     tbl.column.name.fill(["hi", None])
 
@@ -118,16 +118,16 @@ def test_string_column_fill_routes_sequence_payload_to_fixed_handler(monkeypatch
 
 def test_string_column_fill_utf8_uses_unified_fixed_writer(monkeypatch):
     engine = RecordEngine.truncate([Layout(CEStringPoint, 2)])
-    tbl = engine.table(CEStringPoint)
     captured = []
 
     original = engine._fill_fixed_table
 
-    def capture_fill(table_name, writes):
-        captured.append((table_name, writes))
-        return original(table_name, writes)
+    def capture_fill(state, writes):
+        captured.append((state._table_name, writes))
+        return original(state, writes)
 
     monkeypatch.setattr(engine, '_fill_fixed_table', capture_fill)
+    tbl = engine.table(CEStringPoint)
 
     offsets, data = _pack_utf8(["hi", "中"])
     tbl.column.name.fill_utf8(offsets, data)
