@@ -1,6 +1,7 @@
 #include "FastVectorDb_p.h"
 #include "FastVectorDbLayer_p.h"
 #include <cstring>
+#include <limits>
 #include <stdlib.h>
 
 #ifdef _WIN32
@@ -24,15 +25,61 @@ namespace wx
             std::memcpy(&value, source, sizeof(value));
             return value;
         }
+
+        bool valid_layer_bounds(const u8* layer, const layer_header_t& header)
+        {
+            const size_t tail = size_t(header.total_size) - sizeof(layer_header_t);
+            if (header.field_count > tail / sizeof(field_desc_ex_t))
+                return false;
+            const size_t descriptors = size_t(header.field_count) * sizeof(field_desc_ex_t);
+            const u8* data = layer + sizeof(layer_header_t) + descriptors;
+            const size_t size = tail - descriptors;
+            if (header.offset_table > size)
+                return false;
+            if (header.field_count) {
+                const auto last = load_unaligned<field_desc_ex_t>(
+                    layer + sizeof(layer_header_t) + descriptors - sizeof(field_desc_ex_t));
+                if (last.offset > std::numeric_limits<u64>::max() - last.size)
+                    return false;
+                const u64 stride = last.offset + last.size;
+                if (stride && header.feature_count > (size - header.offset_table) / stride)
+                    return false;
+                for (u16 i = 0; i < header.field_count; ++i) {
+                    const auto field = load_unaligned<field_desc_ex_t>(
+                        layer + sizeof(layer_header_t) + size_t(i) * sizeof(field_desc_ex_t));
+                    if (field.offset > stride || field.size > stride - field.offset)
+                        return false;
+                }
+            }
+            // Legacy string tables are read during construction, before the
+            // bounded optional column sections. Check their terminators here.
+            for (unsigned width : {1u, 2u}) {
+                u64 offset = width == 1 ? header.offset_strings : header.offset_wstrings;
+                if (offset > size || size - offset < sizeof(u32))
+                    return false;
+                const u32 count = load_unaligned<u32>(data + offset);
+                offset += sizeof(u32);
+                if (count > (size - offset) / width)
+                    return false;
+                for (u32 i = 0; i < count; ++i) {
+                    for (;;) {
+                        if (size - offset < width)
+                            return false;
+                        const bool terminated = width == 1 ? data[offset] == 0 :
+                            load_unaligned<u16>(data + offset) == 0;
+                        offset += width;
+                        if (terminated) break;
+                    }
+                }
+            }
+            return true;
+        }
     }
 
     FastVectorDb::Impl::Impl(void *pdata, size_t size, fnFreeDbBuffer fnFreeBuffer, void *cookie)
         : m_pdata(pdata), m_size(size), m_fnFreeBuffer(fnFreeBuffer), m_cookie(cookie)
     {
         u8 *ptr = (u8 *)pdata;
-        bool check_mask = strcmp((const char *)ptr, "FASTVectorDB0.1") == 0;
-        assert(check_mask);
-        m_mask_check_ok=check_mask;
         ptr += 16;
         const u32 count = load_unaligned<u32>(ptr);
         ptr += sizeof(u32);
@@ -113,17 +160,32 @@ namespace wx
 
     FastVectorDb *FastVectorDb::load(void *pdata, size_t size, fnFreeDbBuffer fnFreeBuffer, void *cookie)
     {
-        FastVectorDb::Impl *impl = new FastVectorDb::Impl(pdata, size, fnFreeBuffer, cookie);
-        if(impl->m_mask_check_ok)
-        {
-            auto db = new FastVectorDb(impl);
-            return db;
+        // Validate the standalone envelope once before reading its headers.
+        // The backing callback also releases invalid inputs.
+        bool valid = pdata && size >= 20 &&
+            std::memcmp(pdata, "FASTVectorDB0.1", sizeof("FASTVectorDB0.1")) == 0;
+        if (valid) {
+            const u8* ptr = static_cast<const u8*>(pdata) + 20;
+            size_t remaining = size - 20;
+            const u32 count = load_unaligned<u32>(static_cast<const u8*>(pdata) + 16);
+            for (u32 i = 0; i < count; ++i) {
+                if (remaining < sizeof(layer_header_t)) { valid = false; break; }
+                const auto header = load_unaligned<layer_header_t>(ptr);
+                if (header.total_size < sizeof(layer_header_t) || header.total_size > remaining ||
+                    !valid_layer_bounds(ptr, header)) {
+                    valid = false;
+                    break;
+                }
+                ptr += header.total_size;
+                remaining -= header.total_size;
+            }
         }
-        else
+        if (!valid)
         {
-            delete impl;
+            if (fnFreeBuffer) fnFreeBuffer(pdata, size, cookie);
             return nullptr;
         }
+        return new FastVectorDb(new Impl(pdata, size, fnFreeBuffer, cookie));
     }
 
     FastVectorDbFeature* FastVectorDb::tryGetFeature(wx::FastVectorDbFeatureRef* ref)

@@ -70,7 +70,7 @@ def _normalize_bool_fill_ndarray(field_name: str, values: np.ndarray) -> np.ndar
     )
 
 
-def _create_column_accessor(feature_type: Type[T], table) -> T:
+def _create_column_accessor(feature_type: Type[T], state) -> T:
     """
     Create a column accessor that provides numpy array access with proper type hints.
 
@@ -81,7 +81,7 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
         schema = get_schema(feature_type)
         ColumnAccessorClass = schema.column_accessor_class
         if ColumnAccessorClass is not None:
-            return ColumnAccessorClass(table, feature_type)
+            return ColumnAccessorClass(state)
 
         # Get original annotations from feature_type
         original_annotations = getattr(feature_type, '__annotations__', {}).copy()
@@ -96,10 +96,10 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
             # Set the new annotations
             __annotations__ = original_annotations
 
-            def __init__(self, table, feature_type):
-                # Don't call parent __init__ to avoid initializing cache
-                # Just set internal references
-                object.__setattr__(self, '_table', table)
+            def __init__(self, state):
+                object.__setattr__(self, '_state', state)
+                object.__setattr__(self, '_fdb_owner', state._fdb_owner)
+                object.__setattr__(self, '_owner_generation', state._fdb_owner.generation)
                 object.__setattr__(self, '_field_index_map', _field_index_map)
                 object.__setattr__(self, '_name_cache', {})
                 object.__setattr__(self, '_cache_lock', Lock())
@@ -108,8 +108,9 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
                 """Override to return numpy array instead of single value"""
                 # Hot path: name → array directly (1× getattribute + 1× dict.get).
                 # Cached arrays are stable: fixed-scale tables never reallocate columns.
-                table = object.__getattribute__(self, '_table')
-                table._assert_alive()
+                owner = object.__getattribute__(self, '_fdb_owner')
+                if owner.checked:
+                    owner.assert_alive(object.__getattribute__(self, '_owner_generation'))
                 name_cache = object.__getattribute__(self, '_name_cache')
                 arr = name_cache.get(name)
                 if arr is not None:
@@ -127,12 +128,13 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
                     if idx is None:
                         raise AttributeError(f'Field "{name}" not found in the table.')
 
-                    table_origin = table._origin
+                    state = object.__getattribute__(self, '_state')
+                    table_origin = state._origin
                     fd = schema.fields[idx]
                     if fd.field_type in {OriginFieldType.str, OriginFieldType.wstr}:
-                        arr = StringColumn(table, idx, name, wide=fd.field_type == OriginFieldType.wstr)
+                        arr = StringColumn(state, idx, name, wide=fd.field_type == OriginFieldType.wstr)
                     elif fd.field_type == OriginFieldType.bytes:
-                        arr = BytesColumn(table, idx, name)
+                        arr = BytesColumn(state, idx, name)
                     else:
                         column = table_origin.get_column(idx)
                         if column is None:
@@ -140,8 +142,8 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
                                 f'Field "{name}" does not expose a fixed native column.',
                             )
                         arr = column.as_nparray()
-                        if table._fdb_owner.checked or not table._fdb_writeable:
-                            arr = NumericColumnView(table, idx, name, arr)
+                        if state._fdb_owner.checked or not state._fdb_writeable:
+                            arr = NumericColumnView(state, idx, name, arr)
                     name_cache[name] = arr
                     return arr
 
@@ -157,20 +159,39 @@ def _create_column_accessor(feature_type: Type[T], table) -> T:
 
         # Store the class in ClassSchema (replaces _column_accessor_cache WeakKeyDict).
         schema.column_accessor_class = ColumnAccessor
-        return ColumnAccessor(table, feature_type)
+        return ColumnAccessor(state)
 
-class Table(Generic[T]):
+
+class _TableState:
+    """Backing shared by table projections, with no references to projections."""
+
     def __init__(self):
         self._fc: np.ndarray = np.zeros(1, dtype=np.int64)
-        self._column: T | None = None
         self._feature_type: Type[T] | None = None
         self._db: core.WxDatabase | core.WxDatabaseBuild = None
         self._origin: core.WxLayerTable | core.WxLayerTableBuild | None = None
+        self._engine = None
+        self._table_name = ''
         self._fixed_fill_handler = None
         self._read_lock = RLock()
         self._fdb_owner: FdbViewOwner = trusted_view_owner(writeable=True)
-        self._fdb_checked = False
         self._fdb_writeable = True
+
+    def __len__(self) -> int:
+        self._assert_alive()
+        return self._origin.get_feature_count()
+
+    def _assert_alive(self, generation: int | None = None) -> None:
+        self._fdb_owner.assert_alive(generation)
+
+    def _assert_engine_open(self) -> None:
+        if self._engine is not None:
+            self._engine._assert_open()
+
+    def _remap(self, origin, db) -> None:
+        self._db = db
+        self._origin = origin
+        self.feature_count = origin.get_feature_count()
 
     @property
     def feature_count(self) -> int:
@@ -180,41 +201,110 @@ class Table(Generic[T]):
     def feature_count(self, value: int) -> None:
         self._fc[0] = value
 
+
+class Table(Generic[T]):
+    def __init__(self):
+        self._state = _TableState()
+        self._column: T | None = None
+
+    @staticmethod
+    def _from_state(state: _TableState) -> 'Table[T]':
+        table = Table[T]()
+        table._state = state
+        table._reset_columns()
+        return table
+
+    def _reset_columns(self) -> None:
+        self._column = (
+            _create_column_accessor(self._feature_type, self._state)
+            if self.fixed and self._feature_type is not None else None
+        )
+
+    @property
+    def _db(self):
+        return self._state._db
+
+    @property
+    def _origin(self):
+        return self._state._origin
+
+    @_origin.setter
+    def _origin(self, value):
+        self._state._origin = value
+
+    @property
+    def _feature_type(self):
+        return self._state._feature_type
+
+    @_feature_type.setter
+    def _feature_type(self, value):
+        self._state._feature_type = value
+
+    @property
+    def _read_lock(self):
+        return self._state._read_lock
+
+    @_read_lock.setter
+    def _read_lock(self, value):
+        self._state._read_lock = value
+
+    @property
+    def _fdb_owner(self):
+        return self._state._fdb_owner
+
+    @property
+    def _fdb_writeable(self):
+        return self._state._fdb_writeable
+
+    @property
+    def _fixed_fill_handler(self):
+        return self._state._fixed_fill_handler
+
+    @property
+    def feature_count(self) -> int:
+        return self._state.feature_count
+
+    @feature_count.setter
+    def feature_count(self, value: int) -> None:
+        self._state.feature_count = value
+
     def __len__(self) -> int:
         self._assert_alive()
         return self._origin.get_feature_count()
 
     def __getitem__(self, index: int) -> T:
-        with self._read_lock:
-            self._assert_alive()
-            count = self._origin.get_feature_count()
+        state = self._state
+        with state._read_lock:
+            state._assert_alive()
+            count = state._origin.get_feature_count()
             if index < 0:
                 index = count + index
             if index < 0 or index >= count:
                 raise IndexError(f'Feature index {index} out of range [0, {count}).')
 
             return bind_feature(
-                self._feature_type,
-                self._db,
-                self._origin,
+                state._feature_type,
+                state._db,
+                state._origin,
                 index,
-                owner=self._fdb_owner,
-                writeable=self._fdb_writeable,
+                owner=state._fdb_owner,
+                writeable=state._fdb_writeable,
                 table=self,
             )
 
     def __iter__(self) -> Generator[T, None, None]:
         self._assert_alive()
         for i in range(self._origin.get_feature_count()):
-            with self._read_lock:
-                self._assert_alive()
+            state = self._state
+            with state._read_lock:
+                state._assert_alive()
                 item = bind_feature(
-                    self._feature_type,
-                    self._db,
-                    self._origin,
+                    state._feature_type,
+                    state._db,
+                    state._origin,
                     i,
-                    owner=self._fdb_owner,
-                    writeable=self._fdb_writeable,
+                    owner=state._fdb_owner,
+                    writeable=state._fdb_writeable,
                     table=self,
                 )
             yield item
@@ -287,7 +377,7 @@ class Table(Generic[T]):
         writeable: bool | None = None,
     ) -> 'Table[T]':
         table = Table[T]()
-        table._db = db
+        table._state._db = db
         table._origin = origin
         table._feature_type = feature_type
         table._set_view_owner(owner, writeable=writeable)
@@ -295,8 +385,6 @@ class Table(Generic[T]):
         # Get feature count if the fastdb table has fixed scale
         if table.fixed:
             table.feature_count = origin.get_feature_count()
-            # Create column accessor that pretends to be T but returns numpy arrays
-            table._column = _create_column_accessor(feature_type, table) if feature_type is not None else None
 
         return table
 
@@ -305,17 +393,8 @@ class Table(Generic[T]):
         origin: core.WxLayerTable | core.WxLayerTableBuild,
         db: core.WxDatabase | core.WxDatabaseBuild,
     ) -> None:
-        self._db = db
-        self._origin = origin
-        self._fdb_owner.bump_generation()
-        if self.fixed:
-            self.feature_count = origin.get_feature_count()
-            self._column = (
-                _create_column_accessor(self._feature_type, self)
-                if self._feature_type is not None else None
-            )
-        else:
-            self._column = None
+        self._state._remap(origin, db)
+        self._reset_columns()
 
     def rewind(self):
         self._assert_alive()
@@ -328,6 +407,7 @@ class Table(Generic[T]):
         ``tbl.column.<field>`` is stale and must not be reused. Always
         re-fetch ``tbl.column.<field>`` after fill().
         """
+        self._state._assert_engine_open()
         if not self.fixed:
             raise RuntimeError('fill() only supports fixed-scale tables.')
         self._assert_writeable()
@@ -338,7 +418,7 @@ class Table(Generic[T]):
 
         expected = len(self)
         writes = {}
-        col = self._column
+        col = self.column
         schema = get_schema(self._feature_type)
         for field_name, values in col_arrays.items():
             field_def = schema.get(field_name)
@@ -375,7 +455,7 @@ class Table(Generic[T]):
                 )
             writes[field_name] = arr
 
-        self._fixed_fill_handler(writes)
+        self._fixed_fill_handler(self._state, writes)
 
     def _set_view_owner(
         self,
@@ -385,17 +465,12 @@ class Table(Generic[T]):
     ) -> None:
         if owner is None:
             owner = trusted_view_owner(writeable=True if writeable is None else writeable)
-        self._fdb_owner = owner
-        self._fdb_checked = owner.checked
-        self._fdb_writeable = owner.writeable if writeable is None else writeable
-        if self.fixed:
-            self._column = (
-                _create_column_accessor(self._feature_type, self)
-                if self._feature_type is not None else None
-            )
+        self._state._fdb_owner = owner
+        self._state._fdb_writeable = owner.writeable if writeable is None else writeable
+        self._reset_columns()
 
     def _assert_alive(self, generation: int | None = None) -> None:
-        self._fdb_owner.assert_alive(generation)
+        self._state._fdb_owner.assert_alive(generation)
 
     def _assert_writeable(self, generation: int | None = None) -> None:
         self._fdb_owner.assert_alive(generation)

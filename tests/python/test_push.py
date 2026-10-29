@@ -45,7 +45,6 @@ def test_push_scalar_fields():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     layer = rdb.get_layer(0)
     feat = layer.tryGetFeature(0)
     assert abs(feat.get_field_as_float(0) - 42.0) < 1e-9
@@ -67,7 +66,6 @@ def test_push_str_field():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     layer = rdb.get_layer(0)
     feat = layer.tryGetFeature(0)
 def test_push_list_field():
@@ -85,7 +83,6 @@ def test_push_list_field():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     layer = rdb.get_layer(0)
     feat = layer.tryGetFeature(0)
     arr = feat.get_field_as_list_view(0).as_array(np.float64)
@@ -102,7 +99,6 @@ def test_push_default_values():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     layer = rdb.get_layer(0)
     feat = layer.tryGetFeature(0)
     assert feat.get_field_as_float(0) == 0.0
@@ -124,7 +120,6 @@ def test_push_empty_list():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     layer = rdb.get_layer(0)
     feat = layer.tryGetFeature(0)
     arr = feat.get_field_as_list_view(0).as_array(np.float64)
@@ -144,7 +139,6 @@ def test_push_numpy_array_list():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     layer = rdb.get_layer(0)
     feat = layer.tryGetFeature(0)
     arr = feat.get_field_as_list_view(0).as_array(np.float64)
@@ -176,7 +170,6 @@ def test_push_mixed_field_types():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     layer = rdb.get_layer(0)
     feat = layer.tryGetFeature(0)
     

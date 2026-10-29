@@ -224,7 +224,7 @@ namespace wx
         void setTableBufferMaterialized(bool enabled);
         size_t tableBufferBytes();
         void setField(unsigned ix, const FastVectorDbFeatureRef* ref);
-        FastVectorDbFeatureRef* createFeatureRef(u32 ix=-1);
+        FastVectorDbFeatureRef* createFeatureRef(u32 ix=0xFFFFFFFF);
         void freeFeatureRef(FastVectorDbFeatureRef* ref);
         void addFeatureEnd();
         // List column build API
@@ -370,6 +370,9 @@ namespace wx
         const char*             getFieldDefn(unsigned ix, FieldTypeEnum &ft, double &vmin, double &vmax);
         size_t                  getFieldOffset(unsigned ix);
         size_t                  getFeatureByteSize();
+        // Borrowed base of the row table. Rows are separated by getFeatureByteSize().
+        // The address remains valid only while the database and its backing buffer live.
+        void*                   getTableDataAddress();
         void                    getExtent(double &minx, double &miny, double &maxx, double &maxy);
         u32                     getFeatureCount();
         void                    rewind();

@@ -294,6 +294,7 @@ class FastSerializer:
         from multiprocessing import shared_memory as _shm_mod
 
         shm = _shm_mod.SharedMemory(name=shm_name, create=False)
+        db = None
         try:
             if offset + length > shm.size:
                 raise ValueError(
@@ -301,13 +302,9 @@ class FastSerializer:
                     f"exceeds shared memory size ({shm.size})"
                 )
 
-            # Create a memoryview slice and hand it to the C++ loader.
-            # load_xbuffer's SWIG typemap acquires/releases its own Py_buffer,
-            # so we can release *buf* immediately after the call.  The C++ db
-            # holds a raw pointer into the still-alive mmap (owned by *shm*).
-            buf = shm.buf[offset:offset + length]
-            db = core.WxDatabase.load_xbuffer(buf)
-            buf.release()
+            # Native destruction releases the export before closing the mapping.
+            with shm.buf[offset:offset + length] as buf:
+                db = core.WxDatabase.load_xbuffer(buf, shm)
 
             if db.get_layer_count() == 0:
                 return None
@@ -335,7 +332,8 @@ class FastSerializer:
 
             return result
         finally:
-            shm.close()
+            if db is None:
+                shm.close()
 
 # --- Internal Helpers ---
 

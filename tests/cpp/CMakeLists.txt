@@ -85,6 +85,27 @@ add_test(
     COMMAND fastdb_legacy_descriptor_determinism
 )
 
+add_executable(fastdb_legacy_lifetime test_legacy_lifetime.cpp)
+target_include_directories(
+    fastdb_legacy_lifetime
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/../../fastcarto/fastdb/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload
+)
+target_link_libraries(fastdb_legacy_lifetime PRIVATE fastdb)
+target_compile_options(
+    fastdb_legacy_lifetime
+    PRIVATE
+        $<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/Zc:preprocessor>
+)
+fastdb_apply_sanitizers(fastdb_legacy_lifetime)
+add_test(
+    NAME legacy.lifetime
+    COMMAND fastdb_legacy_lifetime
+        "$<TARGET_FILE_DIR:fastdb_legacy_lifetime>/legacy_lifetime.fdb"
+)
+
 set(FASTDB_PAYLOAD_FUZZ_MATCHING_SPEC
     ${CMAKE_CURRENT_SOURCE_DIR}/../golden/payload/v1/binary/spec/component-list-composition.source.json
 )

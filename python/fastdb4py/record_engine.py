@@ -6,6 +6,7 @@ import numpy as np
 from pathlib import Path
 from typing import List, TypeVar, Type
 from multiprocessing import shared_memory
+from weakref import ref
 
 from . import core
 from .registry import (
@@ -16,7 +17,7 @@ from .registry import (
     raw_payload_storage_diagnostics,
 )
 from .layout import Layout
-from .orm.table import Table
+from .orm.table import Table, _TableState
 from .type import OriginFieldType
 from .view_owner import FdbViewOwner
 from .push_compiler import (
@@ -26,6 +27,14 @@ from .push import normalize_bool_cache
 from .string_column import _StringSequencePayload
 
 T = TypeVar('T')
+
+
+def _load_shared_database(shm: shared_memory.SharedMemory):
+    try:
+        return core.WxDatabase.load_xbuffer(shm.buf, shm)
+    except BaseException:
+        shm.close()
+        raise
 
 
 def _post_build_to_bytearray(build: object) -> bytearray:
@@ -95,10 +104,28 @@ def _reject_unsupported_schema(schema: LayerSchema, cls_name: str) -> None:
     _reject_non_native_lists(schema, cls_name)
 
 
+class _TableRegistration:
+    """Weak projections of one backing state, retained until that state dies."""
+
+    def __init__(self, engine, key, table: Table):
+        engine_ref = ref(engine)
+
+        def forget_state(state_ref):
+            parent = engine_ref()
+            if parent is not None:
+                entry = parent._tables.get(key)
+                if entry is not None and entry.state is state_ref:
+                    del parent._tables[key]
+
+        self.state = ref(table._state, forget_state)
+        self.table = ref(table)
+
+
 class RecordEngine:
     def __init__(self):
         self._shm: shared_memory.SharedMemory | None = None
-        self._table_map: dict[str, Table] = {}
+        self._tables: dict[tuple[str, int], _TableRegistration] = {}
+        self._build_states: dict[str, _TableState] = {}
         self._table_feature_types: dict[str, Type] = {}
         self._origin: core.WxDatabase | core.WxDatabaseBuild | None = None
         self._is_mutable: bool = False
@@ -111,6 +138,11 @@ class RecordEngine:
         self._push_batch_fn: dict = {}
         self._push_dispatch: dict = {}
         self._bool_push_schemas: dict = {}
+        self._closed = False
+
+    def _assert_open(self) -> None:
+        if self._closed:
+            raise RuntimeError('RecordEngine is closed.')
 
     @property
     def fixed(self) -> bool:
@@ -155,7 +187,7 @@ class RecordEngine:
 
             table_name = layout.name or ft_cls.__name__
             engine._table_feature_types[table_name] = ft_cls
-            existing = engine._table_map.get(table_name)
+            existing = engine._fixed_layer_builds.get(table_name)
             if existing is not None:
                 warnings.warn(
                     f'Table "{table_name}" already exists, truncate '
@@ -163,22 +195,17 @@ class RecordEngine:
                     UserWarning,
                 )
             else:
-                new_table = Table.map_from(
-                    ft_cls,
-                    _get_default_table_build(engine._fixed_build, table_name),
-                    engine._fixed_build,
-                )
+                layer = _get_default_table_build(engine._fixed_build, table_name)
                 field_ids = {}
                 for fd in schema.fields:
                     field_ids[fd.name] = len(field_ids)
                     if fd.field_type == OriginFieldType.list:
-                        new_table._origin.add_list_field(fd.name, fd.cpp_type)
+                        layer.add_list_field(fd.name, fd.cpp_type)
                     else:
-                        new_table._origin.add_field(fd.name, fd.field_type.value)
+                        layer.add_field(fd.name, fd.field_type.value)
                 if not materialize_table_buffer:
-                    new_table._origin._set_table_buffer_materialized(False)
-                engine._table_map[table_name] = new_table
-                engine._fixed_layer_builds[table_name] = new_table._origin
+                    layer._set_table_buffer_materialized(False)
+                engine._fixed_layer_builds[table_name] = layer
                 engine._fixed_table_fields[table_name] = field_ids
 
             engine._fixed_build.truncate(table_name, layout.capacity)
@@ -202,6 +229,7 @@ class RecordEngine:
 
     def push(self, feature, table_name: str = '') -> None:
         """Push a single @feature instance to the database."""
+        self._assert_open()
         cls = feature.__class__
         # Fast path: batchable buffer
         buf = self._push_buf.get(cls)
@@ -242,25 +270,7 @@ class RecordEngine:
         cache = normalize_bool_cache(feature.__dict__, schema)
 
         feat_table_name = table_name if table_name else feature_type.__name__
-        t_obj: Table = self._table_map.get(feat_table_name)
-        if t_obj is None:
-            new_table = Table.map_from(
-                feature_type,
-                _get_default_table_build(
-                    self._origin,
-                    feat_table_name,
-                    raw_payload=bool(schema.bytes_plan),
-                ),
-                self._origin,
-            )
-            for fd in schema.fields:
-                if fd.field_type == OriginFieldType.list:
-                    new_table._origin.add_list_field(fd.name, fd.cpp_type)
-                else:
-                    new_table._origin.add_field(fd.name, fd.field_type.value)
-            self._table_map[feat_table_name] = new_table
-            self._table_feature_types[feat_table_name] = feature_type
-            t_obj = new_table
+        t_obj = self._get_build_state(feature_type, feat_table_name, schema)
 
         # Ensure compiled push_fn exists
         if schema.push_fn is None:
@@ -294,6 +304,7 @@ class RecordEngine:
 
     def push_many(self, features: list, table_name: str = '') -> None:
         """Push multiple @feature instances of the same type efficiently."""
+        self._assert_open()
         if not self._is_mutable or not features:
             return
         feature_type = features[0].__class__
@@ -320,25 +331,7 @@ class RecordEngine:
                 for feat in features
             ]
         feat_table_name = table_name if table_name else feature_type.__name__
-        t_obj: Table = self._table_map.get(feat_table_name)
-        if t_obj is None:
-            new_table = Table.map_from(
-                feature_type,
-                _get_default_table_build(
-                    self._origin,
-                    feat_table_name,
-                    raw_payload=bool(schema.bytes_plan),
-                ),
-                self._origin,
-            )
-            for fd in schema.fields:
-                if fd.field_type == OriginFieldType.list:
-                    new_table._origin.add_list_field(fd.name, fd.cpp_type)
-                else:
-                    new_table._origin.add_field(fd.name, fd.field_type.value)
-            self._table_map[feat_table_name] = new_table
-            self._table_feature_types[feat_table_name] = feature_type
-            t_obj = new_table
+        t_obj = self._get_build_state(feature_type, feat_table_name, schema)
 
         t_origin = t_obj._origin
         fc = t_obj.feature_count
@@ -351,6 +344,22 @@ class RecordEngine:
                 push_fn(feat.__dict__, t_origin)
                 fc += 1
         t_obj.feature_count = fc
+
+    def _get_build_state(self, feature_type: Type, name: str, schema: LayerSchema) -> _TableState:
+        state = self._build_states.get(name)
+        if state is None:
+            state = _TableState()
+            state._db = self._origin
+            state._origin = _get_default_table_build(self._origin, name, raw_payload=bool(schema.bytes_plan))
+            state._feature_type = feature_type
+            for fd in schema.fields:
+                if fd.field_type == OriginFieldType.list:
+                    state._origin.add_list_field(fd.name, fd.cpp_type)
+                else:
+                    state._origin.add_field(fd.name, fd.field_type.value)
+            self._build_states[name] = state
+            self._table_feature_types[name] = feature_type
+        return state
 
     def _flush_push_batches(self):
         """Flush all pending batch push buffers to C++."""
@@ -365,6 +374,7 @@ class RecordEngine:
 
     def combine(self):
         """Combine memory from all tables into a single continuous block."""
+        self._assert_open()
         if self._origin is None:
             warnings.warn('Database is empty, cannot combine.', UserWarning)
             return
@@ -376,12 +386,15 @@ class RecordEngine:
 
         buffer = _post_build_to_bytearray(self._origin)
         self._origin = core.WxDatabase.load_xbuffer(buffer)
-        self._origin._buffer = buffer
 
-        if self._shm:
-            self._shm.close()
-            self._shm = None
-        self._table_map = {}
+        self._shm = None
+        self._tables.clear()
+        self._build_states.clear()
+        self._is_mutable = False
+        self._push_buf.clear()
+        self._push_batch_fn.clear()
+        self._push_dispatch.clear()
+        self._bool_push_schemas.clear()
 
     def table(
         self,
@@ -392,28 +405,33 @@ class RecordEngine:
         writeable: bool | None = None,
     ) -> Table:
         """Get a Table for the given @feature class."""
+        self._assert_open()
         if not is_feature(feature_type):
             raise TypeError(
                 f'{feature_type.__name__} is not a @feature class. '
                 f'Use @feature decorator.'
             )
         table_name = name or feature_type.__name__
-        cached = self._table_map.get(table_name)
-        if cached is not None:
-            self._table_feature_types[table_name] = feature_type
-            if owner is not None or writeable is not None:
-                tbl = Table.map_from(
-                    feature_type,
-                    cached._origin,
-                    cached._db,
-                    owner=owner,
-                    writeable=writeable,
-                )
-                self._attach_owner_fixed_fill_handler(tbl, table_name)
-                return tbl
-            self._attach_fixed_fill_handler(cached, table_name)
-            return cached
+        alias = owner is not None or writeable is not None
+        if not alias:
+            entry = self._tables.get((table_name, 0))
+            if entry is not None:
+                state = entry.state()
+                if state is not None:
+                    cached = entry.table()
+                    if cached is None:
+                        cached = Table._from_state(state)
+                        entry.table = ref(cached)
+                    return cached
         db = self._origin
+        if isinstance(db, core.WxDatabaseBuild):
+            state = self._build_states.get(table_name)
+            if state is None:
+                raise KeyError(f'Table "{table_name}" not found')
+            tbl = Table.map_from(feature_type, state._origin, db, owner=owner, writeable=writeable)
+            tbl._state._fc = state._fc
+            self._register_table(tbl, table_name, alias)
+            return tbl
         fallback_names = list(self._table_feature_types)
         for i in range(db.get_layer_count()):
             layer = db.get_layer(i)
@@ -427,46 +445,38 @@ class RecordEngine:
                     writeable=writeable,
                 )
                 self._table_feature_types[table_name] = feature_type
-                if owner is not None or writeable is not None:
-                    self._attach_owner_fixed_fill_handler(tbl, table_name)
-                    return tbl
-                self._attach_fixed_fill_handler(tbl, table_name)
-                self._table_map[table_name] = tbl
+                self._register_table(tbl, table_name, alias)
                 return tbl
         raise KeyError(f'Table "{table_name}" not found')
 
-    def _attach_owner_fixed_fill_handler(self, table: Table, table_name: str) -> None:
-        if table.fixed and self._fixed_direct_fill:
-            self._attach_fixed_fill_handler(table, table_name)
-            return
-        if table.fixed and self._fixed_build is not None and self._shm is None:
-            table._fixed_fill_handler = (
-                lambda writes, _table=table: self._fill_mapped_table_and_drop_fixed_build(_table, writes)
-            )
-            return
-        self._attach_fixed_fill_handler(table, table_name)
+    def _register_table(self, table: Table, name: str, alias: bool) -> None:
+        key = (name, id(table._state) if alias else 0)
+        self._tables[key] = _TableRegistration(self, key, table)
+        table._state._engine = self
+        self._attach_fixed_fill_handler(table._state, name, alias)
 
-    def _attach_fixed_fill_handler(self, table: Table, table_name: str) -> None:
-        if table.fixed and self._fixed_direct_fill:
-            table._fixed_fill_handler = (
-                lambda writes, _table=table: self._fill_mapped_table_in_place(_table, writes)
-            )
-        elif table.fixed and self._fixed_build is not None and self._shm is None:
-            table._fixed_fill_handler = (
-                lambda writes: self._fill_fixed_table(table_name, writes)
-            )
+    def _attach_fixed_fill_handler(self, state: _TableState, table_name: str, alias: bool = False) -> None:
+        state._table_name = table_name
+        fixed = isinstance(state._origin, core.WxLayerTable)
+        if fixed and self._fixed_direct_fill:
+            state._fixed_fill_handler = self._fill_mapped_table_in_place
+        elif fixed and self._fixed_build is not None and self._shm is None:
+            state._fixed_fill_handler = self._fill_mapped_table_and_drop_fixed_build if alias else self._fill_fixed_table
         else:
-            table._fixed_fill_handler = None
+            state._fixed_fill_handler = None
 
     def _invalidate_fixed_writes(self) -> None:
         self._fixed_build = None
         self._fixed_layer_builds = {}
         self._fixed_table_fields = {}
         self._fixed_direct_fill = False
-        for table_name, table in self._table_map.items():
-            self._attach_fixed_fill_handler(table, table_name)
+        for (table_name, alias_id), entry in list(self._tables.items()):
+            state = entry.state()
+            if state is not None:
+                self._attach_fixed_fill_handler(state, table_name, bool(alias_id))
 
-    def _fill_fixed_table(self, table_name: str, writes: dict[str, object]) -> None:
+    def _fill_fixed_table(self, state: _TableState, writes: dict[str, object]) -> None:
+        table_name = state._table_name
         layer_build = self._fixed_layer_builds[table_name]
         field_ids = self._fixed_table_fields[table_name]
         try:
@@ -520,26 +530,38 @@ class RecordEngine:
         self._publish_fixed_buffer(writable[:size], direct_fill=direct_fill)
 
     def _publish_fixed_buffer(self, buffer: object, *, direct_fill: bool) -> None:
+        previous_db = self._origin
         self._fixed_direct_fill = direct_fill
         self._origin = core.WxDatabase.load_xbuffer(buffer)
-        self._origin._buffer = buffer
 
-        for table_name, table in list(self._table_map.items()):
+        remaps = []
+        for (table_name, alias_id), entry in list(self._tables.items()):
+            state = entry.state()
+            if state is None or state._db is not previous_db:
+                continue
             new_layer = self._find_layer(table_name)
             if new_layer is None:
                 continue
-            table._remap(new_layer, self._origin)
-            self._attach_fixed_fill_handler(table, table_name)
+            remaps.append((state, entry.table(), new_layer, table_name, bool(alias_id)))
+        for owner in {state._fdb_owner for state, *_ in remaps}:
+            owner.bump_generation()
+        for state, table, layer, table_name, alias in remaps:
+            if table is None:
+                state._remap(layer, self._origin)
+            else:
+                table._remap(layer, self._origin)
+            self._attach_fixed_fill_handler(state, table_name, alias)
 
-    def _fill_mapped_table_in_place(self, table: Table, writes: dict[str, object]) -> None:
+    def _fill_mapped_table_in_place(self, state: _TableState, writes: dict[str, object]) -> None:
+        schema = get_schema(state._feature_type)
         for field_name, payload in writes.items():
             if isinstance(payload, _StringSequencePayload) or isinstance(payload, tuple):
                 raise RuntimeError('direct fixed backing writes do not support variable-size string payloads.')
-            column = getattr(table.column, field_name)
+            column = state._origin.get_column(schema.field_index_map[field_name]).as_nparray()
             column[:] = payload
 
-    def _fill_mapped_table_and_drop_fixed_build(self, table: Table, writes: dict[str, object]) -> None:
-        self._fill_mapped_table_in_place(table, writes)
+    def _fill_mapped_table_and_drop_fixed_build(self, state: _TableState, writes: dict[str, object]) -> None:
+        self._fill_mapped_table_in_place(state, writes)
         self._invalidate_fixed_writes()
 
     # ------------------------------------------------------------------
@@ -560,13 +582,14 @@ class RecordEngine:
             name = _normalize_shm_name(name)
             try:
                 engine._shm = shared_memory.SharedMemory(name=name)
-                engine._origin = core.WxDatabase.load_xbuffer(engine._shm.buf)
+                engine._origin = _load_shared_database(engine._shm)
             except FileNotFoundError:
                 raise FileNotFoundError(f"Database '{name}' not found in shared memory.")
         return engine
 
     def share(self, shm_name: str, close_after: bool = False):
         """Share the database in shared memory."""
+        self._assert_open()
         if self._origin is None:
             raise RuntimeError('Database is empty, cannot share.')
         if isinstance(self._origin, core.WxDatabaseBuild):
@@ -575,17 +598,17 @@ class RecordEngine:
         shm_name = _normalize_shm_name(shm_name)
         chunk = self._origin.buffer()
         self._shm = shared_memory.SharedMemory(create=True, size=chunk.size, name=shm_name)
-        dest = np.ndarray(chunk.size, dtype=np.uint8, buffer=self._shm.buf)
-        dest[:] = chunk.as_array(np.uint8)
-        self._origin._buffer = None
-        self._origin = core.WxDatabase.load_xbuffer(self._shm.buf)
+        chunk.copy_to_buffer(self._shm.buf)
+        self._origin = _load_shared_database(self._shm)
         self._invalidate_fixed_writes()
+        self._tables.clear()
 
         if close_after and platform.system() != 'Windows':
             self.close()
 
     def save(self, path: str):
         """Save the database to a file."""
+        self._assert_open()
         if self._origin is None:
             raise RuntimeError('Database is empty, cannot save.')
         if isinstance(self._origin, core.WxDatabaseBuild):
@@ -596,18 +619,28 @@ class RecordEngine:
                 f.write(chunk.to_bytes())
 
     def close(self):
-        """Close the database and release resources."""
-        if self._shm:
-            self._shm.close()
-            self._shm = None
-            self._origin = None
+        """Release engine references; existing views retain their native backing."""
+        self._closed = True
+        self._tables.clear()
+        self._build_states.clear()
+        self._table_feature_types.clear()
+        self._origin = None
+        self._shm = None
+        self._fixed_build = None
+        self._fixed_layer_builds.clear()
+        self._fixed_table_fields.clear()
+        self._fixed_direct_fill = False
+        self._is_mutable = False
+        self._push_buf.clear()
+        self._push_batch_fn.clear()
+        self._push_dispatch.clear()
+        self._bool_push_schemas.clear()
 
     def unlink(self):
         """Unlink the shared memory database."""
         if self._shm:
             self._shm.unlink()
-            self._shm = None
-            self._origin = None
+        self.close()
 
     def __len__(self):
         if self._origin is None:

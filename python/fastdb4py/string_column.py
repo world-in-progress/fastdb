@@ -7,7 +7,7 @@ import numpy as np
 from .view_owner import FdbViewOwner, FdbViewWriteError
 
 if TYPE_CHECKING:
-    from .orm.table import Table
+    from .orm.table import _TableState
 
 _UINT32_MAX = np.iinfo(np.uint32).max
 
@@ -69,14 +69,14 @@ def _normalize_string_values(
 
 
 class StringColumn:
-    def __init__(self, table: 'Table', field_index: int, field_name: str, *, wide: bool = False):
-        self._table = table
+    def __init__(self, state: '_TableState', field_index: int, field_name: str, *, wide: bool = False):
+        self._state = state
         self._field_index = field_index
         self._field_name = field_name
         self._wide = wide
-        self._owner: FdbViewOwner = table._fdb_owner
-        self._writeable = table._fdb_writeable
-        self._owner_generation = table._fdb_owner.generation
+        self._owner: FdbViewOwner = state._fdb_owner
+        self._writeable = state._fdb_writeable
+        self._owner_generation = state._fdb_owner.generation
 
     def _assert_alive(self) -> None:
         self._owner.assert_alive(self._owner_generation)
@@ -89,18 +89,18 @@ class StringColumn:
 
     def __len__(self) -> int:
         self._assert_alive()
-        return len(self._table)
+        return len(self._state)
 
     def _offsets(self) -> np.ndarray | None:
         self._assert_alive()
-        chunk = self._table._origin.get_string_column_offsets(self._field_index)
+        chunk = self._state._origin.get_string_column_offsets(self._field_index)
         if chunk is None or chunk.size == 0:
             return None
         return chunk.as_array(np.uint32)
 
     def _data(self) -> np.ndarray | None:
         self._assert_alive()
-        chunk = self._table._origin.get_string_column_data(self._field_index)
+        chunk = self._state._origin.get_string_column_data(self._field_index)
         if chunk is None or chunk.size == 0:
             return np.empty(0, dtype=np.uint8)
         return chunk.as_array(np.uint8)
@@ -120,8 +120,8 @@ class StringColumn:
             end = int(offsets[index + 1])
             return bytes(data[start:end]).decode('utf-8')
 
-        with self._table._read_lock:
-            feat = self._table._origin.tryGetFeature(index)
+        with self._state._read_lock:
+            feat = self._state._origin.tryGetFeature(index)
             if self._wide:
                 return feat.get_field_as_wstring(self._field_index) or ''
             raw = feat.get_field_as_string_view(self._field_index)
@@ -145,6 +145,7 @@ class StringColumn:
         return self.to_pylist()
 
     def fill(self, strings: Iterable[Optional[str]]) -> None:
+        self._state._assert_engine_open()
         self._assert_writeable()
         payload = _normalize_string_values(strings, len(self))
         self._dispatch_string_payload(payload)
@@ -158,9 +159,9 @@ class StringColumn:
         return self._validate_utf8_payload(offsets_arr, data_arr, expected_len)
 
     def _dispatch_string_payload(self, payload: _StringSequencePayload) -> None:
-        fill_handler = self._table._fixed_fill_handler
+        fill_handler = self._state._fixed_fill_handler
         if fill_handler is not None:
-            fill_handler({self._field_name: payload})
+            fill_handler(self._state, {self._field_name: payload})
             return
 
         raise RuntimeError(
@@ -194,6 +195,7 @@ class StringColumn:
         return offsets_arr, data_arr
 
     def fill_utf8(self, offsets: np.ndarray, data: np.ndarray) -> None:
+        self._state._assert_engine_open()
         self._assert_writeable()
         offsets_arr, data_arr = self._validate_utf8_payload(offsets, data, len(self))
         self._dispatch_utf8_payload(offsets_arr, data_arr)
@@ -203,9 +205,9 @@ class StringColumn:
         offsets_arr: np.ndarray,
         data_arr: np.ndarray,
     ) -> None:
-        fill_handler = self._table._fixed_fill_handler
+        fill_handler = self._state._fixed_fill_handler
         if fill_handler is not None:
-            fill_handler({self._field_name: (offsets_arr, data_arr)})
+            fill_handler(self._state, {self._field_name: (offsets_arr, data_arr)})
             return
 
         raise RuntimeError(
@@ -215,19 +217,19 @@ class StringColumn:
 
 
 class BytesColumn:
-    def __init__(self, table: 'Table', field_index: int, field_name: str):
-        self._table = table
+    def __init__(self, state: '_TableState', field_index: int, field_name: str):
+        self._state = state
         self._field_index = field_index
         self._field_name = field_name
-        self._owner: FdbViewOwner = table._fdb_owner
-        self._owner_generation = table._fdb_owner.generation
+        self._owner: FdbViewOwner = state._fdb_owner
+        self._owner_generation = state._fdb_owner.generation
 
     def _assert_alive(self) -> None:
         self._owner.assert_alive(self._owner_generation)
 
     def __len__(self) -> int:
         self._assert_alive()
-        return len(self._table)
+        return len(self._state)
 
     def get(self, index: int) -> bytes:
         self._assert_alive()
@@ -237,8 +239,8 @@ class BytesColumn:
         if index < 0 or index >= length:
             raise IndexError(f'Bytes index {index} out of range [0, {length}).')
 
-        with self._table._read_lock:
-            feat = self._table._origin.tryGetFeature(index)
+        with self._state._read_lock:
+            feat = self._state._origin.tryGetFeature(index)
             raw = feat.get_geometry_like_chunk()
             if raw is None:
                 return b''

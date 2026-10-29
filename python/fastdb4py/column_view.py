@@ -7,20 +7,20 @@ import numpy as np
 from .view_owner import FdbViewOwner, FdbViewWriteError
 
 if TYPE_CHECKING:
-    from .orm.table import Table
+    from .orm.table import _TableState
 
 
 class NumericColumnView:
     """Owner-checked view over a numeric native column."""
 
-    def __init__(self, table: 'Table', field_index: int, field_name: str, array: np.ndarray):
-        self._table = table
+    def __init__(self, state: '_TableState', field_index: int, field_name: str, array: np.ndarray):
+        self._state = state
         self._field_index = field_index
         self._field_name = field_name
         self._array = array
-        self._owner: FdbViewOwner = table._fdb_owner
-        self._writeable = table._fdb_writeable
-        self._owner_generation = table._fdb_owner.generation
+        self._owner: FdbViewOwner = state._fdb_owner
+        self._writeable = state._fdb_writeable
+        self._owner_generation = state._fdb_owner.generation
 
     def _checked_array(self) -> np.ndarray:
         self._owner.assert_alive(self._owner_generation)

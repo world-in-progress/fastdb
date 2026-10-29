@@ -41,7 +41,6 @@ def _build_db_with_points():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     return rdb
 
 
@@ -188,7 +187,6 @@ class TestCopyFeature:
         db.post(mem)
         buf = mem.data().as_array(np.uint8).tobytes()
         rdb = core.WxDatabase.load_xbuffer(buf)
-        rdb._buffer = buf
 
         layer = rdb.get_layer(0)
         obj = copy_feature(WithBytes, layer, 0)
@@ -199,7 +197,6 @@ class TestCopyFeature:
 def test_varlen_string_column_reader_exposes_raw_buffers():
     buf, offsets, data = _build_varlen_string_db_bytes(["a", "bé", "中"])
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
 
     layer = rdb.get_layer(0)
     np.testing.assert_array_equal(
@@ -220,7 +217,6 @@ def test_varlen_string_column_reader_rejects_truncated_section_payload():
     corrupted_buf = _corrupt_first_varlen_string_byte_count(valid_buf, data.nbytes + 8)
 
     rdb = core.WxDatabase.load_xbuffer(corrupted_buf)
-    rdb._buffer = corrupted_buf
 
     layer = rdb.get_layer(0)
     assert layer.get_string_column_offsets(0).size == 0
@@ -242,7 +238,6 @@ def test_truncate_layer_build_set_numeric_column_bulk_round_trips():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     out = rdb.get_layer(0).get_column(0).as_nparray()
     np.testing.assert_allclose(out, np.array([1.0, 2.5, 3.5], dtype=np.float64))
 
@@ -278,7 +273,6 @@ def test_truncate_layer_build_set_numeric_column_bulk_silently_ignores_wrong_siz
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     out = rdb.get_layer(0).get_column(0).as_nparray()
     np.testing.assert_allclose(out, np.array([1.0, 2.5, 3.5], dtype=np.float64))
 
@@ -297,7 +291,6 @@ def test_truncate_layer_build_set_numeric_column_bulk_zero_rows_round_trips():
     db.post(mem)
     buf = mem.data().as_array(np.uint8).tobytes()
     rdb = core.WxDatabase.load_xbuffer(buf)
-    rdb._buffer = buf
     out_layer = rdb.get_layer(0)
     assert out_layer.get_feature_count() == 0
     assert out_layer.get_field_count() == 1

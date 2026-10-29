@@ -260,7 +260,7 @@ def test_record_engine_push_many_bool_fields_reject_before_table_creation():
             CEBoolPoint(active='maybe'),
         ])
 
-    assert CEBoolPoint.__name__ not in engine._table_map
+    assert CEBoolPoint.__name__ not in engine._table_feature_types
     assert CEBoolPoint.__name__ not in engine._table_feature_types
 
 
@@ -447,7 +447,7 @@ def test_table_fill_coerces_float32_into_f64_columns():
 def test_table_fill_rejects_non_fixed_tables():
     engine = RecordEngine.create()
     engine.push(CEPoint(x=1.0, y=2.0))
-    tbl = engine._table_map[CEPoint.__name__]
+    tbl = engine.table(CEPoint)
 
     with pytest.raises(RuntimeError, match='fixed-scale tables'):
         tbl.fill(x=np.array([1.0], dtype=np.float64))
