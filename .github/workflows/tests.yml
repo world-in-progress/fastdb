@@ -455,7 +455,7 @@ jobs:
         shell: pwsh
         run: |
           if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw "Expected a Windows x64 runner" }
-          cmake -S fastcarto -B build/native -G Ninja -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF -DCMAKE_BUILD_TYPE=Debug
+          cmake -S fastcarto -B build/native -G Ninja -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF -DCMAKE_BUILD_TYPE=Release
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cmake --build build/native --parallel 2 -- -k 0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
