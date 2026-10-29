@@ -107,6 +107,44 @@ class PublicationTests(unittest.TestCase):
                     publish.prepare(candidate, root / "stage", "pypi", "123", "a" * 40)
                 registry.assert_not_called()
 
+    def test_windows_pr_proofs_are_required_before_publication(self):
+        commit = "a" * 40
+        successful = {"head_sha": commit, "head_branch": "main", "event": "push",
+                      "conclusion": "success", "status": "completed",
+                      "head_repository": {"full_name": publish.REPOSITORY}}
+        # Independent inventory: a second passing Linux Python job cannot
+        # substitute for either Windows job.
+        counts = {"clean_cut": 1, "rust_payload": 1, "python_tests": 2, "ts_tests": 1,
+                  "projection_parity": 1, "generated_projections": 1, "wasm_core": 1,
+                  "native_tests": 2, "native_sanitizers": 1, "package_tests": 2, "test": 1,
+                  "windows_native_tests": 1, "windows_python_tests": 1}
+        complete = [{"name": f"{name} ({index})", "conclusion": "success"}
+                    for name, count in counts.items() for index in range(count)]
+        jobs = complete
+
+        def api(path):
+            if path == "actions/runs/123":
+                return {**successful, "id": 123, "run_attempt": 1,
+                        "path": ".github/workflows/release-artifacts.yml"}
+            if path.startswith("actions/workflows/tests.yml/runs?"):
+                return {"workflow_runs": [{**successful, "id": 456,
+                                          "path": ".github/workflows/tests.yml"}]}
+            if path == "actions/runs/456/jobs?per_page=100":
+                return {"jobs": jobs}
+            self.fail(f"Unexpected API request: {path}")
+
+        with patch.dict(os.environ, {"GITHUB_SHA": commit, "GITHUB_REF": "refs/heads/main"}), \
+                patch.object(publish, "github", side_effect=api):
+            self.assertEqual(publish.check_ci("123", commit)["proof_run_id"], 456)
+            for missing in ("windows_native_tests", "windows_python_tests"):
+                for result in (None, "failure", "skipped", "cancelled"):
+                    with self.subTest(job=missing, result=result):
+                        jobs = [dict(job) for job in complete if not job["name"].startswith(missing + " (")]
+                        if result is not None:
+                            jobs.append({"name": missing, "conclusion": result})
+                        with self.assertRaisesRegex(release.ReleaseError, "complete successful Run Tests proof matrix"):
+                            publish.check_ci("123", commit)
+
     def test_feature_branch_and_unversioned_tag_fail_before_network(self):
         for reference in ("refs/heads/feature", "refs/tags/latest", "refs/tags/v0.2.0-unreviewed"):
             with self.subTest(reference=reference), patch.dict(os.environ, {"GITHUB_SHA": "a" * 40, "GITHUB_REF": reference}), patch.object(publish, "github") as api:

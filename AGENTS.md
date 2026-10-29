@@ -56,6 +56,21 @@ npm run test:ts
 
 When a change touches only Python code and docs, run the Python test suite, compileall, and `uv build`. When a change touches C++ wire/storage layout or TypeScript/WASM code, also run the TypeScript/WASM build and tests.
 
+PR/main `tests.yml` builds and tests native Core on Linux x86_64 and macOS
+arm64 (`native_tests`), and Windows x64 with MSVC/Ninja on `windows-2022`
+(`windows_native_tests`). Both native jobs run CTest and the ABI export gate.
+The full Python suite runs on CPython 3.12 on Linux (`python_tests`) and
+Windows x64 (`windows_python_tests`); the Linux 3.13t job remains experimental.
+Windows jobs use the same path scopes as their Linux/macOS counterparts and
+are required by the `test` aggregate and publication proof inventory. Windows
+ARM64 remains in the release validation matrix.
+
+For CI/release-tooling changes, run every command in the `release_tools` and
+`clean_cut` jobs with Python 3.11+ and a UTF-8 locale for Ruby. The P5 repository
+gate requires a clean Git snapshot; validate pending changes in a detached
+snapshot when the working checkout must remain uncommitted. Run `actionlint`
+when available.
+
 ## Python Binding Conventions
 
 Import the package as `fastdb4py` or `import fastdb4py as fdb` in examples and tests.

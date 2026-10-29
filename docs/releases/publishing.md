@@ -13,6 +13,16 @@ run tooling checks without allocating native, Python-wheel or WASM builders.
 tooling changes use the required `release_tools` gate. Changes to `tests.yml`
 or runtime quality gates still require runtime validation.
 
+`Run Tests` requires native Core/CTest/ABI validation on Linux x86_64 and
+macOS arm64 (`native_tests`, two successful jobs), plus Windows x64
+(`windows_native_tests`, one successful job on `windows-2022`). The Windows
+job uses MSVC/Ninja and puts the built `fastdb.dll` directory on `PATH` before
+CTest. Full Python tests require CPython 3.12 on Linux (`python_tests`) and
+Windows x64 (`windows_python_tests`); the experimental Linux 3.13t job cannot
+substitute for either required proof. The Windows jobs follow the same path
+scopes as their existing native/Python counterparts and feed the required
+`test` aggregate. Windows ARM64 remains covered by release builds.
+
 A version-tag push to `pypi_publish.yml` locates successful Release Artifacts
 and complete Run Tests proofs for that exact source SHA. It downloads the
 unexpired `release-part-python` artifact by run ID and artifact ID. Before

@@ -1,5 +1,4 @@
 """Tests for FastSerializer.loads_shm — deserialization from shared memory."""
-import platform
 import numpy as np
 import numpy.testing as npt
 import pytest
@@ -292,24 +291,48 @@ class TestLoadsShmErrors:
 
         shm = _write_to_shm(data, name)
         try:
+            # An attachment reports the OS-visible mapping size, which can
+            # exceed the creator's requested size on Windows.
+            attached = shared_memory.SharedMemory(name=name)
+            mapped_size = attached.size
+            attached.close()
             with pytest.raises(ValueError, match="exceeds shared memory size"):
-                FastSerializer.loads_shm(name, len(data), shm.size, SimplePoint)
+                FastSerializer.loads_shm(name, len(data), mapped_size, SimplePoint)
+        finally:
+            shm.close()
+            shm.unlink()
+
+    def test_invalid_data_within_mapping(self, request):
+        """Mapped bytes beyond a payload are subject to native validation."""
+        name = _shm_name(request)
+        data = FastSerializer.dumps(SimplePoint(x=1.0, y=2.0, label="err"))
+        shm = shared_memory.SharedMemory(name=name, create=True, size=2 * len(data))
+        try:
+            shm.buf[:len(data)] = data
+            shm.buf[len(data):2 * len(data)] = bytes(len(data))
+            with pytest.raises(ValueError, match=r"^Invalid FastDB database buffer\.$"):
+                FastSerializer.loads_shm(name, len(data), len(data), SimplePoint)
+        finally:
+            shm.close()
+            shm.unlink()
+
+    @pytest.mark.parametrize("offset,length", [(-1, 1), (0, -1), (-1, -1)])
+    def test_negative_region(self, request, offset, length):
+        name = _shm_name(request)
+        shm = shared_memory.SharedMemory(name=name, create=True, size=64)
+        try:
+            with pytest.raises(ValueError, match="offset and length must be non-negative"):
+                FastSerializer.loads_shm(name, length, offset, SimplePoint)
         finally:
             shm.close()
             shm.unlink()
 
     def test_zero_length(self, request):
-        """Zero-length region should either return None or raise."""
         name = _shm_name(request)
         shm = shared_memory.SharedMemory(name=name, create=True, size=64)
         try:
-            # An empty / invalid buffer will either return None or raise
-            # depending on the C++ loader behaviour
-            result = FastSerializer.loads_shm(name, 0, 0, SimplePoint)
-            # If the C++ layer doesn't crash, None is acceptable
-            assert result is None
-        except Exception:
-            pass  # Any exception is fine for invalid input
+            with pytest.raises(ValueError, match=r"^Invalid FastDB database buffer\.$"):
+                FastSerializer.loads_shm(name, 0, 0, SimplePoint)
         finally:
             shm.close()
             shm.unlink()

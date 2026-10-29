@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Type
+from multiprocessing import shared_memory
 import struct
 import numpy as np
 
@@ -135,6 +136,7 @@ class ObjectEngine:
         self._layers: Dict[Type, LayerState] = {}
         self._layer_order: List[Type] = []
         self._built = False
+        self._shared_segments: Dict[str, shared_memory.SharedMemory] = {}
         # Deferred batch push state
         self._pending: List[Any] = []
         self._pushed_ids: Dict[int, bool] = {}
@@ -388,20 +390,20 @@ class ObjectEngine:
             raise RuntimeError("Call combine() before reading")
 
     def share(self, name: str):
-        """Publish the built database to POSIX shared memory."""
+        """Publish a snapshot; retain its mapping until this engine is released."""
         if not self._built:
             raise RuntimeError("Call combine() before sharing")
-        import multiprocessing.shared_memory as shm_mod
         chunk = self._db.buffer()
-        seg = shm_mod.SharedMemory(name=name, create=True, size=chunk.size)
+        seg = shared_memory.SharedMemory(name=name, create=True, size=chunk.size)
         chunk.copy_to_buffer(seg.buf)
-        seg.close()
+        # Windows removes a named mapping when its last handle closes.
+        # Keep every published snapshot available, including earlier names.
+        self._shared_segments[name] = seg
 
     @classmethod
     def load(cls, name: str) -> 'ObjectEngine':
-        """Load a database from POSIX shared memory."""
-        import multiprocessing.shared_memory as shm_mod
-        seg = shm_mod.SharedMemory(name=name, create=False)
+        """Load a detached copy of a database from named shared memory."""
+        seg = shared_memory.SharedMemory(name=name, create=False)
         buf = bytes(seg.buf)
         seg.close()
 
@@ -427,10 +429,12 @@ class ObjectEngine:
 
     @staticmethod
     def unlink(name: str):
-        """Remove a shared memory segment."""
-        import multiprocessing.shared_memory as shm_mod
+        """Remove the POSIX name; Windows deletes after all handles close.
+
+        Published mappings stay open until their publisher engine is released.
+        """
         try:
-            seg = shm_mod.SharedMemory(name=name, create=False)
+            seg = shared_memory.SharedMemory(name=name, create=False)
             seg.close()
             seg.unlink()
         except FileNotFoundError:

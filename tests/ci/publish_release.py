@@ -25,6 +25,7 @@ REQUIRED_PROOFS = {
     "clean_cut": 1, "rust_payload": 1, "python_tests": 1, "ts_tests": 1,
     "projection_parity": 1, "generated_projections": 1, "wasm_core": 1,
     "native_tests": 2, "native_sanitizers": 1, "package_tests": 2, "test": 1,
+    "windows_native_tests": 1, "windows_python_tests": 1,
 }
 
 

@@ -1,5 +1,8 @@
 import secrets
+import weakref
 from multiprocessing import Process, shared_memory
+
+import pytest
 
 from fastdb4py.decorator import feature
 from fastdb4py.object_engine import ObjectEngine
@@ -72,3 +75,55 @@ def test_shared_memory():
             pass
 
     assert p.exitcode == 0, "Child process failed verification"
+
+
+def test_publisher_retains_all_snapshots_until_engine_release(monkeypatch):
+    """Publishing another name must keep both mappings available to readers."""
+    shared_memory_type = shared_memory.SharedMemory
+    published = []
+
+    def track_mapping(*args, **kwargs):
+        segment = shared_memory_type(*args, **kwargs)
+        if kwargs.get('create'):
+            published.append(weakref.ref(segment))
+        return segment
+
+    monkeypatch.setattr(shared_memory, 'SharedMemory', track_mapping)
+    names = [f"fastdb_{secrets.token_hex(8)}" for _ in range(2)]
+    engine = ObjectEngine.create()
+    engine.push(ShmPoint(idx=7, x=1.0, y=2.0, z=3.0))
+    engine.combine()
+    observers = []
+    try:
+        for name in names:
+            engine.share(name)
+            observers.append(shared_memory_type(name=name))
+
+        assert all(segment() is not None for segment in published)
+        assert all(segment().buf is not None for segment in published)
+        loaded = [ObjectEngine.load(name) for name in names]
+        assert [reader.get(ShmPoint, 0, mode='copy').idx for reader in loaded] == [7, 7]
+
+        # Unlink removes POSIX names; existing mappings remain open. Windows
+        # deletes the mapping only after all handles have been closed.
+        for name in names:
+            ObjectEngine.unlink(name)
+        assert all(segment().buf is not None for segment in published)
+
+        engine_ref = weakref.ref(engine)
+        del engine
+        assert engine_ref() is None
+        assert all(segment() is None for segment in published)
+        # ObjectEngine.load copies its backing and survives publisher cleanup.
+        assert loaded[0].get(ShmPoint, 0, mode='copy').z == 3.0
+    finally:
+        for observer in observers:
+            try:
+                observer.unlink()
+            except FileNotFoundError:
+                pass
+            observer.close()
+
+    for name in names:
+        with pytest.raises(FileNotFoundError):
+            ObjectEngine.load(name)

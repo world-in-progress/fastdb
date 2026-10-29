@@ -2,6 +2,12 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
+## Unreleased
+
+- Add required Windows x64 PR/main checks on `windows-2022`: MSVC/Ninja Core builds, CTest, ABI exports and the full CPython 3.12 Python suite. Include both jobs in scoped aggregation and exact-source publication proofs.
+- Keep ObjectEngine's published shared-memory mappings open for the publisher engine's lifetime, so Windows readers can attach by name. Document snapshot ownership, POSIX unlink and Windows last-handle cleanup.
+- Define `FastSerializer.loads_shm` bounds against the attached mapping size, including OS page padding. Reject negative regions and test native rejection of invalid mapped bytes without platform skips.
+
 ## 0.2.4 — 2026-10-29
 
 - Fix ownership of standalone native database factories and standalone feature-reference factories in the Python binding. Repeated truncate/fill/save/close and file load/read/close cycles release their native allocations.
