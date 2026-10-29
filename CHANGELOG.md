@@ -2,6 +2,15 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
+## 0.2.4 — release preparation
+
+- Fix ownership of standalone native database factories and standalone feature-reference factories in the Python binding. Repeated truncate/fill/save/close and file load/read/close cycles release their native allocations.
+- Pin borrowed buffers in the native database's release callback; release the export and shared mapping after its layers. Tables, rows, numeric arrays and chunks keep backing alive independently of the engine. Closing a RecordEngine releases its references; callers control checked-owner invalidation with `invalidate`.
+- Obtain bulk numeric columns directly from the native table address and field offset without creating per-row feature and geometry caches. Checked aliases follow snapshot remaps and reject stale row/column access.
+- Cache column accessors and arrays without table or fill-handler reference cycles, release obsolete builders, and attach NumPy chunk-array owners in C so cleanup is immediate with cyclic GC disabled. Engine-dependent writes after RecordEngine closure report a clear error; retained writable arrays remain usable.
+- Synchronize Python, Rust, TypeScript/WASM and the Core bundle at version 0.2.4. The Core bundle version is derived from the shared package manifests.
+- Local validation and memory measurements are recorded in [the native memory report](docs/reports/0.2.4-native-memory.md). Exact-source CI, release artifacts and publication remain pending in [the 0.2.4 draft release record](docs/releases/0.2.4.md).
+
 ## 0.2.3 — 2026-10-21
 
 - Add native Windows ARM64 Python wheels for CPython 3.11, 3.12, 3.13, 3.14 and free-threaded 3.14, plus an ARM64 Core SDK with C++/ABI/Rust validation on `windows-11-arm`.
