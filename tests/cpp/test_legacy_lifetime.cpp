@@ -10,6 +10,9 @@
 #include <vector>
 
 #ifdef _WIN32
+// The private headers above use namespace std; the full windows.h would
+// declare an RPC byte type that is ambiguous with std::byte.
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <sys/mman.h>
