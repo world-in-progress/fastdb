@@ -151,13 +151,13 @@ DOCUMENTATION_MARKERS = {
         "FASTDB_PAYLOAD_LINK_MODE",
         "system",
         "ABI-117",
-        "0.2.2",
+        "0.2.4",
     ),
     "bindings/rust/fastdb/README.md": (
         "C++ Core",
         "projection",
         "CompiledSpec::generate",
-        "0.2.2",
+        "0.2.4",
     ),
     "python/README.md": (
         "fastdb4py.payload",

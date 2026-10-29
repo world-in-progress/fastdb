@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "fastdb"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "fastdb-sys",
 ]
@@ -18,4 +18,4 @@ dependencies = [
 
 [[package]]
 name = "fastdb-sys"
-version = "0.2.3"
+version = "0.2.4"

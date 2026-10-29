@@ -14,22 +14,23 @@ Add the safe crate with an exact release dependency:
 
 ```toml
 [dependencies]
-fastdb = "=0.2.2"
+fastdb = "=0.2.4"
 ```
 
-Install the matching `fastdb-core-0.2.2-<target>.tar.gz` asset from the
-[FastDB v0.2.2 release](https://github.com/world-in-progress/fastdb/releases/tag/v0.2.2).
+Install the matching `fastdb-core-0.2.4-<target>.tar.gz` asset from the
+[FastDB v0.2.4 release](https://github.com/world-in-progress/fastdb/releases/tag/v0.2.4).
 Set `FASTDB_PAYLOAD_LINK_MODE=system` and set
 `FASTDB_PAYLOAD_SYSTEM_LIB_DIR` to the absolute extracted `lib` directory.
 Configure `LD_LIBRARY_PATH` on Linux, `DYLD_LIBRARY_PATH` on macOS, or `PATH` on Windows to load
 that directory when running the consumer. The native release targets are
-`x86_64-unknown-linux-gnu`, `aarch64-apple-darwin` and `x86_64-pc-windows-msvc`.
+`x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
+`x86_64-pc-windows-msvc`, and `aarch64-pc-windows-msvc`.
 
-The safe crate requires the exact `fastdb-sys 0.2.2` projection. Both crates
+The safe crate requires the exact `fastdb-sys 0.2.4` projection. Both crates
 use the released Core/C ABI bundle and contain no duplicate Core source tree.
 Repository builds use checkout-only source mode by default.
 `CompiledSpec::compile` checks the real Core ABI version before publishing a
-safe handle. See the [raw binding's linking contract](https://github.com/world-in-progress/fastdb/blob/v0.2.2/bindings/rust/fastdb-sys/README.md)
+safe handle. See the [raw binding's linking contract](https://github.com/world-in-progress/fastdb/blob/v0.2.4/bindings/rust/fastdb-sys/README.md)
 for linker and loader setup.
 
 `CompiledSpec::generate` projects Core-owned deterministic C++/Rust/Python/
