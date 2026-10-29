@@ -466,8 +466,30 @@ db = ObjectEngine.load("my_signals")
 tbl = db.table(Signal)
 for row in tbl:
     print(row.t, row.value)
-db.unlink()
 ```
+
+After readers have copied the snapshot, the publisher releases it:
+
+```python
+ObjectEngine.unlink("my_signals")
+del db
+```
+
+`ObjectEngine.share(name)` publishes a snapshot and keeps its mapping open,
+as `RecordEngine.share` does. The ObjectEngine retains every name it publishes
+until it is released, so keep the publisher alive while readers attach.
+`ObjectEngine.load(name)` copies the snapshot into its own backing and closes
+its shared mapping before returning; loaded engines and their views do not
+retain the publisher.
+
+`ObjectEngine.unlink(name)` removes the POSIX name without closing the
+publisher's existing mappings. Windows has no separate unlink operation: the
+name and mapping disappear when the last handle closes, including the
+publisher's. Releasing the publisher closes its retained handles; on POSIX,
+call `unlink` first to remove the names as well. `RecordEngine.unlink()`
+unlinks its segment and releases its engine references; existing backed views
+can retain that mapping. These APIs use Python's
+[`SharedMemory` lifecycle](https://docs.python.org/3.12/library/multiprocessing.shared_memory.html).
 
 ## Batch scalar field access
 
@@ -590,7 +612,7 @@ loaded = FastSerializer.loads(blob, PointCloud)
 
 ### Shared memory deserialization
 
-`FastSerializer.loads_shm` deserializes directly from a POSIX shared memory segment, avoiding an intermediate `bytes` copy:
+`FastSerializer.loads_shm` deserializes directly from a named shared memory segment on POSIX and Windows, avoiding an intermediate `bytes` copy:
 
 ```python
 from multiprocessing import shared_memory
@@ -616,7 +638,15 @@ shm.close()
 shm.unlink()
 ```
 
-All returned objects are fully detached from the shared memory segment (pure Python `_cache` mode). Numpy arrays are copied. The shared memory is closed immediately after deserialization.
+All returned objects are fully detached from the shared memory segment. NumPy arrays are copied, and the shared mapping is closed after deserialization.
+
+`offset` and `length` must be non-negative. A region beyond the size reported
+by the attached mapping raises `ValueError` with `exceeds shared memory size`.
+This mapping size can include OS page padding, particularly when opening by
+name on Windows; it does not recover the publisher's exact payload length.
+Within the mapping, the native loader validates the selected bytes and rejects
+invalid or empty buffers with `ValueError: Invalid FastDB database buffer.`
+Pass the serialized payload's actual length to select the intended database.
 
 For large homogeneous numerical datasets, `RecordEngine.truncate` plus columnar writes is still the preferred path. `FastSerializer` is aimed at trees, graphs, mesh-like structures, and mixed payloads.
 

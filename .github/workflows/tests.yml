@@ -183,6 +183,26 @@ jobs:
       - name: Run Python tests
         run: uv run pytest tests/python
 
+  windows_python_tests:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.python == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: windows-2022
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Run Python tests
+        run: uv run pytest tests/python
+
   ts_tests:
     needs: detect_changes
     if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.ts == 'true' || needs.detect_changes.outputs.workflow == 'true'
@@ -409,6 +429,44 @@ jobs:
       - name: Verify portable payload ABI symbols
         run: python3 tools/check_payload_abi_symbols.py --build-dir build/native
 
+  windows_native_tests:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: windows-2022
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Set up the native MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Ninja for the single-config MSVC build
+        run: python -m pip install ninja
+
+      - name: Build and test native Core (Windows MSVC)
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne 'AMD64') { throw "Expected a Windows x64 runner" }
+          cmake -S fastcarto -B build/native -G Ninja -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF -DCMAKE_BUILD_TYPE=Debug
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/native --parallel 2 -- -k 0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Shared-library test executables live outside the DLL directory.
+          $fastdbDll = @(Get-ChildItem build/native -Filter fastdb.dll -File -Recurse)
+          if ($fastdbDll.Count -ne 1) { throw "Expected exactly one built fastdb.dll" }
+          $env:PATH = "$($fastdbDll[0].DirectoryName);$env:PATH"
+          ctest --test-dir build/native --output-on-failure
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check_payload_abi_symbols.py --build-dir build/native
+
   native_sanitizers:
     needs: detect_changes
     if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.workflow == 'true'
@@ -532,9 +590,11 @@ jobs:
       - detect_changes
       - release_tools
       - python_tests
+      - windows_python_tests
       - rust_payload
       - ts_tests
       - native_tests
+      - windows_native_tests
       - native_sanitizers
       - wasm_core
       - package_tests
@@ -557,8 +617,10 @@ jobs:
           RELEASE_SCOPE: ${{ needs.detect_changes.outputs.release }}
           RELEASE_TOOLS_RESULT: ${{ needs.release_tools.result }}
           PYTHON_TESTS_RESULT: ${{ needs.python_tests.result }}
+          WINDOWS_PYTHON_TESTS_RESULT: ${{ needs.windows_python_tests.result }}
           TS_TESTS_RESULT: ${{ needs.ts_tests.result }}
           NATIVE_TESTS_RESULT: ${{ needs.native_tests.result }}
+          WINDOWS_NATIVE_TESTS_RESULT: ${{ needs.windows_native_tests.result }}
           NATIVE_SANITIZERS_RESULT: ${{ needs.native_sanitizers.result }}
           WASM_CORE_RESULT: ${{ needs.wasm_core.result }}
           PACKAGE_TESTS_RESULT: ${{ needs.package_tests.result }}

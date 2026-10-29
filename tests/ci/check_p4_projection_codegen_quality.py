@@ -705,6 +705,8 @@ def check_workflow_results(environment: dict[str, str]) -> None:
         "RUST_PAYLOAD_RESULT": scopes["CORE"] or scopes["RUST"] or scopes["WORKFLOW"],
         "PROJECTION_PARITY_RESULT": any(scopes.values()),
         "GENERATED_PROJECTIONS_RESULT": any(scopes.values()),
+        "WINDOWS_NATIVE_TESTS_RESULT": scopes["CORE"] or scopes["WORKFLOW"],
+        "WINDOWS_PYTHON_TESTS_RESULT": scopes["CORE"] or scopes["PYTHON"] or scopes["WORKFLOW"],
     }
     for key, required in expectations.items():
         result = environment.get(key)

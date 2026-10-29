@@ -60,6 +60,58 @@ class CIBuildScopeTests(unittest.TestCase):
                 self.assertIn("workflow", matching_scopes(self.test_filters, [path]))
                 self.assertEqual(matching_scopes(self.artifact_filters, [path]), set())
 
+    def test_windows_pr_jobs_share_runtime_scopes_and_are_required(self):
+        jobs = self.tests["jobs"]
+        aggregate = next(step for step in jobs["test"]["steps"]
+                         if step.get("name") == "Validate required test results")
+        for name, peer in (("windows_native_tests", "native_tests"),
+                           ("windows_python_tests", "python_tests")):
+            with self.subTest(job=name):
+                job = jobs[name]
+                self.assertEqual(job["runs-on"], "windows-2022")
+                self.assertEqual(job["needs"], "detect_changes")
+                self.assertEqual(job["if"], jobs[peer]["if"])
+                self.assertFalse(job.get("continue-on-error", False))
+                self.assertIn(name, jobs["test"]["needs"])
+                self.assertEqual(aggregate["env"][f"{name.upper()}_RESULT"],
+                                 "${{ needs." + name + ".result }}")
+                python = next(step for step in job["steps"]
+                              if step.get("uses", "").startswith("actions/setup-python@"))
+                self.assertEqual(python["with"], {"python-version": "3.12", "architecture": "x64"})
+        python_job = jobs["windows_python_tests"]
+        self.assertTrue(any(step.get("uses", "").startswith("astral-sh/setup-uv@")
+                            for step in python_job["steps"]))
+        self.assertEqual(next(step["run"] for step in python_job["steps"]
+                              if step.get("name") == "Run Python tests"),
+                         "uv run pytest tests/python")
+
+    def test_windows_pr_native_core_uses_msvc_and_exposes_dll_to_ctest(self):
+        job = self.tests["jobs"]["windows_native_tests"]
+        msvc = next(step for step in job["steps"]
+                    if step.get("uses", "").startswith("ilammy/msvc-dev-cmd@"))
+        self.assertEqual(msvc["with"]["arch"], "x64")
+        self.assertTrue(any(step.get("run") == "python -m pip install ninja"
+                            for step in job["steps"]))
+        step = next(step for step in job["steps"]
+                    if step.get("name") == "Build and test native Core (Windows MSVC)")
+        self.assertEqual(step["shell"], "pwsh")
+        commands = step["run"].splitlines()
+        configure = next(line for line in commands if line.startswith("cmake -S "))
+        for flag in ("-G Ninja", "-DBUILD_TESTING=ON", "-DBUILD_TOOLS=OFF",
+                     "-DUSE_SWIG_PYTHON=OFF", "-DUSE_SWIG_NODE=OFF", "-DUSE_SWIG_GO=OFF"):
+            self.assertIn(flag, configure)
+        self.assertIn("cmake --build build/native --parallel 2 -- -k 0", commands)
+        self.assertIn("ctest --test-dir build/native --output-on-failure", commands)
+        self.assertIn("python tools/check_payload_abi_symbols.py --build-dir build/native", commands)
+        for index, line in enumerate(commands[:-1]):
+            if line.startswith(("cmake ", "ctest ")):
+                self.assertEqual(commands[index + 1], "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
+        path_update = '$env:PATH = "$($fastdbDll[0].DirectoryName);$env:PATH"'
+        self.assertLess(commands.index(path_update), commands.index("ctest --test-dir build/native --output-on-failure"))
+        self.assertIn("Get-ChildItem build/native -Filter fastdb.dll -File -Recurse", step["run"])
+        self.assertIn("$fastdbDll.Count -ne 1", step["run"])
+        self.assertIn("$env:PROCESSOR_ARCHITECTURE -ne 'AMD64'", step["run"])
+
     def test_package_sources_and_versions_still_build_release_candidates(self):
         for path, scope in (("fastcarto/fastdb/src/payload.cpp", "core"),
                             ("python/fastdb4py/payload.py", "python"),

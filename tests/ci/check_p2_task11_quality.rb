@@ -28,7 +28,9 @@ JOBS = {
 POST_P2_JOBS = {
   "rust_payload" => %w[core rust workflow],
   "projection_parity" => %w[core python rust ts workflow],
-  "generated_projections" => %w[core python rust ts workflow]
+  "generated_projections" => %w[core python rust ts workflow],
+  "windows_native_tests" => %w[core workflow],
+  "windows_python_tests" => %w[core python workflow]
 }.freeze
 POST_P2_AGGREGATE_JOBS = POST_P2_JOBS.keys.freeze
 
@@ -307,7 +309,7 @@ def check_workflow
   require_quality(matrix == [
                     {"os" => "ubuntu-24.04", "expected_arch" => "x86_64"},
                     {"os" => "macos-15", "expected_arch" => "arm64"}
-                  ], "native matrix must be exact Linux x86-64/macOS arm64")
+                  ], "Unix native matrix must be exact Linux x86-64/macOS arm64; Windows uses windows_native_tests")
   require_quality(step_run(native, "Verify portable payload ABI symbols")
                     .include?("check_payload_abi_symbols.py"),
                   "native job must run the executable ABI gate")
@@ -421,7 +423,9 @@ def check_workflow
     "RELEASE_SCOPE" => "${{ needs.detect_changes.outputs.release }}",
     "RELEASE_TOOLS_RESULT" => "${{ needs.release_tools.result }}",
     "RUST_PAYLOAD_RESULT" => "${{ needs.rust_payload.result }}",
-    "PROJECTION_PARITY_RESULT" => "${{ needs.projection_parity.result }}"
+    "PROJECTION_PARITY_RESULT" => "${{ needs.projection_parity.result }}",
+    "WINDOWS_NATIVE_TESTS_RESULT" => "${{ needs.windows_native_tests.result }}",
+    "WINDOWS_PYTHON_TESTS_RESULT" => "${{ needs.windows_python_tests.result }}"
   }.each do |name, expected|
     require_quality(aggregate_env.fetch(name) == expected,
                     "aggregate #{name} wiring is not exact")

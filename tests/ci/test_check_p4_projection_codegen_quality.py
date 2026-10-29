@@ -420,19 +420,32 @@ class ProjectionMapTests(unittest.TestCase):
             environment["GENERATED_PROJECTIONS_RESULT"] = (
                 "success" if any(active.values()) else "skipped"
             )
+            environment["WINDOWS_NATIVE_TESTS_RESULT"] = (
+                "success" if active["CORE"] or active["WORKFLOW"] else "skipped"
+            )
+            environment["WINDOWS_PYTHON_TESTS_RESULT"] = (
+                "success"
+                if active["CORE"] or active["PYTHON"] or active["WORKFLOW"]
+                else "skipped"
+            )
             MODULE.check_workflow_results(environment)
 
             for key in (
                 "RUST_PAYLOAD_RESULT",
                 "PROJECTION_PARITY_RESULT",
                 "GENERATED_PROJECTIONS_RESULT",
+                "WINDOWS_NATIVE_TESTS_RESULT",
+                "WINDOWS_PYTHON_TESTS_RESULT",
             ):
-                wrong = dict(environment)
-                wrong[key] = (
-                    "skipped" if environment[key] == "success" else "success"
-                )
-                with self.assertRaises(MODULE.QualityError):
-                    MODULE.check_workflow_results(wrong)
+                for result in {"success", "skipped", "failure", "cancelled", None} - {environment[key]}:
+                    with self.subTest(scopes=active, key=key, result=result):
+                        wrong = dict(environment)
+                        if result is None:
+                            del wrong[key]
+                        else:
+                            wrong[key] = result
+                        with self.assertRaises(MODULE.QualityError):
+                            MODULE.check_workflow_results(wrong)
 
         invalid_scope = dict(environment)
         invalid_scope["CORE_SCOPE"] = "unknown"

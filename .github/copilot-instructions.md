@@ -371,12 +371,20 @@ When modifying the serializer in either language, always verify the cross-langua
 
 | Changed paths | Jobs that run |
 |---|---|
-| `fastcarto/` | Python tests |
-| `python/` | Python tests |
-| `ts/` | TypeScript tests |
-| `.github/workflows/` | All tests |
+| Core paths including `fastcarto/` | Linux/macOS `native_tests`, Windows x64 `windows_native_tests`, Linux `python_tests`, Windows x64 `windows_python_tests`, Rust, TypeScript/WASM, package and projection tests |
+| `python/`, `tests/python/` | Linux and Windows x64 full Python suites, package and projection tests |
+| `ts/` | TypeScript/WASM package and projection tests |
+| `bindings/rust/`, `tests/rust/` | Rust and projection tests |
+| `tests.yml` and runtime quality gates | All scoped runtime tests, including both Windows x64 jobs |
+| Release tooling, documentation and other workflow files | `release_tools` |
 
-A terminal aggregate job named `test` (with `if: always()`) satisfies the branch protection required status check regardless of which scoped jobs ran.
+`windows_native_tests` runs MSVC/Ninja, CTest and ABI export validation on
+`windows-2022`; `windows_python_tests` runs `uv run pytest tests/python` with
+CPython 3.12 x64 on the same runner. Windows ARM64 is covered by release builds.
+The `clean_cut` repository policy gate runs for every PR/main workflow.
+A terminal aggregate job named `test` (with `if: always()`) validates each
+scoped job's required success or skip result, including both Windows jobs.
+Release publication also requires their successful exact-source proofs.
 
 **npm publish** (`.github/workflows/npm_publish.yml`): triggered on push to `main` when `ts/fastdb4ts/package.json` changes (or `workflow_dispatch`). Checks npm registry first (skips if version exists), builds WASM + TS, tests, packs, then publishes via npm OIDC Trusted Publishing (no `NPM_TOKEN` secret). Creates a `ts/v{version}` git tag after successful publish, which in turn triggers `release-ts.yml` to create a GitHub Release.
 

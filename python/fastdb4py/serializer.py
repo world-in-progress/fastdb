@@ -289,9 +289,18 @@ class FastSerializer:
 
         Raises:
             FileNotFoundError: If the shared memory segment does not exist.
-            ValueError:        If *offset + length* exceeds the segment size.
+            ValueError: If offset or length is negative, the requested region
+                exceeds the attached mapping size, or native validation rejects
+                the selected bytes as an invalid FastDB database buffer.
+
+        The attached mapping size can include OS page padding (in particular
+        on Windows); it does not identify the publisher's exact payload length.
+        In-mapping padding or corrupt bytes are checked by the native loader.
         """
         from multiprocessing import shared_memory as _shm_mod
+
+        if offset < 0 or length < 0:
+            raise ValueError("offset and length must be non-negative")
 
         shm = _shm_mod.SharedMemory(name=shm_name, create=False)
         db = None
