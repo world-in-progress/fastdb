@@ -165,12 +165,16 @@ time.sleep(0.1)
 print('daemon reader exits safely', flush=True)
 ''',
     'module_del': '''
+import os
 class Reporter:
+    # Late teardown cannot import, so read and report through C-level calls only.
     def __init__(self, column):
         self.column = column
+        self.one = np.float32(1).tobytes()
+        self.write = os.write
     def __del__(self):
-        assert float(self.column.sum()) == 2000000
-        print('module destructor read passed', flush=True)
+        assert self.column.tobytes().count(self.one) == 2000000
+        self.write(1, b'module destructor read passed\\n')
 reader = fdb.RecordEngine.load(name)
 reporter = Reporter(reader.table(V).column.value)
 publisher.unlink()
