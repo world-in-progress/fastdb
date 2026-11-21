@@ -367,12 +367,25 @@ class WritableBufferBacking(DirectBacking):
 class ExternalBytes:
     """Pin a C-contiguous read-only buffer or snapshot a writable one.
 
-    The bytes of a read-only export must stay stable for the lifetime of its
-    payloads and views, including when the source has separate writable aliases.
+    The bytes of a read-only export must stay stable while the wrapper, a
+    builder, a build plan, or an opened payload or view retains the buffer.
+    This also applies when the source has separate writable aliases.
     """
 
     def __init__(self, source: object) -> None:
         self._pin = _payload_ext.external_bytes(source)
+
+    def close(self) -> None:
+        """Release this wrapper's reference to the buffer."""
+        self._pin = None
+
+    def _require_pin(self) -> object:
+        pin = self._pin
+        if pin is None:
+            raise binding_error(
+                "ExternalBytes is closed", path="/source", reason="closed_handle"
+            )
+        return pin
 
     def __copy__(self) -> ExternalBytes:
         return self
@@ -906,7 +919,7 @@ class Payload:
         error = _ffi.Handle()
         with spec._borrow_handle() as spec_handle:
             status = _payload_ext.open_external(
-                source._pin,
+                source._require_pin(),
                 spec_handle.value,
                 ctypes.addressof(raw_options),
                 ctypes.addressof(handle),

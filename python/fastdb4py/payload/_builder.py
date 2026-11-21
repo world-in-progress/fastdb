@@ -9,12 +9,15 @@ import struct
 import threading
 from typing import TYPE_CHECKING, Iterator, Optional, Sequence, Type, TypeVar
 
+from ..core import _payload_ext
 from . import _ffi
 from ._error import PayloadError, binding_error
 from ._spec import CompiledSpec, _check_status, _input_bytes, _input_digest
 
 if TYPE_CHECKING:
-    from ._runtime import BuildPolicy, BuildResult, DirectBacking, MemoryBacking
+    from ._runtime import (
+        BuildPolicy, BuildResult, DirectBacking, ExternalBytes, MemoryBacking,
+    )
 
 
 _U64_MAX = (1 << 64) - 1
@@ -452,6 +455,22 @@ class Builder:
 
     def value_bytes(self, value: object) -> Builder:
         return self._call_bytes("fdb_payload_v1_builder_value_bytes", value)
+
+    def value_external_bytes(self, source: ExternalBytes) -> Builder:
+        """Retain the source bytes until the builder or its frozen plan closes."""
+        from ._runtime import ExternalBytes
+
+        if not isinstance(source, ExternalBytes):
+            raise TypeError("source must be ExternalBytes")
+        self._check_thread()
+        error = _ffi.Handle()
+        with self._lock:
+            handle = self._require_handle_locked()
+            status, error.value = _payload_ext.builder_value_external_bytes(
+                handle.value, source._require_pin()
+            )
+            _check_status(status, error)
+        return self
 
     def value_fixed_run(self, run: FixedRun) -> Builder:
         if not isinstance(run, FixedRun):

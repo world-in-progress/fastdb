@@ -1,5 +1,6 @@
 import ctypes
 import gc
+from hashlib import sha256
 import json
 import mmap
 import threading
@@ -27,6 +28,7 @@ from fastdb4py.payload import (
 
 CONTENT = b"\x00\xff payload"
 TEXT = "雪"
+PROFILES = ("record.v1", "object_graph.v1")
 
 
 def compile_spec(profile, entries, components=()):
@@ -42,7 +44,7 @@ def entry(name, kind, **type_options):
     return {"id": name, "cardinality": "many", "type": {"kind": kind, **type_options}}
 
 
-@pytest.fixture(params=["record.v1", "object_graph.v1"])
+@pytest.fixture(params=PROFILES)
 def image(request):
     graph = request.param == "object_graph.v1"
     fields = [
@@ -73,6 +75,154 @@ def aligned_buffer(size, alignment):
     storage = bytearray(size + alignment - 1)
     offset = -address(storage) % alignment
     return memoryview(storage)[offset:offset + size]
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+@pytest.mark.parametrize("make_source", [
+    pytest.param(bytes, id="bytes"),
+    pytest.param(memoryview, id="memoryview"),
+    pytest.param(bytearray, id="bytearray"),
+    pytest.param(lambda data: np.frombuffer(data, dtype=np.uint8), id="ndarray"),
+])
+def test_external_bytes_build_matches_value_bytes(profile, make_source):
+    fields = [
+        {"id": "first", "type": {"kind": "bytes"}},
+        {"id": "copied", "type": {"kind": "bytes"}},
+        {"id": "empty", "type": {"kind": "bytes"}},
+    ]
+    entries = [entry("root", "component", id="Item")]
+    components = [{"id": "Item", "kind": "record", "fields": fields}]
+
+    def freeze(spec, use_external):
+        with Builder.create(spec) as builder:
+            if profile == "object_graph.v1":
+                node = builder.declare_object(0)
+                builder.object_fill_begin(node)
+            else:
+                builder.entry_begin(0, 1).value_component_begin()
+            if use_external:
+                source = make_source(CONTENT)
+                external = ExternalBytes(source)
+                if isinstance(source, bytearray):
+                    source[:] = b"changed"
+                assert builder.value_external_bytes(external) is builder
+                external.close()
+                builder.value_bytes(b"copied").value_external_bytes(
+                    ExternalBytes(make_source(b""))
+                )
+            else:
+                builder.value_bytes(CONTENT).value_bytes(b"copied").value_bytes(b"")
+            if profile == "object_graph.v1":
+                builder.entry_begin(0, 1).value_object(node)
+            return builder.freeze()
+
+    with compile_spec(profile, entries, components) as spec:
+        with freeze(spec, False) as copied, freeze(spec, True) as external:
+            with copied.execute(BuildPolicy.REQUIRE_DIRECT).payload as payload:
+                binary = payload.binary_bytes()
+            info = external.info()
+            storage = aligned_buffer(info.total_bytes, info.max_alignment)
+            backing = DirectBacking(lambda *_: (storage, None))
+            result = external.execute(BuildPolicy.REQUIRE_DIRECT, backing=backing)
+            with result.payload as payload, payload.memoryview() as view:
+                assert_direct(result, storage, binary)
+                assert sha256(view).digest() == sha256(binary).digest()
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_unfrozen_builder_releases_external_bytes_on_close(profile):
+    source = memoryview(CONTENT)
+    external = ExternalBytes(source)
+    with compile_spec(profile, [entry("data", "bytes")]) as spec:
+        builder = Builder.create(spec)
+        builder.entry_begin(0, 1).value_external_bytes(external)
+        external.close()
+        with pytest.raises(BufferError):
+            source.release()
+        builder.close()
+        source.release()
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_frozen_plan_keeps_external_bytes_for_repeated_execution(profile):
+    source = memoryview(CONTENT)
+    external = ExternalBytes(source)
+    with compile_spec(profile, [entry("data", "bytes")]) as spec:
+        with Builder.create(spec) as builder:
+            builder.entry_begin(0, 1).value_external_bytes(external)
+            plan = builder.freeze()
+        external.close()
+        with plan:
+            with pytest.raises(BufferError):
+                source.release()
+            reservations = []
+
+            def reserve(mode, capacity, alignment):
+                assert mode is ReserveMode.DIRECT
+                storage = aligned_buffer(capacity, alignment)
+                reservations.append(storage)
+                return storage, None
+
+            backing = DirectBacking(reserve)
+            for index in range(2):
+                result = plan.execute(BuildPolicy.REQUIRE_DIRECT, backing=backing)
+                with result.payload as payload, payload.entry_view(0) as data:
+                    with data.at(0) as value, value.acquire() as access:
+                        assert access.bytes() == CONTENT
+                    assert_direct(result, reservations[index], payload.binary_bytes())
+                with pytest.raises(BufferError):
+                    source.release()
+            assert len(reservations) == 2
+        source.release()
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_builder_external_bytes_rejections_release_source(profile):
+    source = memoryview(CONTENT)
+    external = ExternalBytes(source)
+    with compile_spec(profile, [entry("flag", "bool")]) as spec:
+        with Builder.create(spec) as builder:
+            builder.entry_begin(0, 1)
+            with pytest.raises(TypeError, match="^source must be ExternalBytes$"):
+                builder.value_external_bytes(source)
+            with pytest.raises(PayloadError) as caught:
+                builder.value_external_bytes(external)
+            assert caught.value.symbol == "TYPE_MISMATCH"
+            external.close()
+            source.release()
+            with pytest.raises(PayloadError, match="ExternalBytes is closed"):
+                builder.value_external_bytes(external)
+            with pytest.raises(PayloadError, match="ExternalBytes is closed"):
+                Payload.open_external(spec, external)
+            with builder.value_bool(True).freeze():
+                pass
+
+        source = memoryview(CONTENT)
+        external = ExternalBytes(source)
+        with pytest.raises(PayloadError, match="Builder is closed"):
+            builder.value_external_bytes(external)
+        external.close()
+        source.release()
+
+
+def test_large_external_bytes_builds_into_direct_backing():
+    source = b"\xa2" * (16 * 1024 * 1024)
+    with compile_spec("object_graph.v1", [entry("data", "bytes")]) as spec:
+        with Builder.create(spec) as builder:
+            builder.entry_begin(0, 1).value_external_bytes(ExternalBytes(source))
+            plan = builder.freeze()
+        with plan:
+            info = plan.info()
+            storage = aligned_buffer(info.total_bytes, info.max_alignment)
+            backing = DirectBacking(lambda *_: (storage, None))
+            result = plan.execute(BuildPolicy.REQUIRE_DIRECT, backing=backing)
+            assert result.report.mode is ExecutionMode.DIRECT
+            assert result.report.staging_bytes == 0
+            with result.payload as payload, payload.memoryview() as whole:
+                assert address(whole) == address(storage)
+                with payload.entry_view(0) as data, data.at(0) as value:
+                    with value.acquire() as access, access.memoryview() as view:
+                        assert view == source
 
 
 def test_external_and_access_share_the_original_address(image):
