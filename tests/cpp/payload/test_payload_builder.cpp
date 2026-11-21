@@ -1767,10 +1767,64 @@ int test_deep_iterative_builder_and_graph_runtime_boundary() {
     return EXIT_SUCCESS;
 }
 
+int test_external_bytes_releases_after_scratch_failure() {
+    constexpr std::string_view source =
+        R"({"schema":"fastdb.payload.v1","profile":"record.v1","entries":[{"id":"v","cardinality":"one","type":{"kind":"bytes"}}],"components":[]})";
+    fdb_payload_v1_spec_t* spec = nullptr;
+    fdb_payload_v1_builder_t* builder = nullptr;
+    fdb_payload_v1_error_t* error = nullptr;
+    require(fdb_payload_v1_spec_compile_json(
+                reinterpret_cast<const std::uint8_t*>(source.data()),
+                source.size(), nullptr, &spec, &error) == 0U);
+    require(fdb_payload_v1_builder_create(spec, nullptr, &builder, &error) == 0U);
+    fdb_payload_v1_spec_release(spec);
+    require(fdb_payload_v1_builder_entry_begin(builder, 0U, 1U, &error) == 0U);
+
+    struct Counts {
+        std::uint32_t retains{0U};
+        std::uint32_t releases{0U};
+        bool tokens_match{true};
+    } counts;
+    fdb_payload_v1_backing_v1_t backing{};
+    fdb_payload_v1_backing_init(&backing);
+    backing.context = &counts;
+    backing.retain = [](void* context, void* token) -> fdb_payload_v1_status_t {
+        auto& observed = *static_cast<Counts*>(context);
+        observed.tokens_match = observed.tokens_match && context == token;
+        ++observed.retains;
+        return 0U;
+    };
+    backing.release = [](void* context, void* token) {
+        auto& observed = *static_cast<Counts*>(context);
+        observed.tokens_match = observed.tokens_match && context == token;
+        ++observed.releases;
+    };
+    const std::uint8_t byte = 42U;
+    arm_scratch_reserve_failure();
+    const auto failed = fdb_payload_v1_builder_value_external_bytes(
+        builder, &byte, 1U, &backing, &counts, &error);
+    disarm_scratch_reserve_failure();
+    require(scratch_reserve_failure_triggered());
+    require(failed == FDB_PAYLOAD_E_ALLOCATION_FAILED);
+    require(error != nullptr && fdb_payload_v1_error_code(error) == failed);
+    fdb_payload_v1_error_release(error);
+    error = nullptr;
+    require(counts.retains == 1U && counts.releases == 1U);
+
+    require(fdb_payload_v1_builder_value_external_bytes(
+                builder, &byte, 1U, &backing, &counts, &error) == 0U);
+    require(error == nullptr);
+    require(counts.retains == 2U && counts.releases == 1U);
+    fdb_payload_v1_builder_release(builder);
+    require(counts.retains == 2U && counts.releases == 2U &&
+            counts.tokens_match);
+    return EXIT_SUCCESS;
+}
+
 }  // namespace
 
 int main() {
-    const std::array<int (*)(), 16> tests{{
+    const std::array<int (*)(), 17> tests{{
         test_empty_and_default_limits,
         test_shared_text_encoding_helpers,
         test_scalars_text_and_out_of_order_entries,
@@ -1779,6 +1833,7 @@ int main() {
         test_fixed_run_limits_precede_scratch_allocation,
         test_fixed_run_exact_final_frame_accounting,
         test_all_mutations_preflight_before_scratch_allocation,
+        test_external_bytes_releases_after_scratch_failure,
         test_all_fixed_kinds_match_individual_authoring,
         test_normalized_boundaries_are_transactional,
         test_input_spans_fail_before_pointer_use,

@@ -54,7 +54,8 @@ private:
           profile_layout_(std::move(profile_layout)),
           info_(info) {}
 
-    view::OpenOptions publication_options(const PlanInfo& info) const noexcept;
+    view::OpenOptions publication_options(
+        const PlanInfo& info, bool validate_text_eager) const noexcept;
 
     friend struct BuildPlanTestAccess;
 

@@ -14,7 +14,6 @@
 #include <cstdint>
 #include <new>
 #include <string>
-#include <string_view>
 #include <vector>
 
 namespace fastdb::payload::build {
@@ -276,7 +275,7 @@ Result<void> encode_scalar_slot(const RecordLayout& layout,
                 encode_error(JsonPointer{}.append("values"),
                              "wide_text_storage_length_is_odd"));
         }
-        if (!list) {
+        if (!list && !node.external_bytes) {
             auto storage_end = layout::checked_range_end(
                 node.scalar_bits_or_offset, node.byte_length,
                 values.byte_storage().size(),
@@ -544,7 +543,7 @@ Result<void> encode_value_slot(const RecordLayout& layout,
 Result<void> encode_record(const RecordLayout& layout,
                            const LogicalPayload& values,
                            ByteSink& sink) try {
-    if (layout.runtime_schema().spec().digest() != values.spec().digest()) {
+    if (layout.runtime_schema().digest() != values.spec().digest()) {
         return Result<void>::failure(encode_error(
             JsonPointer{}, "encode_spec_digest_mismatch"));
     }
@@ -603,8 +602,8 @@ Result<void> encode_record(const RecordLayout& layout,
         return Result<void>::failure(encode_error(
             JsonPointer{}.append("header"), "header_store_failed"));
     }
-    std::copy(layout.runtime_schema().spec().digest().begin(),
-              layout.runtime_schema().spec().digest().end(),
+    std::copy(layout.runtime_schema().digest().begin(),
+              layout.runtime_schema().digest().end(),
               header.begin() + static_cast<std::ptrdiff_t>(
                                    layout::header_spec_digest_offset));
     auto written = writer.write(header.data(), header.size());
@@ -786,7 +785,6 @@ Result<void> encode_record(const RecordLayout& layout,
                 region.kind == RegionKind::utf8_pool    ? TypeKind::str
                 : region.kind == RegionKind::utf16_pool ? TypeKind::wstr
                                                         : TypeKind::bytes;
-            const std::string_view storage = values.byte_storage();
             for (const NodeIndex node_index : layout.variable_values()) {
                 if (node_index >= values.nodes().size()) {
                     return Result<void>::failure(
@@ -801,19 +799,9 @@ Result<void> encode_record(const RecordLayout& layout,
                     node.tag == ValueTag::null_value) {
                     continue;
                 }
-                auto storage_end = layout::checked_range_end(
-                    node.scalar_bits_or_offset, node.byte_length,
-                    storage.size(), JsonPointer{}.append("pools"));
-                if (!storage_end.has_value()) {
-                    return Result<void>::failure(
-                        std::move(storage_end).error());
-                }
                 if (node.byte_length != UINT64_C(0)) {
-                    written = writer.write(
-                        reinterpret_cast<const std::uint8_t*>(storage.data()) +
-                            static_cast<std::ptrdiff_t>(
-                                node.scalar_bits_or_offset),
-                        node.byte_length);
+                    written = writer.write(values.variable_data(node),
+                                           node.byte_length);
                     if (!written.has_value()) {
                         return written;
                     }

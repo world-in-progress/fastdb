@@ -167,17 +167,19 @@ void operator delete[](void* value, std::size_t,
 namespace fastdb::payload::layout {
 
 struct RuntimeSchemaTestAccess final {
-    static void remove_last_list(RuntimeSchema& schema) {
-        if (!schema.list_nodes_.empty()) {
-            schema.list_nodes_.pop_back();
-        }
+    static std::shared_ptr<const RuntimeSchema> without_last_list(
+        const RuntimeSchema& schema) {
+        auto copy = std::make_shared<RuntimeSchema>(schema);
+        copy->list_nodes_.pop_back();
+        return copy;
     }
 
-    static void make_first_list_cyclic(RuntimeSchema& schema) {
-        if (!schema.list_nodes_.empty()) {
-            schema.list_nodes_.front().item_runtime_type_id =
-                schema.list_nodes_.front().owner_runtime_type_id;
-        }
+    static std::shared_ptr<const RuntimeSchema> with_cyclic_first_list(
+        const RuntimeSchema& schema) {
+        auto copy = std::make_shared<RuntimeSchema>(schema);
+        auto& first = copy->list_nodes_.front();
+        first.item_runtime_type_id = first.owner_runtime_type_id;
+        return copy;
     }
 };
 
@@ -2551,13 +2553,13 @@ int test_task5_recursive_lists_and_named_algebra_matrix() {
     auto composition_runtime = RuntimeSchema::compile(composition_spec.value());
     require(nested_runtime.has_value());
     require(composition_runtime.has_value());
-    require(nested_runtime.value().list_nodes().size() == 7U);
-    require(composition_runtime.value().list_nodes().size() == 16U);
+    require(nested_runtime.value()->list_nodes().size() == 7U);
+    require(composition_runtime.value()->list_nodes().size() == 16U);
     for (std::size_t index = 1U;
-         index < nested_runtime.value().list_nodes().size(); ++index) {
-        require(nested_runtime.value().list_nodes()[index - 1U]
+         index < nested_runtime.value()->list_nodes().size(); ++index) {
+        require(nested_runtime.value()->list_nodes()[index - 1U]
                     .owner_runtime_type_id <
-                nested_runtime.value().list_nodes()[index]
+                nested_runtime.value()->list_nodes()[index]
                     .owner_runtime_type_id);
     }
 
@@ -2624,7 +2626,7 @@ int test_task5_recursive_lists_and_named_algebra_matrix() {
             empty_scalar_list->count == UINT64_C(0));
     require(present_scalar_list->first == UINT64_C(0) &&
             present_scalar_list->count == UINT64_C(3));
-    for (const auto& list : nested_runtime.value().list_nodes()) {
+    for (const auto& list : nested_runtime.value()->list_nodes()) {
         const auto* aggregate = nested_layout.value().list_aggregate(
             list.owner_runtime_type_id);
         require(aggregate != nullptr);
@@ -2649,24 +2651,22 @@ int test_task5_recursive_lists_and_named_algebra_matrix() {
     require(composition_sink.next_offset() ==
             composition_layout.value().total_length());
 
-    auto missing_runtime = RuntimeSchema::compile(nested_spec.value());
-    require(missing_runtime.has_value());
-    fastdb::payload::layout::RuntimeSchemaTestAccess::remove_last_list(
-        missing_runtime.value());
+    auto missing_runtime =
+        fastdb::payload::layout::RuntimeSchemaTestAccess::without_last_list(
+            *nested_runtime.value());
     const auto missing_layout =
-        RecordLayout::plan(missing_runtime.value(), nested_values.value());
+        RecordLayout::plan(std::move(missing_runtime), nested_values.value());
     require(!missing_layout.has_value());
     require(missing_layout.error().code() == FDB_PAYLOAD_E_INTERNAL);
     require(missing_layout.error().path() == "/runtime/lists");
     require(missing_layout.error().details_json() ==
             R"({"reason":"missing_list_runtime_metadata"})");
 
-    auto cyclic_runtime = RuntimeSchema::compile(nested_spec.value());
-    require(cyclic_runtime.has_value());
-    fastdb::payload::layout::RuntimeSchemaTestAccess::make_first_list_cyclic(
-        cyclic_runtime.value());
+    auto cyclic_runtime =
+        fastdb::payload::layout::RuntimeSchemaTestAccess::with_cyclic_first_list(
+            *nested_runtime.value());
     const auto cyclic_layout =
-        RecordLayout::plan(cyclic_runtime.value(), nested_values.value());
+        RecordLayout::plan(std::move(cyclic_runtime), nested_values.value());
     require(!cyclic_layout.has_value());
     require(cyclic_layout.error().code() == FDB_PAYLOAD_E_INTERNAL);
     require(cyclic_layout.error().path() == "/runtime/lists");
@@ -2723,8 +2723,8 @@ int test_task5_zero_count_list_aggregate_regions() {
 
     auto runtime = RuntimeSchema::compile(encoded.value().spec);
     require(runtime.has_value());
-    require(runtime.value().list_nodes().size() == 1U);
-    const auto& list_node = runtime.value().list_nodes().front();
+    require(runtime.value()->list_nodes().size() == 1U);
+    const auto& list_node = runtime.value()->list_nodes().front();
     require(list_node.owner_runtime_type_id == UINT32_C(0));
     require(list_node.item_runtime_type_id == UINT32_C(1));
     require(list_node.item_nullable);
@@ -3654,7 +3654,7 @@ int test_layout_ownership_moves_do_not_allocate() {
     const std::uint64_t total_length = planned.value().total_length();
     const std::uint32_t region_count = planned.value().region_count();
     const std::uint32_t entry_count = planned.value().entry_count();
-    const std::uint32_t type_count = runtime.value().type_count();
+    const std::uint32_t type_count = runtime.value()->type_count();
     const std::uint32_t root_type_count = static_cast<std::uint32_t>(
         compiled.value().resolved().entries().size());
 
@@ -3668,8 +3668,9 @@ int test_layout_ownership_moves_do_not_allocate() {
         Result<RecordLayout> twice_relocated = std::move(relocated);
         RecordLayout relocated_layout = std::move(twice_relocated).value();
         planned = Result<RecordLayout>::success(std::move(relocated_layout));
-        RuntimeSchema relocated_schema = std::move(runtime).value();
-        runtime = Result<RuntimeSchema>::success(std::move(relocated_schema));
+        auto cached = RuntimeSchema::compile(compiled.value());
+        require(cached.has_value());
+        require(cached.value() == runtime.value());
         allocation_failure::fail_after.store(INT64_C(-1),
                                               std::memory_order_relaxed);
         moves_completed = true;
@@ -3689,33 +3690,26 @@ int test_layout_ownership_moves_do_not_allocate() {
     require(planned.value().total_length() == total_length);
     require(planned.value().region_count() == region_count);
     require(planned.value().entry_count() == entry_count);
-    require(runtime.value().type_count() == type_count);
+    require(runtime.value()->type_count() == type_count);
 
-    // The shared index is published, not owned: the schema left behind inside
-    // the moved-from Result holds no index and must answer lookups as "unknown"
-    // instead of dereferencing it.
-    RuntimeSchema donor = std::move(runtime).value();
-    require(runtime.value().runtime_id(
-                compiled.value().resolved().entries().front().type) ==
-            UINT32_MAX);
-    runtime = Result<RuntimeSchema>::success(std::move(donor));
+    require(&planned.value().runtime_schema() == runtime.value().get());
 
     // Every resolved type must still round-trip through the relocated runtime
     // schema: the identifier must resolve back to the same source node.
     std::uint32_t checked_types = UINT32_C(0);
     for (const auto& entry : compiled.value().resolved().entries()) {
-        const std::uint32_t type_id = runtime.value().runtime_id(entry.type);
+        const std::uint32_t type_id = runtime.value()->runtime_id(entry.type);
         require(type_id != UINT32_MAX);
-        const RuntimeType* const type = runtime.value().find_type(type_id);
+        const RuntimeType* const type = runtime.value()->find_type(type_id);
         require(type != nullptr && type->source == &entry.type);
         ++checked_types;
     }
     for (const auto& component : compiled.value().resolved().components()) {
         for (const auto& field : component.fields) {
-            const std::uint32_t type_id = runtime.value().runtime_id(field.type);
+            const std::uint32_t type_id = runtime.value()->runtime_id(field.type);
             require(type_id != UINT32_MAX);
             const RuntimeType* const type =
-                runtime.value().find_type(type_id);
+                runtime.value()->find_type(type_id);
             require(type != nullptr && type->source == &field.type);
             ++checked_types;
         }

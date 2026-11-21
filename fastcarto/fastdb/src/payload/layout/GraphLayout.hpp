@@ -22,7 +22,7 @@ struct ObjectAggregate final {
 class GraphLayout final {
 public:
     static error::Result<GraphLayout> plan(
-        const RuntimeSchema& runtime_schema,
+        std::shared_ptr<const RuntimeSchema> runtime,
         const build::LogicalPayload& values);
 
     std::uint64_t total_length() const noexcept { return total_length_; }
@@ -83,14 +83,14 @@ public:
         return list_aggregates_;
     }
     const RuntimeSchema& runtime_schema() const noexcept {
-        return runtime_schema_;
+        return *runtime_schema_;
     }
 
 private:
-    explicit GraphLayout(RuntimeSchema runtime_schema)
+    explicit GraphLayout(std::shared_ptr<const RuntimeSchema> runtime_schema)
         : runtime_schema_(std::move(runtime_schema)) {}
 
-    RuntimeSchema runtime_schema_;
+    std::shared_ptr<const RuntimeSchema> runtime_schema_;
     std::vector<RegionDescriptor> regions_;
     std::vector<EntryDescriptor> entries_;
     std::vector<std::vector<build::NodeIndex>> entry_values_;

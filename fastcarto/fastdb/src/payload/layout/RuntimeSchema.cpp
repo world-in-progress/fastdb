@@ -3,6 +3,7 @@
 #include "payload/json/JsonPointer.hpp"
 #include "payload/json/JsonValue.hpp"
 #include "payload/layout/CheckedMath.hpp"
+#include "payload/spec/CompiledSpec.hpp"
 
 #include <fastdb_payload.h>
 
@@ -10,7 +11,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -98,44 +98,44 @@ Result<void> RuntimeSchema::require_record_runtime(
         })));
 }
 
-Result<RuntimeSchema> RuntimeSchema::compile(
+Result<std::shared_ptr<const RuntimeSchema>> RuntimeSchema::compile(
     const spec::CompiledSpec& compiled) {
-    auto topology = spec::derive_runtime_topology(compiled.resolved());
+    return compiled.runtime_schema();
+}
+
+Result<std::shared_ptr<const RuntimeSchema>> RuntimeSchema::build(
+    std::shared_ptr<const spec::ResolvedSpec> resolved,
+    const std::array<std::uint8_t, 32>& digest) {
+    using RuntimeResult = Result<std::shared_ptr<const RuntimeSchema>>;
+    auto topology = spec::derive_runtime_topology(*resolved);
     if (!topology.has_value()) {
-        return Result<RuntimeSchema>::failure(std::move(topology).error());
+        return RuntimeResult::failure(std::move(topology).error());
     }
-    RuntimeSchema schema(compiled);
-    auto assigned = schema.assign_topology(std::move(topology).value());
+    std::shared_ptr<RuntimeSchema> schema(
+        new RuntimeSchema(std::move(resolved), digest));
+    auto assigned = schema->assign_topology(std::move(topology).value());
     if (!assigned.has_value()) {
-        return Result<RuntimeSchema>::failure(std::move(assigned).error());
+        return RuntimeResult::failure(std::move(assigned).error());
     }
-    auto components = schema.compile_component_layouts();
+    auto components = schema->compile_component_layouts();
     if (!components.has_value()) {
-        return Result<RuntimeSchema>::failure(std::move(components).error());
+        return RuntimeResult::failure(std::move(components).error());
     }
-    auto inventory = schema.finalize_reachable_inventory();
+    auto inventory = schema->finalize_reachable_inventory();
     if (!inventory.has_value()) {
-        return Result<RuntimeSchema>::failure(std::move(inventory).error());
+        return RuntimeResult::failure(std::move(inventory).error());
     }
-    return Result<RuntimeSchema>::success(std::move(schema));
+    return RuntimeResult::success(std::move(schema));
 }
 
 std::uint32_t RuntimeSchema::runtime_id(const TypeNode& type) const noexcept {
-    if (type_ids_ == nullptr) {
-        // A moved-from schema owns no index; report an unknown type instead of
-        // dereferencing the empty publication.
-        return UINT32_MAX;
-    }
-    const auto found = type_ids_->find(&type);
-    return found == type_ids_->end() ? UINT32_MAX : found->second;
+    const auto found = type_ids_.find(&type);
+    return found == type_ids_.end() ? UINT32_MAX : found->second;
 }
 
 Result<void> RuntimeSchema::assign_topology(RuntimeTopology topology) {
     types_.reserve(topology.types.size());
-    // Fill a mutable local while a failed allocation can still be reported
-    // through the Result, then publish it as the immutable shared index.
-    TypeIds type_ids;
-    type_ids.reserve(topology.types.size());
+    type_ids_.reserve(topology.types.size());
     for (std::size_t index = 0U; index < topology.types.size(); ++index) {
         const spec::RuntimeTypeTopology& source = topology.types[index];
         if (source.source == nullptr ||
@@ -147,7 +147,7 @@ Result<void> RuntimeSchema::assign_topology(RuntimeTopology topology) {
                 "invalid_runtime_topology"));
         }
         const auto id = static_cast<std::uint32_t>(index);
-        const auto inserted = type_ids.emplace(source.source, id);
+        const auto inserted = type_ids_.emplace(source.source, id);
         if (!inserted.second) {
             return Result<void>::failure(runtime_error(
                 JsonPointer{}.append("runtime").append("types"),
@@ -160,13 +160,12 @@ Result<void> RuntimeSchema::assign_topology(RuntimeTopology topology) {
             topology_slot(source.source->kind, source.storage_role),
             source.storage_role, source.reachable});
     }
-    type_ids_ = std::make_shared<const TypeIds>(std::move(type_ids));
     reachable_components_ = std::move(topology.reachable_components);
     identity_component_flags_ = std::move(topology.identity_components);
     if (reachable_components_.size() !=
-            spec_.resolved().components().size() ||
+            resolved().components().size() ||
         identity_component_flags_.size() !=
-            spec_.resolved().components().size()) {
+            resolved().components().size()) {
         return Result<void>::failure(runtime_error(
             JsonPointer{}.append("runtime").append("components"),
             FDB_PAYLOAD_E_INTERNAL,
@@ -185,7 +184,7 @@ Result<void> RuntimeSchema::assign_topology(RuntimeTopology topology) {
 }
 
 Result<void> RuntimeSchema::compile_component_layouts() {
-    const auto& source_components = spec_.resolved().components();
+    const auto& source_components = resolved().components();
     component_layout_indexes_.assign(source_components.size(), UINT32_MAX);
     std::vector<std::uint32_t> dependency_count(source_components.size(),
                                                 UINT32_C(0));
@@ -535,15 +534,3 @@ Result<void> RuntimeSchema::validate_list_metadata() const {
 }
 
 }  // namespace fastdb::payload::layout
-
-// A RuntimeSchema moves inside every plan ownership transfer (Result, the
-// ProfileLayout variant, BuildPlan).  Those transfers are noexcept, so a move
-// that allocated would turn an injected std::bad_alloc into std::terminate.
-// This assertion fails to compile if an allocating member is reintroduced.
-static_assert(
-    std::is_nothrow_move_constructible_v<
-        fastdb::payload::layout::RuntimeSchema>,
-    "RuntimeSchema must be nothrow move constructible");
-static_assert(
-    std::is_nothrow_move_assignable_v<fastdb::payload::layout::RuntimeSchema>,
-    "RuntimeSchema must be nothrow move assignable");

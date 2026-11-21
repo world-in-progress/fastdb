@@ -254,7 +254,7 @@ Result<LogicalFacts> collect_logical_facts(
             UINT32_MAX, {}});
     }
 
-    const auto& entries = runtime.spec().resolved().entries();
+    const auto& entries = runtime.resolved().entries();
     if (entries.size() != entry_values.size()) {
         return Result<LogicalFacts>::failure(layout_error(
             JsonPointer{}.append("entries"),
@@ -432,12 +432,14 @@ Result<LogicalFacts> collect_logical_facts(
 
         if (kind == TypeKind::str || kind == TypeKind::wstr ||
             kind == TypeKind::bytes) {
-            auto storage_end = checked_range_end(
-                node.scalar_bits_or_offset, node.byte_length, storage_size,
-                JsonPointer{}.append("pools"));
-            if (!storage_end.has_value()) {
-                return Result<LogicalFacts>::failure(
-                    std::move(storage_end).error());
+            if (!node.external_bytes) {
+                auto storage_end = checked_range_end(
+                    node.scalar_bits_or_offset, node.byte_length, storage_size,
+                    JsonPointer{}.append("pools"));
+                if (!storage_end.has_value()) {
+                    return Result<LogicalFacts>::failure(
+                        std::move(storage_end).error());
+                }
             }
             if (kind == TypeKind::wstr &&
                 node.byte_length % UINT64_C(2) != UINT64_C(0)) {
@@ -551,10 +553,11 @@ Result<LogicalFacts> collect_logical_facts(
 }  // namespace
 
 Result<RecordLayout> RecordLayout::plan(
-    const RuntimeSchema& runtime_schema,
+    std::shared_ptr<const RuntimeSchema> runtime,
     const LogicalPayload& values) {
     try {
-        if (runtime_schema.spec().digest() != values.spec().digest()) {
+        const RuntimeSchema& runtime_schema = *runtime;
+        if (runtime_schema.digest() != values.spec().digest()) {
             return Result<RecordLayout>::failure(Error::from_details(
                 FDB_PAYLOAD_E_DIGEST_MISMATCH, JsonPointer{},
                 "Runtime schema and logical payload spec digests differ",
@@ -566,9 +569,9 @@ Result<RecordLayout> RecordLayout::plan(
             return Result<RecordLayout>::failure(
                 std::move(list_metadata).error());
         }
-        RecordLayout result(runtime_schema);
+        RecordLayout result(std::move(runtime));
         const auto& source_entries =
-            runtime_schema.spec().resolved().entries();
+            runtime_schema.resolved().entries();
         if (source_entries.size() !=
             values.spec().resolved().entries().size()) {
             return Result<RecordLayout>::failure(layout_error(
@@ -893,8 +896,7 @@ Result<RecordLayout> RecordLayout::plan(
 }  // namespace fastdb::payload::layout
 
 // A RecordLayout travels through the noexcept plan ownership transfers
-// (ProfileLayout, Result<BuildPlan>), so its move must not allocate or throw;
-// see RuntimeSchema.cpp for the failure this guards against.
+// (ProfileLayout, Result<BuildPlan>), so its move must not allocate or throw.
 static_assert(
     std::is_nothrow_move_constructible_v<
         fastdb::payload::layout::RecordLayout>,

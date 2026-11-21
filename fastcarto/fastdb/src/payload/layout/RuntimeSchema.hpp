@@ -1,14 +1,18 @@
 #pragma once
 
 #include "payload/error/Result.hpp"
-#include "payload/spec/CompiledSpec.hpp"
 #include "payload/spec/RuntimeTopology.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <unordered_map>
 #include <vector>
+
+namespace fastdb::payload::spec {
+class CompiledSpec;
+}
 
 namespace fastdb::payload::layout {
 
@@ -56,7 +60,7 @@ class RuntimeSchema final {
 public:
     static error::Result<void> require_record_runtime(
         const spec::CompiledSpec& spec);
-    static error::Result<RuntimeSchema> compile(
+    static error::Result<std::shared_ptr<const RuntimeSchema>> compile(
         const spec::CompiledSpec& spec);
 
     std::uint32_t type_count() const noexcept {
@@ -107,37 +111,38 @@ public:
     bool has_utf8_pool() const noexcept { return has_utf8_pool_; }
     bool has_utf16_pool() const noexcept { return has_utf16_pool_; }
     bool has_bytes_pool() const noexcept { return has_bytes_pool_; }
-    const spec::CompiledSpec& spec() const noexcept { return spec_; }
+    const spec::ResolvedSpec& resolved() const noexcept { return *resolved_; }
+    const std::array<std::uint8_t, 32>& digest() const noexcept {
+        return digest_;
+    }
 
 private:
+    friend class spec::CompiledSpec;
     friend class RecordLayout;
     friend struct RuntimeSchemaTestAccess;
 
-    // Index from a compiled-spec type node to its runtime identifier.  It is
-    // built once by assign_topology and never mutated afterwards, so it is
-    // published behind a shared_ptr to const: moving a RuntimeSchema (across
-    // Result, the ProfileLayout variant and BuildPlan) then moves only a
-    // shared_ptr, and copying one shares the index instead of deep cloning it.
-    // A directly owned std::unordered_map would instead make those moves
-    // allocate: MSVC's _Hash move constructor has no noexcept specification and
-    // allocates a fresh list head node plus the bucket array, and an injected
-    // std::bad_alloc escaping a noexcept BuildPlan transfer terminates the
-    // process.  Keys point into the type nodes of spec_'s shared CompiledSpec
-    // state, so they stay valid for every copy of this schema.
     using TypeIds =
         std::unordered_map<const spec::TypeNode*, std::uint32_t>;
 
-    explicit RuntimeSchema(spec::CompiledSpec spec)
-        : spec_(std::move(spec)) {}
+    RuntimeSchema(std::shared_ptr<const spec::ResolvedSpec> resolved,
+                  const std::array<std::uint8_t, 32>& digest)
+        : resolved_(std::move(resolved)), digest_(digest) {}
+
+    static error::Result<std::shared_ptr<const RuntimeSchema>> build(
+        std::shared_ptr<const spec::ResolvedSpec> resolved,
+        const std::array<std::uint8_t, 32>& digest);
 
     error::Result<void> assign_topology(spec::RuntimeTopology topology);
     error::Result<void> compile_component_layouts();
     error::Result<void> finalize_reachable_inventory();
     error::Result<void> validate_list_metadata() const;
 
-    spec::CompiledSpec spec_;
+    // Type pointers refer into this shared model. Keeping it separate from
+    // the compiled-spec cache avoids an ownership cycle.
+    std::shared_ptr<const spec::ResolvedSpec> resolved_;
+    std::array<std::uint8_t, 32> digest_;
     std::vector<RuntimeType> types_;
-    std::shared_ptr<const TypeIds> type_ids_;
+    TypeIds type_ids_;
     std::vector<ComponentLayout> components_;
     std::vector<std::uint32_t> component_layout_indexes_;
     std::vector<std::uint8_t> reachable_components_;

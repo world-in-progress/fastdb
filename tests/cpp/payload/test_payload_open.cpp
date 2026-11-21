@@ -188,7 +188,7 @@ struct BuildPlanTestAccess final {
     static view::OpenOptions publication_options(
         const BuildPlan& plan,
         const PlanInfo& synthetic_info) {
-        return plan.publication_options(synthetic_info);
+        return plan.publication_options(synthetic_info, true);
     }
 };
 

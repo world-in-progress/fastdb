@@ -1375,6 +1375,29 @@ extern "C" fdb_payload_v1_status_t fdb_payload_v1_builder_value_bytes(
 }
 
 extern "C" fdb_payload_v1_status_t
+fdb_payload_v1_builder_value_external_bytes(
+    fdb_payload_v1_builder_t* builder,
+    const uint8_t* value,
+    uint64_t value_size,
+    const fdb_payload_v1_backing_v1_t* backing,
+    void* owner_token,
+    fdb_payload_v1_error_t** out_error) {
+    return fastdb::payload::abi::guard_status(out_error, [=]() {
+        auto valid_builder = fastdb::payload::abi::require_builder(builder);
+        if (!valid_builder.has_value()) {
+            return valid_builder;
+        }
+        auto callbacks = fastdb::payload::abi::backing_callbacks(backing, true);
+        if (!callbacks.has_value()) {
+            return fastdb::payload::error::Result<void>::failure(
+                std::move(callbacks).error());
+        }
+        return builder->value->push_external_bytes(
+            value, value_size, callbacks.value(), owner_token);
+    });
+}
+
+extern "C" fdb_payload_v1_status_t
 fdb_payload_v1_builder_value_fixed_run(
     fdb_payload_v1_builder_t* builder,
     const fdb_payload_v1_fixed_run_v1_t* run,

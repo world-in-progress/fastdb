@@ -15,7 +15,6 @@
 #include <new>
 #include <stdexcept>
 #include <string>
-#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -298,7 +297,7 @@ Result<void> encode_scalar_or_identity(const GraphLayout& graph_layout,
                 JsonPointer{}.append("values"),
                 "variable_value_mismatch"));
         }
-        if (!list) {
+        if (!list && !node.external_bytes) {
             auto storage_end = layout::checked_range_end(
                 node.scalar_bits_or_offset, node.byte_length,
                 values.byte_storage().size(),
@@ -563,7 +562,7 @@ Result<void> encode_value(const GraphLayout& graph_layout,
 Result<void> encode_graph(const GraphLayout& graph_layout,
                           const LogicalPayload& values,
                           ByteSink& sink) try {
-    if (graph_layout.runtime_schema().spec().digest() !=
+    if (graph_layout.runtime_schema().digest() !=
         values.spec().digest()) {
         return Result<void>::failure(encode_error(
             JsonPointer{}, "encode_spec_digest_mismatch"));
@@ -624,8 +623,8 @@ Result<void> encode_graph(const GraphLayout& graph_layout,
         return Result<void>::failure(encode_error(
             JsonPointer{}.append("header"), "header_store_failed"));
     }
-    std::copy(graph_layout.runtime_schema().spec().digest().begin(),
-              graph_layout.runtime_schema().spec().digest().end(),
+    std::copy(graph_layout.runtime_schema().digest().begin(),
+              graph_layout.runtime_schema().digest().end(),
               header.begin() + static_cast<std::ptrdiff_t>(
                                    layout::header_spec_digest_offset));
     auto written = writer.write(header.data(), header.size());
@@ -851,7 +850,6 @@ Result<void> encode_graph(const GraphLayout& graph_layout,
                 region.kind == RegionKind::utf8_pool    ? TypeKind::str
                 : region.kind == RegionKind::utf16_pool ? TypeKind::wstr
                                                         : TypeKind::bytes;
-            const std::string_view storage = values.byte_storage();
             for (const NodeIndex node_index :
                  graph_layout.variable_values()) {
                 if (node_index >= values.nodes().size()) {
@@ -869,20 +867,9 @@ Result<void> encode_graph(const GraphLayout& graph_layout,
                     node.tag == ValueTag::null_value) {
                     continue;
                 }
-                auto storage_end = layout::checked_range_end(
-                    node.scalar_bits_or_offset, node.byte_length,
-                    storage.size(), JsonPointer{}.append("pools"));
-                if (!storage_end.has_value()) {
-                    return Result<void>::failure(
-                        std::move(storage_end).error());
-                }
                 if (node.byte_length != UINT64_C(0)) {
-                    written = writer.write(
-                        reinterpret_cast<const std::uint8_t*>(
-                            storage.data()) +
-                            static_cast<std::ptrdiff_t>(
-                                node.scalar_bits_or_offset),
-                        node.byte_length);
+                    written = writer.write(values.variable_data(node),
+                                           node.byte_length);
                     if (!written.has_value()) {
                         return written;
                     }

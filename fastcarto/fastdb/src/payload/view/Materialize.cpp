@@ -687,7 +687,7 @@ Result<View> materialize_with_metrics(
                       spec::Profile::object_graph_v1
             : view.state_->detached != nullptr &&
                   view.state_->detached->runtime_schema != nullptr &&
-                  view.state_->detached->runtime_schema->spec().profile() ==
+                  view.state_->detached->runtime_schema->resolved().profile() ==
                       spec::Profile::object_graph_v1;
     if (graph_source) {
         return materialize_graph_with_metrics(view, metrics);

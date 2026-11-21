@@ -106,7 +106,7 @@ ValueNode empty_node() noexcept {
         UINT32_MAX, ValueTag::null_value,
         {UINT8_C(0), UINT8_C(0), UINT8_C(0)},
         UINT64_C(0), UINT64_C(0), build::invalid_node_index,
-        build::invalid_node_index, UINT64_C(0), UINT32_MAX, UINT32_C(0),
+        build::invalid_node_index, UINT64_C(0), UINT32_MAX, false,
         UINT64_MAX};
 }
 
@@ -1049,7 +1049,7 @@ Result<void> validate_detached_state(
     const JsonPointer path = JsonPointer{}.append("detached");
     if (root >= nodes.size() || object_pools.size() != source_ids.size() ||
         object_pools.size() !=
-            runtime_schema.spec().resolved().components().size() ||
+            runtime_schema.resolved().components().size() ||
         size_as_u64(object_pools.size()) > UINT32_MAX) {
         return Result<void>::failure(
             internal_error(path, "detached_inventory_invalid"));
@@ -1253,7 +1253,7 @@ struct GraphMaterializeInternals final {
             source.runtime_schema = source.detached->runtime_schema;
         }
         if (source.runtime_schema == nullptr ||
-            source.runtime_schema->spec().profile() !=
+            source.runtime_schema->resolved().profile() !=
                 spec::Profile::object_graph_v1) {
             return Result<Source>::failure(internal_error(
                 view.state_->diagnostic_path,
@@ -1303,7 +1303,7 @@ Result<View> materialize_graph_with_metrics(
     }
 
     const std::size_t component_count =
-        source.runtime_schema->spec().resolved().components().size();
+        source.runtime_schema->resolved().components().size();
     if (size_as_u64(component_count) > UINT32_MAX) {
         throw std::length_error("graph component inventory exhausted");
     }

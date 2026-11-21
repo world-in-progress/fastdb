@@ -1317,7 +1317,7 @@ int test_graph_resource_boundaries_and_empty_target_pool() {
     require(empty_aggregate != layout.value().object_aggregates().end() &&
             empty_aggregate->object_nodes.empty() &&
             node_aggregate != layout.value().object_aggregates().end());
-    const auto* node_layout = runtime.value().component(node);
+    const auto* node_layout = runtime.value()->component(node);
     require(node_layout != nullptr && node_layout->fields.size() == 1U &&
             node_layout->fields[0].validity_bit == UINT32_C(0));
     const std::uint64_t node_base =

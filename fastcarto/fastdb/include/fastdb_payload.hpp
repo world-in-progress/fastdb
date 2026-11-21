@@ -1349,6 +1349,17 @@ public:
         return *this;
     }
 
+    Builder& value_external_bytes(
+        ByteView value, const fdb_payload_v1_backing_v1_t& backing,
+        void* owner_token) {
+        fdb_payload_v1_error_t* error = nullptr;
+        detail::check(fdb_payload_v1_builder_value_external_bytes(
+                          handle_, value.data, detail::abi_size(value.size),
+                          &backing, owner_token, &error),
+                      &error);
+        return *this;
+    }
+
     Builder& value_fixed_run(const FixedRun& run) {
         fdb_payload_v1_error_t* error = nullptr;
         detail::check(fdb_payload_v1_builder_value_fixed_run(
