@@ -449,6 +449,10 @@ impl Builder {
         BuildPlan::from_raw(raw)
     }
 
+    pub(crate) fn as_raw(&mut self) -> *mut sys::fdb_payload_v1_builder_t {
+        self.raw.as_ptr()
+    }
+
     fn call_unary(
         &mut self,
         operation: unsafe extern "C" fn(

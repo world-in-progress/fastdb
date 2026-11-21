@@ -1,7 +1,7 @@
 use fastdb::{
-    Backing, BackingStatus, BuildPlan, BuildPolicy, Builder, CommittedBacking, CompiledSpec,
-    ExecutionMode, ExternalBytes, FallbackReason, OpenOptions, Payload, Profile, ReserveMode,
-    ReservedBacking,
+    Backing, BackingStatus, BuildPlan, BuildPolicy, Builder, BuilderOptions, CommittedBacking,
+    CompiledSpec, ExecutionMode, ExternalBytes, FallbackReason, OpenOptions, Payload, Profile,
+    ReserveMode, ReservedBacking,
 };
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use std::sync::{Arc, Mutex};
@@ -72,6 +72,185 @@ impl Drop for InlineOwner {
         self.drops.fetch_add(1, SeqCst);
         assert!(!self.panic_on_drop, "owner destructor panic");
     }
+}
+
+fn counted_external_bytes(drops: &Arc<AtomicUsize>) -> ExternalBytes {
+    let mut owner = InlineOwner {
+        bytes: [0; 4096],
+        len: VALUE.len(),
+        address: Arc::new(AtomicUsize::new(0)),
+        drops: drops.clone(),
+        panic_on_drop: false,
+    };
+    owner.bytes[..VALUE.len()].copy_from_slice(VALUE);
+    ExternalBytes::from_owner(owner)
+}
+
+fn mixed_bytes_builder(profile: Profile) -> Builder {
+    let profile_name = match profile {
+        Profile::RecordV1 => "record.v1",
+        Profile::ObjectGraphV1 => "object_graph.v1",
+    };
+    let source = format!(
+        r#"{{
+            "schema":"fastdb.payload.v1","profile":"{profile_name}",
+            "entries":[{{"id":"value","cardinality":"one","type":{{"kind":"component","id":"Value"}}}}],
+            "components":[{{"id":"Value","kind":"record","fields":[
+                {{"id":"owned","type":{{"kind":"bytes"}}}},
+                {{"id":"copied","type":{{"kind":"bytes"}}}},
+                {{"id":"shared","type":{{"kind":"bytes"}}}},
+                {{"id":"empty","type":{{"kind":"bytes"}}}}
+            ]}}]
+        }}"#
+    );
+    let spec = CompiledSpec::compile(source.as_bytes()).unwrap();
+    let mut builder = Builder::create(&spec).unwrap();
+    match profile {
+        Profile::RecordV1 => {
+            builder
+                .entry_begin(0, 1)
+                .unwrap()
+                .value_component_begin()
+                .unwrap();
+        }
+        Profile::ObjectGraphV1 => {
+            let object = builder
+                .declare_object(spec.component_index("Value").unwrap())
+                .unwrap();
+            builder
+                .entry_begin(0, 1)
+                .unwrap()
+                .value_object(object)
+                .unwrap();
+            builder.object_fill_begin(object).unwrap();
+        }
+    }
+    builder
+}
+
+#[test]
+fn external_bytes_are_released_when_an_unfrozen_builder_is_dropped() {
+    for profile in [Profile::RecordV1, Profile::ObjectGraphV1] {
+        let drops = Arc::new(AtomicUsize::new(0));
+        let external = counted_external_bytes(&drops);
+        let mut builder = mixed_bytes_builder(profile);
+        builder.value_external_bytes(&external).unwrap();
+        drop(external);
+        assert_eq!(drops.load(SeqCst), 0, "{profile:?}");
+        drop(builder);
+        assert_eq!(drops.load(SeqCst), 1, "{profile:?}");
+    }
+}
+
+#[test]
+fn frozen_external_bytes_match_copied_bytes_in_concurrent_direct_builds() {
+    const COPIED: &[u8] = &[0x12, 0x34];
+    const SHARED: &[u8] = &[0xff, 0, 0x80];
+
+    for profile in [Profile::RecordV1, Profile::ObjectGraphV1] {
+        let expected = mixed_bytes_builder(profile)
+            .value_bytes(VALUE)
+            .unwrap()
+            .value_bytes(COPIED)
+            .unwrap()
+            .value_bytes(SHARED)
+            .unwrap()
+            .value_bytes(&[])
+            .unwrap()
+            .freeze()
+            .unwrap()
+            .execute(BuildPolicy::RequireDirect)
+            .unwrap()
+            .payload;
+        let expected_bytes = expected.binary_bytes().unwrap();
+
+        let drops = Arc::new(AtomicUsize::new(0));
+        let owned = counted_external_bytes(&drops);
+        let shared = ExternalBytes::from_arc(Arc::from(SHARED));
+        let empty = ExternalBytes::from_owner([]);
+        let mut builder = mixed_bytes_builder(profile);
+        builder
+            .value_external_bytes(&owned)
+            .unwrap()
+            .value_bytes(COPIED)
+            .unwrap()
+            .value_external_bytes(&shared)
+            .unwrap()
+            .value_external_bytes(&empty)
+            .unwrap();
+        drop((owned, shared, empty));
+        assert_eq!(drops.load(SeqCst), 0, "{profile:?}");
+        let plan = builder.freeze().unwrap();
+        drop(builder);
+        assert_eq!(drops.load(SeqCst), 0, "{profile:?}");
+
+        let payloads = std::thread::scope(|scope| {
+            let execute = || {
+                let (slab, address) = Slab::new(&plan, Fault::None);
+                let result = plan
+                    .execute_with_backing(BuildPolicy::RequireDirect, &slab)
+                    .unwrap();
+                assert_eq!(result.report.mode, ExecutionMode::Direct);
+                assert_eq!(result.report.staging_bytes, 0);
+                assert_eq!(*slab.state.modes.lock().unwrap(), [ReserveMode::Direct]);
+                let access = result.payload.acquire().unwrap();
+                assert_eq!(access.payload_bytes().unwrap().as_ptr() as usize, address);
+                result.payload
+            };
+            let first = scope.spawn(execute);
+            let second = scope.spawn(execute);
+            [first.join().unwrap(), second.join().unwrap()]
+        });
+        assert_eq!(drops.load(SeqCst), 0, "{profile:?}");
+        drop(plan);
+        assert_eq!(drops.load(SeqCst), 1, "{profile:?}");
+
+        for payload in payloads {
+            let actual_bytes = payload.binary_bytes().unwrap();
+            assert_eq!(actual_bytes, expected_bytes, "{profile:?}");
+        }
+        assert_eq!(drops.load(SeqCst), 1, "{profile:?}");
+    }
+}
+
+#[test]
+fn rejected_external_bytes_do_not_retain_the_owner_or_consume_the_value_slot() {
+    let spec = CompiledSpec::compile(
+        br#"{
+        "schema":"fastdb.payload.v1","profile":"record.v1",
+        "entries":[{"id":"flag","cardinality":"one","type":{"kind":"bool"}},
+                   {"id":"value","cardinality":"one","type":{"kind":"bytes"}}],
+        "components":[]
+    }"#,
+    )
+    .unwrap();
+    let options = BuilderOptions {
+        max_opaque_bytes: 1,
+        ..BuilderOptions::default()
+    };
+    let mut builder = Builder::create_with_options(&spec, &options).unwrap();
+    let drops = Arc::new(AtomicUsize::new(0));
+
+    builder.entry_begin(0, 1).unwrap();
+    let wrong_type = counted_external_bytes(&drops);
+    let error = builder.value_external_bytes(&wrong_type).unwrap_err();
+    assert_eq!(error.symbol(), "TYPE_MISMATCH");
+    drop(wrong_type);
+    assert_eq!(drops.load(SeqCst), 1);
+    builder.value_bool(true).unwrap();
+
+    builder.entry_begin(1, 1).unwrap();
+    let over_limit = counted_external_bytes(&drops);
+    let error = builder.value_external_bytes(&over_limit).unwrap_err();
+    assert_eq!(error.symbol(), "BUILDER_RESOURCE_LIMIT");
+    drop(over_limit);
+    assert_eq!(drops.load(SeqCst), 2);
+    builder.value_bytes(&[0xff]).unwrap();
+    let plan = builder.freeze().unwrap();
+    assert_eq!(plan.info().unwrap().opaque_bytes, 1);
+    drop(builder);
+    drop(plan);
+    assert_eq!(drops.load(SeqCst), 2);
 }
 
 #[test]

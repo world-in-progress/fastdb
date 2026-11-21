@@ -527,6 +527,14 @@ unsafe extern "C" {
         value_size: u64,
         out_error: *mut *mut fdb_payload_v1_error_t,
     ) -> fdb_payload_v1_status_t;
+    pub fn fdb_payload_v1_builder_value_external_bytes(
+        builder: *mut fdb_payload_v1_builder_t,
+        value: *const u8,
+        value_size: u64,
+        backing: *const fdb_payload_v1_backing_v1_t,
+        owner_token: *mut c_void,
+        out_error: *mut *mut fdb_payload_v1_error_t,
+    ) -> fdb_payload_v1_status_t;
     pub fn fdb_payload_v1_builder_value_fixed_run(
         builder: *mut fdb_payload_v1_builder_t,
         run: *const fdb_payload_v1_fixed_run_v1_t,
