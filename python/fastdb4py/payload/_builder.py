@@ -466,8 +466,8 @@ class Builder:
         error = _ffi.Handle()
         with self._lock:
             handle = self._require_handle_locked()
-            status, error.value = _payload_ext.builder_value_external_bytes(
-                handle.value, source._require_pin()
+            status = _payload_ext.builder_value_external_bytes(
+                handle.value, source._require_pin(), ctypes.addressof(error)
             )
             _check_status(status, error)
         return self

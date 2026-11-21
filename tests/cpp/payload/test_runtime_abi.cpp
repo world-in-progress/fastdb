@@ -1114,6 +1114,44 @@ int test_external_bytes_rejections() {
         fdb_payload_v1_builder_release(builder);
     }
     require(input.retains == 3U && input.releases == 1U);
+
+    // Re-entering the same builder from a retain callback must fail closed
+    // without popping the outer frame.
+    struct ReentrantContext final {
+        fdb_payload_v1_builder_t* builder{nullptr};
+        fdb_payload_v1_status_t nested_status{0U};
+        std::size_t retains{0U};
+        std::size_t releases{0U};
+    } reentrant;
+    fdb_payload_v1_backing_v1_t reentrant_backing{};
+    fdb_payload_v1_backing_init(&reentrant_backing);
+    reentrant_backing.context = &reentrant;
+    reentrant_backing.retain = [](void* context, void*) -> fdb_payload_v1_status_t {
+        auto* state = static_cast<ReentrantContext*>(context);
+        ++state->retains;
+        const std::uint8_t nested_byte = 9U;
+        fdb_payload_v1_error_t* nested_error = nullptr;
+        state->nested_status = fdb_payload_v1_builder_value_bytes(
+            state->builder, &nested_byte, 1U, &nested_error);
+        fdb_payload_v1_error_release(nested_error);
+        return 0U;
+    };
+    reentrant_backing.release = [](void* context, void*) {
+        ++static_cast<ReentrantContext*>(context)->releases;
+    };
+    require_abi_success(fdb_payload_v1_builder_create(
+        spec, nullptr, &builder, &error.value), error);
+    reentrant.builder = builder;
+    require_abi_success(fdb_payload_v1_builder_entry_begin(
+        builder, 0U, 1U, &error.value), error);
+    require_abi_success(fdb_payload_v1_builder_value_external_bytes(
+        builder, bytes.data(), bytes.size(), &reentrant_backing, &reentrant,
+        &error.value), error);
+    require(reentrant.nested_status == FDB_PAYLOAD_E_BUILDER_STATE);
+    require(reentrant.retains == 1U && reentrant.releases == 0U);
+    fdb_payload_v1_builder_release(builder);
+    require(reentrant.releases == 1U);
+
     fdb_payload_v1_spec_release(spec);
     return EXIT_SUCCESS;
 }

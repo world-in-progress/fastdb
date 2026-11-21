@@ -378,6 +378,7 @@ struct PayloadBuilder::State final {
     std::uint64_t external_bytes{UINT64_C(0)};
     std::uint64_t root_bytes{UINT64_C(0)};
     bool sealed{false};
+    bool in_callback{false};
 
     Result<void> initialize() {
         if (!checked_multiply(
@@ -431,6 +432,12 @@ struct PayloadBuilder::State final {
     }
 
     Result<void> check_state() const {
+        if (in_callback) {
+            return Result<void>::failure(simple_error(
+                FDB_PAYLOAD_E_BUILDER_STATE, JsonPointer{},
+                "Payload builder cannot be re-entered from a backing callback",
+                "builder_callback_reentrant"));
+        }
         if (sealed) {
             return Result<void>::failure(simple_error(
                 FDB_PAYLOAD_E_BUILDER_STATE, JsonPointer{},
@@ -1030,8 +1037,18 @@ Result<void> PayloadBuilder::push_storage_impl(
                 path, "external_spans", pins.size() + UINT64_C(1),
                 pins.max_size()));
         }
-        auto retained = backing::RetainedBacking::acquire(
-            *external, owner_token, bytes, byte_count);
+        struct CallbackGuard final {
+            bool& flag;
+            explicit CallbackGuard(bool& target) noexcept : flag(target) {
+                flag = true;
+            }
+            ~CallbackGuard() noexcept { flag = false; }
+        };
+        auto retained = [&]() {
+            CallbackGuard guard(state.in_callback);
+            return backing::RetainedBacking::acquire(
+                *external, owner_token, bytes, byte_count);
+        }();
         if (!retained.has_value()) {
             return Result<void>::failure(std::move(retained).error());
         }
@@ -1051,6 +1068,42 @@ Result<void> PayloadBuilder::push_storage_impl(
 
     const std::uint64_t offset =
         static_cast<std::uint64_t>(state.arena.byte_storage_.size());
+    if (text) {
+        const auto path = state.current_path();
+        auto growth = state.check_growth(
+            UINT64_C(1), byte_count,
+            post_frame_count_after_values(state.frames, UINT64_C(1)), path);
+        if (!growth.has_value()) {
+            return growth;
+        }
+        auto capacity = state.reserve(UINT64_C(1), byte_count, UINT64_C(0),
+                                      UINT64_C(0), path);
+        if (!capacity.has_value()) {
+            return capacity;
+        }
+        if (byte_count != UINT64_C(0)) {
+            state.arena.byte_storage_.insert(
+                state.arena.byte_storage_.end(), bytes,
+                bytes + static_cast<std::ptrdiff_t>(byte_count));
+            const std::string_view copied(
+                reinterpret_cast<const char*>(
+                    state.arena.byte_storage_.data() +
+                    static_cast<std::ptrdiff_t>(offset)),
+                static_cast<std::size_t>(byte_count));
+            auto valid = layout::validate_utf8(copied, path);
+            if (!valid.has_value()) {
+                state.arena.byte_storage_.resize(
+                    static_cast<std::size_t>(offset));
+                return valid;
+            }
+        }
+        const std::uint32_t type_id = state.frames.back().type_id;
+        state.commit_leaf(ValueNode{
+            type_id, tag, {0U, 0U, 0U}, offset, byte_count,
+            invalid_node_index, invalid_node_index, UINT64_C(0)});
+        state.text_bytes = updated;
+        return Result<void>::success();
+    }
     auto added = state.add_leaf(tag, offset, byte_count);
     if (!added.has_value()) {
         return added;
@@ -1060,11 +1113,7 @@ Result<void> PayloadBuilder::push_storage_impl(
             state.arena.byte_storage_.end(), bytes,
             bytes + static_cast<std::ptrdiff_t>(byte_count));
     }
-    if (text) {
-        state.text_bytes = updated;
-    } else {
-        state.opaque_bytes = updated;
-    }
+    state.opaque_bytes = updated;
     return Result<void>::success();
 }
 
@@ -1090,10 +1139,6 @@ Result<void> PayloadBuilder::push_str(std::string_view utf8) {
                 state.current_path(),
                 "Payload input span length cannot be represented",
                 "input_span_length_overflow"));
-        }
-        auto valid = layout::validate_utf8(utf8, state.current_path());
-        if (!valid.has_value()) {
-            return valid;
         }
         return push_storage_impl(
             TypeKind::str, ValueTag::str,

@@ -152,16 +152,15 @@ PyObject* open_external(PyObject*, PyObject* args) {
 }
 
 PyObject* builder_value_external_bytes(PyObject*, PyObject* args) {
-    PyObject* address = nullptr;
     PyObject* capsule = nullptr;
-    if (!PyArg_ParseTuple(args, "OO", &address, &capsule)) {
+    unsigned long long builder = 0, error = 0;
+    if (!PyArg_ParseTuple(args, "KOK", &builder, &capsule, &error)) {
         return nullptr;
     }
-    auto* builder = static_cast<fdb_payload_v1_builder_t*>(PyLong_AsVoidPtr(address));
-    if (builder == nullptr) {
-        if (!PyErr_Occurred()) {
-            PyErr_SetString(PyExc_ValueError, "builder address must be nonzero");
-        }
+    auto* builder_ptr = reinterpret_cast<fdb_payload_v1_builder_t*>(
+        static_cast<std::uintptr_t>(builder));
+    if (builder_ptr == nullptr) {
+        PyErr_SetString(PyExc_ValueError, "builder address must be nonzero");
         return nullptr;
     }
     auto* owner = static_cast<BufferOwner*>(PyCapsule_GetPointer(capsule, buffer_capsule));
@@ -170,20 +169,15 @@ PyObject* builder_value_external_bytes(PyObject*, PyObject* args) {
     }
     const auto backing = buffer_backing();
     const auto& view = owner->buffer.view;
-    fdb_payload_v1_error_t* error = nullptr;
     fdb_payload_v1_status_t status;
     Py_BEGIN_ALLOW_THREADS
     status = fdb_payload_v1_builder_value_external_bytes(
-        builder, static_cast<const std::uint8_t*>(view.buf),
-        static_cast<std::uint64_t>(view.len), &backing, owner, &error);
+        builder_ptr, static_cast<const std::uint8_t*>(view.buf),
+        static_cast<std::uint64_t>(view.len), &backing, owner,
+        reinterpret_cast<fdb_payload_v1_error_t**>(
+            static_cast<std::uintptr_t>(error)));
     Py_END_ALLOW_THREADS
-    PyObject* result = Py_BuildValue(
-        "kK", static_cast<unsigned long>(status),
-        static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(error)));
-    if (result == nullptr) {
-        fdb_payload_v1_error_release(error);
-    }
-    return result;
+    return PyLong_FromUnsignedLong(status);
 }
 
 void destroy_access_capsule(PyObject* capsule) {

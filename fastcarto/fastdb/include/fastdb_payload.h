@@ -410,9 +410,12 @@ FDB_PAYLOAD_API void fdb_payload_v1_backing_init(
 /*
  * A builder is unique, thread-confined mutable state and is not thread-safe.
  * Input strings, byte spans, wide-string code units, and fixed-run
- * descriptors/storage are borrowed only for the call. Successful freeze seals
- * the builder and publishes one immutable plan. Ordinary freeze failure
- * publishes no plan and leaves the same builder retryable.
+ * descriptors/storage are borrowed only for the call, except
+ * fdb_payload_v1_builder_value_external_bytes, which pins its byte span until
+ * builder or plan release. Backing callbacks invoked during authoring must not
+ * re-enter operations on the same builder. Successful freeze seals the builder
+ * and publishes one immutable plan. Ordinary freeze failure publishes no plan
+ * and leaves the same builder retryable.
  */
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_create(
     const fdb_payload_v1_spec_t* spec,
