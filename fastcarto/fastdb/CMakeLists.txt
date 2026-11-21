@@ -19,6 +19,8 @@ add_source_by_dir(${PROJECT_DIR} SOURCES)
 
 file(GLOB_RECURSE EXCLUED_FILES ${PROJECT_DIR}/swig/*.*)
 list(REMOVE_ITEM SOURCES ${EXCLUED_FILES})
+set(PAYLOAD_PY_SOURCE ${PROJECT_DIR}/python/payload_py_ext.cpp)
+list(REMOVE_ITEM SOURCES ${PAYLOAD_PY_SOURCE})
 
 add_library(fastdb_payload_emscripten_exception_model INTERFACE)
 if(CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
@@ -204,39 +206,49 @@ if (NOT is_emscripten)
         add_definitions(-DUSE_SWIG_PYTHON -DSWIG_PYTHON_INTERPRETER_NO_DEBUG)
 
         add_library(fastdb4py SHARED ${SWIG_GENERATED_DIR}/fastdb4py_wrap.cxx)
-        target_link_libraries(fastdb4py PRIVATE ${PROJECT_NAME})
-        target_link_directories(fastdb4py PRIVATE ${Python3_LIBRARY_DIRS})
+        add_library(fastdb_payload_py MODULE ${PAYLOAD_PY_SOURCE})
+        set_target_properties(fastdb_payload_py PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/payload_python"
+            LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_BINARY_DIR}/payload_python"
+            CXX_STANDARD 17
+            CXX_STANDARD_REQUIRED ON
+            CXX_EXTENSIONS OFF
+        )
+        if(MSVC)
+            target_compile_options(fastdb_payload_py PRIVATE /W4 /WX)
+        else()
+            target_compile_options(fastdb_payload_py PRIVATE -Wall -Wextra)
+        endif()
 
         # The wheel copies the wrapper and FastDB libraries into one directory.
         # Use that relative runtime location in the build artifact itself so the
         # packaged binaries never retain CMake's temporary source/build RPATH.
-        if(APPLE)
-            set_target_properties(fastdb4py PROPERTIES
-                BUILD_WITH_INSTALL_RPATH TRUE
-                INSTALL_RPATH "@loader_path"
-            )
-        elseif(UNIX)
-            set_target_properties(fastdb4py PROPERTIES
-                BUILD_WITH_INSTALL_RPATH TRUE
-                INSTALL_RPATH "$ORIGIN"
-            )
-        endif()
+        foreach(python_target IN ITEMS fastdb4py fastdb_payload_py)
+            target_link_libraries(${python_target} PRIVATE ${PROJECT_NAME})
+            target_link_directories(${python_target} PRIVATE ${Python3_LIBRARY_DIRS})
+            if(APPLE)
+                set_target_properties(${python_target} PROPERTIES
+                    BUILD_WITH_INSTALL_RPATH TRUE
+                    INSTALL_RPATH "@loader_path"
+                )
+                target_link_options(${python_target} PRIVATE -undefineddynamic_lookup)
+            elseif(UNIX)
+                set_target_properties(${python_target} PROPERTIES
+                    BUILD_WITH_INSTALL_RPATH TRUE
+                    INSTALL_RPATH "$ORIGIN"
+                )
+            endif()
 
-        # Free-threaded Python: define Py_GIL_DISABLED so pyconfig.h's auto-link
-        # pragma resolves to the correct library name (e.g. python314t.lib)
-        if(Py_GIL_DISABLED)
-            target_compile_definitions(fastdb4py PRIVATE Py_GIL_DISABLED=1)
-        endif()
+            # Match the target interpreter, including pyconfig.h's Windows auto-link.
+            if(Py_GIL_DISABLED)
+                target_compile_definitions(${python_target} PRIVATE Py_GIL_DISABLED=1)
+            endif()
 
-        # On Windows, explicitly link the Python library instead of relying
-        # solely on pyconfig.h's #pragma comment(lib, ...) auto-link
-        if(WIN32)
-            target_link_libraries(fastdb4py PRIVATE ${Python3_LIBRARIES})
-        endif()
+            if(WIN32)
+                target_link_libraries(${python_target} PRIVATE ${Python3_LIBRARIES})
+            endif()
+        endforeach()
 
-        target_link_options(fastdb4py
-            PUBLIC
-                $<$<BOOL:${APPLE}>:-undefineddynamic_lookup>)
         if(WIN32)
             set(pyd pyd)
         else()
@@ -248,6 +260,12 @@ if (NOT is_emscripten)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:${PROJECT_NAME}>  ${script_dir}/$<TARGET_FILE_NAME:${PROJECT_NAME}>
             COMMAND ${CMAKE_COMMAND} -E copy_if_different ${SWIG_GENERATED_DIR}/fastdb4py.py  ${script_dir}/__init__.py
             COMMENT "updating fastdb4py into scripts directory"
+        )
+        add_dependencies(fastdb_payload_py fastdb4py)
+        add_custom_command(TARGET fastdb_payload_py POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${script_dir}
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:fastdb_payload_py> ${script_dir}/_payload_ext.${pyd}
         )
 
     else()

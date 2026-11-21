@@ -11,6 +11,7 @@ import sys
 import threading
 from typing import Iterator, Optional, Type, TypeVar
 
+from ..core import _payload_ext
 from . import _ffi
 from ._builder import BuildPlan
 from ._error import PayloadError, binding_error
@@ -98,11 +99,17 @@ class OpenOptions:
 
 @dataclass
 class _Reservation:
+    owner: MemoryBacking
     storage: bytearray
     pin: object
     address: int
     capacity: int
     references: int = 1
+
+
+# The callback table can outlive every Python wrapper for the payload.
+_memory_reservations: dict[int, _Reservation] = {}
+_memory_reservations_lock = threading.Lock()
 
 
 class _NoopObserver:
@@ -132,9 +139,6 @@ class MemoryBacking:
     def __init__(self, observer: object = None) -> None:
         self._observer = observer if observer is not None else _NoopObserver()
         self._execution_lock = threading.Lock()
-        self._lock = threading.Lock()
-        self._tokens: dict[int, _Reservation] = {}
-        self._next_token = 1
         self._reserve_callback = _ffi.BackingReserveCallback(self._reserve)
         self._write_callback = _ffi.BackingWriteCallback(self._write)
         self._commit_callback = _ffi.BackingCommitCallback(self._commit)
@@ -192,11 +196,10 @@ class MemoryBacking:
             except (MemoryError, OverflowError):
                 return int(BackingStatus.ALLOCATION_FAILED)
             address = (base + alignment - 1) & ~(alignment - 1)
-            reservation = _Reservation(storage, pin, address, capacity)
-            with self._lock:
-                token = self._next_token
-                self._next_token += 1
-                self._tokens[token] = reservation
+            reservation = _Reservation(self, storage, pin, address, capacity)
+            token = id(reservation)
+            with _memory_reservations_lock:
+                _memory_reservations[token] = reservation
             out_owner_token[0] = token
             out_writable_data[0] = (
                 ctypes.cast(address, _ffi.BytePointer)
@@ -262,8 +265,9 @@ class MemoryBacking:
     def _rollback(self, _context: int, owner_token: int) -> int:
         try:
             token = _pointer_value(owner_token)
-            with self._lock:
-                if self._tokens.pop(token, None) is None:
+            with _memory_reservations_lock:
+                reservation = _memory_reservations.pop(token, None)
+                if reservation is None:
                     return int(BackingStatus.BACKING_CONTRACT)
             return int(_observer_status(self._observer, "rollback"))
         except BaseException:
@@ -272,8 +276,8 @@ class MemoryBacking:
     def _retain(self, _context: int, owner_token: int) -> int:
         try:
             token = _pointer_value(owner_token)
-            with self._lock:
-                reservation = self._tokens.get(token)
+            with _memory_reservations_lock:
+                reservation = _memory_reservations.get(token)
                 if reservation is None:
                     return int(BackingStatus.BACKING_CONTRACT)
                 reservation.references += 1
@@ -285,13 +289,13 @@ class MemoryBacking:
         try:
             token = _pointer_value(owner_token)
             released = False
-            with self._lock:
-                reservation = self._tokens.get(token)
+            with _memory_reservations_lock:
+                reservation = _memory_reservations.get(token)
                 if reservation is None or reservation.references <= 0:
                     return
                 reservation.references -= 1
                 if reservation.references == 0:
-                    del self._tokens[token]
+                    del _memory_reservations[token]
                     released = True
             if released:
                 callback = getattr(self._observer, "release", None)
@@ -302,68 +306,79 @@ class MemoryBacking:
 
     def _reservation(self, owner_token: int) -> _Reservation:
         token = _pointer_value(owner_token)
-        with self._lock:
-            reservation = self._tokens.get(token)
+        with _memory_reservations_lock:
+            reservation = _memory_reservations.get(token)
         if reservation is None:
             raise KeyError("unknown backing owner token")
         return reservation
 
 
-class ExternalBytes:
-    """An immutable binding-owned byte image suitable for external open."""
+class DirectBacking:
+    """Execute into a caller-provided buffer through the Core backing contract.
 
-    def __init__(self, source: bytes) -> None:
-        copied = bytes(source)
-        self._size = len(copied)
-        pin_type = ctypes.c_uint8 * max(self._size, 1)
-        self._pin = pin_type()
-        if copied:
-            ctypes.memmove(ctypes.addressof(self._pin), copied, self._size)
-        self._address = ctypes.addressof(self._pin)
-        self._lock = threading.Lock()
-        self._references = 0
-        self._retain_callback = _ffi.BackingRetainCallback(self._retain)
-        self._release_callback = _ffi.BackingReleaseCallback(self._release)
+    Reserve receives a ReserveMode, minimum capacity, and alignment in bytes.
+    It returns a writable buffer and an owner token. Returning None or raising
+    an exception declines the reservation. A staged execution offers a second
+    reservation with ReserveMode.STAGED.
+
+    Commit receives the token and used byte count. It may return a readable
+    buffer, or None to publish the reserved span. Keep the published bytes
+    stable until release receives the token. Rollback receives the token after
+    a pre-commit failure. Callbacks must not re-enter the same backing.
+    """
+
+    def __init__(self, reserve, commit=None, rollback=None, release=None) -> None:
+        if not callable(reserve):
+            raise TypeError("reserve must be callable")
+        for name, callback in (("commit", commit), ("rollback", rollback), ("release", release)):
+            if callback is not None and not callable(callback):
+                raise TypeError(f"{name} must be callable or None")
+
+        def reserve_buffer(mode, minimum_capacity, alignment):
+            return reserve(ReserveMode(mode), minimum_capacity, alignment)
+
+        self._callbacks = (reserve_buffer, commit, rollback, release)
+        self._execution_lock = threading.Lock()
+
+
+class WritableBufferBacking(DirectBacking):
+    """Use one caller-provided buffer, with separate storage for staged fallback."""
+
+    def __init__(self, buffer: object) -> None:
+        used = False
+
+        def reserve(mode: ReserveMode, capacity: int, alignment: int):
+            if mode is ReserveMode.DIRECT:
+                return None if used else (buffer, mode)
+            storage = bytearray(capacity + alignment - 1)
+            with _input_bytes(storage) as (data, _):
+                address = ctypes.cast(data, ctypes.c_void_p).value
+            offset = -address % alignment
+            return memoryview(storage)[offset:offset + capacity], mode
+
+        def commit(mode: ReserveMode, _used_bytes: int) -> None:
+            nonlocal used
+            if mode is ReserveMode.DIRECT:
+                used = True
+
+        super().__init__(reserve, commit)
+
+
+class ExternalBytes:
+    """Pin a C-contiguous read-only buffer or snapshot a writable one.
+
+    The bytes of a read-only export must stay stable for the lifetime of its
+    payloads and views, including when the source has separate writable aliases.
+    """
+
+    def __init__(self, source: object) -> None:
+        self._pin = _payload_ext.external_bytes(source)
 
     def __copy__(self) -> ExternalBytes:
         return self
 
     def __deepcopy__(self, memo: object) -> ExternalBytes:
         return self
-
-    def _raw(self) -> _ffi.BackingV1:
-        raw = _ffi.BackingV1()
-        _ffi.library().fdb_payload_v1_backing_init(ctypes.byref(raw))
-        raw.context = id(self)
-        raw.retain = self._retain_callback
-        raw.release = self._release_callback
-        return raw
-
-    def _pointer(self) -> _ffi.BytePointer:
-        if self._size == 0:
-            return _ffi.BytePointer()
-        return ctypes.cast(self._address, _ffi.BytePointer)
-
-    def _retain(self, _context: int, owner_token: int) -> int:
-        try:
-            if _pointer_value(owner_token) != 1:
-                return int(BackingStatus.BACKING_CONTRACT)
-            with self._lock:
-                self._references += 1
-            return int(BackingStatus.OK)
-        except BaseException:
-            return int(BackingStatus.BACKING_CONTRACT)
-
-    def _release(self, _context: int, owner_token: int) -> None:
-        try:
-            if _pointer_value(owner_token) != 1:
-                return
-            with self._lock:
-                if self._references > 0:
-                    self._references -= 1
-        except BaseException:
-            return
-
 
 _PayloadT = TypeVar("_PayloadT", bound="Payload")
 _PAYLOAD_TOKEN = object()
@@ -401,9 +416,11 @@ _AccessT = TypeVar("_AccessT", bound="Access")
 
 
 class Access:
-    """Unique Core access pin whose safe methods return Python-owned copies."""
+    """A scoped Core access pin with copy methods and read-only buffer export."""
 
-    def __init__(self, handle: _ffi.Handle, token: object) -> None:
+    def __init__(
+        self, handle: _ffi.Handle, token: object, kind: Optional[ViewKind] = None
+    ) -> None:
         if token is not _ACCESS_TOKEN:
             raise TypeError("Access handles are created only by fastdb4py.payload")
         if not handle.value:
@@ -412,12 +429,16 @@ class Access:
                 reason="missing_access_handle",
             )
         self._lock = threading.Lock()
+        self._kind = kind
         self._handle: Optional[_ffi.Handle] = handle
+        self._pin = _payload_ext.own_access(handle.value)
 
     @classmethod
-    def _from_handle(cls: Type[_AccessT], handle: _ffi.Handle) -> _AccessT:
+    def _from_handle(
+        cls: Type[_AccessT], handle: _ffi.Handle, kind: Optional[ViewKind] = None
+    ) -> _AccessT:
         try:
-            return cls(handle, _ACCESS_TOKEN)
+            return cls(handle, _ACCESS_TOKEN, kind)
         except BaseException:
             if handle.value:
                 _ffi.library().fdb_payload_v1_access_release(handle)
@@ -425,10 +446,10 @@ class Access:
 
     def close(self) -> None:
         with self._lock:
-            handle = self._handle
+            pin = getattr(self, "_pin", None)
             self._handle = None
-        if handle is not None:
-            _ffi.library().fdb_payload_v1_access_release(handle)
+            self._pin = None
+        del pin
 
     def __enter__(self: _AccessT) -> _AccessT:
         with self._lock:
@@ -508,30 +529,44 @@ class Access:
     def bytes(self) -> bytes:
         return self._copy_bytes("fdb_payload_v1_access_bytes")
 
+    def memoryview(self) -> memoryview:
+        """Export the payload image, a bytes field, or a UTF-8 field without copying."""
+        if self._kind is None:
+            name = "fdb_payload_v1_access_payload_bytes"
+        elif self._kind is ViewKind.STR:
+            name = "fdb_payload_v1_access_str"
+        else:
+            name = "fdb_payload_v1_access_bytes"
+        with self._lock:
+            data, size = self._byte_span_locked(name)
+            address = ctypes.addressof(data.contents) if size else 0
+            return _payload_ext.export_memoryview(self._pin, address, size)
+
     def _copy_bytes(self, name: str) -> bytes:
+        with self._lock:
+            data, size = self._byte_span_locked(name)
+            return ctypes.string_at(data, size) if size else b""
+
+    def _byte_span_locked(self, name: str) -> tuple[_ffi.BytePointer, int]:
         native = _ffi.library()
         data = _ffi.BytePointer()
         size = ctypes.c_uint64(0)
         error = _ffi.Handle()
-        with self._lock:
-            handle = self._require_handle_locked()
-            status = int(
-                getattr(native, name)(
-                    handle,
-                    ctypes.byref(data),
-                    ctypes.byref(size),
-                    ctypes.byref(error),
-                )
+        handle = self._require_handle_locked()
+        status = int(
+            getattr(native, name)(
+                handle, ctypes.byref(data), ctypes.byref(size), ctypes.byref(error)
             )
-            _check_status(status, error)
-            native_size = _checked_span_size(int(size.value), 1, "/access")
-            if native_size and not bool(data):
-                raise binding_error(
-                    "FastDB Core returned non-empty access storage with a null pointer",
-                    path="/access",
-                    reason="invalid_core_byte_span",
-                )
-            return ctypes.string_at(data, native_size) if native_size else b""
+        )
+        _check_status(status, error)
+        native_size = _checked_span_size(int(size.value), 1, "/access")
+        if native_size and not bool(data):
+            raise binding_error(
+                "FastDB Core returned non-empty access storage with a null pointer",
+                path="/access",
+                reason="invalid_core_byte_span",
+            )
+        return data, native_size
 
     def _require_handle_locked(self) -> _ffi.Handle:
         if self._handle is None:
@@ -604,16 +639,14 @@ class View:
 
     def require_spec_sha256(self, expected_sha256: bytes) -> None:
         native = _ffi.library()
-        storage, digest = _input_digest(expected_sha256)
         error = _ffi.Handle()
-        with self._borrow_handle() as handle:
+        with _input_digest(expected_sha256) as digest, self._borrow_handle() as handle:
             status = int(
                 native.fdb_payload_v1_view_require_spec_sha256(
                     handle, digest, ctypes.byref(error)
                 )
             )
             _check_status(status, error)
-        del storage
 
     def kind(self) -> ViewKind:
         value = self._scalar("fdb_payload_v1_view_kind", ctypes.c_uint32)
@@ -729,6 +762,7 @@ class View:
 
     def acquire(self) -> Access:
         native = _ffi.library()
+        kind = self.kind()
         result = _ffi.Handle()
         error = _ffi.Handle()
         with self._borrow_handle() as handle:
@@ -738,7 +772,7 @@ class View:
                 )
             )
             _check_status(status, error)
-        return Access._from_handle(result)
+        return Access._from_handle(result, kind)
 
     def materialize(self: _ViewT) -> _ViewT:
         native = _ffi.library()
@@ -808,9 +842,9 @@ def _checked_span_size(count: int, width: int, path: str) -> int:
 
 
 class Payload:
-    """Owned immutable Core payload, optionally retaining its backing adapter."""
+    """Owned immutable Core payload."""
 
-    def __init__(self, handle: _ffi.Handle, token: object, keeper: object = None) -> None:
+    def __init__(self, handle: _ffi.Handle, token: object) -> None:
         if token is not _PAYLOAD_TOKEN:
             raise TypeError("Payload handles are created only by fastdb4py.payload")
         if not handle.value:
@@ -820,14 +854,11 @@ class Payload:
             )
         self._lock = threading.Lock()
         self._handle: Optional[_ffi.Handle] = handle
-        self._keeper = keeper
 
     @classmethod
-    def _from_handle(
-        cls: Type[_PayloadT], handle: _ffi.Handle, keeper: object = None
-    ) -> _PayloadT:
+    def _from_handle(cls: Type[_PayloadT], handle: _ffi.Handle) -> _PayloadT:
         try:
-            return cls(handle, _PAYLOAD_TOKEN, keeper)
+            return cls(handle, _PAYLOAD_TOKEN)
         except BaseException:
             if handle.value:
                 _ffi.library().fdb_payload_v1_payload_release(handle)
@@ -837,15 +868,17 @@ class Payload:
     def open_copy(
         cls: Type[_PayloadT],
         spec: CompiledSpec,
-        source: bytes,
+        source: object,
         options: Optional[OpenOptions] = None,
     ) -> _PayloadT:
         native = _ffi.library()
-        storage, pointer, size = _input_bytes(bytes(source))
         raw_options = (options or OpenOptions())._to_ffi()
         handle = _ffi.Handle()
         error = _ffi.Handle()
-        with spec._borrow_handle() as spec_handle:
+        with (
+            spec._borrow_handle() as spec_handle,
+            _input_bytes(source) as (pointer, size),
+        ):
             status = int(
                 native.fdb_payload_v1_payload_open_copy(
                     spec_handle,
@@ -856,7 +889,6 @@ class Payload:
                     ctypes.byref(error),
                 )
             )
-        del storage
         _check_status(status, error)
         return cls._from_handle(handle)
 
@@ -869,36 +901,26 @@ class Payload:
     ) -> _PayloadT:
         if not isinstance(source, ExternalBytes):
             raise TypeError("source must be ExternalBytes")
-        native = _ffi.library()
-        backing = source._raw()
         raw_options = (options or OpenOptions())._to_ffi()
         handle = _ffi.Handle()
         error = _ffi.Handle()
         with spec._borrow_handle() as spec_handle:
-            status = int(
-                native.fdb_payload_v1_payload_open_external(
-                    spec_handle,
-                    source._pointer(),
-                    source._size,
-                    ctypes.byref(backing),
-                    ctypes.c_void_p(1),
-                    ctypes.byref(raw_options),
-                    ctypes.byref(handle),
-                    ctypes.byref(error),
-                )
+            status = _payload_ext.open_external(
+                source._pin,
+                spec_handle.value,
+                ctypes.addressof(raw_options),
+                ctypes.addressof(handle),
+                ctypes.addressof(error),
             )
         _check_status(status, error)
-        return cls._from_handle(handle, source)
+        return cls._from_handle(handle)
 
     def close(self) -> None:
         with self._lock:
             handle = self._handle
-            keeper = self._keeper
             self._handle = None
-            self._keeper = None
         if handle is not None:
             _ffi.library().fdb_payload_v1_payload_release(handle)
-        del keeper
 
     def __enter__(self: _PayloadT) -> _PayloadT:
         with self._lock:
@@ -919,8 +941,7 @@ class Payload:
             handle = self._require_handle_locked()
             _ffi.library().fdb_payload_v1_payload_retain(handle)
             clone = _ffi.Handle(handle.value)
-            keeper = self._keeper
-        return type(self)._from_handle(clone, keeper)
+        return type(self)._from_handle(clone)
 
     def __copy__(self: _PayloadT) -> _PayloadT:
         return self.clone()
@@ -930,16 +951,14 @@ class Payload:
 
     def require_spec_sha256(self, expected_sha256: bytes) -> None:
         native = _ffi.library()
-        storage, digest = _input_digest(expected_sha256)
         error = _ffi.Handle()
-        with self._borrow_handle() as handle:
+        with _input_digest(expected_sha256) as digest, self._borrow_handle() as handle:
             status = int(
                 native.fdb_payload_v1_payload_require_spec_sha256(
                     handle, digest, ctypes.byref(error)
                 )
             )
             _check_status(status, error)
-        del storage
 
     def sha256(self) -> bytes:
         native = _ffi.library()
@@ -1000,6 +1019,11 @@ class Payload:
             _check_status(status, error)
         return CompiledSpec._copy_blob(blob)
 
+    def memoryview(self) -> memoryview:
+        """Export the read-only image, keeping its access pin until release."""
+        with self.acquire() as access:
+            return access.memoryview()
+
     def acquire(self) -> Access:
         native = _ffi.library()
         result = _ffi.Handle()
@@ -1031,7 +1055,7 @@ class Payload:
         return View._from_handle(result)
 
     def invalidate(self) -> None:
-        """Invalidate after all same-thread access pins have been closed.
+        """Invalidate after all same-thread access pins and exports have closed.
 
         Core waits synchronously for every active access pin to drain, so a
         caller cannot keep an Access on this thread and release it after this
@@ -1076,32 +1100,39 @@ class BuildResult:
 def execute_plan(
     plan: BuildPlan,
     policy: BuildPolicy,
-    backing: Optional[MemoryBacking] = None,
+    backing: Optional[MemoryBacking | DirectBacking] = None,
 ) -> BuildResult:
     if not isinstance(policy, BuildPolicy):
         raise TypeError("policy must be BuildPolicy")
-    if backing is not None and not isinstance(backing, MemoryBacking):
-        raise TypeError("backing must be MemoryBacking or None")
+    if backing is not None and not isinstance(backing, (MemoryBacking, DirectBacking)):
+        raise TypeError("backing must be MemoryBacking, DirectBacking, or None")
     native = _ffi.library()
     report = _new_report()
     handle = _ffi.Handle()
     error = _ffi.Handle()
     execution = backing._execution_lock if backing is not None else nullcontext()
-    with execution:
-        raw_backing = backing._raw() if backing is not None else None
-        with plan._borrow_handle() as plan_handle:
-            status = int(
-                native.fdb_payload_v1_plan_execute(
-                    plan_handle,
-                    int(policy),
-                    ctypes.byref(raw_backing) if raw_backing is not None else None,
-                    ctypes.byref(handle),
-                    ctypes.byref(report),
-                    ctypes.byref(error),
-                )
+    with execution, plan._borrow_handle() as plan_handle:
+        if isinstance(backing, DirectBacking):
+            status = _payload_ext.execute_backed(
+                plan_handle.value,
+                int(policy),
+                backing._callbacks,
+                ctypes.addressof(handle),
+                ctypes.addressof(report),
+                ctypes.addressof(error),
             )
-            _check_status(status, error)
-    payload = Payload._from_handle(handle, backing)
+        else:
+            raw_backing = backing._raw() if backing is not None else None
+            status = native.fdb_payload_v1_plan_execute(
+                plan_handle,
+                int(policy),
+                ctypes.byref(raw_backing) if raw_backing is not None else None,
+                ctypes.byref(handle),
+                ctypes.byref(report),
+                ctypes.byref(error),
+            )
+        _check_status(status, error)
+    payload = Payload._from_handle(handle)
     try:
         projected = _execution_report(report)
     except BaseException:

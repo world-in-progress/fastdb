@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import ctypes
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 import struct
 import threading
@@ -14,7 +14,7 @@ from ._error import PayloadError, binding_error
 from ._spec import CompiledSpec, _check_status, _input_bytes, _input_digest
 
 if TYPE_CHECKING:
-    from ._runtime import BuildPolicy, BuildResult, MemoryBacking
+    from ._runtime import BuildPolicy, BuildResult, DirectBacking, MemoryBacking
 
 
 _U64_MAX = (1 << 64) - 1
@@ -79,16 +79,11 @@ class BuilderOptions:
 class FixedRun:
     """Borrowed exact-width native scalar bytes for one synchronous call."""
 
-    data: bytes
+    data: object
     count: int
     stride_bytes: int
-    validity: Optional[bytes] = None
+    validity: Optional[object] = None
     validity_bit_offset: int = 0
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "data", bytes(self.data))
-        if self.validity is not None:
-            object.__setattr__(self, "validity", bytes(self.validity))
 
 
 @dataclass(frozen=True, init=False)
@@ -211,7 +206,7 @@ class BuildPlan:
     def execute(
         self,
         policy: BuildPolicy,
-        backing: Optional[MemoryBacking] = None,
+        backing: Optional[MemoryBacking | DirectBacking] = None,
     ) -> BuildResult:
         from ._runtime import execute_plan
 
@@ -316,10 +311,9 @@ class Builder:
 
     def require_spec_sha256(self, expected_sha256: bytes) -> None:
         native = _ffi.library()
-        storage, digest = _input_digest(expected_sha256)
         error = _ffi.Handle()
         self._check_thread()
-        with self._lock:
+        with _input_digest(expected_sha256) as digest, self._lock:
             handle = self._require_handle_locked()
             status = int(
                 native.fdb_payload_v1_builder_require_spec_sha256(
@@ -327,7 +321,6 @@ class Builder:
                 )
             )
             _check_status(status, error)
-        del storage
 
     def entry_begin(self, entry_index: int, value_count: int) -> Builder:
         return self._call(
@@ -455,45 +448,37 @@ class Builder:
             _checked_unsigned(item, 0xFFFF, "wstr unit") for item in value
         )
         storage = (ctypes.c_uint16 * len(units))(*units)
-        pointer = (
-            ctypes.cast(storage, ctypes.POINTER(ctypes.c_uint16))
-            if units
-            else ctypes.POINTER(ctypes.c_uint16)()
-        )
-        return self._call(
-            "fdb_payload_v1_builder_value_wstr", pointer, len(units)
-        )
+        return self._call("fdb_payload_v1_builder_value_wstr", storage, len(units))
 
-    def value_bytes(self, value: bytes) -> Builder:
+    def value_bytes(self, value: object) -> Builder:
         return self._call_bytes("fdb_payload_v1_builder_value_bytes", value)
 
     def value_fixed_run(self, run: FixedRun) -> Builder:
         if not isinstance(run, FixedRun):
             raise TypeError("run must be FixedRun")
-        data_storage, data, data_size = _input_bytes(run.data)
-        if run.validity is None:
-            validity_storage: object = b""
-            validity = _ffi.BytePointer()
-            validity_size = 0
-        else:
-            validity_storage, validity, validity_size = _input_bytes(run.validity)
         raw = _ffi.FixedRunV1()
         native = _ffi.library()
         native.fdb_payload_v1_fixed_run_init(ctypes.byref(raw))
-        raw.data = ctypes.cast(data, ctypes.c_void_p)
-        raw.data_byte_length = data_size
         raw.count = _u64(run.count, "count")
         raw.stride_bytes = _u64(run.stride_bytes, "stride_bytes")
-        raw.validity = validity
-        raw.validity_byte_length = validity_size
         raw.validity_bit_offset = _u64(
             run.validity_bit_offset, "validity_bit_offset"
         )
-        result = self._call(
-            "fdb_payload_v1_builder_value_fixed_run", ctypes.byref(raw)
+        bitmap = (
+            nullcontext((_ffi.BytePointer(), 0))
+            if run.validity is None else _input_bytes(run.validity)
         )
-        del data_storage, validity_storage
-        return result
+        with (
+            _input_bytes(run.data) as (data, size),
+            bitmap as (validity, validity_size),
+        ):
+            raw.data = ctypes.addressof(data.contents) if size else None
+            raw.data_byte_length = size
+            raw.validity = validity
+            raw.validity_byte_length = validity_size
+            return self._call(
+                "fdb_payload_v1_builder_value_fixed_run", ctypes.byref(raw)
+            )
 
     def value_component_begin(self) -> Builder:
         return self._call("fdb_payload_v1_builder_value_component_begin")
@@ -542,11 +527,9 @@ class Builder:
             _check_status(status, error)
         return self
 
-    def _call_bytes(self, function_name: str, value: bytes) -> Builder:
-        storage, data, size = _input_bytes(value)
-        result = self._call(function_name, data, size)
-        del storage
-        return result
+    def _call_bytes(self, function_name: str, value: object) -> Builder:
+        with _input_bytes(value) as (data, size):
+            return self._call(function_name, data, size)
 
     def _check_thread(self) -> None:
         if threading.get_ident() != self._thread_id:

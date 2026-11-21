@@ -9,6 +9,7 @@ from enum import IntEnum
 import threading
 from typing import TYPE_CHECKING, Callable, Iterator, Optional, Type, TypeVar
 
+from ..core import _payload_ext
 from . import _ffi
 from ._error import PayloadError, binding_error
 
@@ -81,19 +82,21 @@ def _check_status(status: int, error: _ffi.Handle) -> None:
         )
 
 
-def _input_bytes(value: bytes) -> tuple[object, _ffi.BytePointer, int]:
-    copied = bytes(value)
-    if not copied:
-        return copied, _ffi.BytePointer(), 0
-    storage = (ctypes.c_uint8 * len(copied)).from_buffer_copy(copied)
-    return storage, ctypes.cast(storage, _ffi.BytePointer), len(copied)
+@contextmanager
+def _input_bytes(value: object) -> Iterator[tuple[_ffi.BytePointer, int]]:
+    pin, address, size = _payload_ext.input_buffer(value)
+    try:
+        yield ctypes.cast(address if size else None, _ffi.BytePointer), size
+    finally:
+        del pin
 
 
-def _input_digest(value: bytes) -> tuple[object, _ffi.BytePointer]:
-    storage, pointer, size = _input_bytes(value)
-    if size != _ffi.SHA256_SIZE:
-        raise ValueError(f"expected_sha256 must contain {_ffi.SHA256_SIZE} bytes")
-    return storage, pointer
+@contextmanager
+def _input_digest(value: bytes) -> Iterator[_ffi.BytePointer]:
+    with _input_bytes(value) as (pointer, size):
+        if size != _ffi.SHA256_SIZE:
+            raise ValueError(f"expected_sha256 must contain {_ffi.SHA256_SIZE} bytes")
+        yield pointer
 
 
 def _checked_u32(value: int, name: str) -> int:
@@ -128,21 +131,16 @@ class CompiledSpec:
             raise
 
     @classmethod
-    def compile(cls: Type[_CompiledSpecT], source: bytes) -> _CompiledSpecT:
+    def compile(cls: Type[_CompiledSpecT], source: object) -> _CompiledSpecT:
         native = _ffi.library()
-        storage, source_pointer, source_size = _input_bytes(source)
         handle = _ffi.Handle()
         error = _ffi.Handle()
-        status = int(
-            native.fdb_payload_v1_spec_compile_json(
-                source_pointer,
-                source_size,
-                None,
-                ctypes.byref(handle),
-                ctypes.byref(error),
+        with _input_bytes(source) as (pointer, size):
+            status = int(
+                native.fdb_payload_v1_spec_compile_json(
+                    pointer, size, None, ctypes.byref(handle), ctypes.byref(error)
+                )
             )
-        )
-        del storage
         _check_status(status, error)
         return cls._from_handle(handle)
 
@@ -318,10 +316,12 @@ class CompiledSpec:
 
     def component_field_index(self, component_index: int, identifier: str) -> int:
         native = _ffi.library()
-        storage, data, size = _input_bytes(identifier.encode("utf-8"))
         value = ctypes.c_uint32(0)
         error = _ffi.Handle()
-        with self._borrow_handle() as handle:
+        with (
+            self._borrow_handle() as handle,
+            _input_bytes(identifier.encode("utf-8")) as (data, size),
+        ):
             status = int(
                 native.fdb_payload_v1_spec_component_field_index(
                     handle,
@@ -333,7 +333,6 @@ class CompiledSpec:
                 )
             )
             _check_status(status, error)
-        del storage
         return int(value.value)
 
     def _require_handle_locked(self) -> _ffi.Handle:
@@ -420,11 +419,13 @@ class CompiledSpec:
 
     def _query_named_index(self, function_name: str, identifier: str) -> int:
         native = _ffi.library()
-        storage, data, size = _input_bytes(identifier.encode("utf-8"))
         value = ctypes.c_uint32(0)
         error = _ffi.Handle()
         function = getattr(native, function_name)
-        with self._borrow_handle() as handle:
+        with (
+            self._borrow_handle() as handle,
+            _input_bytes(identifier.encode("utf-8")) as (data, size),
+        ):
             status = int(
                 function(
                     handle,
@@ -435,5 +436,4 @@ class CompiledSpec:
                 )
             )
             _check_status(status, error)
-        del storage
         return int(value.value)
