@@ -22,6 +22,7 @@ from ._runtime import (
     BackingStatus,
     BuildPolicy,
     BuildResult,
+    DirectBacking,
     ExecutionMode,
     ExecutionReport,
     ExternalBytes,
@@ -33,6 +34,7 @@ from ._runtime import (
     ReserveMode,
     View,
     ViewKind,
+    WritableBufferBacking,
 )
 
 __all__ = [
@@ -50,6 +52,7 @@ __all__ = [
     "CompiledSpec",
     "CodegenOptions",
     "CodegenTarget",
+    "DirectBacking",
     "FixedRun",
     "ExecutionMode",
     "ExecutionReport",
@@ -66,4 +69,5 @@ __all__ = [
     "ReserveMode",
     "View",
     "ViewKind",
+    "WritableBufferBacking",
 ]

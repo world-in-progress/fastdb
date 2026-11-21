@@ -216,12 +216,12 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Install Emscripten
+      - name: Install Emscripten 5.0.2
         run: |
           git clone https://github.com/emscripten-core/emsdk.git "$RUNNER_TEMP/emsdk"
           cd "$RUNNER_TEMP/emsdk"
-          ./emsdk install latest
-          ./emsdk activate latest
+          ./emsdk install 5.0.2
+          ./emsdk activate 5.0.2
           echo "$RUNNER_TEMP/emsdk" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/emsdk/upstream/emscripten" >> "$GITHUB_PATH"
 

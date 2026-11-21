@@ -20,7 +20,7 @@ from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 import zipfile
 
-from release_artifacts import FRAGMENT_SCHEMA, PYTHON_ABIS, WHEEL_PLATFORM_TARGETS, WHEEL_PYTHON_ABIS, ReleaseError, check_windows_binary, digest, file_record, wheel_identity, write_json
+from release_artifacts import FRAGMENT_SCHEMA, PYTHON_ABIS, WHEEL_PLATFORM_TARGETS, WHEEL_PYTHON_ABIS, ReleaseError, check_wheel_extensions, check_windows_binary, digest, file_record, wheel_identity, write_json
 
 
 DEFAULT_BUILD = " ".join(abi + "-*" for abi in PYTHON_ABIS)
@@ -100,14 +100,7 @@ def inventory(directory: Path, source: Path, build: str, platforms: str) -> list
                 if len(metadata) != 1:
                     raise ReleaseError(f"Wheel must have exactly one METADATA: {path.name}")
                 check_metadata(wheel.read(metadata[0]), version, path.name)
-                if not any(name.startswith("fastdb4py/core/_fastdb4py") and name.endswith((".so", ".pyd")) for name in wheel.namelist()):
-                    raise ReleaseError(f"Wheel omits its native extension: {path.name}")
-                if identity[1].startswith("win_"):
-                    extensions = [name for name in wheel.namelist()
-                                  if name.startswith("fastdb4py/core/_fastdb4py") and name.endswith(".pyd")]
-                    if len(extensions) != 1:
-                        raise ReleaseError(f"Windows wheel requires one native extension: {path.name}")
-                    check_windows_binary(wheel.read(extensions[0]), WHEEL_PLATFORM_TARGETS[identity[1]], path.name)
+                check_wheel_extensions(wheel, identity[1], path.name, source=source)
             seen.add(identity)
             record = file_record(path, kind="python-wheel")
             record.update(python_abi=identity[0], platform=identity[1])

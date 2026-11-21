@@ -6,7 +6,7 @@ use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -176,6 +176,54 @@ impl BackingFailure {
     }
 }
 
+pub use BackingFailure as BackingStatus;
+
+mod backing_dispatch {
+    pub struct Key;
+}
+
+/// A source of writable payload reservations.
+///
+/// Each execution has its own callback context. Calls through a shared backing
+/// can overlap, so implementations must synchronize any shared allocator state.
+pub trait Backing: Send + Sync {
+    fn reserve(
+        &self,
+        mode: ReserveMode,
+        minimum_capacity: usize,
+        alignment: usize,
+    ) -> Result<Box<dyn ReservedBacking>, BackingStatus>;
+
+    // Preserve the built-in observer's range-write and rollback status hooks.
+    #[doc(hidden)]
+    fn memory_backing(&self, _: backing_dispatch::Key) -> Option<&MemoryBacking> {
+        None
+    }
+}
+
+/// Owns one unpublished writable reservation. Dropping it abandons the
+/// reservation, including when commit returns an error or panics.
+pub trait ReservedBacking: Send + Sync {
+    fn as_mut_slice(&mut self) -> &mut [u8];
+
+    /// Publishes the initialized prefix of the reservation. Keep its address
+    /// when transferring the storage to the committed owner.
+    fn commit(
+        self: Box<Self>,
+        used_bytes: usize,
+    ) -> Result<Box<dyn CommittedBacking>, BackingStatus>;
+
+    fn rollback(self: Box<Self>) {
+        drop(self);
+    }
+}
+
+/// Owns the readable storage until the last payload, view, or access releases
+/// it. The slice starts at the reservation's base and covers its used prefix.
+pub trait CommittedBacking: Send + Sync {
+    fn as_slice(&self) -> &[u8];
+}
+
 pub trait BackingObserver: Send + Sync + 'static {
     fn reserve(&self, _request: ReservationRequest) -> Result<(), BackingFailure> {
         Ok(())
@@ -204,12 +252,23 @@ struct BackingContext {
     execution: Mutex<()>,
 }
 
+impl BackingContext {
+    fn reserve(&self, request: ReservationRequest) -> Result<AlignedBytes, BackingFailure> {
+        self.observer.reserve(request)?;
+        AlignedBytes::allocate(request.minimum_capacity, request.alignment)
+    }
+}
+
 #[derive(Clone)]
 pub struct MemoryBacking {
     context: Arc<BackingContext>,
 }
 
 impl MemoryBacking {
+    pub fn new() -> Self {
+        Self::direct()
+    }
+
     /// Creates binding-owned aligned storage for direct or staged execution.
     ///
     /// Executions sharing a clone of this backing are serialized as required
@@ -246,6 +305,36 @@ impl MemoryBacking {
         raw.retain = Some(memory_retain);
         raw.release = Some(memory_release);
         raw
+    }
+}
+
+impl Default for MemoryBacking {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Backing for MemoryBacking {
+    fn reserve(
+        &self,
+        mode: ReserveMode,
+        minimum_capacity: usize,
+        alignment: usize,
+    ) -> Result<Box<dyn ReservedBacking>, BackingStatus> {
+        let request = ReservationRequest {
+            mode,
+            minimum_capacity: u64::try_from(minimum_capacity)
+                .map_err(|_| BackingStatus::AllocationFailed)?,
+            alignment: u32::try_from(alignment).map_err(|_| BackingStatus::AllocationFailed)?,
+        };
+        Ok(Box::new(MemoryReservation {
+            storage: self.context.reserve(request)?,
+            observer: self.context.observer.clone(),
+        }))
+    }
+
+    fn memory_backing(&self, _: backing_dispatch::Key) -> Option<&MemoryBacking> {
+        Some(self)
     }
 }
 
@@ -300,6 +389,52 @@ impl Drop for AlignedBytes {
 unsafe impl Send for AlignedBytes {}
 unsafe impl Sync for AlignedBytes {}
 
+struct MemoryReservation {
+    storage: AlignedBytes,
+    observer: Arc<dyn BackingObserver>,
+}
+
+impl ReservedBacking for MemoryReservation {
+    fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.storage.as_mut_slice()
+    }
+
+    fn commit(
+        self: Box<Self>,
+        used_bytes: usize,
+    ) -> Result<Box<dyn CommittedBacking>, BackingStatus> {
+        if used_bytes > self.storage.capacity {
+            return Err(BackingStatus::Contract);
+        }
+        self.observer.commit(self.storage.as_slice(used_bytes))?;
+        Ok(Box::new(CommittedMemory {
+            reservation: *self,
+            used_bytes,
+        }))
+    }
+
+    fn rollback(self: Box<Self>) {
+        let _ = self.observer.rollback();
+    }
+}
+
+struct CommittedMemory {
+    reservation: MemoryReservation,
+    used_bytes: usize,
+}
+
+impl CommittedBacking for CommittedMemory {
+    fn as_slice(&self) -> &[u8] {
+        self.reservation.storage.as_slice(self.used_bytes)
+    }
+}
+
+impl Drop for CommittedMemory {
+    fn drop(&mut self) {
+        self.reservation.observer.release();
+    }
+}
+
 struct ReservationToken {
     references: AtomicUsize,
     storage: AlignedBytes,
@@ -333,10 +468,7 @@ unsafe extern "C" fn memory_reserve(
             minimum_capacity,
             alignment,
         };
-        if let Err(failure) = context.observer.reserve(request) {
-            return failure.status();
-        }
-        let storage = match AlignedBytes::allocate(minimum_capacity, alignment) {
+        let storage = match context.reserve(request) {
             Ok(storage) => storage,
             Err(failure) => return failure.status(),
         };
@@ -437,14 +569,14 @@ unsafe extern "C" fn memory_rollback(_context: *mut c_void, owner_token: *mut c_
     if owner_token.is_null() {
         return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
     }
-    // SAFETY: rollback consumes the one uncommitted token reference.
-    let token = unsafe { Box::from_raw(owner_token.cast::<ReservationToken>()) };
-    let status = callback_status(|| match token.observer.rollback() {
-        Ok(()) => 0,
-        Err(failure) => failure.status(),
-    });
-    drop(token);
-    status
+    callback_status(|| {
+        // SAFETY: rollback consumes the one uncommitted token reference.
+        let token = unsafe { Box::from_raw(owner_token.cast::<ReservationToken>()) };
+        token
+            .observer
+            .rollback()
+            .map_or_else(BackingFailure::status, |()| 0)
+    })
 }
 
 unsafe extern "C" fn memory_retain(_context: *mut c_void, owner_token: *mut c_void) -> u32 {
@@ -471,14 +603,15 @@ unsafe extern "C" fn memory_release(_context: *mut c_void, owner_token: *mut c_v
     if owner_token.is_null() {
         return;
     }
-    // SAFETY: Core calls release only for a live committed token reference.
-    let token = unsafe { &*owner_token.cast::<ReservationToken>() };
-    if token.references.fetch_sub(1, Ordering::AcqRel) == 1 {
-        // SAFETY: this thread consumed the final token reference.
-        let token = unsafe { Box::from_raw(owner_token.cast::<ReservationToken>()) };
-        let _ = catch_unwind(AssertUnwindSafe(|| token.observer.release()));
-        drop(token);
-    }
+    callback_result(|| {
+        // SAFETY: Core calls release only for a live committed token reference.
+        let token = unsafe { &*owner_token.cast::<ReservationToken>() };
+        if token.references.fetch_sub(1, Ordering::AcqRel) == 1 {
+            // SAFETY: this thread consumed the final token reference.
+            let token = unsafe { Box::from_raw(owner_token.cast::<ReservationToken>()) };
+            token.observer.release();
+        }
+    });
 }
 
 fn token_ref(owner_token: *mut c_void) -> Option<&'static ReservationToken> {
@@ -491,13 +624,200 @@ fn token_mut(owner_token: *mut c_void) -> Option<&'static mut ReservationToken> 
     unsafe { owner_token.cast::<ReservationToken>().as_mut() }
 }
 
+struct BackingReservation {
+    owner: Box<dyn ReservedBacking>,
+    address: usize,
+    capacity: usize,
+}
+
+struct BackingToken {
+    reservation: Mutex<Option<BackingReservation>>,
+    committed: OnceLock<Box<dyn CommittedBacking>>,
+}
+
+unsafe extern "C" fn backing_reserve<B: Backing + ?Sized>(
+    context: *mut c_void,
+    reserve_mode: u32,
+    minimum_capacity: u64,
+    alignment: u32,
+    out_owner_token: *mut *mut c_void,
+    out_writable_data: *mut *mut u8,
+    out_capacity: *mut u64,
+) -> u32 {
+    callback_status(|| {
+        // SAFETY: the execution context holds this reference for the call.
+        let backing = unsafe { context.cast::<&B>().as_ref() };
+        let (Some(backing), Ok(mode), Ok(minimum_capacity)) = (
+            backing,
+            ReserveMode::from_raw(reserve_mode),
+            usize::try_from(minimum_capacity),
+        ) else {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        };
+        let alignment = alignment as usize;
+        if !alignment.is_power_of_two()
+            || out_owner_token.is_null()
+            || out_writable_data.is_null()
+            || out_capacity.is_null()
+        {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        let owner = match backing.reserve(mode, minimum_capacity, alignment) {
+            Ok(owner) => owner,
+            Err(status) => return status.status(),
+        };
+        let mut token = Arc::new(BackingToken {
+            reservation: Mutex::new(Some(BackingReservation {
+                owner,
+                address: 0,
+                capacity: 0,
+            })),
+            committed: OnceLock::new(),
+        });
+        let slot = Arc::get_mut(&mut token)
+            .unwrap()
+            .reservation
+            .get_mut()
+            .unwrap();
+        let reservation = slot.as_mut().unwrap();
+        // Borrow only after the owner is in its final location. Neither the
+        // reservation nor the slice is accessed by Rust until Core is done
+        // writing and calls commit or rollback.
+        let slice = reservation.owner.as_mut_slice();
+        let capacity = slice.len();
+        let writable = slice.as_mut_ptr();
+        let address = writable as usize;
+        if capacity < minimum_capacity || address & (alignment - 1) != 0 {
+            slot.take().unwrap().owner.rollback();
+            return sys::FDB_PAYLOAD_E_DIRECT_UNAVAILABLE;
+        }
+        reservation.address = address;
+        reservation.capacity = capacity;
+        // SAFETY: Core owns one token reference and uses the writable span
+        // exclusively up to commit or rollback.
+        unsafe {
+            *out_owner_token = Arc::into_raw(token).cast_mut().cast();
+            *out_writable_data = writable;
+            *out_capacity = capacity as u64;
+        }
+        0
+    })
+}
+
+unsafe extern "C" fn backing_commit(
+    _context: *mut c_void,
+    owner_token: *mut c_void,
+    used_size: u64,
+    out_readable_data: *mut *const u8,
+    out_readable_size: *mut u64,
+) -> u32 {
+    callback_status(|| {
+        // SAFETY: Core holds the reserved token reference during commit.
+        let token = unsafe { owner_token.cast::<BackingToken>().as_ref() };
+        let (Some(token), Ok(size)) = (token, usize::try_from(used_size)) else {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        };
+        if out_readable_data.is_null() || out_readable_size.is_null() {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        let mut slot = token
+            .reservation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let Some(reservation) = slot.as_ref() else {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        };
+        if size > reservation.capacity {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        let BackingReservation { owner, address, .. } = slot.take().unwrap();
+        drop(slot);
+        let committed = match owner.commit(size) {
+            Ok(committed) => committed,
+            Err(status) => return status.status(),
+        };
+        // Moving a Box into Arc can relocate inline storage. Keep the Box in
+        // the Arc-owned token and take the shared borrow after publication.
+        if token.committed.set(committed).is_err() {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        let readable = token.committed.get().unwrap().as_slice();
+        if readable.len() < size || readable.as_ptr() as usize != address {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        // SAFETY: Core owns the token for the lifetime of the immutable span.
+        unsafe {
+            *out_readable_data = readable.as_ptr();
+            *out_readable_size = used_size;
+        }
+        0
+    })
+}
+
+unsafe extern "C" fn backing_rollback(_context: *mut c_void, owner_token: *mut c_void) -> u32 {
+    callback_status(|| {
+        if owner_token.is_null() {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        // SAFETY: Core relinquishes the initial token reference on rollback.
+        let token = unsafe { Arc::from_raw(owner_token.cast::<BackingToken>()) };
+        let reservation = token
+            .reservation
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        if let Some(reservation) = reservation {
+            reservation.owner.rollback();
+        }
+        0
+    })
+}
+
+unsafe extern "C" fn retain_owner<T>(_context: *mut c_void, owner_token: *mut c_void) -> u32 {
+    callback_status(|| {
+        if owner_token.is_null() {
+            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
+        }
+        // SAFETY: Core holds a live committed token reference.
+        unsafe { Arc::increment_strong_count(owner_token.cast::<T>()) };
+        0
+    })
+}
+
+unsafe extern "C" fn release_owner<T>(_context: *mut c_void, owner_token: *mut c_void) {
+    if !owner_token.is_null() {
+        callback_result(|| {
+            // SAFETY: release relinquishes one committed token reference.
+            unsafe { Arc::decrement_strong_count(owner_token.cast::<T>()) };
+        });
+    }
+}
+
 fn callback_status(operation: impl FnOnce() -> u32) -> u32 {
-    catch_unwind(AssertUnwindSafe(operation)).unwrap_or(sys::FDB_PAYLOAD_E_BACKING_CONTRACT)
+    callback_result(operation).unwrap_or(sys::FDB_PAYLOAD_E_BACKING_CONTRACT)
+}
+
+fn callback_result<T>(operation: impl FnOnce() -> T) -> Option<T> {
+    match catch_unwind(AssertUnwindSafe(operation)) {
+        Ok(result) => Some(result),
+        Err(panic) => match catch_unwind(AssertUnwindSafe(|| drop(panic))) {
+            // A user-supplied panic payload can itself panic during destruction.
+            Ok(()) => None,
+            Err(_panic) => std::process::abort(),
+        },
+    }
 }
 
 struct ExternalInner {
-    bytes: Box<[u8]>,
+    bytes: *const [u8],
+    _owner: Arc<dyn Send + Sync>,
 }
+
+// SAFETY: the span came from one shared borrow of the heap-owned value. The
+// owner remains live, is never accessed mutably, and is safe to share and drop
+// on any thread.
+unsafe impl Send for ExternalInner {}
+unsafe impl Sync for ExternalInner {}
 
 #[derive(Clone)]
 pub struct ExternalBytes {
@@ -506,15 +826,34 @@ pub struct ExternalBytes {
 
 impl ExternalBytes {
     pub fn new(bytes: Vec<u8>) -> Self {
+        Self::from_owner(bytes)
+    }
+
+    /// Retains an owner and borrows its bytes without copying them.
+    /// The owner is stored on the heap before borrowing, including when its
+    /// bytes are stored inline. Open payloads and their views retain the owner.
+    pub fn from_owner<T>(owner: T) -> Self
+    where
+        T: AsRef<[u8]> + Send + Sync + 'static,
+    {
+        let owner = Arc::new(owner);
+        let bytes = (*owner).as_ref() as *const [u8];
         Self {
             inner: Arc::new(ExternalInner {
-                bytes: bytes.into_boxed_slice(),
+                bytes,
+                _owner: owner,
             }),
         }
     }
 
+    /// Retains an existing shared byte allocation without copying it.
+    pub fn from_arc(bytes: Arc<[u8]>) -> Self {
+        Self::from_owner(bytes)
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
-        &self.inner.bytes
+        // SAFETY: the immutable span is kept live by self.inner._owner.
+        unsafe { &*self.inner.bytes }
     }
 
     fn owner_token(&self) -> *mut c_void {
@@ -527,8 +866,8 @@ impl ExternalBytes {
         unsafe { sys::fdb_payload_v1_backing_init(raw.as_mut_ptr()) };
         // SAFETY: the initializer wrote the complete structure.
         let mut raw = unsafe { raw.assume_init() };
-        raw.retain = Some(external_retain);
-        raw.release = Some(external_release);
+        raw.retain = Some(retain_owner::<ExternalInner>);
+        raw.release = Some(release_owner::<ExternalInner>);
         raw
     }
 }
@@ -537,28 +876,9 @@ impl fmt::Debug for ExternalBytes {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("ExternalBytes")
-            .field("len", &self.inner.bytes.len())
+            .field("len", &self.as_bytes().len())
             .finish()
     }
-}
-
-unsafe extern "C" fn external_retain(_context: *mut c_void, owner_token: *mut c_void) -> u32 {
-    callback_status(|| {
-        if owner_token.is_null() {
-            return sys::FDB_PAYLOAD_E_BACKING_CONTRACT;
-        }
-        // SAFETY: owner_token came from Arc::as_ptr and one Arc is live for call.
-        unsafe { Arc::increment_strong_count(owner_token.cast::<ExternalInner>()) };
-        0
-    })
-}
-
-unsafe extern "C" fn external_release(_context: *mut c_void, owner_token: *mut c_void) {
-    if owner_token.is_null() {
-        return;
-    }
-    // SAFETY: release consumes one reference previously created by retain.
-    unsafe { Arc::decrement_strong_count(owner_token.cast::<ExternalInner>()) };
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1227,18 +1547,32 @@ impl BuildPlan {
         self.execute_raw(policy, ptr::null())
     }
 
-    pub fn execute_with_backing(
+    pub fn execute_with_backing<B: Backing + ?Sized>(
         &self,
         policy: BuildPolicy,
-        backing: &MemoryBacking,
+        backing: &B,
     ) -> Result<BuildResult, PayloadError> {
-        let _execution = backing
-            .context
-            .execution
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        let raw_backing = backing.raw();
-        self.execute_raw(policy, &raw_backing)
+        if let Some(memory) = backing.memory_backing(backing_dispatch::Key) {
+            let _execution = memory
+                .context
+                .execution
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            return self.execute_raw(policy, &memory.raw());
+        }
+        let mut raw = std::mem::MaybeUninit::<sys::fdb_payload_v1_backing_v1_t>::uninit();
+        // SAFETY: Core initializes the complete backing table.
+        unsafe { sys::fdb_payload_v1_backing_init(raw.as_mut_ptr()) };
+        let mut raw = unsafe { raw.assume_init() };
+        // Only reserve reads this borrowed context, during the synchronous
+        // execution. Subsequent release and retain use the owning token.
+        raw.context = ptr::from_ref(&backing).cast_mut().cast();
+        raw.reserve = Some(backing_reserve::<B>);
+        raw.commit = Some(backing_commit);
+        raw.rollback = Some(backing_rollback);
+        raw.retain = Some(retain_owner::<BackingToken>);
+        raw.release = Some(release_owner::<BackingToken>);
+        self.execute_raw(policy, &raw)
     }
 
     fn execute_raw(
