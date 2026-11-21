@@ -1049,7 +1049,7 @@ View::require_spec_sha256(const std::array<std::uint8_t, 32>& expected) const {
             state_->diagnostic_path, "detached_runtime_schema_missing"));
     }
     return spec::require_spec_sha256(
-        state_->detached->runtime_schema->spec().digest(), expected,
+        state_->detached->runtime_schema->digest(), expected,
         JsonPointer{}.append("view").append("spec_sha256"));
 }
 

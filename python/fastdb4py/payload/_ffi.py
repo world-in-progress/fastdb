@@ -487,6 +487,16 @@ def _declare(library: ctypes.CDLL) -> None:
         ]
         function.restype = ctypes.c_uint32
 
+    library.fdb_payload_v1_builder_value_external_bytes.argtypes = [
+        Handle,
+        BytePointer,
+        ctypes.c_uint64,
+        ctypes.POINTER(BackingV1),
+        ctypes.c_void_p,
+        HandlePointer,
+    ]
+    library.fdb_payload_v1_builder_value_external_bytes.restype = ctypes.c_uint32
+
     library.fdb_payload_v1_builder_value_wstr.argtypes = [
         Handle,
         ctypes.POINTER(ctypes.c_uint16),

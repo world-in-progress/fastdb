@@ -7,13 +7,13 @@ import {
   Builder,
   CompiledSpec,
   ExecutionMode,
+  ExternalBytes,
   FallbackReason,
   OpenOptions,
   Payload,
   PayloadError,
   Profile,
   WasmMemoryBacking,
-  WasmOwnedBytes,
   initPayload,
 } from '../../ts/fastdb4ts/dist/payload/index.js';
 import { __testingWasmMemoryBacking } from '../../ts/fastdb4ts/dist/payload/runtime.js';
@@ -176,8 +176,8 @@ test('copy and Wasm-owned external open keep truthful lifetimes', async () => {
   source.fill(0xff);
   assert.deepEqual(copied.binaryBytes(), original);
 
-  const external = WasmOwnedBytes.copyFrom(original);
-  const opened = Payload.openWasmOwned(spec, external, new OpenOptions());
+  const external = ExternalBytes.copyFrom(original);
+  const opened = Payload.openExternal(spec, external, new OpenOptions());
   external.dispose();
   assert.deepEqual(opened.binaryBytes(), original);
   assert.throws(
@@ -231,7 +231,7 @@ test('invalid open preserves every Core field', async () => {
 test('runtime handles cannot be forged from JavaScript', async () => {
   await initPayload();
   assert.throws(() => Reflect.construct(Payload, [1]), /created only/);
-  assert.throws(() => Reflect.construct(WasmOwnedBytes, [{}, Symbol()]));
+  assert.throws(() => Reflect.construct(ExternalBytes, [{}, Symbol()]));
 
   const forgedPayload = Object.create(Payload.prototype);
   forgedPayload.handle = 1;

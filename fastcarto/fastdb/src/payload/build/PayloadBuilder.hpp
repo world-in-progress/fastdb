@@ -63,6 +63,9 @@ public:
                                   std::uint64_t unit_count);
     error::Result<void> push_bytes(const std::uint8_t* bytes,
                                    std::uint64_t byte_count);
+    error::Result<void> push_external_bytes(
+        const std::uint8_t* bytes, std::uint64_t byte_count,
+        const backing::Callbacks& callbacks, void* owner_token);
     error::Result<void> push_fixed_run(const FixedRun& run);
     error::Result<void> begin_component();
     error::Result<void> begin_list(std::uint64_t item_count);
@@ -92,12 +95,11 @@ private:
                                              ValueTag tag,
                                              std::uint64_t bits,
                                              std::string_view operation);
-    error::Result<void> push_storage_impl(spec::TypeKind kind,
-                                          ValueTag tag,
-                                          const std::uint8_t* bytes,
-                                          std::uint64_t byte_count,
-                                          bool text,
-                                          std::string_view operation);
+    error::Result<void> push_storage_impl(
+        spec::TypeKind kind, ValueTag tag, const std::uint8_t* bytes,
+        std::uint64_t byte_count, bool text, std::string_view operation,
+        const backing::Callbacks* external = nullptr,
+        void* owner_token = nullptr);
     error::Result<void> push_fixed_run_impl(const FixedRun& run);
     error::Result<void> begin_component_impl();
     error::Result<void> begin_list_impl(std::uint64_t item_count);

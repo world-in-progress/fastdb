@@ -162,7 +162,7 @@ class LocalPayloadCandidateTests(unittest.TestCase):
 
     def test_manifest_schema_and_abi_evidence_are_exact(self) -> None:
         allowlist = MODULE.read_abi_allowlist()
-        self.assertEqual(len(allowlist), 117)
+        self.assertEqual(len(allowlist), 118)
         self.assertEqual(allowlist, sorted(set(allowlist)))
         self.assertEqual(MODULE.ABI_VERSION, 1)
         self.assertEqual(

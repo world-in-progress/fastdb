@@ -76,7 +76,7 @@ def valid_document() -> dict[str, object]:
         },
         "abi": {
             "version": 1,
-            "symbol_count": 117,
+            "symbol_count": 118,
             "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
             "status": "frozen-p4",
         },
@@ -484,9 +484,17 @@ class ProjectionMapTests(unittest.TestCase):
                 MODULE.check_documentation(changed.__getitem__)
 
     def test_rejects_abi_count_order_or_shape_drift(self) -> None:
-        exact = [f"fdb_payload_v1_symbol_{index:03d}" for index in range(117)]
+        external_bytes = "fdb_payload_v1_builder_value_external_bytes"
+        exact = [external_bytes] + [
+            f"fdb_payload_v1_symbol_{index:03d}" for index in range(117)
+        ]
         MODULE.check_abi_allowlist("\n".join(exact))
-        for invalid in (exact[:-1], list(reversed(exact)), exact[:-1] + ["bad"]):
+        for invalid in (
+            exact[:-1],
+            list(reversed(exact)),
+            exact[:-1] + ["bad"],
+            exact[1:] + ["fdb_payload_v1_symbol_117"],
+        ):
             with self.assertRaises(MODULE.QualityError):
                 MODULE.check_abi_allowlist("\n".join(invalid))
 

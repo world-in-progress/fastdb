@@ -81,6 +81,7 @@ class ReleaseInventoryTests(unittest.TestCase):
                 for expected in ("LICENSE", "THIRD_PARTY_NOTICES.txt", "include/fastdb_payload.h", "include/fastdb_payload.hpp", "licenses/double-conversion/LICENSE", "licenses/yyjson/UPSTREAM.md", "licenses/picosha2/LICENSE", "licenses/clipper/NOTICES.txt", "licenses/gaiageo/NOTICES.txt"):
                     self.assertIn(expected, members)
                 manifest = json.load(archive.extractfile("manifest.json"))
+                self.assertEqual(manifest["abi_symbol_count"], 118)
                 inventory = {item["path"] for item in manifest["files"]}
                 self.assertIn("licenses/double-conversion/LICENSE", inventory)
                 self.assertIn("include/fastdb_payload.hpp", inventory)

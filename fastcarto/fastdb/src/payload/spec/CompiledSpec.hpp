@@ -13,6 +13,10 @@
 #include <optional>
 #include <string_view>
 
+namespace fastdb::payload::layout {
+class RuntimeSchema;
+}
+
 namespace fastdb::payload::spec {
 
 error::Result<void>
@@ -54,9 +58,12 @@ public:
         std::string_view id) const noexcept;
 
 private:
+    friend class layout::RuntimeSchema;
     struct State;
 
     explicit CompiledSpec(std::shared_ptr<const State> state) noexcept;
+    error::Result<std::shared_ptr<const layout::RuntimeSchema>>
+    runtime_schema() const;
 
     std::shared_ptr<const State> state_;
 };

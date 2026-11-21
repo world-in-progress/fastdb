@@ -449,7 +449,7 @@ Result<std::vector<EntryDescriptor>> read_entries(
     entries.reserve(header.entry_count);
     std::uint64_t summed_roots = UINT64_C(0);
     std::uint32_t next_region = UINT32_C(0);
-    const auto& source_entries = runtime.spec().resolved().entries();
+    const auto& source_entries = runtime.resolved().entries();
     for (std::uint32_t index = UINT32_C(0); index < header.entry_count;
          ++index) {
         const JsonPointer path = binary_entry_path(index);
@@ -1040,7 +1040,7 @@ Result<void> validate_slot_tree(
                 slot.type->resolved_component_index);
             if (component == nullptr ||
                 slot.type->resolved_component_index >=
-                    runtime.spec().resolved().components().size()) {
+                    runtime.resolved().components().size()) {
                 return Result<void>::failure(simple_error(
                     FDB_PAYLOAD_E_INTERNAL, slot_path,
                     "Graph component layout is missing",
@@ -1072,7 +1072,7 @@ Result<void> validate_slot_tree(
             }
             pending.push_back(ComponentContinuation{
                 component,
-                &runtime.spec().resolved().components()[
+                &runtime.resolved().components()[
                     slot.type->resolved_component_index],
                 slot.offset, slot.structural_depth, 0U,
                 component->validity_bytes, slot.path_mark});
@@ -1356,7 +1356,7 @@ Result<void> revisit_slot_tree(
                 runtime.component(component_index);
             if (component == nullptr ||
                 component_index >=
-                    runtime.spec().resolved().components().size()) {
+                    runtime.resolved().components().size()) {
                 return Result<void>::failure(simple_error(
                     FDB_PAYLOAD_E_INTERNAL, slot_path,
                     "Validated graph component metadata is missing",
@@ -1364,7 +1364,7 @@ Result<void> revisit_slot_tree(
             }
             pending.push_back(ReachComponentContinuation{
                 component,
-                &runtime.spec().resolved().components()[component_index],
+                &runtime.resolved().components()[component_index],
                 slot.offset, 0U, slot.path_mark});
         }
     }
@@ -1421,7 +1421,7 @@ Result<void> validate_reachability(
     }
     std::vector<ReachFrame> pending;
 
-    const auto& source_entries = runtime.spec().resolved().entries();
+    const auto& source_entries = runtime.resolved().entries();
     for (const EntryState& entry : entries) {
         const spec::Entry& source =
             source_entries[entry.descriptor.entry_index];
@@ -1458,7 +1458,7 @@ Result<void> validate_reachability(
         const JsonPointer object_path =
             JsonPointer{}
                 .append("objects")
-                .append(runtime.spec().resolved().components()[
+                .append(runtime.resolved().components()[
                     coordinate.component_index]
                             .id)
                 .append(coordinate.object_id);
@@ -1494,7 +1494,7 @@ Result<void> validate_reachability(
             return Result<void>::failure(std::move(absolute).error());
         }
         const spec::Component& source_component =
-            runtime.spec().resolved().components()[
+            runtime.resolved().components()[
                 coordinate.component_index];
         for (std::size_t field_index = 0U;
              field_index < component->fields.size(); ++field_index) {
@@ -1531,7 +1531,7 @@ Result<void> validate_reachability(
             const JsonPointer path =
                 JsonPointer{}
                     .append("objects")
-                    .append(runtime.spec().resolved().components()[
+                    .append(runtime.resolved().components()[
                         component_index]
                                 .id)
                     .append(object_id);
@@ -1572,14 +1572,14 @@ Result<void> validate_object_record(
             "component_layout_missing"));
     }
     if (pool.component_index >=
-        runtime.spec().resolved().components().size()) {
+        runtime.resolved().components().size()) {
         return Result<void>::failure(simple_error(
             FDB_PAYLOAD_E_INTERNAL, JsonPointer{}.append("objects"),
             "Graph source component is missing",
             "component_source_missing"));
     }
     const spec::Component& source_component =
-        runtime.spec().resolved().components()[pool.component_index];
+        runtime.resolved().components()[pool.component_index];
     const JsonPointer path = JsonPointer{}
                                  .append("objects")
                                  .append(pool.component_index)
@@ -1689,13 +1689,14 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
                 binary_header_path(), "components", expected_components,
                 limits.max_components));
         }
-        auto runtime = RuntimeSchema::compile(compiled);
-        if (!runtime.has_value()) {
+        auto compiled_runtime = RuntimeSchema::compile(compiled);
+        if (!compiled_runtime.has_value()) {
             return Result<PayloadIndex>::failure(
-                std::move(runtime).error());
+                std::move(compiled_runtime).error());
         }
+        const RuntimeSchema& runtime = *compiled_runtime.value();
         PayloadIndex output;
-        output.list_slots_.assign(runtime.value().type_count(), std::nullopt);
+        output.list_slots_.assign(runtime.type_count(), std::nullopt);
         output.object_pools_.assign(expected_component_count, std::nullopt);
 
         std::uint64_t expected_regions = expected_entries;
@@ -1711,13 +1712,13 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
             }
         }
         auto added = layout::checked_accumulate_u64(
-            expected_regions, runtime.value().identity_components().size(),
+            expected_regions, runtime.identity_components().size(),
             JsonPointer{}.append("regions"));
         if (!added.has_value()) {
             return Result<PayloadIndex>::failure(std::move(added).error());
         }
         for (const layout::ListNodeLayout& list :
-             runtime.value().list_nodes()) {
+             runtime.list_nodes()) {
             added = layout::checked_accumulate_u64(
                 expected_regions, list.item_nullable ? UINT64_C(2)
                                                      : UINT64_C(1),
@@ -1728,9 +1729,9 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
             }
         }
         const std::uint64_t pool_regions =
-            (runtime.value().has_utf8_pool() ? UINT64_C(1) : UINT64_C(0)) +
-            (runtime.value().has_utf16_pool() ? UINT64_C(1) : UINT64_C(0)) +
-            (runtime.value().has_bytes_pool() ? UINT64_C(1) : UINT64_C(0));
+            (runtime.has_utf8_pool() ? UINT64_C(1) : UINT64_C(0)) +
+            (runtime.has_utf16_pool() ? UINT64_C(1) : UINT64_C(0)) +
+            (runtime.has_bytes_pool() ? UINT64_C(1) : UINT64_C(0));
         added = layout::checked_accumulate_u64(
             expected_regions, pool_regions,
             JsonPointer{}.append("regions"));
@@ -1751,7 +1752,7 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
                 std::move(header).error());
         }
         auto entries = read_entries(
-            runtime.value(), bytes, byte_count, header.value(), work);
+            runtime, bytes, byte_count, header.value(), work);
         if (!entries.has_value()) {
             return Result<PayloadIndex>::failure(
                 std::move(entries).error());
@@ -1780,7 +1781,7 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
         for (const EntryDescriptor& entry : entries.value()) {
             EntryState state{entry, RegionFields{}, RegionFields{}, false};
             const RuntimeType* const type =
-                runtime.value().find_type(entry.runtime_type_id);
+                runtime.find_type(entry.runtime_type_id);
             if (type == nullptr) {
                 return Result<PayloadIndex>::failure(simple_error(
                     FDB_PAYLOAD_E_INTERNAL, JsonPointer{},
@@ -1881,12 +1882,12 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
         }
 
         std::vector<ObjectPoolState> pools;
-        pools.reserve(runtime.value().identity_components().size());
+        pools.reserve(runtime.identity_components().size());
         std::vector<std::uint64_t> object_counts(
             compiled.resolved().components().size(), UINT64_C(0));
         std::uint64_t graph_object_count = UINT64_C(0);
         for (const std::uint32_t component_index :
-             runtime.value().identity_components()) {
+             runtime.identity_components()) {
             const JsonPointer path = binary_region_path(region_index);
             auto charged = work.charge(UINT64_C(1), path);
             if (!charged.has_value()) {
@@ -1900,7 +1901,7 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
                     std::move(fields).error());
             }
             const ComponentLayout* const component =
-                runtime.value().component(component_index);
+                runtime.component(component_index);
             if (component == nullptr) {
                 return Result<PayloadIndex>::failure(simple_error(
                     FDB_PAYLOAD_E_INTERNAL, path,
@@ -1976,12 +1977,12 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
         }
 
         ListPartitions list_partitions;
-        list_partitions.indexes.assign(runtime.value().type_count(),
+        list_partitions.indexes.assign(runtime.type_count(),
                                        UINT32_MAX);
-        list_partitions.states.reserve(runtime.value().list_nodes().size());
+        list_partitions.states.reserve(runtime.list_nodes().size());
         std::uint64_t total_list_elements = UINT64_C(0);
         for (const layout::ListNodeLayout& list :
-             runtime.value().list_nodes()) {
+             runtime.list_nodes()) {
             RegionFields validity{};
             std::uint32_t validity_region_index = UINT32_MAX;
             if (list.item_nullable) {
@@ -2163,10 +2164,10 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
         for (const layout::RegionKind expected_kind : pool_order) {
             const bool required =
                 expected_kind == layout::RegionKind::utf8_pool
-                    ? runtime.value().has_utf8_pool()
+                    ? runtime.has_utf8_pool()
                 : expected_kind == layout::RegionKind::utf16_pool
-                    ? runtime.value().has_utf16_pool()
-                    : runtime.value().has_bytes_pool();
+                    ? runtime.has_utf16_pool()
+                    : runtime.has_bytes_pool();
             if (!required) {
                 continue;
             }
@@ -2329,10 +2330,10 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
                         std::move(absolute).error());
                 }
                 const spec::Entry& source =
-                    runtime.value().spec().resolved().entries()[
+                    runtime.resolved().entries()[
                         entry.descriptor.entry_index];
                 auto valid = validate_slot_tree(
-                    runtime.value(), bytes, byte_count, source.type,
+                    runtime, bytes, byte_count, source.type,
                     absolute.value(), present, true, UINT64_C(0), object_counts,
                     variable_pools, pool_cursors, list_partitions, variables,
                     limits.validate_text_eager, work,
@@ -2349,7 +2350,7 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
             for (std::uint64_t object_id = UINT64_C(0);
                  object_id < pool.values.element_count; ++object_id) {
                 auto valid = validate_object_record(
-                    runtime.value(), bytes, byte_count, pool, object_id,
+                    runtime, bytes, byte_count, pool, object_id,
                     object_counts, variable_pools, pool_cursors,
                     list_partitions, variables, limits.validate_text_eager,
                     work, limits.max_nesting_depth);
@@ -2385,7 +2386,7 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
             }
         }
         auto reachable = validate_reachability(
-            runtime.value(), bytes, byte_count, entry_states, pools,
+            runtime, bytes, byte_count, entry_states, pools,
             object_counts, graph_object_count, list_partitions, work);
         if (!reachable.has_value()) {
             return Result<PayloadIndex>::failure(
@@ -2393,7 +2394,7 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
         }
         output.entries_.reserve(entry_states.size());
         for (const EntryState& entry : entry_states) {
-            const RuntimeType* const type = runtime.value().find_type(
+            const RuntimeType* const type = runtime.find_type(
                 entry.descriptor.runtime_type_id);
             if (type == nullptr || type->source == nullptr) {
                 return Result<PayloadIndex>::failure(simple_error(
@@ -2411,8 +2412,7 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
         }
         output.pools_ = std::move(variable_pools);
         output.variable_slots_ = std::move(variables);
-        output.runtime_schema_ = std::make_shared<const RuntimeSchema>(
-            std::move(runtime).value());
+        output.runtime_schema_ = std::move(compiled_runtime).value();
         output.total_length_ = byte_count;
         output.root_value_count_ = header.value().root_value_count;
         output.graph_object_count_ = graph_object_count;
@@ -2420,7 +2420,7 @@ Result<PayloadIndex> open_graph(const spec::CompiledSpec& compiled,
         output.region_count_ = header.value().region_count;
         output.retained_max_string_bytes_ = limits.max_string_bytes;
         output.retained_max_validation_work_ = limits.max_validation_work;
-        output.text_validated_eagerly_ = limits.validate_text_eager;
+        output.text_validated_ = limits.validate_text_eager;
         return Result<PayloadIndex>::success(std::move(output));
     } catch (const std::bad_alloc&) {
         return Result<PayloadIndex>::failure(allocation_error());

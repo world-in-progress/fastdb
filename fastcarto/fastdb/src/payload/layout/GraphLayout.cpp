@@ -233,7 +233,7 @@ Result<GraphLogicalFacts> collect_logical_facts(
             UINT32_MAX, UINT32_MAX, {}});
     }
 
-    const auto& source_entries = runtime.spec().resolved().entries();
+    const auto& source_entries = runtime.resolved().entries();
     if (entries.size() != source_entries.size()) {
         return Result<GraphLogicalFacts>::failure(layout_error(
             JsonPointer{}.append("entries"),
@@ -460,12 +460,14 @@ Result<GraphLogicalFacts> collect_logical_facts(
                     JsonPointer{}.append("values"),
                     "value_tag_mismatch"));
             }
-            auto storage_end = checked_range_end(
-                node.scalar_bits_or_offset, node.byte_length, storage_size,
-                JsonPointer{}.append("pools"));
-            if (!storage_end.has_value()) {
-                return Result<GraphLogicalFacts>::failure(
-                    std::move(storage_end).error());
+            if (node.external_bytes == UINT32_C(0)) {
+                auto storage_end = checked_range_end(
+                    node.scalar_bits_or_offset, node.byte_length, storage_size,
+                    JsonPointer{}.append("pools"));
+                if (!storage_end.has_value()) {
+                    return Result<GraphLogicalFacts>::failure(
+                        std::move(storage_end).error());
+                }
             }
             if (kind == TypeKind::wstr &&
                 node.byte_length % UINT64_C(2) != UINT64_C(0)) {
@@ -724,15 +726,16 @@ Result<std::uint64_t> compute_reachability_work(
 }  // namespace
 
 Result<GraphLayout> GraphLayout::plan(
-    const RuntimeSchema& runtime_schema,
+    std::shared_ptr<const RuntimeSchema> runtime,
     const LogicalPayload& values) {
     try {
-        if (runtime_schema.spec().profile() != Profile::object_graph_v1 ||
+        const RuntimeSchema& runtime_schema = *runtime;
+        if (runtime_schema.resolved().profile() != Profile::object_graph_v1 ||
             values.spec().profile() != Profile::object_graph_v1) {
             return Result<GraphLayout>::failure(layout_error(
                 JsonPointer{}, "graph_profile_required"));
         }
-        if (runtime_schema.spec().digest() != values.spec().digest()) {
+        if (runtime_schema.digest() != values.spec().digest()) {
             return Result<GraphLayout>::failure(Error::from_details(
                 FDB_PAYLOAD_E_DIGEST_MISMATCH, JsonPointer{},
                 "Runtime schema and logical payload spec digests differ",
@@ -740,16 +743,16 @@ Result<GraphLayout> GraphLayout::plan(
                     "reason", JsonValue{"layout_spec_digest_mismatch"}}})));
         }
         const auto& source_entries =
-            runtime_schema.spec().resolved().entries();
+            runtime_schema.resolved().entries();
         const auto& source_components =
-            runtime_schema.spec().resolved().components();
+            runtime_schema.resolved().components();
         if (source_entries.size() != values.entry_roots().size() ||
             source_components.size() != values.object_pools().size()) {
             return Result<GraphLayout>::failure(layout_error(
                 JsonPointer{}, "logical_inventory_mismatch"));
         }
 
-        GraphLayout result(runtime_schema);
+        GraphLayout result(std::move(runtime));
         result.entries_.reserve(source_entries.size());
         result.entry_values_.reserve(source_entries.size());
         result.object_aggregates_.reserve(
@@ -1139,7 +1142,7 @@ Result<GraphLayout> GraphLayout::plan(
 }  // namespace fastdb::payload::layout
 
 // A GraphLayout travels through the same noexcept ownership transfers as
-// RecordLayout; see RuntimeSchema.cpp for the failure this guards against.
+// RecordLayout.
 static_assert(
     std::is_nothrow_move_constructible_v<
         fastdb::payload::layout::GraphLayout>,

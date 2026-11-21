@@ -118,6 +118,14 @@ PyObject* external_bytes(PyObject*, PyObject* source) {
     return make_buffer_owner(source, true);
 }
 
+fdb_payload_v1_backing_v1_t buffer_backing() {
+    fdb_payload_v1_backing_v1_t backing;
+    fdb_payload_v1_backing_init(&backing);
+    backing.retain = retain_buffer;
+    backing.release = release_buffer;
+    return backing;
+}
+
 PyObject* open_external(PyObject*, PyObject* args) {
     PyObject* capsule = nullptr;
     unsigned long long spec = 0, options = 0, payload = 0, error = 0;
@@ -129,10 +137,7 @@ PyObject* open_external(PyObject*, PyObject* args) {
     if (owner == nullptr) {
         return nullptr;
     }
-    fdb_payload_v1_backing_v1_t backing;
-    fdb_payload_v1_backing_init(&backing);
-    backing.retain = retain_buffer;
-    backing.release = release_buffer;
+    const auto backing = buffer_backing();
     const auto& view = owner->buffer.view;
     fdb_payload_v1_status_t status;
     Py_BEGIN_ALLOW_THREADS
@@ -142,6 +147,35 @@ PyObject* open_external(PyObject*, PyObject* args) {
         &backing, owner, reinterpret_cast<const fdb_payload_v1_open_options_t*>(options),
         reinterpret_cast<fdb_payload_v1_payload_t**>(payload),
         reinterpret_cast<fdb_payload_v1_error_t**>(error));
+    Py_END_ALLOW_THREADS
+    return PyLong_FromUnsignedLong(status);
+}
+
+PyObject* builder_value_external_bytes(PyObject*, PyObject* args) {
+    PyObject* capsule = nullptr;
+    unsigned long long builder = 0, error = 0;
+    if (!PyArg_ParseTuple(args, "KOK", &builder, &capsule, &error)) {
+        return nullptr;
+    }
+    auto* builder_ptr = reinterpret_cast<fdb_payload_v1_builder_t*>(
+        static_cast<std::uintptr_t>(builder));
+    if (builder_ptr == nullptr) {
+        PyErr_SetString(PyExc_ValueError, "builder address must be nonzero");
+        return nullptr;
+    }
+    auto* owner = static_cast<BufferOwner*>(PyCapsule_GetPointer(capsule, buffer_capsule));
+    if (owner == nullptr) {
+        return nullptr;
+    }
+    const auto backing = buffer_backing();
+    const auto& view = owner->buffer.view;
+    fdb_payload_v1_status_t status;
+    Py_BEGIN_ALLOW_THREADS
+    status = fdb_payload_v1_builder_value_external_bytes(
+        builder_ptr, static_cast<const std::uint8_t*>(view.buf),
+        static_cast<std::uint64_t>(view.len), &backing, owner,
+        reinterpret_cast<fdb_payload_v1_error_t**>(
+            static_cast<std::uintptr_t>(error)));
     Py_END_ALLOW_THREADS
     return PyLong_FromUnsignedLong(status);
 }
@@ -436,6 +470,7 @@ PyMethodDef methods[] = {
     {"input_buffer", input_buffer, METH_O, nullptr},
     {"external_bytes", external_bytes, METH_O, nullptr},
     {"open_external", open_external, METH_VARARGS, nullptr},
+    {"builder_value_external_bytes", builder_value_external_bytes, METH_VARARGS, nullptr},
     {"own_access", own_access, METH_O, nullptr},
     {"export_memoryview", export_memoryview, METH_VARARGS, nullptr},
     {"execute_backed", execute_backed, METH_VARARGS, nullptr},

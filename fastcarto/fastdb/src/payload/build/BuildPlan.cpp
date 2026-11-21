@@ -358,7 +358,7 @@ Result<BuildPlan> BuildPlan::create(LogicalPayload&& values) try {
 }
 
 view::OpenOptions BuildPlan::publication_options(
-    const PlanInfo& info) const noexcept {
+    const PlanInfo& info, bool validate_text_eager) const noexcept {
     view::OpenOptions options = view::default_open_options();
     options.max_total_bytes =
         std::max(options.max_total_bytes, info.total_bytes);
@@ -381,7 +381,7 @@ view::OpenOptions BuildPlan::publication_options(
         std::max(options.max_string_bytes, info.text_bytes);
     options.max_validation_work =
         std::max(options.max_validation_work, info.validation_work);
-    options.validate_text_eager = true;
+    options.validate_text_eager = validate_text_eager;
     return options;
 }
 
@@ -509,11 +509,13 @@ Result<view::PayloadOwner> BuildPlan::execute(
             CommittedImage{std::move(committed), report});
     };
 
-    auto publish_image = [this](CommittedImage image)
+    auto publish_image = [this, validate_text_eager = callbacks != nullptr](
+                             CommittedImage image)
         -> Result<view::PayloadOwner> {
         auto opened = view::open_payload(
             values_.spec(), image.backing.readable_data(),
-            image.backing.readable_size(), publication_options(info_));
+            image.backing.readable_size(),
+            publication_options(info_, validate_text_eager));
         if (!opened.has_value()) {
             if (opened.error().code() == FDB_PAYLOAD_E_ALLOCATION_FAILED) {
                 return Result<view::PayloadOwner>::failure(
@@ -522,6 +524,9 @@ Result<view::PayloadOwner> BuildPlan::execute(
             return Result<view::PayloadOwner>::failure(
                 committed_image_validation_error(opened.error()));
         }
+        // Heap backing preserves the text already validated during authoring.
+        // Custom backing reaches this point only after eager validation.
+        opened.value().text_validated_ = true;
         return view::PayloadOwner::publish(
             std::move(image.backing), values_.spec(),
             std::move(opened).value(), image.report);

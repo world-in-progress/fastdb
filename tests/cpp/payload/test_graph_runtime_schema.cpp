@@ -219,7 +219,7 @@ int test_roles_identity_reachability_and_layout() {
 
     auto runtime = RuntimeSchema::compile(compiled.value());
     require(runtime.has_value());
-    const RuntimeSchema& schema = runtime.value();
+    const RuntimeSchema& schema = *runtime.value();
     require(schema.type_count() == topology.types.size());
     require(schema.runtime_id(entries[0].type) == root_id);
     require(schema.storage_role(root_id).has_value());
@@ -323,11 +323,10 @@ int test_large_reference_cycle_is_iterative() {
     }
     auto runtime = RuntimeSchema::compile(compiled.value());
     require(runtime.has_value());
-    require(runtime.value().components().size() == component_count);
-    require(runtime.value().identity_components().size() == component_count);
-    require(runtime.value().component(UINT32_C(0))->stride == UINT32_C(8));
-    require(runtime.value()
-                .component(component_count - UINT32_C(1))
+    require(runtime.value()->components().size() == component_count);
+    require(runtime.value()->identity_components().size() == component_count);
+    require(runtime.value()->component(UINT32_C(0))->stride == UINT32_C(8));
+    require(runtime.value()->component(component_count - UINT32_C(1))
                 ->stride == UINT32_C(8));
     return EXIT_SUCCESS;
 }

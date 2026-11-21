@@ -3,6 +3,7 @@
 #include "payload/identity/Sha256.hpp"
 #include "payload/json/Jcs.hpp"
 #include "payload/json/JsonPointer.hpp"
+#include "payload/layout/RuntimeSchema.hpp"
 #include "payload/spec/Resolve.hpp"
 
 #include <fastdb_payload.h>
@@ -11,6 +12,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -120,21 +122,24 @@ struct CompiledSpec::State final {
           ManifestArtifact manifest_value)
         : canonical(std::move(canonical_value)),
           digest(digest_value),
-          resolved(std::move(resolved_value)),
+          resolved(std::make_shared<const ResolvedSpec>(
+              std::move(resolved_value))),
           manifest(std::move(manifest_value.canonical_bytes)),
           capabilities(std::move(manifest_value.capabilities)),
-          entries(entry_lookup(resolved)),
-          components(component_lookup(resolved)),
-          fields(field_lookups(resolved)) {}
+          entries(entry_lookup(*resolved)),
+          components(component_lookup(*resolved)),
+          fields(field_lookups(*resolved)) {}
 
     const std::string canonical;
     const std::array<std::uint8_t, 32> digest;
-    const ResolvedSpec resolved;
+    const std::shared_ptr<const ResolvedSpec> resolved;
     const std::string manifest;
     const ManifestCapabilities capabilities;
     const Lookup entries;
     const Lookup components;
     const std::vector<Lookup> fields;
+    mutable std::once_flag runtime_once;
+    mutable std::shared_ptr<const layout::RuntimeSchema> runtime;
 };
 
 Result<CompiledSpec> CompiledSpec::compile(std::string_view source,
@@ -181,6 +186,25 @@ Result<CompiledSpec> CompiledSpec::compile(std::string_view source,
 CompiledSpec::CompiledSpec(std::shared_ptr<const State> state) noexcept
     : state_(std::move(state)) {}
 
+Result<std::shared_ptr<const layout::RuntimeSchema>>
+CompiledSpec::runtime_schema() const {
+    using RuntimeResult = Result<std::shared_ptr<const layout::RuntimeSchema>>;
+    try {
+        std::call_once(state_->runtime_once, [this] {
+            auto runtime = layout::RuntimeSchema::build(
+                state_->resolved, state_->digest);
+            if (!runtime.has_value()) {
+                // An exceptional exit leaves the once flag unset for retries.
+                throw std::move(runtime).error();
+            }
+            state_->runtime = std::move(runtime).value();
+        });
+    } catch (Error& failure) {
+        return RuntimeResult::failure(std::move(failure));
+    }
+    return RuntimeResult::success(state_->runtime);
+}
+
 std::string_view CompiledSpec::canonical_bytes() const noexcept {
     return state_->canonical;
 }
@@ -194,11 +218,11 @@ std::string_view CompiledSpec::manifest_bytes() const noexcept {
 }
 
 Profile CompiledSpec::profile() const noexcept {
-    return state_->resolved.profile();
+    return state_->resolved->profile();
 }
 
 const SemanticFacts& CompiledSpec::facts() const noexcept {
-    return state_->resolved.facts();
+    return state_->resolved->facts();
 }
 
 const ManifestCapabilities& CompiledSpec::capabilities() const noexcept {
@@ -206,7 +230,7 @@ const ManifestCapabilities& CompiledSpec::capabilities() const noexcept {
 }
 
 const ResolvedSpec& CompiledSpec::resolved() const noexcept {
-    return state_->resolved;
+    return *state_->resolved;
 }
 
 std::optional<std::uint32_t> CompiledSpec::entry_index(

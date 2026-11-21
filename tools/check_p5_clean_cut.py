@@ -250,8 +250,8 @@ def validate_policy(root: Path, policy: dict[str, object]) -> list[str]:
         return sorted(set(violations))
     if policy["schema"] != SCHEMA:
         violations.append(f"policy schema must be {SCHEMA!r}")
-    if policy["native_abi_symbol_count"] != 117:
-        violations.append("policy native ABI symbol count must remain exactly 117")
+    if policy["native_abi_symbol_count"] != 118:
+        violations.append("policy native ABI symbol count must remain exactly 118")
     if policy["python_version"] != "0.2.4":
         violations.append("policy Python package version must match release 0.2.4")
     if policy["typescript_version"] != "0.2.4":

@@ -1,7 +1,9 @@
 #pragma once
 
+#include "payload/backing/Backing.hpp"
 #include "payload/spec/CompiledSpec.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 #include <string_view>
@@ -46,13 +48,13 @@ struct ValueNode final {
     std::uint32_t runtime_type_id;
     ValueTag tag;
     std::uint8_t reserved8[3];
-    std::uint64_t scalar_bits_or_offset;
+    std::uint64_t scalar_bits_or_offset;  // External spans use a pin index.
     std::uint64_t byte_length;
     NodeIndex first_child;
     NodeIndex next_sibling;
     std::uint64_t child_count;
     std::uint32_t object_component_index{UINT32_MAX};
-    std::uint32_t reserved32{UINT32_C(0)};
+    std::uint32_t external_bytes{UINT32_C(0)};
     std::uint64_t object_id{UINT64_MAX};
 };
 
@@ -66,6 +68,7 @@ public:
     /* Core-internal mutable storage; only the builder publishes it. */
     std::vector<ValueNode> nodes_;
     std::vector<std::uint8_t> byte_storage_;
+    std::vector<backing::RetainedBacking> external_bytes_;
 };
 
 class LogicalPayload final {
@@ -96,6 +99,13 @@ public:
         return std::string_view{
             reinterpret_cast<const char*>(arena_.byte_storage_.data()),
             arena_.byte_storage_.size()};
+    }
+    const std::uint8_t* variable_data(const ValueNode& node) const noexcept {
+        const auto offset = static_cast<std::size_t>(node.scalar_bits_or_offset);
+        if (node.external_bytes != UINT32_C(0)) {
+            return arena_.external_bytes_[offset].readable_data();
+        }
+        return arena_.byte_storage_.data() + offset;
     }
 
 private:

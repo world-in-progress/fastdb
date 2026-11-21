@@ -425,6 +425,14 @@ export interface FastdbModule {
     valueSize: bigint,
     outError: number,
   ): number;
+  _fdb_payload_v1_builder_value_external_bytes(
+    builder: number,
+    value: number,
+    valueSize: bigint,
+    backing: number,
+    ownerToken: number,
+    outError: number,
+  ): number;
   _fdb_payload_v1_builder_value_fixed_run(
     builder: number,
     run: number,

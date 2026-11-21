@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
 import {
   BuildPlan,
+  BuildPolicy,
   Builder,
   CompiledSpec,
+  ExternalBytes,
   FixedRun,
   ObjectHandle,
   PayloadError,
@@ -17,6 +20,132 @@ const specUrl = new URL('../golden/payload/v1/binary/spec/', import.meta.url);
 async function compile(name) {
   return CompiledSpec.compile(await readFile(new URL(name, specUrl)));
 }
+
+function compileBytesSpec(profile) {
+  return CompiledSpec.compile(Buffer.from(JSON.stringify({
+    schema: 'fastdb.payload.v1',
+    profile,
+    entries: [{
+      id: 'row',
+      cardinality: 'one',
+      type: { kind: 'component', id: 'Row' },
+    }],
+    components: [{
+      id: 'Row',
+      kind: 'record',
+      fields: [
+        { id: 'bytes', type: { kind: 'bytes' } },
+        { id: 'empty', type: { kind: 'bytes' } },
+      ],
+    }],
+  })));
+}
+
+for (const profile of ['record.v1', 'object_graph.v1']) {
+  test(`external bytes match copied bytes in ${profile}`, async (t) => {
+    await initPayload();
+    const spec = compileBytesSpec(profile);
+    const bytes = new Uint8Array(256 * 1024).map((_, index) => index % 251);
+    const empty = new Uint8Array();
+    const source = ExternalBytes.copyFrom(bytes);
+    const emptySource = ExternalBytes.copyFrom(empty);
+    t.after(() => {
+      spec.dispose();
+      source.dispose();
+      emptySource.dispose();
+    });
+
+    const author = (writeValues) => {
+      const builder = Builder.create(spec);
+      try {
+        if (profile === 'object_graph.v1') {
+          const row = builder.declareObject(spec.componentIndex('Row'));
+          writeValues(builder.objectFillBegin(row));
+          builder.entryBegin(0, 1n).valueObject(row);
+        } else {
+          writeValues(builder.entryBegin(0, 1n).valueComponentBegin());
+        }
+        return builder.freeze();
+      } finally {
+        builder.dispose();
+      }
+    };
+
+    const copied = author((builder) => builder.valueBytes(bytes).valueBytes(empty));
+    t.after(() => copied.dispose());
+    const external = author((builder) => {
+      assert.equal(builder.valueExternalBytes(source), builder);
+      builder.valueExternalBytes(emptySource);
+    });
+    t.after(() => external.dispose());
+    source.dispose();
+    emptySource.dispose();
+
+    const baseline = copied.execute(BuildPolicy.AllowStaging).payload;
+    t.after(() => baseline.dispose());
+    const image = baseline.binaryBytes();
+    const digest = createHash('sha256').update(image).digest('hex');
+    for (let execution = 0; execution < 2; execution++) {
+      const payload = external.execute(BuildPolicy.AllowStaging).payload;
+      try {
+        const actual = payload.binaryBytes();
+        assert.deepEqual(actual, image);
+        assert.deepEqual(payload.sha256(), baseline.sha256());
+        assert.equal(createHash('sha256').update(actual).digest('hex'), digest);
+      } finally {
+        payload.dispose();
+      }
+    }
+  });
+}
+
+test('external byte rejection leaves the builder and the source reusable', async (t) => {
+  await initPayload();
+  const spec = compileBytesSpec('record.v1');
+  const builder = Builder.create(spec, { maxOpaqueBytes: 3n });
+  const abandoned = Builder.create(spec);
+  const bytes = new Uint8Array([0, 0xff, 0x41]);
+  const source = ExternalBytes.copyFrom(bytes);
+  const tooLarge = ExternalBytes.copyFrom(new Uint8Array(4));
+  t.after(() => {
+    abandoned.dispose();
+    builder.dispose();
+    source.dispose();
+    tooLarge.dispose();
+    spec.dispose();
+  });
+
+  abandoned.entryBegin(0, 1n).valueComponentBegin().valueExternalBytes(source);
+  abandoned.dispose();
+  abandoned.dispose();
+
+  assert.throws(() => builder.valueExternalBytes(source), { symbol: 'BUILDER_STATE' });
+  builder.entryBegin(0, 1n).valueComponentBegin();
+  assert.throws(() => builder.valueExternalBytes(tooLarge), {
+    symbol: 'BUILDER_RESOURCE_LIMIT',
+  });
+  tooLarge.dispose();
+  assert.throws(() => builder.valueExternalBytes(tooLarge), /ExternalBytes is disposed/);
+  assert.throws(() => builder.valueExternalBytes(new Uint8Array()), TypeError);
+
+  builder.valueExternalBytes(source).valueBytes(new Uint8Array());
+  source.dispose();
+  const plan = builder.freeze();
+  t.after(() => plan.dispose());
+  builder.dispose();
+  assert.equal(plan.info().opaqueBytes, 3n);
+  const { payload } = plan.execute(BuildPolicy.AllowStaging);
+  t.after(() => payload.dispose());
+  const entry = payload.entryView(0);
+  t.after(() => entry.dispose());
+  const row = entry.at(0n);
+  t.after(() => row.dispose());
+  const value = row.field(0);
+  t.after(() => value.dispose());
+  const access = value.acquire();
+  t.after(() => access.dispose());
+  assert.deepEqual(access.bytes(), bytes);
+});
 
 function fixedBytes() {
   const bytes = new Uint8Array(6);

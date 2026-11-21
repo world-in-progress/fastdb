@@ -323,8 +323,8 @@ typedef void (*fdb_payload_v1_backing_release_fn)(void* context,
  * known flags and every fully covered known reserved word must be zero. A
  * larger unknown tail is ignored. Build requires reserve/commit/rollback/
  * release; write may be null only when reserve supplies a stable writable
- * base. External open requires retain/release. owner_token may be null and is
- * never dereferenced by Core.
+ * base. External open and external bytes require retain/release. owner_token
+ * may be null and is never dereferenced by Core.
  *
  * Callback statuses are closed. Direct reserve accepts zero,
  * DIRECT_UNAVAILABLE, or ALLOCATION_FAILED; staged reserve accepts zero or
@@ -410,9 +410,12 @@ FDB_PAYLOAD_API void fdb_payload_v1_backing_init(
 /*
  * A builder is unique, thread-confined mutable state and is not thread-safe.
  * Input strings, byte spans, wide-string code units, and fixed-run
- * descriptors/storage are borrowed only for the call. Successful freeze seals
- * the builder and publishes one immutable plan. Ordinary freeze failure
- * publishes no plan and leaves the same builder retryable.
+ * descriptors/storage are borrowed only for the call, except
+ * fdb_payload_v1_builder_value_external_bytes, which pins its byte span until
+ * builder or plan release. Backing callbacks invoked during authoring must not
+ * re-enter operations on the same builder. Successful freeze seals the builder
+ * and publishes one immutable plan. Ordinary freeze failure publishes no plan
+ * and leaves the same builder retryable.
  */
 FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_create(
     const fdb_payload_v1_spec_t* spec,
@@ -507,6 +510,21 @@ FDB_PAYLOAD_API fdb_payload_v1_status_t fdb_payload_v1_builder_value_bytes(
     fdb_payload_v1_builder_t* builder,
     const uint8_t* value,
     uint64_t value_size,
+    fdb_payload_v1_error_t** out_error);
+/*
+ * Authors a bytes value without copying it into the builder. A successful
+ * retain pins the span until the builder or its frozen plan releases it.
+ * A failure after retain releases the span before returning. A frozen plan
+ * may read the span concurrently. The caller must keep it readable and
+ * unchanged while pinned. A null value is allowed for an empty span.
+ */
+FDB_PAYLOAD_API fdb_payload_v1_status_t
+fdb_payload_v1_builder_value_external_bytes(
+    fdb_payload_v1_builder_t* builder,
+    const uint8_t* value,
+    uint64_t value_size,
+    const fdb_payload_v1_backing_v1_t* backing,
+    void* owner_token,
     fdb_payload_v1_error_t** out_error);
 FDB_PAYLOAD_API fdb_payload_v1_status_t
 fdb_payload_v1_builder_value_fixed_run(

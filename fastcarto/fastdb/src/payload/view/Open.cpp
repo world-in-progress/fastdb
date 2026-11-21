@@ -695,7 +695,7 @@ Result<void> validate_fixed_slot(
         }
 
         const auto& source_component =
-            runtime.spec().resolved().components()[
+            runtime.resolved().components()[
                 slot.type->resolved_component_index];
         if (!component->fields.empty()) {
             pending.push_back(ComponentContinuation{
@@ -1506,7 +1506,7 @@ Result<VariableSpanMetadata> PayloadIndex::text_span(
             diagnostic_path, "string_bytes", span.value().byte_length,
             retained_max_string_bytes_));
     }
-    if (!text_validated_eagerly_) {
+    if (!text_validated_) {
         const std::uint64_t units =
             inline_cursor->kind == TypeKind::str
                 ? span.value().byte_length
@@ -1925,12 +1925,14 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 known_minimum_work, limits.max_validation_work));
         }
 
-        auto runtime = RuntimeSchema::compile(compiled);
-        if (!runtime.has_value()) {
-            return Result<PayloadIndex>::failure(std::move(runtime).error());
+        auto compiled_runtime = RuntimeSchema::compile(compiled);
+        if (!compiled_runtime.has_value()) {
+            return Result<PayloadIndex>::failure(
+                std::move(compiled_runtime).error());
         }
+        const RuntimeSchema& runtime = *compiled_runtime.value();
         const auto& runtime_entries =
-            runtime.value().spec().resolved().entries();
+            runtime.resolved().entries();
         if (runtime_entries.size() != expected_entries) {
             return Result<PayloadIndex>::failure(simple_error(
                 FDB_PAYLOAD_E_INTERNAL, JsonPointer{}.append("entries"),
@@ -1948,7 +1950,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         }
         std::uint64_t list_region_count = UINT64_C(0);
         for (const layout::ListNodeLayout& list :
-             runtime.value().list_nodes()) {
+             runtime.list_nodes()) {
             const std::uint64_t count =
                 list.item_nullable ? UINT64_C(2) : UINT64_C(1);
             counted_work = layout::checked_accumulate_u64(
@@ -1960,9 +1962,9 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
         }
         const std::uint64_t pool_count =
-            (runtime.value().has_utf8_pool() ? UINT64_C(1) : UINT64_C(0)) +
-            (runtime.value().has_utf16_pool() ? UINT64_C(1) : UINT64_C(0)) +
-            (runtime.value().has_bytes_pool() ? UINT64_C(1) : UINT64_C(0));
+            (runtime.has_utf8_pool() ? UINT64_C(1) : UINT64_C(0)) +
+            (runtime.has_utf16_pool() ? UINT64_C(1) : UINT64_C(0)) +
+            (runtime.has_bytes_pool() ? UINT64_C(1) : UINT64_C(0));
         counted_work = layout::checked_accumulate_u64(
             expected_regions, list_region_count,
             JsonPointer{}.append("regions"));
@@ -2198,9 +2200,9 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     std::move(reserved).error());
             }
             const std::uint32_t expected_type =
-                runtime.value().runtime_id(source.type);
+                runtime.runtime_id(source.type);
             if (expected_type == UINT32_MAX ||
-                runtime.value().find_type(expected_type) == nullptr) {
+                runtime.find_type(expected_type) == nullptr) {
                 return Result<PayloadIndex>::failure(simple_error(
                     FDB_PAYLOAD_E_INTERNAL, path,
                     "Runtime entry type is unassigned",
@@ -2305,7 +2307,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             const spec::Entry& source =
                 runtime_entries[entry.entry_index];
             const layout::RuntimeType* const runtime_type =
-                runtime.value().find_type(entry.runtime_type_id);
+                runtime.find_type(entry.runtime_type_id);
             if (entry.runtime_type_id == UINT32_MAX ||
                 runtime_type == nullptr) {
                 return Result<PayloadIndex>::failure(simple_error(
@@ -2420,14 +2422,14 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         }
 
         ListPartitions list_partitions;
-        list_partitions.indexes.assign(runtime.value().type_count(),
+        list_partitions.indexes.assign(runtime.type_count(),
                                        UINT32_MAX);
-        output.list_slots_.assign(runtime.value().type_count(), std::nullopt);
+        output.list_slots_.assign(runtime.type_count(), std::nullopt);
         list_partitions.states.reserve(
-            runtime.value().list_nodes().size());
+            runtime.list_nodes().size());
         std::uint64_t total_list_elements = UINT64_C(0);
         for (const layout::ListNodeLayout& list :
-             runtime.value().list_nodes()) {
+             runtime.list_nodes()) {
             RegionDescriptor validity_descriptor{
                 RegionKind::list_validity, UINT32_C(0),
                 list.owner_runtime_type_id, list.item_runtime_type_id,
@@ -2627,10 +2629,10 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         std::uint64_t text_pool_bytes = UINT64_C(0);
         for (const RegionKind expected_kind : pool_order) {
             const bool required = expected_kind == RegionKind::utf8_pool
-                                      ? runtime.value().has_utf8_pool()
+                                      ? runtime.has_utf8_pool()
                                   : expected_kind == RegionKind::utf16_pool
-                                      ? runtime.value().has_utf16_pool()
-                                      : runtime.value().has_bytes_pool();
+                                      ? runtime.has_utf16_pool()
+                                      : runtime.has_bytes_pool();
             if (!required) {
                 continue;
             }
@@ -2803,7 +2805,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                     ? nullptr
                     : &regions[entry.validity_region_index];
             const layout::RuntimeType* type =
-                runtime.value().find_type(entry.runtime_type_id);
+                runtime.find_type(entry.runtime_type_id);
             if (type == nullptr) {
                 return Result<PayloadIndex>::failure(simple_error(
                     FDB_PAYLOAD_E_INTERNAL,
@@ -2905,7 +2907,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
                 }
                 const std::uint64_t offset = absolute_offset.value();
                 auto valid = validate_fixed_slot(
-                    runtime.value(), bytes, byte_count, source.type, offset,
+                    runtime, bytes, byte_count, source.type, offset,
                     present, work, limits.max_nesting_depth, output.pools_,
                     pool_cursors, list_partitions, output.variable_slots_,
                     limits.validate_text_eager, path);
@@ -2941,8 +2943,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
             }
         }
 
-        output.runtime_schema_ = std::make_shared<const RuntimeSchema>(
-            std::move(runtime).value());
+        output.runtime_schema_ = std::move(compiled_runtime).value();
         output.total_length_ = byte_count;
         output.validation_work_ = work.value();
         output.root_value_count_ = root_value_count.value();
@@ -2950,7 +2951,7 @@ Result<PayloadIndex> open_record(const spec::CompiledSpec& compiled,
         output.region_count_ = region_count.value();
         output.retained_max_string_bytes_ = limits.max_string_bytes;
         output.retained_max_validation_work_ = limits.max_validation_work;
-        output.text_validated_eagerly_ = limits.validate_text_eager;
+        output.text_validated_ = limits.validate_text_eager;
         return Result<PayloadIndex>::success(std::move(output));
     } catch (const std::bad_alloc&) {
         return Result<PayloadIndex>::failure(allocation_error());

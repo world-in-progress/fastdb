@@ -69,7 +69,7 @@ def commit_repository(root: Path) -> None:
 def valid_policy() -> dict[str, object]:
     return {
         "schema": "fastdb.p5-clean-cut-policy.v1",
-        "native_abi_symbol_count": 117,
+        "native_abi_symbol_count": 118,
         "python_version": "0.2.4",
         "typescript_version": "0.2.4",
         "removed_paths": list(PRODUCTION_POLICY["removed_paths"]),
@@ -95,7 +95,7 @@ def valid_policy() -> dict[str, object]:
     }
 
 
-def abi_symbols(count: int = 117) -> str:
+def abi_symbols(count: int = 118) -> str:
     return "".join(
         f"fdb_payload_v1_fixture_{index:03d}\n" for index in range(count)
     )
@@ -172,13 +172,13 @@ def create_repository(root: Path) -> dict[str, object]:
     write(
         root,
         "tools/generate_payload_wasm_exports.py",
-        "EXPECTED_ABI_SYMBOLS = 117\n"
+        "EXPECTED_ABI_SYMBOLS = 118\n"
         'ALLOWLIST = "tests/abi/fastdb_payload_v1_symbols.txt"\n',
     )
     write(
         root,
         "tests/ci/p4_projection_codegen_map.json",
-        '{"abi":{"symbol_count":117,'
+        '{"abi":{"symbol_count":118,'
         '"allowlist":"tests/abi/fastdb_payload_v1_symbols.txt"}}\n',
     )
 
@@ -344,7 +344,7 @@ class PolicyTests(RepositoryFixture):
     def test_production_policy_contract_is_exact_and_valid(self) -> None:
         policy = PRODUCTION_POLICY
         self.assertEqual(policy["schema"], "fastdb.p5-clean-cut-policy.v1")
-        self.assertEqual(policy["native_abi_symbol_count"], 117)
+        self.assertEqual(policy["native_abi_symbol_count"], 118)
         self.assertEqual(policy["python_version"], "0.2.4")
         self.assertEqual(policy["typescript_version"], "0.2.4")
         self.assertEqual(len(policy["removed_paths"]), 14)
@@ -534,7 +534,7 @@ class GovernanceSurfaceTests(RepositoryFixture):
         write(
             self.root,
             "tests/abi/fastdb_payload_v1_symbols.txt",
-            abi_symbols(116),
+            abi_symbols(117),
         )
         self.assert_rejected("native ABI")
         write(
@@ -545,20 +545,20 @@ class GovernanceSurfaceTests(RepositoryFixture):
         write(
             self.root,
             "tools/generate_payload_wasm_exports.py",
-            "EXPECTED_ABI_SYMBOLS = 116\n"
+            "EXPECTED_ABI_SYMBOLS = 117\n"
             'ALLOWLIST = "tests/abi/fastdb_payload_v1_symbols.txt"\n',
         )
         self.assert_rejected("Wasm ABI")
         write(
             self.root,
             "tools/generate_payload_wasm_exports.py",
-            "EXPECTED_ABI_SYMBOLS = 117\n"
+            "EXPECTED_ABI_SYMBOLS = 118\n"
             'ALLOWLIST = "tests/abi/fastdb_payload_v1_symbols.txt"\n',
         )
         write(
             self.root,
             "tests/ci/p4_projection_codegen_map.json",
-            '{"abi":{"symbol_count":116,'
+            '{"abi":{"symbol_count":117,'
             '"allowlist":"tests/abi/fastdb_payload_v1_symbols.txt"}}\n',
         )
         self.assert_rejected("P4 proof-map ABI")

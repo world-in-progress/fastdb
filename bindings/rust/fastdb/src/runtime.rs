@@ -1,4 +1,4 @@
-use crate::{Blob, BuildPlan, CompiledSpec, PayloadError, Profile, check_status};
+use crate::{Blob, BuildPlan, Builder, CompiledSpec, PayloadError, Profile, check_status};
 use fastdb_sys as sys;
 use std::alloc::{Layout, alloc_zeroed, dealloc};
 use std::ffi::c_void;
@@ -831,7 +831,8 @@ impl ExternalBytes {
 
     /// Retains an owner and borrows its bytes without copying them.
     /// The owner is stored on the heap before borrowing, including when its
-    /// bytes are stored inline. Open payloads and their views retain the owner.
+    /// bytes are stored inline. Builders, frozen plans, and open payloads
+    /// (including their views) retain the owner while they need its bytes.
     pub fn from_owner<T>(owner: T) -> Self
     where
         T: AsRef<[u8]> + Send + Sync + 'static,
@@ -878,6 +879,36 @@ impl fmt::Debug for ExternalBytes {
             .debug_struct("ExternalBytes")
             .field("len", &self.as_bytes().len())
             .finish()
+    }
+}
+
+impl Builder {
+    /// Adds a bytes value without copying it into the builder.
+    /// On success, the builder retains the owner. [`Builder::freeze`]
+    /// transfers that hold to the build plan.
+    pub fn value_external_bytes(
+        &mut self,
+        bytes: &ExternalBytes,
+    ) -> Result<&mut Self, PayloadError> {
+        let value = bytes.as_bytes();
+        let size =
+            u64::try_from(value.len()).map_err(|_| PayloadError::size_overflow("/value/bytes"))?;
+        let backing = bytes.raw_backing();
+        let mut error = ptr::null_mut();
+        // SAFETY: self is live, error is a valid sink, and Core retains the
+        // immutable owner token before keeping the span beyond this call.
+        let status = unsafe {
+            sys::fdb_payload_v1_builder_value_external_bytes(
+                self.as_raw(),
+                slice_pointer(value),
+                size,
+                &backing,
+                bytes.owner_token(),
+                &mut error,
+            )
+        };
+        check_status(status, error)?;
+        Ok(self)
     }
 }
 

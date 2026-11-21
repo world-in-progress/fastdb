@@ -3,6 +3,7 @@
 #include <fastdb_payload.h>
 
 #include "payload/abi/Handles.hpp"
+#include "payload/identity/Sha256.hpp"
 
 #include <algorithm>
 #include <array>
@@ -32,6 +33,25 @@ namespace allocation_failure {
 
 std::atomic<std::int64_t> fail_after{INT64_C(-1)};
 
+struct LargeAllocations final {
+    explicit LargeAllocations(std::size_t minimum);
+    ~LargeAllocations();
+
+    const std::size_t minimum;
+    std::size_t count{0U};
+};
+
+thread_local LargeAllocations* observation = nullptr;
+
+LargeAllocations::LargeAllocations(std::size_t minimum_size)
+    : minimum(minimum_size) {
+    observation = this;
+}
+
+LargeAllocations::~LargeAllocations() {
+    observation = nullptr;
+}
+
 struct AllocationHeader final {
     void* raw;
 };
@@ -45,6 +65,9 @@ static_assert((alignof(AllocationHeader) &
 
 void* allocate(std::size_t size,
                std::size_t alignment = kDefaultNewAlignment) {
+    if (observation != nullptr && size >= observation->minimum) {
+        ++observation->count;
+    }
     const std::int64_t remaining = fail_after.load(std::memory_order_relaxed);
     if (remaining >= INT64_C(0) &&
         fail_after.fetch_sub(INT64_C(1), std::memory_order_relaxed) ==
@@ -727,6 +750,7 @@ struct BackingContext final {
     std::uint32_t commit_status{UINT32_C(0)};
     std::uint32_t rollback_status{UINT32_C(0)};
     std::uint32_t retain_status{UINT32_C(0)};
+    std::size_t corrupt_offset{std::numeric_limits<std::size_t>::max()};
 };
 
 fdb_payload_v1_status_t reserve_backing(
@@ -804,6 +828,9 @@ fdb_payload_v1_status_t commit_backing(
     if (context.relocate_on_commit) {
         context.relocated_bytes = context.bytes;
     }
+    if (context.corrupt_offset < context.bytes.size()) {
+        context.bytes[context.corrupt_offset] = UINT8_C(255);
+    }
     *out_readable_data = context.relocate_on_commit
                              ? context.relocated_bytes.data()
                              : context.bytes.data();
@@ -857,6 +884,383 @@ void require_abi_success(fdb_payload_v1_status_t status,
                                  std::to_string(status) + " " +
                                  std::string(error_details(error.value)));
     }
+}
+
+int test_external_bytes_images(bool graph) {
+    std::string source = R"({
+        "schema":"fastdb.payload.v1","profile":"record.v1",
+        "entries":[{"id":"row","cardinality":"one",
+                    "type":{"kind":"component","id":"Row"}}],
+        "components":[{"id":"Row","kind":"record","fields":[
+            {"id":"first","type":{"kind":"bytes"}},
+            {"id":"items","type":{"kind":"list","items":{"kind":"bytes"}}},
+            {"id":"last","type":{"kind":"bytes"}}]}]
+    })";
+    if (graph) {
+        source.replace(source.find("record.v1"), sizeof("record.v1") - 1U,
+                       "object_graph.v1");
+    }
+    auto* spec = compile_spec(source);
+    require(spec != nullptr);
+    std::vector<std::uint8_t> large(256U * 1024U, UINT8_C(0xa2));
+    const std::array<std::uint8_t, 3> small{0U, 1U, 255U};
+    BackingContext input;
+    auto input_backing = backing_for(input);
+    input_backing.reserve = nullptr;
+    input_backing.write = nullptr;
+    input_backing.commit = nullptr;
+    input_backing.rollback = nullptr;
+
+    const auto make_plan = [&](bool borrow) {
+        ErrorRef error;
+        fdb_payload_v1_builder_t* builder = nullptr;
+        require_abi_success(fdb_payload_v1_builder_create(
+            spec, nullptr, &builder, &error.value), error);
+        fdb_payload_v1_object_handle_t object{};
+        if (graph) {
+            require_abi_success(fdb_payload_v1_builder_object_declare(
+                builder, 0U, &object, &error.value), error);
+            require_abi_success(fdb_payload_v1_builder_object_fill_begin(
+                builder, object, &error.value), error);
+        } else {
+            require_abi_success(fdb_payload_v1_builder_entry_begin(
+                builder, 0U, 1U, &error.value), error);
+            require_abi_success(fdb_payload_v1_builder_value_component_begin(
+                builder, &error.value), error);
+        }
+        const auto bytes = [&](const std::uint8_t* data, std::uint64_t size,
+                               bool external) {
+            if (borrow && external) {
+                allocation_failure::LargeAllocations allocations(large.size());
+                require_abi_success(fdb_payload_v1_builder_value_external_bytes(
+                    builder, data, size, &input_backing, &input, &error.value),
+                    error);
+                if (allocations.count != 0U) {
+                    throw std::runtime_error("external bytes allocated a copy");
+                }
+            } else {
+                require_abi_success(fdb_payload_v1_builder_value_bytes(
+                    builder, data, size, &error.value), error);
+            }
+        };
+        bytes(large.data(), large.size(), true);
+        require_abi_success(fdb_payload_v1_builder_value_list_begin(
+            builder, 3U, &error.value), error);
+        bytes(small.data(), small.size(), false);
+        bytes(nullptr, 0U, true);
+        bytes(small.data(), small.size(), true);
+        bytes(large.data(), large.size(), false);
+        if (graph) {
+            require_abi_success(fdb_payload_v1_builder_entry_begin(
+                builder, 0U, 1U, &error.value), error);
+            require_abi_success(fdb_payload_v1_builder_value_object(
+                builder, object, &error.value), error);
+        }
+        fdb_payload_v1_plan_t* plan = nullptr;
+        require_abi_success(fdb_payload_v1_builder_freeze(
+            builder, &plan, &error.value), error);
+        fdb_payload_v1_builder_release(builder);
+        return plan;
+    };
+
+    const auto execute = [](fdb_payload_v1_plan_t* plan, bool staged) {
+        ErrorRef error;
+        BackingContext context;
+        context.decline_direct = staged;
+        auto backing = backing_for(context);
+        fdb_payload_v1_payload_t* payload = nullptr;
+        fdb_payload_v1_execution_report_t report{};
+        fdb_payload_v1_execution_report_init(&report);
+        require_abi_success(fdb_payload_v1_plan_execute(
+            plan, FDB_PAYLOAD_BUILD_ALLOW_STAGING,
+            staged ? &backing : nullptr, &payload, &report, &error.value),
+            error);
+        if (report.mode != (staged ? FDB_PAYLOAD_EXECUTION_STAGED
+                                   : FDB_PAYLOAD_EXECUTION_DIRECT)) {
+            throw std::runtime_error("unexpected execution mode");
+        }
+        fdb_payload_v1_blob_t* blob = nullptr;
+        require_abi_success(fdb_payload_v1_payload_binary_blob(
+            payload, &blob, &error.value), error);
+        const auto* data = fdb_payload_v1_blob_data(blob);
+        std::vector<std::uint8_t> image(
+            data, data + fdb_payload_v1_blob_size(blob));
+        fdb_payload_v1_blob_release(blob);
+        fdb_payload_v1_payload_release(payload);
+        if (context.releases != (staged ? 1U : 0U)) {
+            throw std::runtime_error("unexpected output backing release count");
+        }
+        return image;
+    };
+
+    auto* copied = make_plan(false);
+    const auto expected = execute(copied, false);
+    fdb_payload_v1_plan_release(copied);
+    auto* external = make_plan(true);
+    fdb_payload_v1_spec_release(spec);
+    require(input.retains == 3U && input.releases == 0U);
+    const auto digest = fastdb::payload::identity::sha256(
+        expected.data(), expected.size());
+    const auto repeat = [&](bool staged) {
+        for (int i = 0; i < 3; ++i) {
+            const auto image = execute(external, staged);
+            if (image != expected || fastdb::payload::identity::sha256(
+                    image.data(), image.size()) != digest) {
+                return false;
+            }
+        }
+        return true;
+    };
+    bool direct_ok = false;
+    bool staged_ok = false;
+    std::thread direct([&] { direct_ok = repeat(false); });
+    std::thread staged([&] { staged_ok = repeat(true); });
+    direct.join();
+    staged.join();
+    require(direct_ok && staged_ok);
+    require(input.retains == 3U && input.releases == 0U && input.tokens_match);
+    fdb_payload_v1_plan_retain(external);
+    fdb_payload_v1_plan_release(external);
+    require(input.releases == 0U);
+    fdb_payload_v1_plan_release(external);
+    require(input.releases == input.retains && input.tokens_match);
+    return EXIT_SUCCESS;
+}
+
+int test_external_bytes_rejections() {
+    auto* spec = compile_spec(R"({
+        "schema":"fastdb.payload.v1","profile":"record.v1",
+        "entries":[{"id":"opaque","cardinality":"one","type":{"kind":"bytes"}},
+                   {"id":"flag","cardinality":"one","type":{"kind":"bool"}}],
+        "components":[]
+    })");
+    require(spec != nullptr);
+    BackingContext input;
+    const auto backing = backing_for(input);
+    const std::array<std::uint8_t, 2> bytes{1U, 2U};
+    ErrorRef error;
+    fdb_payload_v1_builder_t* builder = nullptr;
+    const auto attempt = [&](const std::uint8_t* value, std::uint64_t size,
+                             const fdb_payload_v1_backing_v1_t* callbacks,
+                             std::uint32_t expected) {
+        const auto status = fdb_payload_v1_builder_value_external_bytes(
+            builder, value, size, callbacks, &input, &error.value);
+        if (status != expected || !owned_error(status, error.value)) {
+            throw std::runtime_error(
+                "unexpected external bytes status " + std::to_string(status) +
+                " " + std::string(error_details(error.value)));
+        }
+        error.clear();
+    };
+    require_abi_success(fdb_payload_v1_builder_create(
+        spec, nullptr, &builder, &error.value), error);
+    attempt(bytes.data(), bytes.size(), &backing, FDB_PAYLOAD_E_BUILDER_STATE);
+    require_abi_success(fdb_payload_v1_builder_entry_begin(
+        builder, 1U, 1U, &error.value), error);
+    attempt(nullptr, 1U, &backing, FDB_PAYLOAD_E_TYPE_MISMATCH);
+    require_abi_success(fdb_payload_v1_builder_value_bool(
+        builder, 0U, &error.value), error);
+    require_abi_success(fdb_payload_v1_builder_entry_begin(
+        builder, 0U, 1U, &error.value), error);
+    attempt(nullptr, 1U, &backing, FDB_PAYLOAD_E_INVALID_ARGUMENT);
+    attempt(bytes.data(), UINT64_MAX, &backing,
+            FDB_PAYLOAD_E_BUILDER_LENGTH_OVERFLOW);
+    attempt(bytes.data(), bytes.size(), nullptr, FDB_PAYLOAD_E_INVALID_ARGUMENT);
+    auto invalid = backing;
+    invalid.struct_size = 4U;
+    attempt(bytes.data(), bytes.size(), &invalid, FDB_PAYLOAD_E_UNSUPPORTED_ABI);
+    invalid = backing;
+    invalid.flags = 1U;
+    attempt(bytes.data(), bytes.size(), &invalid, FDB_PAYLOAD_E_UNSUPPORTED_ABI);
+    invalid = backing;
+    invalid.reserved[3] = 1U;
+    attempt(bytes.data(), bytes.size(), &invalid, FDB_PAYLOAD_E_UNSUPPORTED_ABI);
+    invalid = backing;
+    invalid.retain = nullptr;
+    attempt(bytes.data(), bytes.size(), &invalid, FDB_PAYLOAD_E_BACKING_CONTRACT);
+    invalid = backing;
+    invalid.release = nullptr;
+    attempt(bytes.data(), bytes.size(), &invalid, FDB_PAYLOAD_E_BACKING_CONTRACT);
+    require(input.retains == 0U && input.releases == 0U);
+
+    input.retain_status = FDB_PAYLOAD_E_ALLOCATION_FAILED;
+    attempt(bytes.data(), bytes.size(), &backing, FDB_PAYLOAD_E_ALLOCATION_FAILED);
+    require(input.retains == 1U && input.releases == 0U);
+    input.retain_status = FDB_PAYLOAD_E_INVALID_ARGUMENT;
+    attempt(bytes.data(), bytes.size(), &backing, FDB_PAYLOAD_E_BACKING_CONTRACT);
+    require(input.retains == 2U && input.releases == 0U);
+    input.retain_status = 0U;
+    require_abi_success(fdb_payload_v1_builder_value_external_bytes(
+        builder, nullptr, 0U, &backing, &input, &error.value), error);
+    require(input.retains == 3U && input.releases == 0U);
+    fdb_payload_v1_builder_release(builder);
+    require(input.releases == 1U && input.tokens_match);
+
+    fdb_payload_v1_builder_options_t limits{};
+    for (const bool total : {false, true}) {
+        fdb_payload_v1_builder_options_init(&limits);
+        if (total) {
+            // Two entry roots, one sequence node and one expectation frame.
+            limits.max_total_builder_bytes = 144U;
+        } else {
+            limits.max_opaque_bytes = 1U;
+        }
+        require_abi_success(fdb_payload_v1_builder_create(
+            spec, &limits, &builder, &error.value), error);
+        require_abi_success(fdb_payload_v1_builder_entry_begin(
+            builder, 0U, 1U, &error.value), error);
+        attempt(bytes.data(), bytes.size(), &backing,
+                FDB_PAYLOAD_E_BUILDER_RESOURCE_LIMIT);
+        fdb_payload_v1_builder_release(builder);
+    }
+    require(input.retains == 3U && input.releases == 1U);
+
+    // Re-entering the same builder from a retain callback must fail closed
+    // without popping the outer frame.
+    struct ReentrantContext final {
+        fdb_payload_v1_builder_t* builder{nullptr};
+        fdb_payload_v1_status_t nested_status{0U};
+        std::size_t retains{0U};
+        std::size_t releases{0U};
+    } reentrant;
+    fdb_payload_v1_backing_v1_t reentrant_backing{};
+    fdb_payload_v1_backing_init(&reentrant_backing);
+    reentrant_backing.context = &reentrant;
+    reentrant_backing.retain = [](void* context, void*) -> fdb_payload_v1_status_t {
+        auto* state = static_cast<ReentrantContext*>(context);
+        ++state->retains;
+        const std::uint8_t nested_byte = 9U;
+        fdb_payload_v1_error_t* nested_error = nullptr;
+        state->nested_status = fdb_payload_v1_builder_value_bytes(
+            state->builder, &nested_byte, 1U, &nested_error);
+        fdb_payload_v1_error_release(nested_error);
+        return 0U;
+    };
+    reentrant_backing.release = [](void* context, void*) {
+        ++static_cast<ReentrantContext*>(context)->releases;
+    };
+    require_abi_success(fdb_payload_v1_builder_create(
+        spec, nullptr, &builder, &error.value), error);
+    reentrant.builder = builder;
+    require_abi_success(fdb_payload_v1_builder_entry_begin(
+        builder, 0U, 1U, &error.value), error);
+    require_abi_success(fdb_payload_v1_builder_value_external_bytes(
+        builder, bytes.data(), bytes.size(), &reentrant_backing, &reentrant,
+        &error.value), error);
+    require(reentrant.nested_status == FDB_PAYLOAD_E_BUILDER_STATE);
+    require(reentrant.retains == 1U && reentrant.releases == 0U);
+    fdb_payload_v1_builder_release(builder);
+    require(reentrant.releases == 1U);
+
+    fdb_payload_v1_spec_release(spec);
+    return EXIT_SUCCESS;
+}
+
+int test_text_growth_and_publication() {
+    auto* spec = compile_spec(R"({
+        "schema":"fastdb.payload.v1","profile":"record.v1",
+        "entries":[{"id":"text","cardinality":"many","type":{"kind":"str"}}],
+        "components":[]
+    })");
+    require(spec != nullptr);
+    constexpr std::uint64_t rows = 16384U;
+    std::array<std::uint8_t, 128> text{};
+    text.fill('x');
+    ErrorRef error;
+    fdb_payload_v1_builder_t* builder = nullptr;
+    require_abi_success(fdb_payload_v1_builder_create(
+        spec, nullptr, &builder, &error.value), error);
+    require_abi_success(fdb_payload_v1_builder_entry_begin(
+        builder, 0U, rows, &error.value), error);
+    {
+        allocation_failure::LargeAllocations allocations(4096U);
+        for (std::uint64_t i = 0; i < rows; ++i) {
+            require_abi_success(fdb_payload_v1_builder_value_str(
+                builder, text.data(), text.size(), &error.value), error);
+        }
+        // Authoring grows both the node arena and text storage.
+        require(allocations.count > 0U && allocations.count < 32U);
+    }
+    fdb_payload_v1_plan_t* plan = nullptr;
+    require_abi_success(fdb_payload_v1_builder_freeze(
+        builder, &plan, &error.value), error);
+    fdb_payload_v1_builder_release(builder);
+
+    fdb_payload_v1_payload_t* payload = nullptr;
+    fdb_payload_v1_execution_report_t report{};
+    fdb_payload_v1_execution_report_init(&report);
+    require_abi_success(fdb_payload_v1_plan_execute(
+        plan, FDB_PAYLOAD_BUILD_REQUIRE_DIRECT, nullptr, &payload, &report,
+        &error.value), error);
+    fdb_payload_v1_blob_t* blob = nullptr;
+    require_abi_success(fdb_payload_v1_payload_binary_blob(
+        payload, &blob, &error.value), error);
+    const auto* data = fdb_payload_v1_blob_data(blob);
+    const auto* end = data + fdb_payload_v1_blob_size(blob);
+    const auto* text_data = std::search(data, end, text.begin(), text.end());
+    require(text_data != end);
+    BackingContext corrupt;
+    corrupt.corrupt_offset = static_cast<std::size_t>(text_data - data);
+    fdb_payload_v1_blob_release(blob);
+    fdb_payload_v1_payload_release(payload);
+
+    auto callbacks = backing_for(corrupt);
+    const auto status = fdb_payload_v1_plan_execute(
+        plan, FDB_PAYLOAD_BUILD_REQUIRE_DIRECT, &callbacks, &payload, &report,
+        &error.value);
+    require(status == FDB_PAYLOAD_E_BACKING_CONTRACT);
+    require(owned_error(status, error.value));
+    require(payload == nullptr && corrupt.releases == 1U);
+    fdb_payload_v1_plan_release(plan);
+    fdb_payload_v1_spec_release(spec);
+    return EXIT_SUCCESS;
+}
+
+int test_runtime_schema_cache_retry_and_sharing() {
+    using fastdb::payload::layout::RuntimeSchema;
+    auto* spec = compile_spec(kRecordSpec);
+    require(spec != nullptr);
+    ErrorRef error;
+    fdb_payload_v1_builder_t* builder = nullptr;
+    {
+        allocation_failure::Reset reset;
+        allocation_failure::fail_after.store(0, std::memory_order_relaxed);
+        require(fdb_payload_v1_builder_create(
+                    spec, nullptr, &builder, &error.value) ==
+                FDB_PAYLOAD_E_ALLOCATION_FAILED);
+    }
+    require(builder == nullptr);
+    error.clear();
+
+    std::array<std::shared_ptr<const RuntimeSchema>, 4> observed;
+    std::array<std::thread, 4> workers;
+    std::atomic<bool> start{false};
+    for (std::size_t i = 0U; i < workers.size(); ++i) {
+        workers[i] = std::thread([&, i, compiled = spec->compiled] {
+            while (!start.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            auto runtime = RuntimeSchema::compile(compiled);
+            if (runtime.has_value()) {
+                observed[i] = std::move(runtime).value();
+            }
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& worker : workers) {
+        worker.join();
+    }
+    fdb_payload_v1_spec_release(spec);
+    require(observed.front() != nullptr);
+    for (const auto& runtime : observed) {
+        require(runtime == observed.front());
+    }
+    const auto& first = observed.front()->resolved().entries().front();
+    const auto id = observed.front()->runtime_id(first.type);
+    require(id != UINT32_MAX);
+    const auto* type = observed.front()->find_type(id);
+    require(type != nullptr && type->source == &first.type);
+    return EXIT_SUCCESS;
 }
 
 void author_public_graph(fdb_payload_v1_builder_t* builder,
@@ -3500,6 +3904,8 @@ int test_null_error_sink_rule() {
         nullptr, nullptr, UINT64_C(0), nullptr));
     REQUIRE_NULL_SINK_REJECTED(fdb_payload_v1_builder_value_bytes(
         nullptr, nullptr, UINT64_C(0), nullptr));
+    REQUIRE_NULL_SINK_REJECTED(fdb_payload_v1_builder_value_external_bytes(
+        nullptr, nullptr, UINT64_C(0), nullptr, nullptr, nullptr));
     REQUIRE_NULL_SINK_REJECTED(fdb_payload_v1_builder_value_fixed_run(
         nullptr, nullptr, nullptr));
     REQUIRE_NULL_SINK_REJECTED(
@@ -3894,6 +4300,11 @@ int main(int argc, char** argv) {
     require(test_public_graph_handle_errors() == EXIT_SUCCESS);
     require(test_complete_record_runtime() == EXIT_SUCCESS);
     require(test_complete_public_graph_runtime() == EXIT_SUCCESS);
+    require(test_external_bytes_images(false) == EXIT_SUCCESS);
+    require(test_external_bytes_images(true) == EXIT_SUCCESS);
+    require(test_external_bytes_rejections() == EXIT_SUCCESS);
+    require(test_text_growth_and_publication() == EXIT_SUCCESS);
+    require(test_runtime_schema_cache_retry_and_sharing() == EXIT_SUCCESS);
     require(test_handle_allocation_boundaries_and_owner_projection() ==
             EXIT_SUCCESS);
     require(test_stale_generation_c_projection() == EXIT_SUCCESS);

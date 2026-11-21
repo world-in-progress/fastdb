@@ -12,6 +12,10 @@
 #include <variant>
 #include <vector>
 
+namespace fastdb::payload::build {
+class BuildPlan;
+}
+
 namespace fastdb::payload::view {
 
 struct OpenOptions final {
@@ -168,7 +172,7 @@ public:
     std::optional<PoolMetadata> pool_metadata(
         layout::RegionKind kind) const noexcept;
     bool text_validated_eagerly() const noexcept {
-        return text_validated_eagerly_;
+        return text_validated_;
     }
     std::uint64_t retained_max_string_bytes() const noexcept {
         return retained_max_string_bytes_;
@@ -260,6 +264,7 @@ public:
         std::uint64_t field_depth) const;
 
 private:
+    friend class build::BuildPlan;
     friend error::Result<PayloadIndex> open_record(
         const spec::CompiledSpec&,
         const std::uint8_t*,
@@ -284,7 +289,7 @@ private:
     std::uint64_t retained_max_string_bytes_{UINT64_C(0)};
     std::uint64_t retained_max_validation_work_{UINT64_C(0)};
     std::uint32_t region_count_{UINT32_C(0)};
-    bool text_validated_eagerly_{false};
+    bool text_validated_{false};
 };
 
 error::Result<PayloadIndex> open_record(

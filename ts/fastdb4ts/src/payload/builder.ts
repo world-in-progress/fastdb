@@ -21,8 +21,10 @@ import { bindingError, checkStatus } from './error.js';
 import { CompiledSpec, compiledSpecHandle } from './spec.js';
 import {
   executePlan,
+  ownedBytesNative,
   type BuildPolicy,
   type BuildResult,
+  type ExternalBytes,
   type WasmMemoryBacking,
 } from './runtime.js';
 
@@ -508,6 +510,22 @@ export class Builder {
           size,
           error,
         ),
+    );
+  }
+
+  /** Adds bytes without copying the WASM-owned source. Core retains it for the plan. */
+  valueExternalBytes(source: ExternalBytes): Builder {
+    const module = payloadModule();
+    const native = ownedBytesNative(source);
+    return this.call((handle, error) =>
+      module._fdb_payload_v1_builder_value_external_bytes(
+        handle,
+        native.dataAddress(),
+        BigInt(native.size()),
+        native.backingAddress(),
+        native.ownerToken(),
+        error,
+      ),
     );
   }
 

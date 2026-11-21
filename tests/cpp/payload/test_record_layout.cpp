@@ -61,7 +61,7 @@ int test_runtime_ids_reachability_and_component_layout() {
     require(compiled.has_value());
     auto runtime = RuntimeSchema::compile(compiled.value());
     require(runtime.has_value());
-    const RuntimeSchema& schema = runtime.value();
+    const RuntimeSchema& schema = *runtime.value();
 
     require(schema.type_count() == UINT32_C(13));
     for (std::uint32_t id = UINT32_C(0); id < UINT32_C(13); ++id) {
@@ -182,10 +182,9 @@ int test_builder_consumes_the_same_runtime_schema_ids() {
 
     std::set<std::uint32_t> observed;
     for (const auto& node : frozen.value().nodes()) {
-        require(node.runtime_type_id < runtime.value().type_count());
-        require(runtime.value().find_type(node.runtime_type_id) != nullptr);
-        require(runtime.value()
-                    .find_type(node.runtime_type_id)
+        require(node.runtime_type_id < runtime.value()->type_count());
+        require(runtime.value()->find_type(node.runtime_type_id) != nullptr);
+        require(runtime.value()->find_type(node.runtime_type_id)
                     ->runtime_type_id == node.runtime_type_id);
         observed.insert(node.runtime_type_id);
     }
@@ -397,9 +396,9 @@ int test_unreachable_component_layout_overflow_is_not_compiled() {
     require(compiled.has_value());
     auto runtime = RuntimeSchema::compile(compiled.value());
     require(runtime.has_value());
-    require(runtime.value().type_count() == UINT32_C(67));
-    require(runtime.value().components().empty());
-    require(!runtime.value().component_reachable(UINT32_C(0)));
+    require(runtime.value()->type_count() == UINT32_C(67));
+    require(runtime.value()->components().empty());
+    require(!runtime.value()->component_reachable(UINT32_C(0)));
 
     auto reachable = compile(doubling_component_spec(true));
     require(reachable.has_value());
@@ -434,10 +433,10 @@ int test_reverse_component_chain_layout_is_iterative_and_linear() {
     require(compiled.has_value());
     auto runtime = RuntimeSchema::compile(compiled.value());
     require(runtime.has_value());
-    require(runtime.value().components().size() == component_count);
-    const auto* first = runtime.value().component(UINT32_C(0));
+    require(runtime.value()->components().size() == component_count);
+    const auto* first = runtime.value()->component(UINT32_C(0));
     const auto* last =
-        runtime.value().component(component_count - UINT32_C(1));
+        runtime.value()->component(component_count - UINT32_C(1));
     require(first != nullptr);
     require(last != nullptr);
     require(first->stride == UINT32_C(1));

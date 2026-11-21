@@ -26,7 +26,7 @@ CI_ROOT = Path(__file__).resolve().parent
 MANIFEST_SCHEMA = "fastdb.local-candidate-manifest.v1"
 MANIFEST_FILENAME = "fastdb-local-candidate-manifest.v1.json"
 ABI_VERSION = 1
-ABI_SYMBOL_COUNT = 117
+ABI_SYMBOL_COUNT = 118
 FASTDB_VERSION = "0.2.0"
 FASTDB4TS_VERSION = "0.2.0"
 EXPECTED_ARTIFACT_KINDS = {
@@ -480,7 +480,7 @@ def read_abi_allowlist() -> list[str]:
         )
     ):
         raise CandidateError(
-            "payload ABI allowlist must contain exact sorted 117 V1 symbols"
+            "payload ABI allowlist must contain exact sorted 118 V1 symbols"
         )
     return lines
 
@@ -636,7 +636,7 @@ def validate_manifest(
     expected_abi = abi_evidence()
     if abi != expected_abi:
         raise CandidateError(
-            "candidate ABI evidence differs from exact ABI version 1 / 117 symbols"
+            "candidate ABI evidence differs from exact ABI version 1 / 118 symbols"
         )
     artifacts = document["artifacts"]
     if not isinstance(artifacts, list):

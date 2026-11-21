@@ -18,6 +18,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -84,7 +85,7 @@ Error allocation_error() {
 }
 
 #if defined(FASTDB_PAYLOAD_BUILD_TESTING)
-// One-shot scratch/reserve failpoint driven only by the payload_builder test.
+// One-shot scratch/reserve failpoint for builder tests.
 // It fires at the mutation stage itself, so it observes builder ordering
 // without depending on any platform allocator size.
 thread_local bool scratch_reserve_armed = false;
@@ -266,6 +267,18 @@ std::uint64_t post_frame_count_after_values(
     return static_cast<std::uint64_t>(post_count);
 }
 
+template <typename T>
+void reserve_geometrically(std::vector<T>& values, std::size_t added) {
+    const std::size_t needed = values.size() + added;
+    const std::size_t capacity = values.capacity();
+    if (needed > capacity) {
+        const std::size_t maximum = values.max_size();
+        const std::size_t doubled =
+            capacity > maximum / 2U ? maximum : capacity * 2U;
+        values.reserve(std::max(needed, doubled));
+    }
+}
+
 std::uint64_t structural_depth(
     const std::vector<ExpectationFrame>& frames) noexcept {
     std::uint64_t depth = UINT64_C(0);
@@ -344,14 +357,14 @@ struct PendingScalar final {
 
 struct PayloadBuilder::State final {
     State(spec::CompiledSpec compiled,
-          layout::RuntimeSchema compiled_runtime_schema,
+          std::shared_ptr<const layout::RuntimeSchema> runtime,
           BuilderLimits builder_limits)
         : spec(std::move(compiled)),
-          runtime_schema(std::move(compiled_runtime_schema)),
+          runtime_schema(std::move(runtime)),
           limits(builder_limits) {}
 
     spec::CompiledSpec spec;
-    layout::RuntimeSchema runtime_schema;
+    const std::shared_ptr<const layout::RuntimeSchema> runtime_schema;
     BuilderLimits limits;
     GraphAuthoring graph;
     ValueArena arena;
@@ -362,8 +375,10 @@ struct PayloadBuilder::State final {
     std::uint64_t list_elements{UINT64_C(0)};
     std::uint64_t text_bytes{UINT64_C(0)};
     std::uint64_t opaque_bytes{UINT64_C(0)};
+    std::uint64_t external_bytes{UINT64_C(0)};
     std::uint64_t root_bytes{UINT64_C(0)};
     bool sealed{false};
+    bool in_callback{false};
 
     Result<void> initialize() {
         if (!checked_multiply(
@@ -395,7 +410,7 @@ struct PayloadBuilder::State final {
     }
 
     std::uint32_t runtime_id(const TypeNode& type) const noexcept {
-        return runtime_schema.runtime_id(type);
+        return runtime_schema->runtime_id(type);
     }
 
     JsonPointer current_path() const { return make_path(path); }
@@ -417,6 +432,12 @@ struct PayloadBuilder::State final {
     }
 
     Result<void> check_state() const {
+        if (in_callback) {
+            return Result<void>::failure(simple_error(
+                FDB_PAYLOAD_E_BUILDER_STATE, JsonPointer{},
+                "Payload builder cannot be re-entered from a backing callback",
+                "builder_callback_reentrant"));
+        }
         if (sealed) {
             return Result<void>::failure(simple_error(
                 FDB_PAYLOAD_E_BUILDER_STATE, JsonPointer{},
@@ -495,27 +516,11 @@ struct PayloadBuilder::State final {
             }));
     }
 
-    std::uint64_t total_bytes(std::uint64_t node_count,
-                              std::uint64_t storage_count,
-                              std::uint64_t frame_count) const noexcept {
-        std::uint64_t node_bytes = UINT64_MAX;
-        std::uint64_t frame_bytes = UINT64_MAX;
-        std::uint64_t total = UINT64_MAX;
-        if (!checked_multiply(node_count, logical_node_bytes, node_bytes) ||
-            !checked_multiply(frame_count, logical_frame_bytes,
-                              frame_bytes) ||
-            !checked_add(root_bytes, node_bytes, total) ||
-            !checked_add(total, storage_count, total) ||
-            !checked_add(total, frame_bytes, total)) {
-            return UINT64_MAX;
-        }
-        return total;
-    }
-
     Result<void> check_growth(std::uint64_t added_nodes,
                               std::uint64_t added_storage,
                               std::uint64_t post_frame_count,
-                              const JsonPointer& error_path) const {
+                              const JsonPointer& error_path,
+                              std::uint64_t added_external = 0U) const {
         std::uint64_t post_nodes = UINT64_MAX;
         std::uint64_t post_storage = UINT64_MAX;
         if (!checked_add(static_cast<std::uint64_t>(arena.nodes_.size()),
@@ -545,8 +550,21 @@ struct PayloadBuilder::State final {
                 error_path, "byte_storage", post_storage,
                 storage_capacity));
         }
-        const std::uint64_t total =
-            total_bytes(post_nodes, post_storage, post_frame_count);
+        std::uint64_t node_bytes = 0U;
+        std::uint64_t frame_bytes = 0U;
+        std::uint64_t total = 0U;
+        if (!checked_multiply(post_nodes, logical_node_bytes, node_bytes) ||
+            !checked_multiply(post_frame_count, logical_frame_bytes,
+                              frame_bytes) ||
+            !checked_add(root_bytes, node_bytes, total) ||
+            !checked_add(total, frame_bytes, total) ||
+            !checked_add(total, post_storage, total) ||
+            !checked_add(total, external_bytes, total) ||
+            !checked_add(total, added_external, total)) {
+            return Result<void>::failure(resource_error(
+                error_path, "total_builder_bytes", UINT64_MAX,
+                limits.max_total_builder_bytes));
+        }
         if (total > limits.max_total_builder_bytes) {
             return Result<void>::failure(resource_error(
                 error_path, "total_builder_bytes", total,
@@ -588,21 +606,25 @@ struct PayloadBuilder::State final {
                 error_path, "path_tokens", UINT64_MAX,
                 static_cast<std::uint64_t>(path.max_size())));
         }
+        reserve_scratch(static_cast<std::size_t>(added_nodes),
+                        static_cast<std::size_t>(added_storage),
+                        static_cast<std::size_t>(added_frames),
+                        static_cast<std::size_t>(added_path_tokens));
+        return Result<void>::success();
+    }
+
+    void reserve_scratch(std::size_t added_nodes, std::size_t added_storage,
+                         std::size_t added_frames,
+                         std::size_t added_path_tokens) {
 #if defined(FASTDB_PAYLOAD_BUILD_TESTING)
         if (consume_scratch_reserve_failure()) {
             throw std::bad_alloc();
         }
 #endif
-        arena.nodes_.reserve(arena.nodes_.size() +
-                             static_cast<std::size_t>(added_nodes));
-        arena.byte_storage_.reserve(
-            arena.byte_storage_.size() +
-            static_cast<std::size_t>(added_storage));
-        frames.reserve(frames.size() +
-                       static_cast<std::size_t>(added_frames));
-        path.reserve(path.size() +
-                     static_cast<std::size_t>(added_path_tokens));
-        return Result<void>::success();
+        reserve_geometrically(arena.nodes_, added_nodes);
+        reserve_geometrically(arena.byte_storage_, added_storage);
+        reserve_geometrically(frames, added_frames);
+        reserve_geometrically(path, added_path_tokens);
     }
 
     NodeIndex append_node(ValueNode node) {
@@ -631,7 +653,7 @@ struct PayloadBuilder::State final {
         link_child(frame, child);
         --frame.remaining;
         ++frame.next_index;
-        refresh_type_id(frame, runtime_schema);
+        refresh_type_id(frame, *runtime_schema);
         close_completed(frames, path, &arena, &graph);
     }
 
@@ -963,12 +985,10 @@ Result<void> PayloadBuilder::push_u16n_bits(std::uint64_t binary64_bits) {
     }
 }
 
-Result<void> PayloadBuilder::push_storage_impl(TypeKind kind,
-                                               ValueTag tag,
-                                               const std::uint8_t* bytes,
-                                               std::uint64_t byte_count,
-                                               bool text,
-                                               std::string_view operation) {
+Result<void> PayloadBuilder::push_storage_impl(
+    TypeKind kind, ValueTag tag, const std::uint8_t* bytes,
+    std::uint64_t byte_count, bool text, std::string_view operation,
+    const backing::Callbacks* external, void* owner_token) {
     State& state = *state_;
     auto valid_state = state.check_state();
     if (!valid_state.has_value()) {
@@ -1002,8 +1022,88 @@ Result<void> PayloadBuilder::push_storage_impl(TypeKind kind,
             updated, limit));
     }
 
+    if (external != nullptr) {
+        const auto path = state.current_path();
+        auto growth = state.check_growth(
+            UINT64_C(1), UINT64_C(0),
+            post_frame_count_after_values(state.frames, UINT64_C(1)),
+            path, byte_count);
+        if (!growth.has_value()) {
+            return growth;
+        }
+        auto& pins = state.arena.external_bytes_;
+        if (pins.size() == pins.max_size()) {
+            return Result<void>::failure(state.resource_error(
+                path, "external_spans", pins.size() + UINT64_C(1),
+                pins.max_size()));
+        }
+        struct CallbackGuard final {
+            bool& flag;
+            explicit CallbackGuard(bool& target) noexcept : flag(target) {
+                flag = true;
+            }
+            ~CallbackGuard() noexcept { flag = false; }
+        };
+        auto retained = [&]() {
+            CallbackGuard guard(state.in_callback);
+            return backing::RetainedBacking::acquire(
+                *external, owner_token, bytes, byte_count);
+        }();
+        if (!retained.has_value()) {
+            return Result<void>::failure(std::move(retained).error());
+        }
+
+        state.reserve_scratch(1U, 0U, 0U, 0U);
+        const auto index = static_cast<std::uint64_t>(pins.size());
+        pins.push_back(std::move(retained).value());
+        ValueNode node{
+            state.frames.back().type_id, tag, {0U, 0U, 0U}, index,
+            byte_count, invalid_node_index, invalid_node_index, UINT64_C(0)};
+        node.external_bytes = UINT32_C(1);
+        state.commit_leaf(node);
+        state.external_bytes += byte_count;
+        state.opaque_bytes = updated;
+        return Result<void>::success();
+    }
+
     const std::uint64_t offset =
         static_cast<std::uint64_t>(state.arena.byte_storage_.size());
+    if (text) {
+        const auto path = state.current_path();
+        auto growth = state.check_growth(
+            UINT64_C(1), byte_count,
+            post_frame_count_after_values(state.frames, UINT64_C(1)), path);
+        if (!growth.has_value()) {
+            return growth;
+        }
+        auto capacity = state.reserve(UINT64_C(1), byte_count, UINT64_C(0),
+                                      UINT64_C(0), path);
+        if (!capacity.has_value()) {
+            return capacity;
+        }
+        if (byte_count != UINT64_C(0)) {
+            state.arena.byte_storage_.insert(
+                state.arena.byte_storage_.end(), bytes,
+                bytes + static_cast<std::ptrdiff_t>(byte_count));
+            const std::string_view copied(
+                reinterpret_cast<const char*>(
+                    state.arena.byte_storage_.data() +
+                    static_cast<std::ptrdiff_t>(offset)),
+                static_cast<std::size_t>(byte_count));
+            auto valid = layout::validate_utf8(copied, path);
+            if (!valid.has_value()) {
+                state.arena.byte_storage_.resize(
+                    static_cast<std::size_t>(offset));
+                return valid;
+            }
+        }
+        const std::uint32_t type_id = state.frames.back().type_id;
+        state.commit_leaf(ValueNode{
+            type_id, tag, {0U, 0U, 0U}, offset, byte_count,
+            invalid_node_index, invalid_node_index, UINT64_C(0)});
+        state.text_bytes = updated;
+        return Result<void>::success();
+    }
     auto added = state.add_leaf(tag, offset, byte_count);
     if (!added.has_value()) {
         return added;
@@ -1013,11 +1113,7 @@ Result<void> PayloadBuilder::push_storage_impl(TypeKind kind,
             state.arena.byte_storage_.end(), bytes,
             bytes + static_cast<std::ptrdiff_t>(byte_count));
     }
-    if (text) {
-        state.text_bytes = updated;
-    } else {
-        state.opaque_bytes = updated;
-    }
+    state.opaque_bytes = updated;
     return Result<void>::success();
 }
 
@@ -1043,10 +1139,6 @@ Result<void> PayloadBuilder::push_str(std::string_view utf8) {
                 state.current_path(),
                 "Payload input span length cannot be represented",
                 "input_span_length_overflow"));
-        }
-        auto valid = layout::validate_utf8(utf8, state.current_path());
-        if (!valid.has_value()) {
-            return valid;
         }
         return push_storage_impl(
             TypeKind::str, ValueTag::str,
@@ -1141,6 +1233,18 @@ Result<void> PayloadBuilder::push_bytes(const std::uint8_t* bytes,
     }
 }
 
+Result<void> PayloadBuilder::push_external_bytes(
+    const std::uint8_t* bytes, std::uint64_t byte_count,
+    const backing::Callbacks& callbacks, void* owner_token) try {
+    return push_storage_impl(TypeKind::bytes, ValueTag::bytes, bytes,
+                             byte_count, false, "push_external_bytes",
+                             &callbacks, owner_token);
+} catch (const std::bad_alloc&) {
+    return Result<void>::failure(allocation_error());
+} catch (const std::length_error&) {
+    return Result<void>::failure(allocation_error());
+}
+
 Result<void> PayloadBuilder::begin_component() {
     try {
         return begin_component_impl();
@@ -1161,7 +1265,7 @@ Result<void> PayloadBuilder::begin_component_impl() {
     }
     const TypeNode& type = *expected_type(state.frames.back());
     const auto role =
-        state.runtime_schema.storage_role(state.frames.back().type_id);
+        state.runtime_schema->storage_role(state.frames.back().type_id);
     if (type.kind != TypeKind::component || !role.has_value() ||
         *role != StorageRole::inline_component) {
         return Result<void>::failure(
@@ -1202,7 +1306,7 @@ Result<void> PayloadBuilder::begin_component_impl() {
     state.link_child(parent, node);
     --parent.remaining;
     ++parent.next_index;
-    refresh_type_id(parent, state.runtime_schema);
+    refresh_type_id(parent, *state.runtime_schema);
     if (has_fields) {
         const std::size_t base = state.path.size();
         state.frames.push_back(ExpectationFrame{
@@ -1282,7 +1386,7 @@ Result<void> PayloadBuilder::begin_list_impl(std::uint64_t item_count) {
     state.link_child(parent, node);
     --parent.remaining;
     ++parent.next_index;
-    refresh_type_id(parent, state.runtime_schema);
+    refresh_type_id(parent, *state.runtime_schema);
     if (has_items) {
         const std::size_t base = state.path.size();
         state.frames.push_back(ExpectationFrame{
@@ -1331,7 +1435,7 @@ Result<ObjectHandle> PayloadBuilder::declare_object_impl(
     }
     const Component& component =
         state.spec.resolved().components()[component_index];
-    if (!state.runtime_schema.component_identity_bearing(component_index)) {
+    if (!state.runtime_schema->component_identity_bearing(component_index)) {
         return Result<ObjectHandle>::failure(simple_error(
             FDB_PAYLOAD_E_TYPE_MISMATCH,
             JsonPointer{}.append("components").append(component.id),
@@ -1488,7 +1592,7 @@ Result<void> PayloadBuilder::push_graph_coordinate_impl(
     }
     const TypeNode& type = *expected_type(state.frames.back());
     const auto role =
-        state.runtime_schema.storage_role(state.frames.back().type_id);
+        state.runtime_schema->storage_role(state.frames.back().type_id);
     if (!role.has_value() || *role != required_role) {
         return Result<void>::failure(state.type_mismatch(type.kind, operation));
     }
@@ -1739,7 +1843,7 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
             pending.push_back(
                 PendingScalar{ValueTag::null_value, UINT64_C(0), true});
             simulate_leaf(simulated_frames, simulated_path,
-                          state.runtime_schema);
+                          *state.runtime_schema);
             continue;
         }
 
@@ -1767,7 +1871,7 @@ Result<void> PayloadBuilder::push_fixed_run_impl(const FixedRun& run) {
         }
         pending.push_back(PendingScalar{tag_for(type.kind), bits, false});
         simulate_leaf(simulated_frames, simulated_path,
-                      state.runtime_schema);
+                      *state.runtime_schema);
     }
 
     auto capacity = state.reserve(run.count, UINT64_C(0), UINT64_C(0),

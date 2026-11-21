@@ -2,6 +2,7 @@
 
 #include <fastdb_payload.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -395,6 +396,31 @@ int test_external_execute_and_open() {
     return EXIT_SUCCESS;
 }
 
+int test_external_bytes_facade() {
+    const auto spec = CompiledSpec::compile(R"({
+        "schema":"fastdb.payload.v1","profile":"record.v1",
+        "entries":[{"id":"data","cardinality":"one","type":{"kind":"bytes"}}],
+        "components":[]
+    })");
+    BackingContext context;
+    context.bytes = {0U, 255U, 42U};
+    const auto backing = backing_for(context);
+    const auto plan = [&] {
+        auto builder = Builder::create(spec);
+        builder.entry_begin(0U, 1U).value_external_bytes(
+            ByteView{context.bytes.data(), context.bytes.size()},
+            backing, &context);
+        return builder.freeze();
+    }();
+    require(context.retains == 1U && context.releases == 0U);
+    const auto execution = plan.execute(BuildPolicy::require_direct);
+    const auto access = execution.payload.entry_view(0U).at(0U).acquire();
+    const auto bytes = access.bytes();
+    require(bytes.size == context.bytes.size());
+    require(std::equal(context.bytes.begin(), context.bytes.end(), bytes.data));
+    return EXIT_SUCCESS;
+}
+
 int test_checked_native_sizes() {
     require(fastdb::payload::v1::detail::checked_size(
                 UINT64_C(7), "test_size") == std::size_t{7});
@@ -609,6 +635,7 @@ int main() {
     require(test_typed_authoring_heap_open_views_and_lifetimes() ==
             EXIT_SUCCESS);
     require(test_external_execute_and_open() == EXIT_SUCCESS);
+    require(test_external_bytes_facade() == EXIT_SUCCESS);
     require(test_checked_native_sizes() == EXIT_SUCCESS);
     require(test_graph_facade_is_thin_and_complete() == EXIT_SUCCESS);
     require(test_provenance_guards_reject_same_indexes_from_another_spec() ==
