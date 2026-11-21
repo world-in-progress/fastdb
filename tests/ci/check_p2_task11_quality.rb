@@ -461,13 +461,14 @@ def check_workflow
     fdb_payload_v1_spec_codegen
     fdb_payload_v1_view_require_spec_sha256
   ]
-  p2_symbols = allowlist - p3_additions - p4_additions
-  require_quality(allowlist.length == 117 &&
+  later_additions = %w[fdb_payload_v1_builder_value_external_bytes]
+  additions = p3_additions + p4_additions + later_additions
+  p2_symbols = allowlist - additions
+  require_quality(allowlist.length == 118 &&
                   allowlist == allowlist.uniq.sort &&
-                  (p3_additions - allowlist).empty? &&
-                  (p4_additions - allowlist).empty? &&
+                  (additions - allowlist).empty? &&
                   p2_symbols.length == 99,
-                  "portable payload ABI allowlist must preserve the 99 P2 symbols plus the exact P3 and P4 additive families")
+                  "portable payload ABI allowlist must preserve the 99 P2 symbols plus the exact later additions")
 end
 
 def check_documentation

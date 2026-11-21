@@ -1,6 +1,6 @@
 {
   "schema": "fastdb.p5-clean-cut-policy.v1",
-  "native_abi_symbol_count": 117,
+  "native_abi_symbol_count": 118,
   "python_version": "0.2.4",
   "typescript_version": "0.2.4",
   "removed_paths": [

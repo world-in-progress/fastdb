@@ -228,7 +228,7 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
             "macos_deployment_target": os.environ.get("MACOSX_DEPLOYMENT_TARGET") if target == MACOS_TARGET else None,
             "compiler": compiler_identity(build_dir, msvc=target in WINDOWS_TARGETS),
             "link_mode": "system", "system_lib_dir": "<absolute bundle path>/lib",
-            "abi": "fdb_payload_v1", "abi_symbol_count": 117,
+            "abi": "fdb_payload_v1", "abi_symbol_count": 118,
             "files": [{"path": file.relative_to(bundle).as_posix(), "bytes": file.stat().st_size, "sha256": digest(file)} for file in members],
         }
         if runtime_library is not None:

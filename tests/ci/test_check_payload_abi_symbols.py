@@ -81,9 +81,9 @@ class DumpbinExportParsingTests(unittest.TestCase):
 
 
 class AllowlistContractTests(unittest.TestCase):
-    def test_reviewed_allowlist_is_exact_117_sorted_symbols(self) -> None:
+    def test_reviewed_allowlist_is_exact_118_sorted_symbols(self) -> None:
         symbols = MODULE.read_allowlist(MODULE.ALLOWLIST)
-        self.assertEqual(len(symbols), 117)
+        self.assertEqual(len(symbols), 118)
         self.assertEqual(symbols, sorted(set(symbols)))
 
 

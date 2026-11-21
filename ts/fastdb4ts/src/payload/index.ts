@@ -24,12 +24,12 @@ export {
   BuildResult,
   ExecutionMode,
   ExecutionReport,
+  ExternalBytes,
   FallbackReason,
   GraphIdentity,
   OpenOptions,
   Payload,
   WasmMemoryBacking,
-  WasmOwnedBytes,
   View,
   ViewKind,
 } from './runtime.js';

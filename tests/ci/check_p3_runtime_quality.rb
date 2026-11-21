@@ -398,11 +398,12 @@ module P3RuntimeQuality
     check_traceability(document) if expected_d1_status == D1_CLOSED_STATUS
 
     symbols = ABI_ALLOWLIST.read.lines(chomp: true)
-    require_quality(symbols.length == 117 &&
+    later_additions = P4_ABI_ADDITIONS + %w[fdb_payload_v1_builder_value_external_bytes]
+    require_quality(symbols.length == 118 &&
                     symbols == symbols.uniq.sort &&
-                    (P4_ABI_ADDITIONS - symbols).empty?,
-                    "current ABI must be the sorted ABI-117 with exact P4 additions")
-    p3_symbols = symbols - P4_ABI_ADDITIONS
+                    (later_additions - symbols).empty?,
+                    "current ABI must be the sorted ABI-118 with exact additions since P3")
+    p3_symbols = symbols - later_additions
     check_abi_symbols(p3_symbols, p3_symbols)
     require_quality((P3_ABI_ADDITIONS - p3_symbols).empty? &&
                     (p3_symbols - P3_ABI_ADDITIONS).length == 99,

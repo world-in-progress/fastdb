@@ -248,7 +248,7 @@ const ownedBytesFinalizer = new FinalizationRegistry<WxPayloadOwnedBytesHandle>(
   },
 );
 
-export class WasmOwnedBytes {
+export class ExternalBytes {
   #native: WxPayloadOwnedBytesHandle | null;
   readonly #finalizerToken = {};
 
@@ -257,19 +257,19 @@ export class WasmOwnedBytes {
     token: typeof ownedBytesConstructionToken,
   ) {
     if (token !== ownedBytesConstructionToken) {
-      throw new TypeError('WasmOwnedBytes values are created only by FastDB');
+      throw new TypeError('ExternalBytes values are created only by FastDB');
     }
     this.#native = native;
     ownedBytesFinalizer.register(this, native, this.#finalizerToken);
   }
 
-  static copyFrom(source: Uint8Array): WasmOwnedBytes {
+  static copyFrom(source: Uint8Array): ExternalBytes {
     if (!(source instanceof Uint8Array)) {
       throw new TypeError('source must be Uint8Array');
     }
     const module = payloadModule();
     return withInputBytes(module, source, (pointer) =>
-      new WasmOwnedBytes(
+      new ExternalBytes(
         new module.WxPayloadOwnedBytes(pointer, source.byteLength),
         ownedBytesConstructionToken,
       ),
@@ -288,7 +288,7 @@ export class WasmOwnedBytes {
   /** @internal */
   [ownedBytesHandleValue](): WxPayloadOwnedBytesHandle {
     if (this.#native === null) {
-      throw bindingError('WasmOwnedBytes is disposed', 'disposed_handle');
+      throw bindingError('ExternalBytes is disposed', 'disposed_handle');
     }
     return this.#native;
   }
@@ -917,9 +917,9 @@ export class Payload {
     );
   }
 
-  static openWasmOwned(
+  static openExternal(
     spec: CompiledSpec,
-    source: WasmOwnedBytes,
+    source: ExternalBytes,
     options = new OpenOptions(),
   ): Payload {
     const module = payloadModule();
@@ -1166,11 +1166,11 @@ function backingNative(backing: WasmMemoryBacking): WxPayloadBackingHandle {
   return WasmMemoryBacking.prototype[backingHandleValue].call(backing);
 }
 
-function ownedBytesNative(source: WasmOwnedBytes): WxPayloadOwnedBytesHandle {
-  if (!(source instanceof WasmOwnedBytes)) {
-    throw new TypeError('source must be WasmOwnedBytes');
+export function ownedBytesNative(source: ExternalBytes): WxPayloadOwnedBytesHandle {
+  if (!(source instanceof ExternalBytes)) {
+    throw new TypeError('source must be ExternalBytes');
   }
-  return WasmOwnedBytes.prototype[ownedBytesHandleValue].call(source);
+  return ExternalBytes.prototype[ownedBytesHandleValue].call(source);
 }
 
 function withOpenOptions<T>(

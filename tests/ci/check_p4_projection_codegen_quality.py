@@ -260,11 +260,11 @@ def check_map(document: dict[str, Any]) -> None:
         document["abi"]
         == {
             "version": 1,
-            "symbol_count": 117,
+            "symbol_count": 118,
             "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
             "status": "frozen-p4",
         },
-        "P4 map must freeze the reviewed ABI-117",
+        "P4 map must record the reviewed ABI-118 rooted in the frozen P4 ABI",
     )
 
     receipts = document["runtime_receipts"]
@@ -662,7 +662,11 @@ def check_workflow(document: dict[str, Any], source: str) -> None:
 
 def check_abi_allowlist(source: str) -> None:
     symbols = source.splitlines()
-    require(len(symbols) == 117, "P4 ABI allowlist must be exactly 117")
+    require(len(symbols) == 118, "Current ABI allowlist must contain exactly 118 symbols")
+    require(
+        "fdb_payload_v1_builder_value_external_bytes" in symbols,
+        "Current ABI allowlist must include the external bytes builder symbol",
+    )
     require(symbols == sorted(set(symbols)), "ABI allowlist must be sorted and unique")
     require(
         all(re.fullmatch(r"fdb_payload_v1_[A-Za-z0-9_]+", item) for item in symbols),

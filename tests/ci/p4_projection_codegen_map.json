@@ -6,7 +6,7 @@
   },
   "abi": {
     "version": 1,
-    "symbol_count": 117,
+    "symbol_count": 118,
     "allowlist": "tests/abi/fastdb_payload_v1_symbols.txt",
     "status": "frozen-p4"
   },
@@ -453,7 +453,7 @@
             {
               "file": "tests/ts/payload_runtime.mjs",
               "test": "copy and Wasm-owned external open keep truthful lifetimes",
-              "markers": ["openCopy", "openWasmOwned"]
+              "markers": ["openCopy", "openExternal"]
             },
             {
               "file": "tests/ts/payload_record_view.mjs",
@@ -868,7 +868,7 @@
             "file": "tests/ci/check_p4_projection_codegen_quality.py",
             "language": "python",
             "test": "check_abi_allowlist",
-            "markers": ["len(symbols) == 117", "sorted(set(symbols))", "fdb_payload_v1_"]
+            "markers": ["len(symbols) == 118", "sorted(set(symbols))", "fdb_payload_v1_builder_value_external_bytes"]
           }
         ]
       },
