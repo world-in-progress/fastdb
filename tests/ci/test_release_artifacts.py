@@ -32,6 +32,8 @@ class ReleaseInventoryTests(unittest.TestCase):
                 with zipfile.ZipFile(wheel, "w") as archive:
                     archive.writestr("fastdb4py-0.2.0.dist-info/METADATA", "Name: fastdb4py\nVersion: 0.2.0\n")
                     archive.writestr("fastdb4py/payload/__init__.py", "")
+                    archive.writestr("fastdb4py/core/_fastdb4py.so", b"native fixture")
+                    archive.writestr("fastdb4py/core/_payload_ext.so", b"native payload fixture")
                     archive.writestr("fastdb4py-0.2.0.dist-info/licenses/LICENSE", (release.ROOT / "LICENSE").read_bytes())
                     if notice is not None:
                         archive.writestr("fastdb4py-0.2.0.dist-info/licenses/THIRD_PARTY_NOTICES.txt", notice)
@@ -244,7 +246,12 @@ class ReleaseInventoryTests(unittest.TestCase):
                 archive.writestr("fastdb4py-0.2.0.dist-info/METADATA", "Name: fastdb4py\nVersion: 0.2.0\n")
                 archive.writestr("fastdb4py/payload/__init__.py", "")
                 if "win_" in name:
-                    archive.writestr("fastdb4py/core/_fastdb4py.pyd", windows_image(0xAA64 if "win_arm64" in name else 0x8664))
+                    machine = 0xAA64 if "win_arm64" in name else 0x8664
+                    archive.writestr("fastdb4py/core/_fastdb4py.pyd", windows_image(machine))
+                    archive.writestr("fastdb4py/core/_payload_ext.pyd", windows_image(machine))
+                else:
+                    archive.writestr("fastdb4py/core/_fastdb4py.so", b"native fixture")
+                    archive.writestr("fastdb4py/core/_payload_ext.so", b"native payload fixture")
                 archive.writestr("fastdb4py-0.2.0.dist-info/licenses/LICENSE", (release.ROOT / "LICENSE").read_bytes())
                 archive.writestr("fastdb4py-0.2.0.dist-info/licenses/THIRD_PARTY_NOTICES.txt", (release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes())
         with tempfile.TemporaryDirectory() as directory:
@@ -262,6 +269,29 @@ class ReleaseInventoryTests(unittest.TestCase):
                 release.record_part(output, "python", None)
             document = json.loads((output / "python.json").read_text())
             self.assertEqual(document["artifacts"][0]["target"], "aarch64-unknown-linux-gnu")
+
+            # Legacy backfill source without payload_py_ext.cpp accepts legacy wheel layout in record_part().
+            legacy_source = Path(directory) / "legacy-source"
+            legacy_source.mkdir()
+            (legacy_source / "LICENSE").write_bytes((release.ROOT / "LICENSE").read_bytes())
+            (legacy_source / "THIRD_PARTY_NOTICES.txt").write_bytes((release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes())
+            legacy_output = Path(directory) / "legacy-out"
+            legacy_output.mkdir()
+            legacy_wheel = legacy_output / "fastdb4py-0.2.0-cp312-cp312-win_arm64.whl"
+            with zipfile.ZipFile(legacy_wheel, "w") as archive:
+                archive.writestr("fastdb4py-0.2.0.dist-info/METADATA", "Name: fastdb4py\nVersion: 0.2.0\n")
+                archive.writestr("fastdb4py/payload/__init__.py", "")
+                archive.writestr("fastdb4py/core/_fastdb4py.pyd", windows_image(0xAA64))
+                archive.writestr("fastdb4py-0.2.0.dist-info/licenses/LICENSE", (release.ROOT / "LICENSE").read_bytes())
+                archive.writestr("fastdb4py-0.2.0.dist-info/licenses/THIRD_PARTY_NOTICES.txt", (release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes())
+            with patch.object(release, "ROOT", legacy_source), patch.object(release, "source_sha", return_value="a" * 40), patch.object(release, "version", return_value="0.2.0"):
+                release.record_part(legacy_output, "python", None)
+            legacy_doc = json.loads((legacy_output / "python.json").read_text())
+            self.assertEqual(legacy_doc["artifacts"][0]["target"], release.WINDOWS_ARM64_TARGET)
+            # Current source rejects the same wheel without _payload_ext.
+            with patch.object(release, "source_sha", return_value="a" * 40), patch.object(release, "version", return_value="0.2.0"):
+                with self.assertRaisesRegex(release.ReleaseError, "requires exactly one native extension"):
+                    release.record_part(legacy_output, "python", None)
 
     def test_manifest_rejects_mistagged_or_missing_windows_artifacts(self):
         with tempfile.TemporaryDirectory() as directory:

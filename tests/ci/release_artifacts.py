@@ -241,6 +241,38 @@ def make_core(build_dir: Path, output: Path, target: str) -> None:
                 archive.add(member, arcname=member.relative_to(bundle).as_posix(), recursive=False)
 
 
+def required_wheel_extensions(source: Path | None = None) -> tuple[str, ...]:
+    root = ROOT if source is None else source
+    if (root / "fastcarto/fastdb/python/payload_py_ext.cpp").is_file():
+        return ("_fastdb4py", "_payload_ext")
+    return ("_fastdb4py",)
+
+
+def check_wheel_extensions(
+    archive: zipfile.ZipFile,
+    wheel_platform: str,
+    name: str,
+    source: Path | None = None,
+) -> None:
+    is_windows = wheel_platform.startswith("win_")
+    suffix = ".pyd" if is_windows else ".so"
+    members = [PurePosixPath(member) for member in archive.namelist()]
+    for module in required_wheel_extensions(source):
+        matches = [
+            member.as_posix()
+            for member in members
+            if member.parent.as_posix() == "fastdb4py/core"
+            and member.name.startswith(f"{module}.")
+            and member.name.endswith(suffix)
+        ]
+        if len(matches) != 1:
+            raise ReleaseError(
+                f"Wheel requires exactly one native extension fastdb4py/core/{module}.*{suffix}: {name}"
+            )
+        if is_windows:
+            check_windows_binary(archive.read(matches[0]), WHEEL_PLATFORM_TARGETS[wheel_platform], name)
+
+
 def inspect_wheel(path: Path, release_version: str) -> str:
     # Check repaired wheel identity separately from the source-wheel inventory gate.
     # auditwheel/delocate may legitimately add dependency libraries to this archive.
@@ -259,12 +291,7 @@ def inspect_wheel(path: Path, release_version: str) -> str:
         if not any(name.startswith("fastdb4py/payload/") for name in archive.namelist()):
             raise ReleaseError(f"Wheel omits the portable payload API: {path.name}")
         wheel_platform = path.stem.rsplit("-", 1)[-1]
-        if wheel_platform.startswith("win_"):
-            extensions = [name for name in archive.namelist()
-                          if name.startswith("fastdb4py/core/_fastdb4py") and name.endswith(".pyd")]
-            if len(extensions) != 1:
-                raise ReleaseError(f"Windows wheel requires one native extension: {path.name}")
-            check_windows_binary(archive.read(extensions[0]), WHEEL_PLATFORM_TARGETS[wheel_platform], path.name)
+        check_wheel_extensions(archive, wheel_platform, path.name)
     pieces = path.stem.split("-")
     return "cp314t" if pieces[-2] == "cp314t" else pieces[-3]
 

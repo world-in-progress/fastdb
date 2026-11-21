@@ -46,17 +46,25 @@ class PythonDistributionTests(unittest.TestCase):
                     continue
                 name = f"fastdb4py-0.2.1-{abi.removesuffix('t')}-{abi}-{tag}.whl"
                 self.wheel(self.dist / name)
+        (self.source / "fastcarto/fastdb/python").mkdir(parents=True, exist_ok=True)
+        (self.source / "fastcarto/fastdb/python/payload_py_ext.cpp").write_text("// fixture\n")
         self.sdist = self.dist / "fastdb4py-0.2.1.tar.gz"
         self.archive({"PKG-INFO": b"Name: fastdb4py\nVersion: 0.2.1\n"})
 
-    def wheel(self, path, *, metadata_version="0.2.1", binary_machine=None):
+    def wheel(self, path, *, metadata_version="0.2.1", binary_machine=None, payload_machine=None, omit_payload_ext=False):
         with zipfile.ZipFile(path, "w") as archive:
             archive.writestr("fastdb4py-0.2.1.dist-info/METADATA", f"Name: fastdb4py\nVersion: {metadata_version}\n")
             if "win_" in path.name:
-                machine = binary_machine if binary_machine is not None else (0xAA64 if "win_arm64" in path.name else 0x8664)
+                default_machine = 0xAA64 if "win_arm64" in path.name else 0x8664
+                machine = binary_machine if binary_machine is not None else default_machine
+                ext_machine = payload_machine if payload_machine is not None else machine
                 archive.writestr("fastdb4py/core/_fastdb4py.pyd", windows_image(machine))
+                if not omit_payload_ext:
+                    archive.writestr("fastdb4py/core/_payload_ext.pyd", windows_image(ext_machine))
             else:
                 archive.writestr("fastdb4py/core/_fastdb4py.so", b"native fixture")
+                if not omit_payload_ext:
+                    archive.writestr("fastdb4py/core/_payload_ext.so", b"native payload fixture")
 
     def archive(self, members):
         with tarfile.open(self.sdist, "w:gz") as archive:
@@ -97,6 +105,26 @@ class PythonDistributionTests(unittest.TestCase):
         self.wheel(path, binary_machine=0x8664)
         with self.assertRaisesRegex(ReleaseError, "binary architecture"):
             self.inventory()
+        self.wheel(path, binary_machine=0xAA64, payload_machine=0x8664)
+        with self.assertRaisesRegex(ReleaseError, "binary architecture"):
+            self.inventory()
+        self.wheel(path, omit_payload_ext=True)
+        with self.assertRaisesRegex(ReleaseError, "requires exactly one native extension"):
+            self.inventory()
+        # Reject prefix collision and wrong-platform suffix on POSIX wheels.
+        posix_path = self.dist / "fastdb4py-0.2.1-cp312-cp312-manylinux_2_28_x86_64.whl"
+        posix_backup = posix_path.read_bytes()
+        for bad_member in ("fastdb4py/core/_payload_ext_helper.so", "fastdb4py/core/_payload_ext.pyd", "other/_payload_ext.so"):
+            with zipfile.ZipFile(posix_path, "w") as archive:
+                archive.writestr("fastdb4py-0.2.1.dist-info/METADATA", "Name: fastdb4py\nVersion: 0.2.1\n")
+                archive.writestr("fastdb4py/core/_fastdb4py.so", b"native fixture")
+                archive.writestr(bad_member, b"bad fixture")
+            with self.subTest(bad_member=bad_member), self.assertRaisesRegex(ReleaseError, "requires exactly one native extension"):
+                self.inventory()
+        posix_path.write_bytes(posix_backup)
+        # Legacy tags without payload_py_ext.cpp remain backfill-compatible.
+        (self.source / "fastcarto/fastdb/python/payload_py_ext.cpp").unlink()
+        self.assertEqual(len(self.inventory()), 36)
 
     def test_windows_arm64_has_no_unsupported_cpython_310_slot(self):
         slots = distributions.expected_slots(BUILD, PLATFORMS)
@@ -177,7 +205,7 @@ class PythonDistributionTests(unittest.TestCase):
         members = {path.relative_to(self.source).as_posix(): path.read_bytes() for path in self.source.rglob("*") if path.is_file()}
         members["PKG-INFO"] = b"Name: fastdb4py\nVersion: 0.2.1\n"
         self.archive(members)
-        self.assertEqual(distributions.compare_sdist(self.source, self.sdist)["matched_source_files"], 6)
+        self.assertEqual(distributions.compare_sdist(self.source, self.sdist)["matched_source_files"], 7)
         self.archive({**members, "setup.py": b"changed source"})
         with self.assertRaisesRegex(ReleaseError, "differs from the tag"):
             distributions.compare_sdist(self.source, self.sdist)

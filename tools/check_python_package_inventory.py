@@ -43,6 +43,7 @@ SDIST_REQUIRED = {
     "tools/generate_third_party_notices.py",
     "fastcarto/fastdb/include/fastdb_payload.h",
     "fastcarto/fastdb/include/fastdb_payload.hpp",
+    "fastcarto/fastdb/python/payload_py_ext.cpp",
     "fastcarto/fastdb/src/payload/codegen/Artifact.cpp",
     "fastcarto/fastdb/src/payload/codegen/Artifact.hpp",
     "fastcarto/fastdb/src/payload/codegen/Generator.cpp",
@@ -173,33 +174,72 @@ def reject_members(names: set[str], forbidden: set[str], label: str) -> None:
 
 def check_wheel_native_artifacts(names: set[str]) -> None:
     native = {name for name in names if NATIVE_ARTIFACT.search(name)}
+    core_native = {
+        name for name in native if PurePosixPath(name).parent.as_posix() == "fastdb4py/core"
+    }
+    windows_core = {
+        name for name in core_native if PurePosixPath(name).name == "fastdb.dll"
+    }
+    if windows_core:
+        python_extension = {
+            name
+            for name in core_native
+            if PurePosixPath(name).name.startswith("_fastdb4py.")
+            and PurePosixPath(name).name.endswith(".pyd")
+        }
+        payload_extension = {
+            name
+            for name in core_native
+            if PurePosixPath(name).name.startswith("_payload_ext.")
+            and PurePosixPath(name).name.endswith(".pyd")
+        }
+        expected = python_extension | payload_extension | windows_core
+        if (
+            len(python_extension) != 1
+            or len(payload_extension) != 1
+            or len(windows_core) != 1
+            or native != expected
+        ):
+            raise CheckError(
+                "Windows wheel must contain exactly fastdb4py/core/_fastdb4py.*.pyd, "
+                "fastdb4py/core/_payload_ext.*.pyd, and fastdb4py/core/fastdb.dll; "
+                f"found {sorted(native)}"
+            )
+        return
+
     python_extension = {
         name
-        for name in native
+        for name in core_native
         if PurePosixPath(name).name.startswith("_fastdb4py.")
+        and PurePosixPath(name).name.endswith(".so")
+    }
+    payload_extension = {
+        name
+        for name in core_native
+        if PurePosixPath(name).name.startswith("_payload_ext.")
+        and PurePosixPath(name).name.endswith(".so")
     }
     native_core = {
         name
-        for name in native
+        for name in core_native
         if PurePosixPath(name).name.startswith("libfastdb.")
-        or PurePosixPath(name).name == "fastdb.dll"
     }
     native_binding = {
         name
-        for name in native
+        for name in core_native
         if PurePosixPath(name).name.startswith("libfastdb4py.")
-        or PurePosixPath(name).name == "fastdb4py.dll"
     }
-    expected = python_extension | native_core | native_binding
+    expected = python_extension | payload_extension | native_core | native_binding
     if (
         len(python_extension) != 1
+        or len(payload_extension) != 1
         or len(native_core) != 1
         or len(native_binding) != 1
         or native != expected
     ):
         raise CheckError(
-            "wheel must contain exactly one Python extension, one native FastDB "
-            "library, and one native binding library; "
+            "wheel must contain exactly fastdb4py/core/_fastdb4py.*.so, "
+            "fastdb4py/core/_payload_ext.*.so, libfastdb, and libfastdb4py; "
             f"found {sorted(native)}"
         )
 

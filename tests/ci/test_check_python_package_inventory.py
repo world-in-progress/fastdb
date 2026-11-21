@@ -226,20 +226,48 @@ class InventoryTests(unittest.TestCase):
                 "fastdb4py-0.1.22",
             )
 
-    def test_requires_exact_three_native_wheel_artifacts(self) -> None:
-        exact = {
+    def test_requires_payload_extension_source_in_sdist(self) -> None:
+        self.assertIn(
+            "fastcarto/fastdb/python/payload_py_ext.cpp", MODULE.SDIST_REQUIRED
+        )
+
+    def test_requires_exact_native_wheel_artifacts(self) -> None:
+        posix_exact = {
             "fastdb4py/core/_fastdb4py.so",
+            "fastdb4py/core/_payload_ext.so",
             "fastdb4py/core/libfastdb.so",
             "fastdb4py/core/libfastdb4py.so",
         }
-        MODULE.check_wheel_native_artifacts(exact)
-        for missing in exact:
-            with self.subTest(missing=missing), self.assertRaises(MODULE.CheckError):
-                MODULE.check_wheel_native_artifacts(exact - {missing})
+        windows_exact = {
+            "fastdb4py/core/_fastdb4py.pyd",
+            "fastdb4py/core/_payload_ext.pyd",
+            "fastdb4py/core/fastdb.dll",
+        }
+        for exact in (posix_exact, windows_exact):
+            MODULE.check_wheel_native_artifacts(exact)
+            for missing in exact:
+                with self.subTest(missing=missing), self.assertRaises(MODULE.CheckError):
+                    MODULE.check_wheel_native_artifacts(exact - {missing})
+            with self.assertRaises(MODULE.CheckError):
+                MODULE.check_wheel_native_artifacts(exact | {"fastdb4py/core/extra.so"})
+            with self.assertRaises(MODULE.CheckError):
+                MODULE.check_wheel_native_artifacts(exact | {"other/extra.so"})
+        # Reject misplaced directory, prefix collision, and cross-platform suffix.
         with self.assertRaises(MODULE.CheckError):
-            MODULE.check_wheel_native_artifacts(exact | {"fastdb4py/core/extra.so"})
+            MODULE.check_wheel_native_artifacts(
+                (posix_exact - {"fastdb4py/core/_payload_ext.so"})
+                | {"other/_payload_ext.so"}
+            )
         with self.assertRaises(MODULE.CheckError):
-            MODULE.check_wheel_native_artifacts(exact | {"other/extra.so"})
+            MODULE.check_wheel_native_artifacts(
+                (posix_exact - {"fastdb4py/core/_payload_ext.so"})
+                | {"fastdb4py/core/_payload_ext_helper.so"}
+            )
+        with self.assertRaises(MODULE.CheckError):
+            MODULE.check_wheel_native_artifacts(
+                (posix_exact - {"fastdb4py/core/_payload_ext.so"})
+                | {"fastdb4py/core/_payload_ext.pyd"}
+            )
 
 
 if __name__ == "__main__":
