@@ -432,7 +432,7 @@ Result<LogicalFacts> collect_logical_facts(
 
         if (kind == TypeKind::str || kind == TypeKind::wstr ||
             kind == TypeKind::bytes) {
-            if (!node.external_bytes) {
+            if (node.external_bytes == UINT32_C(0)) {
                 auto storage_end = checked_range_end(
                     node.scalar_bits_or_offset, node.byte_length, storage_size,
                     JsonPointer{}.append("pools"));

@@ -54,7 +54,7 @@ struct ValueNode final {
     NodeIndex next_sibling;
     std::uint64_t child_count;
     std::uint32_t object_component_index{UINT32_MAX};
-    bool external_bytes{false};
+    std::uint32_t external_bytes{UINT32_C(0)};
     std::uint64_t object_id{UINT64_MAX};
 };
 
@@ -102,7 +102,7 @@ public:
     }
     const std::uint8_t* variable_data(const ValueNode& node) const noexcept {
         const auto offset = static_cast<std::size_t>(node.scalar_bits_or_offset);
-        if (node.external_bytes) {
+        if (node.external_bytes != UINT32_C(0)) {
             return arena_.external_bytes_[offset].readable_data();
         }
         return arena_.byte_storage_.data() + offset;

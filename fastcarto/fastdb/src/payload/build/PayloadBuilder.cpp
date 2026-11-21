@@ -1059,7 +1059,7 @@ Result<void> PayloadBuilder::push_storage_impl(
         ValueNode node{
             state.frames.back().type_id, tag, {0U, 0U, 0U}, index,
             byte_count, invalid_node_index, invalid_node_index, UINT64_C(0)};
-        node.external_bytes = true;
+        node.external_bytes = UINT32_C(1);
         state.commit_leaf(node);
         state.external_bytes += byte_count;
         state.opaque_bytes = updated;
@@ -1484,7 +1484,7 @@ Result<ObjectHandle> PayloadBuilder::declare_object_impl(
     const NodeIndex appended = state.append_node(ValueNode{
         UINT32_MAX, ValueTag::object_record, {0U, 0U, 0U}, UINT64_C(0),
         UINT64_C(0), invalid_node_index, invalid_node_index, UINT64_C(0),
-        component_index, false, object_id});
+        component_index, UINT32_C(0), object_id});
     if (appended != node) {
         return Result<ObjectHandle>::failure(simple_error(
             FDB_PAYLOAD_E_INTERNAL, path,
@@ -1621,7 +1621,7 @@ Result<void> PayloadBuilder::push_graph_coordinate_impl(
     state.commit_leaf(ValueNode{
         type_id, tag, {0U, 0U, 0U}, UINT64_C(0), UINT64_C(0),
         invalid_node_index, invalid_node_index, UINT64_C(0),
-        coordinate.component_index, false, coordinate.object_id});
+        coordinate.component_index, UINT32_C(0), coordinate.object_id});
     return Result<void>::success();
 }
 

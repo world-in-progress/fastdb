@@ -297,7 +297,7 @@ Result<void> encode_scalar_or_identity(const GraphLayout& graph_layout,
                 JsonPointer{}.append("values"),
                 "variable_value_mismatch"));
         }
-        if (!list && !node.external_bytes) {
+        if (!list && node.external_bytes == UINT32_C(0)) {
             auto storage_end = layout::checked_range_end(
                 node.scalar_bits_or_offset, node.byte_length,
                 values.byte_storage().size(),

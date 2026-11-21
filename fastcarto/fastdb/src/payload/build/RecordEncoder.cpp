@@ -275,7 +275,7 @@ Result<void> encode_scalar_slot(const RecordLayout& layout,
                 encode_error(JsonPointer{}.append("values"),
                              "wide_text_storage_length_is_odd"));
         }
-        if (!list && !node.external_bytes) {
+        if (!list && node.external_bytes == UINT32_C(0)) {
             auto storage_end = layout::checked_range_end(
                 node.scalar_bits_or_offset, node.byte_length,
                 values.byte_storage().size(),
