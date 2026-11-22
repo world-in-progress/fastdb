@@ -2,7 +2,7 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
-## 0.3.0 — release preparation
+## 0.3.0 — 2026-11-22
 
 - Add the `fastdb4py.core._payload_ext` native extension for CPython 3.10 through 3.14, including free-threaded 3.14. Python `ExternalBytes` pins C-contiguous read-only buffers without copying, snapshots writable buffers, and supports idempotent `close()`. `Payload.memoryview()` and `Access.memoryview()` export read-only views that retain backing. `DirectBacking` and `WritableBufferBacking` let build plans write into caller-provided storage (PR #48, PR #49).
 - Add Rust `ExternalBytes::from_owner` and `ExternalBytes::from_arc` for zero-copy ownership of byte spans. `BuildPlan::execute_with_backing` uses the safe `Backing`, `ReservedBacking`, and `CommittedBacking` traits for reservation and publication (PR #48).
@@ -12,7 +12,7 @@ All notable changes to `fastdb` and its bindings are documented here. Release en
 - Add required Windows x64 PR/main checks on `windows-2022`: MSVC/Ninja Core builds, CTest, ABI exports and the full CPython 3.12 Python suite. Include both jobs in scoped aggregation and exact-source publication proofs.
 - Keep ObjectEngine's published shared-memory mappings open for the publisher engine's lifetime, so Windows readers can attach by name. Document snapshot ownership, POSIX unlink and Windows last-handle cleanup.
 - Define `FastSerializer.loads_shm` bounds against the attached mapping size, including OS page padding. Reject negative regions and test native rejection of invalid mapped bytes without platform skips.
-- Synchronize Python, Rust, TypeScript/WASM, and the Core bundle at 0.3.0. Exact-source CI, release artifacts, and publication evidence are pending in [the 0.3.0 draft release record](docs/releases/0.3.0.md).
+- Synchronize Python, Rust, TypeScript/WASM, and the Core bundle at 0.3.0. Exact-source CI, release artifacts, and publication evidence are recorded in [the 0.3.0 release record](docs/releases/0.3.0.md).
 
 ## 0.2.4 — 2026-10-29
 
