@@ -5,8 +5,8 @@ portable-payload C ABI. The C++ Core remains the only semantic authority; this
 crate does not parse schemas, canonicalize JSON, plan layouts, read binaries,
 walk graphs, materialize values, or generate code.
 
-Install the `fastdb-core-0.2.4-<target>.tar.gz` Core/C ABI bundle from the
-[FastDB v0.2.4 release](https://github.com/world-in-progress/fastdb/releases/tag/v0.2.4)
+Install the `fastdb-core-0.3.0-<target>.tar.gz` Core/C ABI bundle from the
+[FastDB v0.3.0 release](https://github.com/world-in-progress/fastdb/releases/tag/v0.3.0)
 and verify it against that release's artifact manifest. The native release
 targets are `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
 `x86_64-pc-windows-msvc`, and `aarch64-pc-windows-msvc`. The extracted bundle contains
@@ -16,11 +16,11 @@ targets are `x86_64-unknown-linux-gnu`, `aarch64-apple-darwin`,
 
 Registry consumers select the `system` link mode and use the extracted `lib`
 directory. For example, after extracting the bundle under
-`/opt/fastdb/0.2.4/<target>`:
+`/opt/fastdb/0.3.0/<target>`:
 
 ```sh
 export FASTDB_PAYLOAD_LINK_MODE=system
-export FASTDB_PAYLOAD_SYSTEM_LIB_DIR=/opt/fastdb/0.2.4/x86_64-unknown-linux-gnu/lib
+export FASTDB_PAYLOAD_SYSTEM_LIB_DIR=/opt/fastdb/0.3.0/x86_64-unknown-linux-gnu/lib
 # Linux runtime loader:
 export LD_LIBRARY_PATH="$FASTDB_PAYLOAD_SYSTEM_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # On macOS, use DYLD_LIBRARY_PATH with the same directory instead.
@@ -32,7 +32,7 @@ the process loader path:
 
 ```powershell
 $env:FASTDB_PAYLOAD_LINK_MODE = "system"
-$env:FASTDB_PAYLOAD_SYSTEM_LIB_DIR = "C:\fastdb\0.2.4\x86_64-pc-windows-msvc\lib"
+$env:FASTDB_PAYLOAD_SYSTEM_LIB_DIR = "C:\fastdb\0.3.0\x86_64-pc-windows-msvc\lib"
 $env:PATH = "$env:FASTDB_PAYLOAD_SYSTEM_LIB_DIR;$env:PATH"
 cargo run
 ```
@@ -56,7 +56,9 @@ fails closed for an unknown mode, a relative/missing directory, or a missing
 library. The raw ABI test and the safe crate call `fdb_payload_v1_abi_version`
 against the linked library; a mismatched ABI is rejected rather than adapted.
 
-The ABI-117 boundary uses ABI version 1 and exactly 117 exported symbols.
+The ABI-118 boundary uses ABI version 1 and exactly 118 exported symbols.
+It retains all 117 symbols from ABI-117 and adds
+`fdb_payload_v1_builder_value_external_bytes`.
 The historical P3 runtime sub-boundary is ABI-105; the twelve P4
 additions are only three Core provenance guards and nine immutable
 ArtifactSet/codegen functions.

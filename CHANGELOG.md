@@ -2,11 +2,17 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
-## Unreleased
+## 0.3.0 — release preparation
 
+- Add the `fastdb4py.core._payload_ext` native extension for CPython 3.10 through 3.14, including free-threaded 3.14. Python `ExternalBytes` pins C-contiguous read-only buffers without copying, snapshots writable buffers, and supports idempotent `close()`. `Payload.memoryview()` and `Access.memoryview()` export read-only views that retain backing. `DirectBacking` and `WritableBufferBacking` let build plans write into caller-provided storage (PR #48, PR #49).
+- Add Rust `ExternalBytes::from_owner` and `ExternalBytes::from_arc` for zero-copy ownership of byte spans. `BuildPlan::execute_with_backing` uses the safe `Backing`, `ReservedBacking`, and `CommittedBacking` traits for reservation and publication (PR #48).
+- Cache a shared immutable `RuntimeSchema` in `CompiledSpec` and grow `PayloadBuilder` storage geometrically. Validate UTF-8 after copying into builder storage and reuse that validation when publishing from Core-owned heap backing. Assert at compile time that `ValueNode` has no padding (PR #49).
+- Extend ABI-117 to ABI-118 with `fdb_payload_v1_builder_value_external_bytes`, retaining all 117 existing exports. Expose external-byte builder inputs in C++, Rust, Python, and TypeScript/WASM. In TypeScript, rename `WasmOwnedBytes` to `ExternalBytes`, rename `Payload.openWasmOwned` to `Payload.openExternal`, and add `Builder.valueExternalBytes` (PR #49).
+- Require `_payload_ext` in Python wheel inventories and verify its PE architecture in Windows wheels. Pin Emscripten 5.0.2 in the `ts_tests` job (PR #48).
 - Add required Windows x64 PR/main checks on `windows-2022`: MSVC/Ninja Core builds, CTest, ABI exports and the full CPython 3.12 Python suite. Include both jobs in scoped aggregation and exact-source publication proofs.
 - Keep ObjectEngine's published shared-memory mappings open for the publisher engine's lifetime, so Windows readers can attach by name. Document snapshot ownership, POSIX unlink and Windows last-handle cleanup.
 - Define `FastSerializer.loads_shm` bounds against the attached mapping size, including OS page padding. Reject negative regions and test native rejection of invalid mapped bytes without platform skips.
+- Synchronize Python, Rust, TypeScript/WASM, and the Core bundle at 0.3.0. Exact-source CI, release artifacts, and publication evidence are pending in [the 0.3.0 draft release record](docs/releases/0.3.0.md).
 
 ## 0.2.4 — 2026-10-29
 
