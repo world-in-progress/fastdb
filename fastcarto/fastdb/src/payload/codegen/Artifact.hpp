@@ -15,6 +15,7 @@ enum class Target : std::uint8_t {
     rust = UINT8_C(2),
     python = UINT8_C(4),
     typescript = UINT8_C(8),
+    java = UINT8_C(16),
 };
 
 enum class ArtifactKind : std::uint32_t {

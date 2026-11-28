@@ -53,7 +53,7 @@
                 "const": ["compile", "query", "build", "open", "view", "materialize", "invalidate", "codegen"]
               },
               "codegen_targets": {
-                "const": ["cpp", "rust", "python", "typescript"]
+                "const": ["cpp", "rust", "python", "typescript", "java"]
               },
               "direct_build": {
                 "properties": {
@@ -79,7 +79,7 @@
                 "const": ["compile", "query", "build", "open", "view", "materialize", "invalidate", "codegen"]
               },
               "codegen_targets": {
-                "const": ["cpp", "rust", "python", "typescript"]
+                "const": ["cpp", "rust", "python", "typescript", "java"]
               },
               "direct_build": {
                 "properties": {
@@ -248,7 +248,7 @@
           ]
         },
         "codegen_targets": {
-          "const": ["cpp", "rust", "python", "typescript"]
+          "const": ["cpp", "rust", "python", "typescript", "java"]
         },
         "direct_build": {"$ref": "#/$defs/direct_build"}
       },

@@ -43,6 +43,8 @@ std::string suffix(Target target) {
         return ".py";
     case Target::typescript:
         return ".ts";
+    case Target::java:
+        return ".java";
     }
     return {};
 }
@@ -59,6 +61,8 @@ std::string render(const spec::CompiledSpec& compiled,
         return render_python(compiled, topology, max_total_bytes);
     case Target::typescript:
         return render_typescript(compiled, topology, max_total_bytes);
+    case Target::java:
+        return render_java(compiled, topology, max_total_bytes);
     }
     return {};
 }
@@ -93,7 +97,10 @@ Result<ArtifactSet> generate(const spec::CompiledSpec& compiled,
         }
         const std::string digest =
             identity::sha256_lower_hex(compiled.digest());
-        std::string relative_path = "fastdb_payload_";
+        std::string relative_path =
+            target == Target::java
+                ? "io/fastdb/payload/generated/FastdbPayload_"
+                : "fastdb_payload_";
         relative_path += digest;
         relative_path += suffix(target);
 

@@ -19,6 +19,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       python: ${{ steps.filter.outputs.python }}
       ts: ${{ steps.filter.outputs.ts }}
+      java: ${{ steps.filter.outputs.java }}
       workflow: ${{ steps.filter.outputs.workflow }}
       release: ${{ steps.filter.outputs.release }}
     steps:
@@ -65,6 +66,8 @@ jobs:
               - 'ts/**'
               - 'tests/ts/**'
               - 'package.json'
+            java:
+              - 'bindings/java/**'
             workflow:
               - '.github/workflows/tests.yml'
               - 'tests/ci/check_*'
@@ -202,6 +205,87 @@ jobs:
 
       - name: Run Python tests
         run: uv run pytest tests/python
+
+  java_payload:
+    needs: detect_changes
+    if: needs.detect_changes.outputs.core == 'true' || needs.detect_changes.outputs.java == 'true' || needs.detect_changes.outputs.workflow == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, expected_arch: x86_64, lib_name: libfastdb_java.so }
+          - { os: macos-15, expected_arch: arm64, lib_name: libfastdb_java.dylib }
+          - { os: windows-2022, expected_arch: AMD64, lib_name: fastdb_java.dll }
+    env:
+      EXPECTED_ARCH: ${{ matrix.expected_arch }}
+      LIB_NAME: ${{ matrix.lib_name }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: bindings/java/pom.xml
+
+      - name: Build and test the Java binding (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          test "$(uname -m)" = "$EXPECTED_ARCH"
+          cmake -S fastcarto -B build/java -DCMAKE_BUILD_TYPE=Release -DFASTDB_BUILD_JAVA_JNI=ON -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF
+          cmake --build build/java --target fastdb_java fastdb_java_test --parallel
+          library="$(find "$PWD/build/java" -type f -name "$LIB_NAME")"
+          if [[ ! -f "$library" ]]; then
+            echo "Expected exactly one built $LIB_NAME"
+            exit 1
+          fi
+          mvn -f bindings/java/pom.xml -B test "-Dfastdb.java.library.path=$library"
+          mvn -f bindings/java/pom.xml -B test -Dtest=NativeBackingTest "-Dfastdb.java.library.path=$library"
+          mvn -f bindings/java/pom.xml -B package -DskipTests
+
+      - name: Set up the native MSVC developer environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up Python
+        if: runner.os == 'Windows'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          architecture: x64
+
+      - name: Install Ninja
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip install ninja
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build and test the Java binding (Windows MSVC)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if ($env:PROCESSOR_ARCHITECTURE -ne $env:EXPECTED_ARCH) { throw "Expected a Windows x64 runner" }
+          cmake -S fastcarto -B build/java -G Ninja -DCMAKE_BUILD_TYPE=Release -DFASTDB_BUILD_JAVA_JNI=ON -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cmake --build build/java --target fastdb_java fastdb_java_test --parallel 2 -- -k 0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $libraries = @(Get-ChildItem build/java -Filter $env:LIB_NAME -File -Recurse)
+          if ($libraries.Count -ne 1) { throw "Expected exactly one built $env:LIB_NAME" }
+          $library = $libraries[0].FullName
+          mvn -f bindings/java/pom.xml -B test "-Dfastdb.java.library.path=$library"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          mvn -f bindings/java/pom.xml -B test -Dtest=NativeBackingTest "-Dfastdb.java.library.path=$library"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          mvn -f bindings/java/pom.xml -B package -DskipTests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   ts_tests:
     needs: detect_changes
@@ -592,6 +676,7 @@ jobs:
       - python_tests
       - windows_python_tests
       - rust_payload
+      - java_payload
       - ts_tests
       - native_tests
       - windows_native_tests
@@ -613,6 +698,7 @@ jobs:
           RUST_SCOPE: ${{ needs.detect_changes.outputs.rust }}
           PYTHON_SCOPE: ${{ needs.detect_changes.outputs.python }}
           TS_SCOPE: ${{ needs.detect_changes.outputs.ts }}
+          JAVA_SCOPE: ${{ needs.detect_changes.outputs.java }}
           WORKFLOW_SCOPE: ${{ needs.detect_changes.outputs.workflow }}
           RELEASE_SCOPE: ${{ needs.detect_changes.outputs.release }}
           RELEASE_TOOLS_RESULT: ${{ needs.release_tools.result }}
@@ -625,6 +711,7 @@ jobs:
           WASM_CORE_RESULT: ${{ needs.wasm_core.result }}
           PACKAGE_TESTS_RESULT: ${{ needs.package_tests.result }}
           RUST_PAYLOAD_RESULT: ${{ needs.rust_payload.result }}
+          JAVA_PAYLOAD_RESULT: ${{ needs.java_payload.result }}
           PROJECTION_PARITY_RESULT: ${{ needs.projection_parity.result }}
           GENERATED_PROJECTIONS_RESULT: ${{ needs.generated_projections.result }}
         run: |

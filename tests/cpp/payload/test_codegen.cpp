@@ -120,7 +120,7 @@ struct TargetExpectation final {
     std::string_view component_guard_marker;
 };
 
-constexpr std::array<TargetExpectation, 4> kTargets{{
+constexpr std::array<TargetExpectation, 5> kTargets{{
     {Target::cpp, "cpp", ".hpp", "empty-record.expected.hpp",
      "<fastdb_payload.hpp>", "fdb_cpp_id_", "graph_identity",
      "ref_target", "at_graph_identity", "at_ref_target",
@@ -135,6 +135,9 @@ constexpr std::array<TargetExpectation, 4> kTargets{{
     {Target::typescript, "typescript", ".ts", "empty-record.expected.ts",
      "fastdb4ts/payload", "fdb_ts_id_", "graphIdentity", "refTarget",
      "atGraphIdentity", "atRefTarget", "componentIndex() !=="},
+    {Target::java, "java", ".java", "empty-record.expected.java",
+     "io.fastdb.payload", "fdb_java_id_", "graphIdentity", "refTarget",
+     "atGraphIdentity", "atRefTarget", "componentIndex() !="},
 }};
 
 std::string read_file(const std::string& path) {
@@ -255,6 +258,7 @@ int test_identifier_projection_is_total_and_collision_free() {
     require(static_cast<std::uint8_t>(Target::rust) == UINT8_C(2));
     require(static_cast<std::uint8_t>(Target::python) == UINT8_C(4));
     require(static_cast<std::uint8_t>(Target::typescript) == UINT8_C(8));
+    require(static_cast<std::uint8_t>(Target::java) == UINT8_C(16));
 
     std::string all_bytes;
     std::string all_hex;
@@ -432,9 +436,11 @@ int test_exact_empty_artifacts_and_repeated_determinism() {
 
         const auto& artifact = first.value().artifacts().front();
         const auto& repeated = second.value().artifacts().front();
+        const char* path_prefix = expectation.target == Target::java
+            ? "io/fastdb/payload/generated/FastdbPayload_"
+            : "fastdb_payload_";
         require(artifact.relative_path() ==
-                "fastdb_payload_" + digest +
-                    std::string(expectation.suffix));
+                path_prefix + digest + std::string(expectation.suffix));
         require(artifact.kind() == ArtifactKind::source);
         require(artifact.relative_path() == repeated.relative_path());
         require(artifact.bytes() == repeated.bytes());
@@ -572,12 +578,16 @@ int test_rich_specs_emit_only_official_runtime_ergonomics() {
             if (has_identity) {
                 require(bytes.find(expectation.graph_identity_marker) !=
                         std::string_view::npos);
-                require(bytes.find("_builder_declare") !=
+                require(bytes.find(expectation.target == Target::java
+                                       ? "_builderDeclare"
+                                       : "_builder_declare") !=
                         std::string_view::npos);
             } else {
                 require(bytes.find(expectation.graph_identity_marker) ==
                         std::string_view::npos);
-                require(bytes.find("_builder_declare") ==
+                require(bytes.find(expectation.target == Target::java
+                                       ? "_builderDeclare"
+                                       : "_builder_declare") ==
                         std::string_view::npos);
             }
             if (expectation.target == Target::typescript &&
@@ -997,10 +1007,10 @@ int emit_spec_artifacts(const std::string& source_path,
             return EXIT_FAILURE;
         }
         const auto& artifact = generated.value().artifacts().front();
-        std::ofstream output(
-            std::filesystem::path(directory) /
-                std::string(artifact.relative_path()),
-            std::ios::binary | std::ios::trunc);
+        const auto path = std::filesystem::path(directory) /
+                          std::string(artifact.relative_path());
+        std::filesystem::create_directories(path.parent_path());
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
         if (!output) {
             return EXIT_FAILURE;
         }

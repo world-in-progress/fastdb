@@ -18,7 +18,7 @@ The target repository layers are:
 
 - C++ Core under `fastcarto/fastdb/`: sole authority for `fastdb.payload.v1`, canonical identity, binary layout, build/open, backing, lifetime, errors, and codegen.
 - Stable C ABI under `fastcarto/fastdb/include/fastdb_payload.h`: versioned opaque-handle boundary for every native and WASM projection.
-- C++ RAII facade, Rust raw/safe crates, Python binding, and TypeScript/WASM binding: ergonomic projections over the Core, never separate semantic implementations.
+- C++ RAII facade, Rust raw/safe crates, Python binding, TypeScript/WASM binding, and Java JNI binding: ergonomic projections over the Core, never separate semantic implementations.
 
 FastDB is a generic data/storage project. Do not add C-Two-specific modules, CRM methods/bindings, providers, bridge derivation, contract assembly, route identity, relay behavior, transport/lease policy, or C-Two codegen surfaces here. C-Two owns the `c-two.contract.v2` super-schema and delegates its nested FastDB value to this library.
 
@@ -52,6 +52,17 @@ uv sync
 bash ts/build-wasm.sh
 npm --prefix ts/fastdb4ts run build
 npm run test:ts
+
+# Java 17 JNI and Maven (macOS arm64 example)
+export JAVA_HOME="$(/usr/libexec/java_home -v 17)"
+cmake -S fastcarto -B build/java -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DFASTDB_BUILD_JAVA_JNI=ON -DBUILD_TESTING=ON -DBUILD_TOOLS=OFF \
+  -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF
+cmake --build build/java --target fastdb_java fastdb_java_test --parallel
+java_library="$PWD/build/java/fastdb/java/libfastdb_java.dylib"
+mvn -f bindings/java/pom.xml -B test "-Dfastdb.java.library.path=$java_library"
+mvn -f bindings/java/pom.xml -B test -Dtest=NativeBackingTest "-Dfastdb.java.library.path=$java_library"
+mvn -f bindings/java/pom.xml -B package -DskipTests
 ```
 
 When a change touches only Python code and docs, run the Python test suite, compileall, and `uv build`. When a change touches C++ wire/storage layout or TypeScript/WASM code, also run the TypeScript/WASM build and tests.
@@ -64,6 +75,12 @@ Windows x64 (`windows_python_tests`); the Linux 3.13t job remains experimental.
 Windows jobs use the same path scopes as their Linux/macOS counterparts and
 are required by the `test` aggregate and publication proof inventory. Windows
 ARM64 remains in the release validation matrix.
+
+The required `java_payload` job runs on Linux x86_64, macOS arm64, and Windows
+x64 for Core, Java binding, or runtime workflow changes. It builds the JNI
+libraries, runs the Maven suite and an isolated `NativeBackingTest`, and
+packages the JAR. See the [Java binding guide](bindings/java/README.md) for
+platform library names and runtime loading.
 
 For CI/release-tooling changes, run every command in the `release_tools` and
 `clean_cut` jobs with Python 3.11+ and a UTF-8 locale for Ruby. The P5 repository
@@ -101,7 +118,7 @@ Do not replace these FastDB-owned semantics with C-Two-owned guard wrappers. Dow
 
 ## Schema And Codegen Boundary
 
-`fastdb.payload.v1`, its two profiles, RFC 8785 canonicalization, SHA-256 digest, `fastdb.payload.bin.v1`, generic payload lifetime/backing, and payload-only C++/Rust/Python/TypeScript artifact generation belong in FastDB Core.
+`fastdb.payload.v1`, its two profiles, RFC 8785 canonicalization, SHA-256 digest, `fastdb.payload.bin.v1`, generic payload lifetime/backing, and payload-only C++/Rust/Python/TypeScript/Java artifact generation belong in FastDB Core.
 
 Bindings may offer authoring conveniences, but the final JSON is compiled by Core. They must not parse, normalize, digest, lay out, or decode the portable format independently. All public FastDB type names come from the native algebra (`str` and `wstr`, never a binding-owned `text` type).
 
@@ -188,4 +205,4 @@ retrofit OIDC. Its complete publication is already verified.
 - Keep the C++ Core as the only parser/canonicalizer/digest/layout/binary authority; language parity is a release gate.
 - Keep Python 3.10 compatibility unless the project explicitly raises the minimum version.
 - Keep PRs scoped by layer: Python lifetime/API changes, C++ storage changes, TypeScript/WASM changes, benchmark experiments, and release metadata should be separate when practical.
-- When C++ portable binary or ABI behavior changes, revalidate C++, Rust, Python, and TypeScript/WASM consumers together.
+- When C++ portable binary or ABI behavior changes, revalidate C++, Rust, Python, TypeScript/WASM, and Java consumers together.

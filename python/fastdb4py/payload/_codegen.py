@@ -19,6 +19,7 @@ class CodegenTarget(IntEnum):
     RUST = 1 << 1
     PYTHON = 1 << 2
     TYPESCRIPT = 1 << 3
+    JAVA = 1 << 4
 
 
 class ArtifactKind(IntEnum):

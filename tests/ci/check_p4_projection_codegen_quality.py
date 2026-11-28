@@ -698,17 +698,20 @@ def check_documentation(reader: Callable[[str], str] = default_reader) -> None:
 
 
 def check_workflow_results(environment: dict[str, str]) -> None:
+    projection_scopes = ("CORE", "RUST", "PYTHON", "TS", "WORKFLOW")
     scopes = {}
-    for name in ("CORE", "RUST", "PYTHON", "TS", "WORKFLOW"):
+    for name in (*projection_scopes, "JAVA"):
         key = f"{name}_SCOPE"
         value = environment.get(key)
         require(value in {"true", "false"}, f"{key} must be true or false")
         scopes[name] = value == "true"
 
+    requires_projection = any(scopes[name] for name in projection_scopes)
     expectations = {
         "RUST_PAYLOAD_RESULT": scopes["CORE"] or scopes["RUST"] or scopes["WORKFLOW"],
-        "PROJECTION_PARITY_RESULT": any(scopes.values()),
-        "GENERATED_PROJECTIONS_RESULT": any(scopes.values()),
+        "JAVA_PAYLOAD_RESULT": scopes["CORE"] or scopes["JAVA"] or scopes["WORKFLOW"],
+        "PROJECTION_PARITY_RESULT": requires_projection,
+        "GENERATED_PROJECTIONS_RESULT": requires_projection,
         "WINDOWS_NATIVE_TESTS_RESULT": scopes["CORE"] or scopes["WORKFLOW"],
         "WINDOWS_PYTHON_TESTS_RESULT": scopes["CORE"] or scopes["PYTHON"] or scopes["WORKFLOW"],
     }

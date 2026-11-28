@@ -29,6 +29,13 @@
       "kind": "source",
       "golden": "empty-record.expected.ts",
       "sha256": "ee48fe1c1b9b05abb7d75464a32132323b950258e4cbd8b139606a9fea546dc2"
+    },
+    {
+      "target": "java",
+      "relative_path": "io/fastdb/payload/generated/FastdbPayload_92fbbc65fc79ad9ca6e9637063c8f15a806b40e788532225cafe25ef17cdfc71.java",
+      "kind": "source",
+      "golden": "empty-record.expected.java",
+      "sha256": "fe43f1a64aa271d1177299f1f26535592eef95a5136f3eb000f56e2e396d9def"
     }
   ]
 }

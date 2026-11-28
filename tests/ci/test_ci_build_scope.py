@@ -60,6 +60,81 @@ class CIBuildScopeTests(unittest.TestCase):
                 self.assertIn("workflow", matching_scopes(self.test_filters, [path]))
                 self.assertEqual(matching_scopes(self.artifact_filters, [path]), set())
 
+    def test_java_payload_has_scoped_required_platform_matrix(self):
+        jobs = self.tests["jobs"]
+        job = jobs["java_payload"]
+        self.assertEqual(matching_scopes(self.test_filters, ["bindings/java/pom.xml"]), {"java"})
+        self.assertEqual(jobs["detect_changes"]["outputs"]["java"], "${{ steps.filter.outputs.java }}")
+        self.assertEqual(job["needs"], "detect_changes")
+        self.assertEqual(job["if"], " || ".join(
+            f"needs.detect_changes.outputs.{scope} == 'true'" for scope in ("core", "java", "workflow")
+        ))
+        self.assertEqual(job["runs-on"], "${{ matrix.os }}")
+        self.assertFalse(job["strategy"]["fail-fast"])
+        self.assertFalse(job.get("continue-on-error", False))
+        self.assertEqual(job["strategy"]["matrix"], {"include": [
+            {"os": "ubuntu-24.04", "expected_arch": "x86_64", "lib_name": "libfastdb_java.so"},
+            {"os": "macos-15", "expected_arch": "arm64", "lib_name": "libfastdb_java.dylib"},
+            {"os": "windows-2022", "expected_arch": "AMD64", "lib_name": "fastdb_java.dll"},
+        ]})
+        java = next(step for step in job["steps"] if step.get("uses") == "actions/setup-java@v4")
+        self.assertEqual(java["with"], {
+            "distribution": "temurin", "java-version": "17", "cache": "maven",
+            "cache-dependency-path": "bindings/java/pom.xml",
+        })
+
+        self.assertIn("java_payload", jobs["test"]["needs"])
+        aggregate = next(step for step in jobs["test"]["steps"]
+                         if step.get("name") == "Validate required test results")
+        self.assertEqual(aggregate["env"]["JAVA_SCOPE"], "${{ needs.detect_changes.outputs.java }}")
+        self.assertEqual(aggregate["env"]["JAVA_PAYLOAD_RESULT"], "${{ needs.java_payload.result }}")
+        self.assertIn("check_p4_projection_codegen_quality.py", aggregate["run"])
+        self.assertIn("--validate-results", aggregate["run"])
+
+        unix = next(step for step in job["steps"]
+                    if step.get("name") == "Build and test the Java binding (Unix)")
+        self.assertEqual(unix["if"], "runner.os != 'Windows'")
+        unix_commands = unix["run"].splitlines()
+        self.assertIn('mvn -f bindings/java/pom.xml -B test "-Dfastdb.java.library.path=$library"',
+                      unix_commands)
+        self.assertIn('mvn -f bindings/java/pom.xml -B test -Dtest=NativeBackingTest '
+                      '"-Dfastdb.java.library.path=$library"', unix_commands)
+        self.assertIn("mvn -f bindings/java/pom.xml -B package -DskipTests", unix_commands)
+
+    def test_windows_java_payload_uses_msvc_and_checks_command_results(self):
+        job = self.tests["jobs"]["java_payload"]
+        windows_steps = [step for step in job["steps"] if step.get("if") == "runner.os == 'Windows'"]
+        msvc = next(step for step in windows_steps if step.get("uses") == "ilammy/msvc-dev-cmd@v1")
+        self.assertEqual(msvc["with"]["arch"], "x64")
+        python = next(step for step in windows_steps if step.get("uses") == "actions/setup-python@v6")
+        self.assertEqual(python["with"], {"python-version": "3.12", "architecture": "x64"})
+        ninja = next(step for step in windows_steps if step["name"] == "Install Ninja")
+        build = next(step for step in windows_steps
+                     if step["name"] == "Build and test the Java binding (Windows MSVC)")
+        for step in (ninja, build):
+            self.assertEqual(step["shell"], "pwsh")
+            commands = step["run"].splitlines()
+            for index, line in enumerate(commands):
+                if line.startswith(("python ", "cmake ", "mvn ")):
+                    self.assertEqual(commands[index + 1], "if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }")
+
+        self.assertIn("python -m pip install ninja", ninja["run"].splitlines())
+        commands = build["run"].splitlines()
+        configure = next(line for line in commands if line.startswith("cmake -S "))
+        for flag in ("-S fastcarto", "-B build/java", "-G Ninja", "-DCMAKE_BUILD_TYPE=Release",
+                     "-DFASTDB_BUILD_JAVA_JNI=ON", "-DBUILD_TESTING=ON", "-DBUILD_TOOLS=OFF",
+                     "-DUSE_SWIG_PYTHON=OFF", "-DUSE_SWIG_NODE=OFF", "-DUSE_SWIG_GO=OFF"):
+            self.assertIn(flag, configure)
+        self.assertIn("$env:PROCESSOR_ARCHITECTURE -ne $env:EXPECTED_ARCH", build["run"])
+        self.assertIn("cmake --build build/java --target fastdb_java fastdb_java_test --parallel 2 -- -k 0",
+                      commands)
+        self.assertIn("Get-ChildItem build/java -Filter $env:LIB_NAME -File -Recurse", build["run"])
+        self.assertIn("$libraries.Count -ne 1", build["run"])
+        self.assertIn('mvn -f bindings/java/pom.xml -B test "-Dfastdb.java.library.path=$library"', commands)
+        self.assertIn('mvn -f bindings/java/pom.xml -B test -Dtest=NativeBackingTest '
+                      '"-Dfastdb.java.library.path=$library"', commands)
+        self.assertIn("mvn -f bindings/java/pom.xml -B package -DskipTests", commands)
+
     def test_windows_pr_jobs_share_runtime_scopes_and_are_required(self):
         jobs = self.tests["jobs"]
         aggregate = next(step for step in jobs["test"]["steps"]

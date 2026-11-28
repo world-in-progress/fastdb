@@ -74,6 +74,8 @@ static_assert(static_cast<std::uint64_t>(codegen::Target::python) ==
               FDB_PAYLOAD_CODEGEN_TARGET_PYTHON);
 static_assert(static_cast<std::uint64_t>(codegen::Target::typescript) ==
               FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT);
+static_assert(static_cast<std::uint64_t>(codegen::Target::java) ==
+              FDB_PAYLOAD_CODEGEN_TARGET_JAVA);
 static_assert(static_cast<std::uint32_t>(codegen::ArtifactKind::source) ==
               FDB_PAYLOAD_ARTIFACT_SOURCE);
 
@@ -488,7 +490,8 @@ codegen_target(fdb_payload_v1_codegen_target_t target) {
     if (target != FDB_PAYLOAD_CODEGEN_TARGET_CPP &&
         target != FDB_PAYLOAD_CODEGEN_TARGET_RUST &&
         target != FDB_PAYLOAD_CODEGEN_TARGET_PYTHON &&
-        target != FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT) {
+        target != FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT &&
+        target != FDB_PAYLOAD_CODEGEN_TARGET_JAVA) {
         return error::Result<codegen::Target>::failure(
             error::Error::from_details(
                 FDB_PAYLOAD_E_UNSUPPORTED_TARGET,

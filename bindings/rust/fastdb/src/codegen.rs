@@ -9,6 +9,7 @@ pub enum CodegenTarget {
     Rust = sys::FDB_PAYLOAD_CODEGEN_TARGET_RUST,
     Python = sys::FDB_PAYLOAD_CODEGEN_TARGET_PYTHON,
     TypeScript = sys::FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT,
+    Java = sys::FDB_PAYLOAD_CODEGEN_TARGET_JAVA,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -278,6 +279,7 @@ mod tests {
             CodegenTarget::Rust,
             CodegenTarget::Python,
             CodegenTarget::TypeScript,
+            CodegenTarget::Java,
         ] {
             let set = spec
                 .generate(target, &CodegenOptions::default())

@@ -20,6 +20,7 @@ export enum CodegenTarget {
   Rust = 1 << 1,
   Python = 1 << 2,
   TypeScript = 1 << 3,
+  Java = 1 << 4,
 }
 
 export enum ArtifactKind {
@@ -270,7 +271,8 @@ export function generateArtifacts(
     target !== CodegenTarget.Cpp &&
     target !== CodegenTarget.Rust &&
     target !== CodegenTarget.Python &&
-    target !== CodegenTarget.TypeScript
+    target !== CodegenTarget.TypeScript &&
+    target !== CodegenTarget.Java
   ) {
     throw new RangeError('target must be a CodegenTarget');
   }

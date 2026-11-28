@@ -64,6 +64,7 @@ enum class CodegenTarget : std::uint64_t {
     rust = FDB_PAYLOAD_CODEGEN_TARGET_RUST,
     python = FDB_PAYLOAD_CODEGEN_TARGET_PYTHON,
     typescript = FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT,
+    java = FDB_PAYLOAD_CODEGEN_TARGET_JAVA,
 };
 
 enum class ArtifactKind : std::uint32_t {

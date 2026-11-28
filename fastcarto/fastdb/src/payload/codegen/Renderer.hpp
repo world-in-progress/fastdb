@@ -125,5 +125,8 @@ std::string render_python(const spec::CompiledSpec& compiled,
 std::string render_typescript(const spec::CompiledSpec& compiled,
                               const spec::RuntimeTopology& topology,
                               std::uint64_t max_total_bytes);
+std::string render_java(const spec::CompiledSpec& compiled,
+                        const spec::RuntimeTopology& topology,
+                        std::uint64_t max_total_bytes);
 
 }  // namespace fastdb::payload::codegen

@@ -372,7 +372,8 @@ int test_manifest_indexes_facts_and_capabilities() {
     require(compiled.capabilities().codegen_target_flags ==
             (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
              FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
-             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT));
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT |
+             FDB_PAYLOAD_CODEGEN_TARGET_JAVA));
     require(compiled.capabilities().direct_build_status ==
             FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
     require(compiled.capabilities().direct_build_reason ==
@@ -439,7 +440,7 @@ int test_manifest_indexes_facts_and_capabilities() {
         R"("operations":["compile","query","build","open","view","materialize","invalidate","codegen"])",
         R"("operations":["compile","query"])"));
     require(rejects_replacement(
-        R"("codegen_targets":["cpp","rust","python","typescript"])",
+        R"("codegen_targets":["cpp","rust","python","typescript","java"])",
         R"("codegen_targets":[])"));
     require(rejects_replacement(R"("profile":"record.v1")",
                                 R"("profile":"object_graph.v1")"));
@@ -493,7 +494,8 @@ int test_manifest_indexes_facts_and_capabilities() {
     require(graph.capabilities().codegen_target_flags ==
             (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
              FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
-             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT));
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT |
+             FDB_PAYLOAD_CODEGEN_TARGET_JAVA));
     require(graph.capabilities().direct_build_status ==
             FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE);
     auto graph_manifest = JsonDocument::parse(
@@ -687,10 +689,11 @@ int test_schema_artifacts_and_manifest_schema_contract() {
         require(array_at(record_operations, index).string() ==
                 record_operation_names[static_cast<std::size_t>(index)]);
     }
-    constexpr std::array<std::string_view, 4> codegen_target_names{
-        {"cpp", "rust", "python", "typescript"}};
+    constexpr std::array<std::string_view, 5> codegen_target_names{
+        {"cpp", "rust", "python", "typescript", "java"}};
     const JsonCursor record_codegen_targets = required_member(
         required_member(record_capabilities, "codegen_targets"), "const");
+    require(record_codegen_targets.size() == codegen_target_names.size());
     for (std::uint64_t index = UINT64_C(0); index < codegen_target_names.size();
          ++index) {
         require(array_at(record_codegen_targets, index).string() ==
@@ -724,6 +727,7 @@ int test_schema_artifacts_and_manifest_schema_contract() {
     }
     const JsonCursor graph_codegen_targets = required_member(
         required_member(graph_capabilities, "codegen_targets"), "const");
+    require(graph_codegen_targets.size() == codegen_target_names.size());
     for (std::uint64_t index = UINT64_C(0); index < codegen_target_names.size();
          ++index) {
         require(array_at(graph_codegen_targets, index).string() ==

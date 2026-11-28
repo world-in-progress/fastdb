@@ -30,6 +30,7 @@ bool known_target(Target target) noexcept {
     case Target::rust:
     case Target::python:
     case Target::typescript:
+    case Target::java:
         return true;
     }
     return false;
