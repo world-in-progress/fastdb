@@ -26,6 +26,7 @@ TARGETS = {
     "rust": CodegenTarget.RUST,
     "python": CodegenTarget.PYTHON,
     "typescript": CodegenTarget.TYPESCRIPT,
+    "java": CodegenTarget.JAVA,
 }
 
 

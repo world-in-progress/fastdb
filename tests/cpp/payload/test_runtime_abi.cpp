@@ -3428,7 +3428,8 @@ int test_checked_view_access_materialize_and_barrier_abi() {
     require(capabilities.codegen_target_flags ==
             (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
              FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
-             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT));
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT |
+             FDB_PAYLOAD_CODEGEN_TARGET_JAVA));
 
     fdb_payload_v1_access_t* payload_access = nullptr;
     require(fdb_payload_v1_payload_acquire(

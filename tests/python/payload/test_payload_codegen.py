@@ -32,6 +32,7 @@ def test_core_codegen_projects_all_targets_and_owned_artifacts() -> None:
         CodegenTarget.RUST: ".rs",
         CodegenTarget.PYTHON: ".py",
         CodegenTarget.TYPESCRIPT: ".ts",
+        CodegenTarget.JAVA: ".java",
     }
     with CompiledSpec.compile(SPEC_A) as spec:
         for target, suffix in suffixes.items():

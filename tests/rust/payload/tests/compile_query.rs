@@ -51,7 +51,7 @@ fn compile_and_query_record_all_types_through_core() -> Result<(), PayloadError>
             profile: Profile::RecordV1,
             semantic_flags: 0x1b,
             operation_flags: 0xff,
-            codegen_target_flags: 0x0f,
+            codegen_target_flags: 0x1f,
             direct_build_status: 1,
         }
     );

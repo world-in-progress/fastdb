@@ -28,6 +28,7 @@ TARGETS = {
     "rust": CodegenTarget.RUST,
     "python": CodegenTarget.PYTHON,
     "typescript": CodegenTarget.TYPESCRIPT,
+    "java": CodegenTarget.JAVA,
 }
 
 _WINDOWS_RESERVED_CHARS = frozenset('<>:"/\\|?*') | frozenset(

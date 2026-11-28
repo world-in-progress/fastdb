@@ -17,6 +17,8 @@ std::string_view identifier_prefix(Target target) noexcept {
         return "fdb_python_id_";
     case Target::typescript:
         return "fdb_ts_id_";
+    case Target::java:
+        return "fdb_java_id_";
     }
     return {};
 }
@@ -31,6 +33,8 @@ std::string_view type_prefix(Target target) noexcept {
         return "FdbPythonType_";
     case Target::typescript:
         return "FdbTsType_";
+    case Target::java:
+        return "FdbJavaType_";
     }
     return {};
 }
@@ -47,6 +51,8 @@ std::string_view target_name(Target target) noexcept {
         return "python";
     case Target::typescript:
         return "typescript";
+    case Target::java:
+        return "java";
     }
     return {};
 }

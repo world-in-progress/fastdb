@@ -51,6 +51,7 @@ int main(void) {
       FDB_PAYLOAD_CODEGEN_TARGET_RUST,
       FDB_PAYLOAD_CODEGEN_TARGET_PYTHON,
       FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT,
+      FDB_PAYLOAD_CODEGEN_TARGET_JAVA,
   };
   fdb_payload_v1_codegen_options_t options = {0};
   fdb_payload_v1_spec_t *spec = (fdb_payload_v1_spec_t *)0;

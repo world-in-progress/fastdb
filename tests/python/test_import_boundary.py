@@ -120,7 +120,7 @@ def test_fdb_codegen_help_advertises_only_core_artifact_targets():
     )
 
     assert completed.returncode == 0, completed.stderr
-    assert '--target {cpp,rust,python,typescript}' in completed.stdout
+    assert '--target {cpp,rust,python,typescript,java}' in completed.stdout
     assert '--output OUTPUT' in completed.stdout
     assert '--ts' not in completed.stdout
     assert '--c-' + 'two-ts' not in completed.stdout

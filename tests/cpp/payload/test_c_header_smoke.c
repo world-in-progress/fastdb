@@ -313,7 +313,8 @@ int main(void) {
         capabilities.codegen_target_flags !=
             (FDB_PAYLOAD_CODEGEN_TARGET_CPP | FDB_PAYLOAD_CODEGEN_TARGET_RUST |
              FDB_PAYLOAD_CODEGEN_TARGET_PYTHON |
-             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT) ||
+             FDB_PAYLOAD_CODEGEN_TARGET_TYPESCRIPT |
+             FDB_PAYLOAD_CODEGEN_TARGET_JAVA) ||
         capabilities.direct_build_status != FDB_PAYLOAD_DIRECT_BUILD_ELIGIBLE ||
         error != (fdb_payload_v1_error_t*)0) {
         return 12;

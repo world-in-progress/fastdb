@@ -50,6 +50,7 @@ test('Core codegen projects all targets into independently owned artifacts', asy
     [CodegenTarget.Rust, '.rs'],
     [CodegenTarget.Python, '.py'],
     [CodegenTarget.TypeScript, '.ts'],
+    [CodegenTarget.Java, '.java'],
   ]);
   const spec = CompiledSpec.compile(SPEC_A);
   try {
