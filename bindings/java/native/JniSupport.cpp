@@ -104,27 +104,26 @@ jlongArray longs(JNIEnv* env, std::initializer_list<jlong> fields) {
     return result;
 }
 
-ByteArray::ByteArray(JNIEnv* env, jbyteArray array, jint offset, jint size)
-    : env_(env), array_(array), offset_(offset) {
-    const auto capacity = env_->GetArrayLength(array_);
+ByteArray::ByteArray(JNIEnv* env, jbyteArray array, jint offset, jint size) {
+    const auto capacity = env->GetArrayLength(array);
     if (offset < 0 || size < 0 || offset > capacity || size > capacity - offset) {
-        throw_new(env_, "java/lang/IndexOutOfBoundsException", "Invalid byte array span");
+        throw_new(env, "java/lang/IndexOutOfBoundsException", "Invalid byte array span");
         return;
     }
     size_ = static_cast<uint64_t>(size);
     if (size != 0) {
-        data_ = env_->GetByteArrayElements(array_, nullptr);
-        if (data_ == nullptr) {
+        data_.reset(new (std::nothrow) jbyte[static_cast<std::size_t>(size)]);
+        if (!data_) {
+            throw_new(env, "java/lang/OutOfMemoryError", "Cannot copy FastDB byte array span");
+            return;
+        }
+        env->GetByteArrayRegion(array, offset, size, data_.get());
+        if (env->ExceptionCheck()) {
+            data_.reset();
             return;
         }
     }
     valid_ = true;
-}
-
-ByteArray::~ByteArray() {
-    if (data_ != nullptr) {
-        env_->ReleaseByteArrayElements(array_, data_, JNI_ABORT);
-    }
 }
 
 DirectSpan direct_span(JNIEnv* env, jobject buffer, jint offset, jint length) {

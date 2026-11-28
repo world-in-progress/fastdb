@@ -18,8 +18,9 @@ The example uses macOS arm64. On Linux x86_64 the library is
 `libfastdb_java.so`. On Windows x64 use `fastdb_java.dll` from the corresponding
 CMake configuration directory. Offline Maven requires the compiler, resource,
 JAR, and Surefire plugins and their dependencies in the local cache, including
-Surefire's JUnit Platform provider and launcher. Use `mvn -f bindings/java/pom.xml
-package` to build the JAR. Build the native library with `BUILD_TESTING=OFF`
+Surefire's JUnit Platform provider and launcher. Use
+`mvn -f bindings/java/pom.xml package -DskipTests` after tests pass (or pass the
+same `-Dfastdb.java.library.path=...` property) to build the JAR. Build the native library with `BUILD_TESTING=OFF`
 when packaging for distribution.
 
 At runtime, the loader checks the exact library path in

@@ -168,13 +168,11 @@ final class FastDbNative {
     static native long viewMaterialize(long handle);
     static native long[] viewGraphIdentity(long handle);
     static native long viewAcquire(long handle);
-    static native int viewCopyBytes(long handle, ByteBuffer direct, byte[] array, int offset, int remaining);
 
     static native void accessRelease(long handle);
     static native long accessByteLength(long handle, int kind);
     static native long accessDataAddress(long handle, int kind);
     static native byte[] accessToArray(long handle, int kind);
     static native ByteBuffer accessDirectBuffer(long handle, int kind);
-    static native int accessCopy(long handle, int kind, ByteBuffer direct, byte[] array, int offset, int remaining);
     static native String accessWstr(long handle);
 }

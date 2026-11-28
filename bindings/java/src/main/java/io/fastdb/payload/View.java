@@ -1,6 +1,7 @@
 package io.fastdb.payload;
 
 import java.nio.ByteBuffer;
+import java.nio.ReadOnlyBufferException;
 
 /** Checked immutable view over backed or materialized Core data. */
 public final class View extends NativeHandle {
@@ -123,7 +124,12 @@ public final class View extends NativeHandle {
 
     /** Copies into the buffer at its current position and advances it by the byte count on success. */
     public synchronized void copyBytesInto(ByteBuffer destination) {
-        NativeValues.copyInto(address(), ViewKind.BYTES.code(), true, destination);
+        if (destination.isReadOnly()) {
+            throw new ReadOnlyBufferException();
+        }
+        try (Access access = acquireAs(ViewKind.BYTES.code())) {
+            access.copyTo(destination);
+        }
     }
 
     /** Pins a str, wstr or bytes value. Close the pin before invalidating its payload on this thread. */

@@ -91,6 +91,16 @@ class CIBuildScopeTests(unittest.TestCase):
         self.assertIn("check_p4_projection_codegen_quality.py", aggregate["run"])
         self.assertIn("--validate-results", aggregate["run"])
 
+        unix = next(step for step in job["steps"]
+                    if step.get("name") == "Build and test the Java binding (Unix)")
+        self.assertEqual(unix["if"], "runner.os != 'Windows'")
+        unix_commands = unix["run"].splitlines()
+        self.assertIn('mvn -f bindings/java/pom.xml -B test "-Dfastdb.java.library.path=$library"',
+                      unix_commands)
+        self.assertIn('mvn -f bindings/java/pom.xml -B test -Dtest=NativeBackingTest '
+                      '"-Dfastdb.java.library.path=$library"', unix_commands)
+        self.assertIn("mvn -f bindings/java/pom.xml -B package -DskipTests", unix_commands)
+
     def test_windows_java_payload_uses_msvc_and_checks_command_results(self):
         job = self.tests["jobs"]["java_payload"]
         windows_steps = [step for step in job["steps"] if step.get("if") == "runner.os == 'Windows'"]

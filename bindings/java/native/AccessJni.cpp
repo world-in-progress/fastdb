@@ -1,6 +1,5 @@
 #include "JniSupport.hpp"
 
-#include <cstring>
 #include <type_traits>
 
 using namespace fastdb::java;
@@ -31,27 +30,6 @@ AccessSpan access_span(JNIEnv* env, fdb_payload_v1_access_t* access, jint kind) 
     }
     span.valid = call(env, read, access, &span.data, &span.size);
     return span;
-}
-
-jint copy_span(JNIEnv* env, AccessSpan span, jobject direct, jbyteArray array,
-               jint offset, jint remaining) {
-    if (!span.valid || span.size > static_cast<uint64_t>(remaining)) {
-        return -1;
-    }
-    const auto length = static_cast<jsize>(span.size);
-    if (length == 0) {
-        return 0;
-    }
-    if (direct != nullptr) {
-        const auto output = direct_span(env, direct, offset, length);
-        if (!output.valid) {
-            return -1;
-        }
-        std::memmove(output.data, span.data, static_cast<std::size_t>(length));
-    } else {
-        env->SetByteArrayRegion(array, offset, length, reinterpret_cast<const jbyte*>(span.data));
-    }
-    return length;
 }
 }  // namespace
 
@@ -104,27 +82,6 @@ extern "C" JNIEXPORT jobject JNICALL FASTDB_JNI(accessDirectBuffer)(
     static uint8_t empty = 0;
     auto* data = span.size == 0 ? &empty : const_cast<uint8_t*>(span.data);
     return env->NewDirectByteBuffer(data, static_cast<jlong>(span.size));
-}
-
-extern "C" JNIEXPORT jint JNICALL FASTDB_JNI(accessCopy)(
-    JNIEnv* env, jclass, jlong handle, jint kind, jobject direct, jbyteArray array,
-    jint offset, jint remaining) {
-    const auto span = access_span(env, pointer<fdb_payload_v1_access_t>(handle), kind);
-    return copy_span(env, span, direct, array, offset, remaining);
-}
-
-extern "C" JNIEXPORT jint JNICALL FASTDB_JNI(viewCopyBytes)(
-    JNIEnv* env, jclass, jlong handle, jobject direct, jbyteArray array,
-    jint offset, jint remaining) {
-    auto* raw_access = query<fdb_payload_v1_access_t*>(
-        env, fdb_payload_v1_view_acquire, pointer<fdb_payload_v1_view_t>(handle));
-    std::unique_ptr<fdb_payload_v1_access_t, decltype(&fdb_payload_v1_access_release)>
-        access(raw_access, fdb_payload_v1_access_release);
-    if (!access) {
-        return -1;
-    }
-    const auto span = access_span(env, access.get(), FDB_PAYLOAD_VIEW_BYTES);
-    return copy_span(env, span, direct, array, offset, remaining);
 }
 
 extern "C" JNIEXPORT jstring JNICALL FASTDB_JNI(accessWstr)(

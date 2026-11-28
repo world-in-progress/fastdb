@@ -1,7 +1,9 @@
 package io.fastdb.payload;
 
+import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.ReadOnlyBufferException;
 
 /** Unique, scoped pin on a payload image or a variable-width value. */
 public final class Access extends NativeHandle {
@@ -23,7 +25,14 @@ public final class Access extends NativeHandle {
 
     /** Copies into the remaining destination and advances its position on success. */
     public synchronized void copyTo(ByteBuffer destination) {
-        NativeValues.copyInto(address(), kind, false, destination);
+        if (destination.isReadOnly()) {
+            throw new ReadOnlyBufferException();
+        }
+        ByteBuffer source = unsafeByteBuffer();
+        if (destination.remaining() < source.remaining()) {
+            throw new BufferOverflowException();
+        }
+        destination.put(source);
     }
 
     /**

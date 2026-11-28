@@ -61,22 +61,18 @@ jbyteArray digest(JNIEnv* env, Fn fn, Args... args) {
 class ByteArray final {
 public:
     ByteArray(JNIEnv* env, jbyteArray array, jint offset, jint size);
-    ~ByteArray();
     ByteArray(const ByteArray&) = delete;
     ByteArray& operator=(const ByteArray&) = delete;
 
     bool valid() const { return valid_; }
     uint64_t size() const { return size_; }
     const uint8_t* data() const {
-        return data_ == nullptr ? nullptr : reinterpret_cast<const uint8_t*>(data_ + offset_);
+        return data_ ? reinterpret_cast<const uint8_t*>(data_.get()) : nullptr;
     }
 
 private:
-    JNIEnv* env_;
-    jbyteArray array_;
-    jint offset_;
+    std::unique_ptr<jbyte[]> data_;
     uint64_t size_ = 0;
-    jbyte* data_ = nullptr;
     bool valid_ = false;
 };
 

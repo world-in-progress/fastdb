@@ -1,9 +1,7 @@
 package io.fastdb.payload;
 
-import java.nio.BufferOverflowException;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
-import java.nio.ReadOnlyBufferException;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
@@ -40,24 +38,6 @@ final class NativeValues {
         byte[] bytes = new byte[buffer.remaining()];
         buffer.duplicate().get(bytes);
         return bytes;
-    }
-
-    static void copyInto(long handle, int kind, boolean fromView, ByteBuffer destination) {
-        if (destination.isReadOnly()) {
-            throw new ReadOnlyBufferException();
-        }
-        int position = destination.position();
-        ByteBuffer direct = destination.isDirect() ? destination : null;
-        byte[] array = direct != null ? null : destination.array();
-        int offset = direct != null ? position : destination.arrayOffset() + position;
-        int remaining = destination.remaining();
-        int written = fromView
-                ? FastDbNative.viewCopyBytes(handle, direct, array, offset, remaining)
-                : FastDbNative.accessCopy(handle, kind, direct, array, offset, remaining);
-        if (written < 0) {
-            throw new BufferOverflowException();
-        }
-        destination.position(position + written);
     }
 
     static long unsigned(long value, long max, String type) {
