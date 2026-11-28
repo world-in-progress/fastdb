@@ -37,6 +37,7 @@ class CIBuildScopeTests(unittest.TestCase):
         cls.tests = yaml_document(ROOT / ".github/workflows/tests.yml")
         cls.artifacts = yaml_document(ROOT / ".github/workflows/release-artifacts.yml")
         cls.publish = yaml_document(ROOT / ".github/workflows/pypi_publish.yml")
+        cls.maven = yaml_document(ROOT / ".github/workflows/maven_publish.yml")
         cls.python = yaml_document(ROOT / ".github/workflows/python-distributions.yml")
         cls.test_filters = path_filters(cls.tests, "detect_changes")
         cls.artifact_filters = path_filters(cls.artifacts, "metadata")
@@ -44,6 +45,7 @@ class CIBuildScopeTests(unittest.TestCase):
     def test_release_tools_and_documentation_allocate_no_native_builds(self):
         for path in (
             ".github/workflows/pypi_publish.yml", ".github/workflows/python-distributions.yml",
+            ".github/workflows/maven_publish.yml",
             ".github/workflows/release-artifacts.yml", "tests/ci/python_distributions.py",
             "tests/ci/publish_release.py", "tests/ci/release_artifacts.py",
             "tests/ci/test_python_release_reuse.py", "tests/ci/test_ci_build_scope.py",
@@ -77,7 +79,7 @@ class CIBuildScopeTests(unittest.TestCase):
             {"os": "macos-15", "expected_arch": "arm64", "lib_name": "libfastdb_java.dylib"},
             {"os": "windows-2022", "expected_arch": "AMD64", "lib_name": "fastdb_java.dll"},
         ]})
-        java = next(step for step in job["steps"] if step.get("uses") == "actions/setup-java@v4")
+        java = next(step for step in job["steps"] if step.get("uses") == "actions/setup-java@v5")
         self.assertEqual(java["with"], {
             "distribution": "temurin", "java-version": "17", "cache": "maven",
             "cache-dependency-path": "bindings/java/pom.xml",
@@ -191,6 +193,7 @@ class CIBuildScopeTests(unittest.TestCase):
         for path, scope in (("fastcarto/fastdb/src/payload.cpp", "core"),
                             ("python/fastdb4py/payload.py", "python"),
                             ("bindings/rust/fastdb/Cargo.toml", "rust"),
+                            ("bindings/java/pom.xml", "java"),
                             ("ts/fastdb4ts/package.json", "ts"), ("pyproject.toml", "core")):
             with self.subTest(path=path):
                 self.assertIn(scope, matching_scopes(self.test_filters, [path]))
@@ -201,10 +204,83 @@ class CIBuildScopeTests(unittest.TestCase):
         gate = jobs["metadata"]["outputs"]["build"]
         self.assertIn("github.event_name == 'push'", gate)
         self.assertIn("steps.filter.outputs.packages == 'true'", gate)
-        for name in ("native", "python", "typescript", "candidate"):
+        for name in ("native", "python", "typescript", "java_native", "java", "candidate"):
             with self.subTest(job=name):
                 self.assertIn("metadata", jobs[name]["needs"])
                 self.assertEqual(jobs[name]["if"], "needs.metadata.outputs.build == 'true'")
+
+    def test_java_candidate_packages_three_native_artifacts_and_runs_classpath_smoke(self):
+        jobs = self.artifacts["jobs"]
+        native = jobs["java_native"]
+        platforms = {
+            "linux-x86_64": ("ubuntu-24.04", "libfastdb_java.so"),
+            "macos-arm64": ("macos-15", "libfastdb_java.dylib"),
+            "windows-x86_64": ("windows-2022", "fastdb_java.dll"),
+        }
+        self.assertEqual({row["platform"]: (row["os"], row["lib_name"])
+                          for row in native["strategy"]["matrix"]["include"]}, platforms)
+        native_upload = next(step for step in native["steps"]
+                             if step.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertEqual(native_upload["with"]["name"], "java-native-${{ matrix.platform }}")
+        self.assertEqual(native_upload["with"]["path"], "build/java-native/${{ matrix.lib_name }}")
+        msvc = next(step for step in native["steps"] if step.get("uses") == "ilammy/msvc-dev-cmd@v1")
+        self.assertEqual(msvc["if"], "runner.os == 'Windows'")
+        self.assertEqual(msvc["with"]["arch"], "x64")
+        build = next(step["run"] for step in native["steps"] if step.get("name") == "Build and locate the native Java library")
+        for command in ("-G Ninja", "MACOSX_DEPLOYMENT_TARGET=11.0", "-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0",
+                        "-DBUILD_TESTING=OFF", "cmake --build build/java --target fastdb_java --parallel 2",
+                        'find build/java -type f -name "$LIB_NAME"'):
+            self.assertIn(command, build)
+        java = jobs["java"]
+        self.assertEqual(java["needs"], ["metadata", "java_native"])
+        self.assertIn("java", jobs["candidate"]["needs"])
+        setup = next(step for step in java["steps"] if step.get("uses") == "actions/setup-java@v5")
+        self.assertEqual(setup["with"], {"distribution": "temurin", "java-version": "17", "cache": "maven",
+                                         "cache-dependency-path": "bindings/java/pom.xml"})
+        downloads = [step for step in java["steps"] if step.get("uses", "").startswith("actions/download-artifact@")]
+        self.assertEqual({step["with"]["name"]: step["with"]["path"] for step in downloads}, {
+            f"java-native-{platform}": f"build/java-resources/META-INF/native/{platform}" for platform in platforms
+        })
+        packaging = next(step["run"] for step in java["steps"] if step.get("name") == "Package and smoke-test the self-loading Java release")
+        commands = ("cp LICENSE THIRD_PARTY_NOTICES.txt", "package source:jar-no-fork javadoc:jar",
+                    '-Dfastdb.java.nativeResourcesDir="$PWD/build/java-resources"', "env -u FASTDB_JAVA_LIBRARY_PATH",
+                    'java -Xcheck:jni -Djava.library.path= --class-path "$package.jar"', "JavaReleaseSmoke.java",
+                    "release_artifacts.py record --output dist --part java")
+        positions = [packaging.index(command) for command in commands]
+        self.assertEqual(positions, sorted(positions))
+        upload = next(step for step in java["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertEqual(upload["with"]["name"], "release-part-java")
+
+    def test_maven_publish_only_consumes_the_exact_source_candidate(self):
+        dispatch = self.maven.get("on", self.maven.get("true"))
+        self.assertEqual(set(dispatch), {"workflow_dispatch"})
+        self.assertEqual(set(dispatch["workflow_dispatch"]["inputs"]), {"candidate_run_id", "source_sha"})
+        self.assertEqual(set(self.maven["jobs"]), {"publish"})
+        job = self.maven["jobs"]["publish"]
+        self.assertIn("refs/heads/main", job["if"])
+        self.assertIn("refs/tags/v", job["if"])
+        steps = job["steps"]
+        download = next(step for step in steps if step.get("uses", "").startswith("actions/download-artifact@"))
+        self.assertEqual(download["with"], {
+            "name": "portable-release-${{ inputs.source_sha }}",
+            "path": "release", "github-token": "${{ github.token }}",
+            "run-id": "${{ inputs.candidate_run_id }}",
+        })
+        commands = [step["run"] for step in steps if "run" in step]
+        self.assertEqual([command.split()[2] for command in commands],
+                         ["check-ci", "prepare", "publish-maven", "verify-registry"])
+        self.assertTrue(all(command.startswith("python3 tests/ci/publish_release.py ") for command in commands))
+        self.assertIn("--ecosystem maven", commands[1])
+        self.assertLess(steps.index(next(step for step in steps if step.get("run") == commands[0])),
+                        steps.index(download))
+        self.assertLess(steps.index(download), steps.index(next(step for step in steps if step.get("run") == commands[1])))
+        upload = next(step for step in steps if step.get("run") == commands[2])
+        self.assertEqual(upload["if"], "steps.prepare.outputs.pending == 'true'")
+        self.assertEqual(set(upload["env"]), {"MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD",
+                                               "MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE"})
+        self.assertFalse(any("setup-java" in step.get("uses", "") for step in steps))
+        receipt = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertEqual(receipt["with"]["name"], "maven-publication-${{ inputs.source_sha }}")
 
     def test_pr_path_filters_can_read_changed_files(self):
         for workflow, job in ((self.tests, "detect_changes"), (self.artifacts, "metadata")):

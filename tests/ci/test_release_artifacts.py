@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import struct
 from pathlib import Path
 import subprocess
@@ -25,6 +26,97 @@ def windows_image(machine=0x8664):
 
 
 class ReleaseInventoryTests(unittest.TestCase):
+    def test_release_version_requires_the_java_coordinates_and_version(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("pyproject.toml", "ts/fastdb4ts/package.json", "bindings/rust/fastdb/Cargo.toml",
+                         "bindings/rust/fastdb-sys/Cargo.toml"):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(release.ROOT / name, path)
+            pom = root / "bindings/java/pom.xml"
+            pom.parent.mkdir(parents=True)
+            original = (release.ROOT / "bindings/java/pom.xml").read_text()
+            with patch.object(release, "ROOT", root):
+                self.assertEqual(release.version(include_java=False), "0.4.0")
+                pom.write_text(original)
+                self.assertEqual(release.version(), "0.4.0")
+                for bad, message in (
+                    (original.replace("io.github.world-in-progress", "example"), "POM coordinates"),
+                    (original.replace("<artifactId>fastdb-java", "<artifactId>other"), "POM coordinates"),
+                    (original.replace("<version>0.4.0", "<version>0.4.1"), "versions must match"),
+                    ("<invalid", "Invalid Java POM"),
+                ):
+                    pom.write_text(bad)
+                    with self.subTest(message=message), self.assertRaisesRegex(release.ReleaseError, message):
+                        release.version()
+
+    def java_members(self):
+        return {
+            "io/fastdb/payload/CompiledSpec.class": b"java class",
+            "META-INF/LICENSE": (release.ROOT / "LICENSE").read_bytes(),
+            "META-INF/THIRD_PARTY_NOTICES.txt": (release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes(),
+            "META-INF/native/linux-x86_64/libfastdb_java.so": b"linux library",
+            "META-INF/native/macos-arm64/libfastdb_java.dylib": b"macos library",
+            "META-INF/native/windows-x86_64/fastdb_java.dll": windows_image(),
+        }
+
+    def test_main_jar_requires_class_notices_and_all_native_libraries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            jar = Path(directory) / "fastdb-java-0.4.0.jar"
+            members = self.java_members()
+            for missing in (None, *members):
+                with zipfile.ZipFile(jar, "w") as archive:
+                    for name, contents in members.items():
+                        if name != missing:
+                            archive.writestr(name, contents)
+                if missing is None:
+                    release.inspect_java_jar(jar, "0.4.0")
+                    with self.assertRaisesRegex(release.ReleaseError, "JAR name/version"):
+                        release.inspect_java_jar(jar, "0.4.1")
+                else:
+                    with self.subTest(missing=missing), self.assertRaisesRegex(release.ReleaseError, missing):
+                        release.inspect_java_jar(jar, "0.4.0")
+            for name, contents, message in (
+                ("META-INF/LICENSE", b"rewritten", "original LICENSE"),
+                ("META-INF/THIRD_PARTY_NOTICES.txt", b"rewritten", "original THIRD_PARTY_NOTICES"),
+                ("META-INF/native/windows-x86_64/fastdb_java.dll", windows_image(0xAA64), "binary architecture"),
+            ):
+                with zipfile.ZipFile(jar, "w") as archive:
+                    for member, value in {**members, name: contents}.items():
+                        archive.writestr(member, value)
+                with self.subTest(member=name), self.assertRaisesRegex(release.ReleaseError, message):
+                    release.inspect_java_jar(jar, "0.4.0")
+
+    def test_java_fragment_preserves_original_pom_and_package_hashes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory)
+            names = {
+                "fastdb-java-0.4.0.jar": "maven-jar",
+                "fastdb-java-0.4.0-sources.jar": "maven-sources",
+                "fastdb-java-0.4.0-javadoc.jar": "maven-javadoc",
+                "fastdb-java-0.4.0.pom": "maven-pom",
+            }
+            for name in names:
+                path = output / name
+                if path.suffix == ".pom":
+                    shutil.copyfile(release.ROOT / "bindings/java/pom.xml", path)
+                else:
+                    with zipfile.ZipFile(path, "w") as archive:
+                        for member, contents in self.java_members().items():
+                            archive.writestr(member, contents)
+            with patch.object(release, "source_sha", return_value="a" * 40):
+                release.record_part(output, "java", None)
+                fragment = json.loads((output / "java.json").read_text())
+                self.assertEqual(fragment["source_sha"], "a" * 40)
+                self.assertIn("java", release.PARTS)
+                self.assertEqual({item["name"]: item["kind"] for item in fragment["artifacts"]}, names)
+                self.assertTrue(all(item["sha256"] == release.digest(output / item["name"])
+                                    for item in fragment["artifacts"]))
+                (output / "fastdb-java-0.4.0.pom").write_text("<project/>")
+                with self.assertRaisesRegex(release.ReleaseError, "differs from the source POM"):
+                    release.record_part(output, "java", None)
+
     def test_repaired_wheel_preserves_license_texts(self):
         with tempfile.TemporaryDirectory() as directory:
             wheel = Path(directory) / "fastdb4py-0.2.0-cp312-cp312-manylinux_2_17_x86_64.whl"
@@ -108,13 +200,25 @@ class ReleaseInventoryTests(unittest.TestCase):
                 record = release.file_record(wheel, kind="python-wheel", target=target)
                 record["python_abi"] = abi
                 records.append(record)
-        for name, kind in (("fastdb-0.2.0.crate", "rust-crate"), ("fastdb-sys-0.2.0.crate", "rust-crate"), ("fastdb4py-0.2.0.tar.gz", "python-sdist"), ("fastdb4ts-0.2.0.tgz", "typescript-package")):
+        for name, kind in (("fastdb-0.2.0.crate", "rust-crate"), ("fastdb-sys-0.2.0.crate", "rust-crate"), ("fastdb4py-0.2.0.tar.gz", "python-sdist"), ("fastdb4ts-0.2.0.tgz", "typescript-package"), *release.maven_files("0.2.0").items()):
             path = root / name
             path.write_bytes(b"tested package")
             records.append(release.file_record(path, kind=kind))
         document = {"schema": release.SCHEMA, "version": "0.2.0", "source_sha": "a" * 40, "artifacts": records}
         release.write_json(root / "release-manifest.json", document)
         return document
+
+    def test_each_maven_file_and_kind_is_required_in_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            records = self.candidate(Path(directory))["artifacts"]
+            for item in records:
+                if item["kind"].startswith("maven-"):
+                    others = [record for record in records if record is not item]
+                    with self.subTest(item=item["name"]):
+                        with self.assertRaisesRegex(release.ReleaseError, "Incomplete fixed"):
+                            release.check_complete(others, "0.2.0")
+                        with self.assertRaisesRegex(release.ReleaseError, "Maven artifact names and kinds"):
+                            release.check_complete([*others, {**item, "kind": "rust-crate"}], "0.2.0")
 
     def test_verification_rejects_changed_source_or_artifact(self):
         with tempfile.TemporaryDirectory() as directory:

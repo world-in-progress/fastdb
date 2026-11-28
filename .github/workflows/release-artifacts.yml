@@ -35,6 +35,7 @@ jobs:
               - 'schemas/**'
               - 'python/**'
               - 'bindings/rust/**'
+              - 'bindings/java/**'
               - 'ts/**'
               - 'tests/cpp/**'
               - 'tests/abi/**'
@@ -238,8 +239,122 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  java_native:
+    needs: metadata
+    if: needs.metadata.outputs.build == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, platform: linux-x86_64, arch: x86_64, lib_name: libfastdb_java.so }
+          - { os: macos-15, platform: macos-arm64, arch: arm64, lib_name: libfastdb_java.dylib }
+          - { os: windows-2022, platform: windows-x86_64, arch: AMD64, lib_name: fastdb_java.dll }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - uses: actions/setup-python@v6
+        if: runner.os == 'Windows'
+        with:
+          python-version: '3.12'
+          architecture: x64
+      - name: Install Ninja
+        if: runner.os == 'Windows'
+        run: python -m pip install ninja
+      - name: Build and locate the native Java library
+        shell: bash
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+          LIB_NAME: ${{ matrix.lib_name }}
+        run: |
+          cmake_args=()
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            test "$PROCESSOR_ARCHITECTURE" = "$EXPECTED_ARCH"
+            cmake_args+=(-G Ninja)
+          else
+            test "$(uname -m)" = "$EXPECTED_ARCH"
+          fi
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+            cmake_args+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0)
+          fi
+          cmake -S fastcarto -B build/java "${cmake_args[@]}" \
+            -DFASTDB_BUILD_JAVA_JNI=ON -DBUILD_TESTING=OFF -DBUILD_TOOLS=OFF \
+            -DUSE_SWIG_PYTHON=OFF -DUSE_SWIG_NODE=OFF -DUSE_SWIG_GO=OFF \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/java --target fastdb_java --parallel 2
+          library="$(find build/java -type f -name "$LIB_NAME")"
+          if [[ ! -s "$library" ]]; then
+            echo "Expected exactly one nonempty $LIB_NAME"
+            exit 1
+          fi
+          mkdir -p build/java-native
+          cp "$library" "build/java-native/$LIB_NAME"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: java-native-${{ matrix.platform }}
+          path: build/java-native/${{ matrix.lib_name }}
+          if-no-files-found: error
+
+  java:
+    needs: [metadata, java_native]
+    if: needs.metadata.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: bindings/java/pom.xml
+      - uses: actions/download-artifact@v8
+        with:
+          name: java-native-linux-x86_64
+          path: build/java-resources/META-INF/native/linux-x86_64
+      - uses: actions/download-artifact@v8
+        with:
+          name: java-native-macos-arm64
+          path: build/java-resources/META-INF/native/macos-arm64
+      - uses: actions/download-artifact@v8
+        with:
+          name: java-native-windows-x86_64
+          path: build/java-resources/META-INF/native/windows-x86_64
+      - name: Package and smoke-test the self-loading Java release
+        run: |
+          version="$(python3 tests/ci/release_artifacts.py version)"
+          cp LICENSE THIRD_PARTY_NOTICES.txt build/java-resources/META-INF/
+          mvn -f bindings/java/pom.xml -B package source:jar-no-fork javadoc:jar -DskipTests \
+            -Dfastdb.java.nativeResourcesDir="$PWD/build/java-resources"
+          package="bindings/java/target/fastdb-java-$version"
+          env -u FASTDB_JAVA_LIBRARY_PATH -u JAVA_TOOL_OPTIONS -u JDK_JAVA_OPTIONS -u _JAVA_OPTIONS \
+            java -Xcheck:jni -Djava.library.path= --class-path "$package.jar" \
+            bindings/java/src/test/release/JavaReleaseSmoke.java
+          mkdir -p dist
+          cp "$package.jar" "$package-sources.jar" "$package-javadoc.jar" dist/
+          cp bindings/java/pom.xml "dist/fastdb-java-$version.pom"
+          python3 tests/ci/release_artifacts.py record --output dist --part java
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-part-java
+          path: dist/
+          if-no-files-found: error
+
   candidate:
-    needs: [metadata, native, python, typescript]
+    needs: [metadata, native, python, typescript, java]
     if: needs.metadata.outputs.build == 'true'
     runs-on: ubuntu-24.04
     steps:

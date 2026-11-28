@@ -1,8 +1,22 @@
 # FastDB for Java
 
-`io.fastdb:fastdb-java:0.4.0-SNAPSHOT` projects the portable payload C ABI into
+`io.github.world-in-progress:fastdb-java:0.4.0` projects the portable payload C ABI into
 Java 17 and later. Core compiles specs, builds and reads payloads, and generates
 source for all five targets. The Java JAR has no runtime dependencies.
+
+The Maven Central release JAR bundles JNI libraries for Linux x86_64, macOS
+arm64, and Windows x64. Add the dependency and import the API from
+`io.fastdb.payload`.
+
+```xml
+<dependency>
+    <groupId>io.github.world-in-progress</groupId>
+    <artifactId>fastdb-java</artifactId>
+    <version>0.4.0</version>
+</dependency>
+```
+
+## Build from source
 
 From the repository root, set `JAVA_HOME` to a JDK and build the JNI library and
 its test fixture.

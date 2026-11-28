@@ -3,15 +3,37 @@
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    <groupId>io.fastdb</groupId>
+    <groupId>io.github.world-in-progress</groupId>
     <artifactId>fastdb-java</artifactId>
-    <version>0.4.0-SNAPSHOT</version>
+    <version>0.4.0</version>
     <name>FastDB Java</name>
+    <description>Java bindings for the FastDB portable payload Core.</description>
+    <url>https://github.com/world-in-progress/fastdb</url>
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/license/mit</url>
+        </license>
+    </licenses>
+    <developers>
+        <developer>
+            <id>world-in-progress</id>
+            <name>World in Progress</name>
+            <url>https://github.com/world-in-progress</url>
+        </developer>
+    </developers>
+    <scm>
+        <connection>scm:git:https://github.com/world-in-progress/fastdb.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/world-in-progress/fastdb.git</developerConnection>
+        <url>https://github.com/world-in-progress/fastdb</url>
+        <tag>v0.4.0</tag>
+    </scm>
 
     <properties>
         <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <junit.version>5.10.2</junit.version>
+        <fastdb.java.nativeResourcesDir>${project.build.directory}/native-resources</fastdb.java.nativeResourcesDir>
     </properties>
 
     <dependencies>
@@ -30,6 +52,14 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${fastdb.java.nativeResourcesDir}</directory>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -46,6 +76,22 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
                 <version>3.4.2</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-source-plugin</artifactId>
+                <version>3.3.1</version>
+                <configuration>
+                    <excludeResources>true</excludeResources>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.11.2</version>
+                <configuration>
+                    <doclint>none</doclint>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

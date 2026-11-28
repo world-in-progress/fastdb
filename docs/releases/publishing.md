@@ -8,7 +8,7 @@ Version tags are immutable.
 
 `release-artifacts.yml` builds the release candidate once on a package-changing
 push to `main`. PRs and changes limited to documentation or release tooling
-run tooling checks without allocating native, Python-wheel or WASM builders.
+run tooling checks without allocating native, Python-wheel, WASM, or Java builders.
 `tests.yml` independently applies its runtime validation scopes; release
 tooling changes use the required `release_tools` gate. Changes to `tests.yml`
 or runtime quality gates still require runtime validation.
@@ -22,6 +22,8 @@ Windows x64 (`windows_python_tests`); the experimental Linux 3.13t job cannot
 substitute for either required proof. The Windows jobs follow the same path
 scopes as their existing native/Python counterparts and feed the required
 `test` aggregate. Windows ARM64 remains covered by release builds.
+For sources that include the Java binding, the publication proof also requires
+all three `java_payload` jobs (Linux x86_64, macOS arm64, and Windows x64).
 
 A version-tag push to `pypi_publish.yml` locates successful Release Artifacts
 and complete Run Tests proofs for that exact source SHA. It downloads the
@@ -36,6 +38,31 @@ Manual retry uses the current controller from `main`, an existing matching tag,
 and `operation=publish`. It performs the same artifact checks and does not
 rebuild. npm and Rust already download their tested Release Artifacts archives
 and retain their existing workflow inputs.
+
+## Maven Central publication
+
+The coordinated 0.4.0 release adds `io.github.world-in-progress:fastdb-java`.
+Release Artifacts builds JNI libraries on Linux x86_64, macOS arm64 (minimum
+macOS 11), and Windows x64. Its Java packaging job bundles the libraries and
+license texts in the main JAR, checks classpath loading and a payload round
+trip, and records the main, sources, and Javadoc JARs and the exact source POM
+in the SHA-256 manifest.
+
+Dispatch `maven_publish.yml` from the tested `main` SHA or its matching
+version tag with `candidate_run_id` and `source_sha`. Configure the Central
+Portal user token as `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD`.
+Set `MAVEN_GPG_PRIVATE_KEY` to the armored private signing key and
+`MAVEN_GPG_PASSPHRASE` to its passphrase. The corresponding public key must
+be available to Central. [Central Portal publishing requirements](https://central.sonatype.org/publish/requirements/)
+
+The workflow verifies the candidate and stages its four Maven files. It signs
+their exact bytes and submits a bundle through the Central Portal Publisher API
+without building JARs. It waits for `PUBLISHED`, then waits for public
+repository propagation and compares SHA-256 digests for all four files.
+An existing matching file triggers verification of the entire coordinate
+without uploading another deployment. A hash mismatch fails publication.
+The workflow retains the publication plan and the verified receipt.
+[Central Portal Publisher API](https://central.sonatype.org/publish/publish-portal-api/)
 
 ## Missing-wheel backfill
 

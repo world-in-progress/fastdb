@@ -132,7 +132,7 @@ fallbacks, or new users; ADR-0001 requires the single Core authority.
 
 ## Release Process
 
-Python, Rust, TypeScript and the Core bundle share one version and source
+Python, Rust, TypeScript, Java, and the Core bundle share one version and source
 commit. Update all package metadata and lockfiles together, and run the
 relevant local checks before opening the release PR. The exact merged source
 must pass both `tests.yml` and `release-artifacts.yml` on `main`.
@@ -181,6 +181,12 @@ they upload the tested archives and only accept existing registry versions
 whose hashes match. Do not rebuild packages inside upload jobs or move
 an existing release tag. See the [0.2.0 release record](docs/releases/0.2.0.md)
 for the complete package inventory and verified evidence.
+
+Maven Central uses `maven_publish.yml` with the same exact-source dispatch
+inputs. Release Artifacts builds the three-platform JNI JAR, checks classpath
+loading, and records the main, sources, and Javadoc JARs and the POM in the
+release manifest. The publishing job signs and uploads the verified files
+and compares the public bytes. See [publishing and local validation](docs/releases/publishing.md).
 
 Rust publication uses GitHub OIDC in `crates_publish.yml`, operation `publish`.
 Both crates must have a Trusted Publisher for that workflow with no environment

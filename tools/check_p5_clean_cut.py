@@ -252,10 +252,10 @@ def validate_policy(root: Path, policy: dict[str, object]) -> list[str]:
         violations.append(f"policy schema must be {SCHEMA!r}")
     if policy["native_abi_symbol_count"] != 118:
         violations.append("policy native ABI symbol count must remain exactly 118")
-    if policy["python_version"] != "0.3.0":
-        violations.append("policy Python package version must match release 0.3.0")
-    if policy["typescript_version"] != "0.3.0":
-        violations.append("policy TypeScript package version must match release 0.3.0")
+    if policy["python_version"] != "0.4.0":
+        violations.append("policy Python package version must match release 0.4.0")
+    if policy["typescript_version"] != "0.4.0":
+        violations.append("policy TypeScript package version must match release 0.4.0")
 
     removed = _validate_string_list(
         policy, "removed_paths", violations, paths=True
