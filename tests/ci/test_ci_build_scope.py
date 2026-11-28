@@ -204,7 +204,7 @@ class CIBuildScopeTests(unittest.TestCase):
         gate = jobs["metadata"]["outputs"]["build"]
         self.assertIn("github.event_name == 'push'", gate)
         self.assertIn("steps.filter.outputs.packages == 'true'", gate)
-        for name in ("native", "python", "typescript", "java_native", "java", "candidate"):
+        for name in ("native", "python", "typescript", "java_native", "java", "java_smoke", "candidate"):
             with self.subTest(job=name):
                 self.assertIn("metadata", jobs[name]["needs"])
                 self.assertEqual(jobs[name]["if"], "needs.metadata.outputs.build == 'true'")
@@ -233,7 +233,15 @@ class CIBuildScopeTests(unittest.TestCase):
             self.assertIn(command, build)
         java = jobs["java"]
         self.assertEqual(java["needs"], ["metadata", "java_native"])
+        smoke = jobs["java_smoke"]
+        self.assertEqual(smoke["needs"], ["metadata", "java"])
+        self.assertEqual([row["os"] for row in smoke["strategy"]["matrix"]["include"]],
+                         ["ubuntu-24.04", "macos-15", "windows-2022"])
+        smoke_run = next(step["run"] for step in smoke["steps"]
+                         if step.get("name") == "Smoke-test the final Java release JAR on each supported OS")
+        self.assertIn("JavaReleaseSmoke.java", smoke_run)
         self.assertIn("java", jobs["candidate"]["needs"])
+        self.assertIn("java_smoke", jobs["candidate"]["needs"])
         setup = next(step for step in java["steps"] if step.get("uses") == "actions/setup-java@v5")
         self.assertEqual(setup["with"], {"distribution": "temurin", "java-version": "17", "cache": "maven",
                                          "cache-dependency-path": "bindings/java/pom.xml"})
@@ -254,7 +262,7 @@ class CIBuildScopeTests(unittest.TestCase):
     def test_maven_publish_only_consumes_the_exact_source_candidate(self):
         dispatch = self.maven.get("on", self.maven.get("true"))
         self.assertEqual(set(dispatch), {"workflow_dispatch"})
-        self.assertEqual(set(dispatch["workflow_dispatch"]["inputs"]), {"candidate_run_id", "source_sha"})
+        self.assertEqual(set(dispatch["workflow_dispatch"]["inputs"]), {"candidate_run_id", "source_sha", "deployment_id"})
         self.assertEqual(set(self.maven["jobs"]), {"publish"})
         job = self.maven["jobs"]["publish"]
         self.assertIn("refs/heads/main", job["if"])
@@ -277,10 +285,13 @@ class CIBuildScopeTests(unittest.TestCase):
         upload = next(step for step in steps if step.get("run") == commands[2])
         self.assertEqual(upload["if"], "steps.prepare.outputs.pending == 'true'")
         self.assertEqual(set(upload["env"]), {"MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD",
-                                               "MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE"})
+                                               "MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE",
+                                               "MAVEN_DEPLOYMENT_ID"})
+        self.assertIn("--deployment-id", upload["run"])
         self.assertFalse(any("setup-java" in step.get("uses", "") for step in steps))
         receipt = next(step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@"))
         self.assertEqual(receipt["with"]["name"], "maven-publication-${{ inputs.source_sha }}")
+        self.assertIn("stage/deployment.json", receipt["with"]["path"])
 
     def test_pr_path_filters_can_read_changed_files(self):
         for workflow, job in ((self.tests, "detect_changes"), (self.artifacts, "metadata")):

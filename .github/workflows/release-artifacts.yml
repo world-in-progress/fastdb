@@ -353,8 +353,52 @@ jobs:
           path: dist/
           if-no-files-found: error
 
+  java_smoke:
+    needs: [metadata, java]
+    if: needs.metadata.outputs.build == 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04 }
+          - { os: macos-15 }
+          - { os: windows-2022 }
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-part-java
+          path: dist
+      - name: Smoke-test the final Java release JAR on each supported OS
+        shell: bash
+        run: |
+          jars=()
+          for candidate in dist/fastdb-java-*.jar; do
+            case "$candidate" in
+              *-sources.jar|*-javadoc.jar) continue ;;
+            esac
+            if [[ -f "$candidate" ]]; then
+              jars+=("$candidate")
+            fi
+          done
+          if [[ "${#jars[@]}" -ne 1 ]]; then
+            echo "Expected exactly one main Java release JAR, found ${#jars[@]}"
+            exit 1
+          fi
+          env -u FASTDB_JAVA_LIBRARY_PATH -u JAVA_TOOL_OPTIONS -u JDK_JAVA_OPTIONS -u _JAVA_OPTIONS \
+            java -Xcheck:jni -Djava.library.path= --class-path "${jars[0]}" \
+            bindings/java/src/test/release/JavaReleaseSmoke.java
+
   candidate:
-    needs: [metadata, native, python, typescript, java]
+    needs: [metadata, native, python, typescript, java, java_smoke]
     if: needs.metadata.outputs.build == 'true'
     runs-on: ubuntu-24.04
     steps:

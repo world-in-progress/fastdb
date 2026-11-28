@@ -16,6 +16,22 @@ from unittest.mock import patch
 import release_artifacts as release
 
 
+def elf_x86_64_image(machine=62):
+    header = bytearray(64)
+    header[:4] = b"\x7fELF"
+    header[4] = 2
+    header[5] = 1
+    struct.pack_into("<H", header, 18, machine)
+    return bytes(header)
+
+
+def macho_arm64_image(cputype=0x0100000C):
+    header = bytearray(32)
+    header[:4] = b"\xcf\xfa\xed\xfe"
+    struct.pack_into("<I", header, 4, cputype)
+    return bytes(header)
+
+
 def windows_image(machine=0x8664):
     header = bytearray(134)
     header[:2] = b"MZ"
@@ -56,9 +72,21 @@ class ReleaseInventoryTests(unittest.TestCase):
             "io/fastdb/payload/CompiledSpec.class": b"java class",
             "META-INF/LICENSE": (release.ROOT / "LICENSE").read_bytes(),
             "META-INF/THIRD_PARTY_NOTICES.txt": (release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes(),
-            "META-INF/native/linux-x86_64/libfastdb_java.so": b"linux library",
-            "META-INF/native/macos-arm64/libfastdb_java.dylib": b"macos library",
+            "META-INF/native/linux-x86_64/libfastdb_java.so": elf_x86_64_image(),
+            "META-INF/native/macos-arm64/libfastdb_java.dylib": macho_arm64_image(),
             "META-INF/native/windows-x86_64/fastdb_java.dll": windows_image(),
+        }
+
+    def java_sources_members(self):
+        return {
+            "io/fastdb/payload/CompiledSpec.java": b"package io.fastdb.payload;",
+            "META-INF/LICENSE": (release.ROOT / "LICENSE").read_bytes(),
+            "META-INF/THIRD_PARTY_NOTICES.txt": (release.ROOT / "THIRD_PARTY_NOTICES.txt").read_bytes(),
+        }
+
+    def java_javadoc_members(self):
+        return {
+            "index.html": b"<!doctype html><title>FastDB Java</title>",
         }
 
     def test_main_jar_requires_class_notices_and_all_native_libraries(self):
@@ -80,6 +108,10 @@ class ReleaseInventoryTests(unittest.TestCase):
             for name, contents, message in (
                 ("META-INF/LICENSE", b"rewritten", "original LICENSE"),
                 ("META-INF/THIRD_PARTY_NOTICES.txt", b"rewritten", "original THIRD_PARTY_NOTICES"),
+                ("META-INF/native/linux-x86_64/libfastdb_java.so", b"not elf", "ELF binary"),
+                ("META-INF/native/linux-x86_64/libfastdb_java.so", elf_x86_64_image(183), "ELF binary architecture"),
+                ("META-INF/native/macos-arm64/libfastdb_java.dylib", b"not macho", "Mach-O binary"),
+                ("META-INF/native/macos-arm64/libfastdb_java.dylib", macho_arm64_image(0x01000007), "Mach-O binary architecture"),
                 ("META-INF/native/windows-x86_64/fastdb_java.dll", windows_image(0xAA64), "binary architecture"),
             ):
                 with zipfile.ZipFile(jar, "w") as archive:
@@ -97,13 +129,18 @@ class ReleaseInventoryTests(unittest.TestCase):
                 "fastdb-java-0.4.0-javadoc.jar": "maven-javadoc",
                 "fastdb-java-0.4.0.pom": "maven-pom",
             }
-            for name in names:
+            contents_by_kind = {
+                "maven-jar": self.java_members(),
+                "maven-sources": self.java_sources_members(),
+                "maven-javadoc": self.java_javadoc_members(),
+            }
+            for name, kind in names.items():
                 path = output / name
                 if path.suffix == ".pom":
                     shutil.copyfile(release.ROOT / "bindings/java/pom.xml", path)
                 else:
                     with zipfile.ZipFile(path, "w") as archive:
-                        for member, contents in self.java_members().items():
+                        for member, contents in contents_by_kind[kind].items():
                             archive.writestr(member, contents)
             with patch.object(release, "source_sha", return_value="a" * 40):
                 release.record_part(output, "java", None)
@@ -113,6 +150,27 @@ class ReleaseInventoryTests(unittest.TestCase):
                 self.assertEqual({item["name"]: item["kind"] for item in fragment["artifacts"]}, names)
                 self.assertTrue(all(item["sha256"] == release.digest(output / item["name"])
                                     for item in fragment["artifacts"]))
+                with zipfile.ZipFile(output / "fastdb-java-0.4.0-sources.jar", "w") as archive:
+                    for member, contents in {**self.java_sources_members(),
+                                             "META-INF/native/linux-x86_64/libfastdb_java.so": elf_x86_64_image()}.items():
+                        archive.writestr(member, contents)
+                with self.assertRaisesRegex(release.ReleaseError, "must not bundle native"):
+                    release.record_part(output, "java", None)
+                with zipfile.ZipFile(output / "fastdb-java-0.4.0-sources.jar", "w") as archive:
+                    archive.writestr("io/fastdb/payload/CompiledSpec.java", b"package io.fastdb.payload;")
+                with self.assertRaisesRegex(release.ReleaseError, "META-INF/LICENSE"):
+                    release.record_part(output, "java", None)
+                with zipfile.ZipFile(output / "fastdb-java-0.4.0-sources.jar", "w") as archive:
+                    for member, contents in self.java_sources_members().items():
+                        archive.writestr(member, contents)
+                with zipfile.ZipFile(output / "fastdb-java-0.4.0-javadoc.jar", "w") as archive:
+                    archive.writestr("index.html", b"docs")
+                    archive.writestr("META-INF/native/macos-arm64/libfastdb_java.dylib", macho_arm64_image())
+                with self.assertRaisesRegex(release.ReleaseError, "must not bundle native"):
+                    release.record_part(output, "java", None)
+                with zipfile.ZipFile(output / "fastdb-java-0.4.0-javadoc.jar", "w") as archive:
+                    for member, contents in self.java_javadoc_members().items():
+                        archive.writestr(member, contents)
                 (output / "fastdb-java-0.4.0.pom").write_text("<project/>")
                 with self.assertRaisesRegex(release.ReleaseError, "differs from the source POM"):
                     release.record_part(output, "java", None)

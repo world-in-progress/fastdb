@@ -246,7 +246,7 @@ class MavenPublicationTests(unittest.TestCase):
             path = packages / name
             path.write_bytes(name.encode())
             artifacts.append(release.file_record(path, kind=kind))
-        plan = {"ecosystem": "maven", "version": self.version, "artifacts": artifacts, "pending": list(self.names)}
+        plan = {"ecosystem": "maven", "version": self.version, "source_sha": "a" * 40, "artifacts": artifacts, "pending": list(self.names)}
         release.write_json(stage / "publish-plan.json", plan)
         return plan
 
@@ -348,6 +348,7 @@ class MavenPublicationTests(unittest.TestCase):
                 headers, body = request.data.split(b"\r\n\r\n", 1)
                 self.assertTrue(headers.startswith(b"--" + boundary))
                 self.assertIn(b'name="bundle"; filename="fastdb-java.zip"', headers)
+                self.assertIn(b"Content-Type: application/octet-stream", headers)
                 with zipfile.ZipFile(io.BytesIO(body.removesuffix(b"\r\n--" + boundary + b"--\r\n"))) as bundle:
                     self.assertEqual(len(bundle.namelist()), 16)
                     for name in self.names:
@@ -375,6 +376,38 @@ class MavenPublicationTests(unittest.TestCase):
             self.assertEqual(portal.call_count, 5)
             self.assertEqual(sleep.call_count, 3)
             self.assertFalse(Path(signer.call_args.kwargs["env"]["GNUPGHOME"]).exists())
+            recorded = json.loads((stage / "deployment.json").read_text())
+            self.assertEqual(recorded["deployment_id"], self.deployment_id)
+            self.assertFalse(recorded["resumed"])
+
+    def test_maven_poll_retries_transient_503_and_can_resume_existing_deployment(self):
+        responses = iter([
+            HTTPError("https://central.sonatype.com/api/v1/publisher/status", 503, "unavailable", {}, io.BytesIO(b"busy")),
+            io.BytesIO(json.dumps({"deploymentState": "PUBLISHING"}).encode()),
+            io.BytesIO(json.dumps({"deploymentState": "PUBLISHED"}).encode()),
+        ])
+
+        def api(request, *, timeout):
+            self.assertEqual(request.full_url, "https://central.sonatype.com/api/v1/publisher/status?id=" + self.deployment_id)
+            item = next(responses)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        with tempfile.TemporaryDirectory() as directory:
+            stage = Path(directory)
+            self.write_stage(stage)
+            with patch.dict(os.environ, {"MAVEN_CENTRAL_USERNAME": "user", "MAVEN_CENTRAL_PASSWORD": "pass"}, clear=True), \
+                    patch.object(publish.subprocess, "run") as signer, \
+                    patch.object(publish, "urlopen", side_effect=api) as portal, \
+                    patch.object(publish.time, "sleep") as sleep, patch("builtins.print"):
+                publish.publish_maven(stage, deployment_id=self.deployment_id)
+            signer.assert_not_called()
+            self.assertEqual(portal.call_count, 3)
+            self.assertEqual(sleep.call_count, 2)
+            recorded = json.loads((stage / "deployment.json").read_text())
+            self.assertEqual(recorded["deployment_id"], self.deployment_id)
+            self.assertTrue(recorded["resumed"])
 
     def test_maven_failed_deployment_returns_all_details_without_waiting(self):
         status = {"deploymentState": "FAILED", "errors": {"first": ["bad POM"], "second": ["bad signature"]}}

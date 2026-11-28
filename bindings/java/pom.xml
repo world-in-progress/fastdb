@@ -82,7 +82,9 @@
                 <artifactId>maven-source-plugin</artifactId>
                 <version>3.3.1</version>
                 <configuration>
-                    <excludeResources>true</excludeResources>
+                    <excludes>
+                        <exclude>META-INF/native/**</exclude>
+                    </excludes>
                 </configuration>
             </plugin>
             <plugin>

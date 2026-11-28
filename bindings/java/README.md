@@ -4,9 +4,9 @@
 Java 17 and later. Core compiles specs, builds and reads payloads, and generates
 source for all five targets. The Java JAR has no runtime dependencies.
 
-The Maven Central release JAR bundles JNI libraries for Linux x86_64, macOS
-arm64, and Windows x64. Add the dependency and import the API from
-`io.fastdb.payload`.
+The Maven Central release JAR bundles JNI libraries for Linux x86_64 (built on
+Ubuntu 24.04, glibc 2.34+), macOS arm64 (macOS 11+), and Windows x64. Add the
+dependency and import the API from `io.fastdb.payload`.
 
 ```xml
 <dependency>

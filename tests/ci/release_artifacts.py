@@ -330,6 +330,22 @@ def maven_files(release_version: str) -> dict[str, str]:
     return {f"{MAVEN_ARTIFACT}-{release_version}{suffix}": kind for suffix, kind in MAVEN_KINDS.items()}
 
 
+def check_elf_x86_64_binary(data: bytes, label: str) -> None:
+    if len(data) < 20 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        raise ReleaseError(f"Expected a 64-bit little-endian ELF binary: {label}")
+    machine = struct.unpack_from("<H", data, 18)[0]
+    if machine != 62:
+        raise ReleaseError(f"Unexpected ELF binary architecture 0x{machine:04x} for Linux x86_64: {label}")
+
+
+def check_macho_arm64_binary(data: bytes, label: str) -> None:
+    if len(data) < 8 or data[:4] != b"\xcf\xfa\xed\xfe":
+        raise ReleaseError(f"Expected a 64-bit little-endian Mach-O binary: {label}")
+    cputype = struct.unpack_from("<I", data, 4)[0]
+    if cputype != 0x0100000C:
+        raise ReleaseError(f"Unexpected Mach-O binary architecture 0x{cputype:08x} for macOS arm64: {label}")
+
+
 def inspect_java_jar(path: Path, release_version: str) -> None:
     if path.name != f"{MAVEN_ARTIFACT}-{release_version}.jar":
         raise ReleaseError(f"Unexpected main JAR name/version: {path.name}")
@@ -348,8 +364,35 @@ def inspect_java_jar(path: Path, release_version: str) -> None:
             for filename in ("LICENSE", "THIRD_PARTY_NOTICES.txt"):
                 if archive.read(f"META-INF/{filename}") != (ROOT / filename).read_bytes():
                     raise ReleaseError(f"JAR does not retain original {filename}: {path.name}")
-            dll = JAVA_NATIVE_LIBRARIES[-1]
-            check_windows_binary(archive.read(dll), WINDOWS_TARGET, f"{path.name}/{dll}")
+            linux_so, macos_dylib, windows_dll = JAVA_NATIVE_LIBRARIES
+            check_elf_x86_64_binary(archive.read(linux_so), f"{path.name}/{linux_so}")
+            check_macho_arm64_binary(archive.read(macos_dylib), f"{path.name}/{macos_dylib}")
+            check_windows_binary(archive.read(windows_dll), WINDOWS_TARGET, f"{path.name}/{windows_dll}")
+    except zipfile.BadZipFile as error:
+        raise ReleaseError(f"Invalid JAR: {path.name}") from error
+
+
+def inspect_java_companion_jar(path: Path, release_version: str, kind: str) -> None:
+    suffix = "-sources.jar" if kind == "maven-sources" else "-javadoc.jar"
+    if path.name != f"{MAVEN_ARTIFACT}-{release_version}{suffix}":
+        raise ReleaseError(f"Unexpected {kind} JAR name/version: {path.name}")
+    required = (
+        ("io/fastdb/payload/CompiledSpec.java", "META-INF/LICENSE", "META-INF/THIRD_PARTY_NOTICES.txt")
+        if kind == "maven-sources"
+        else ("index.html",)
+    )
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = archive.namelist()
+            if any(member.startswith("META-INF/native/") for member in members):
+                raise ReleaseError(f"Companion JAR must not bundle native libraries: {path.name}")
+            for member in required:
+                if members.count(member) != 1 or not archive.getinfo(member).file_size:
+                    raise ReleaseError(f"JAR requires exactly one nonempty {member}: {path.name}")
+            if kind == "maven-sources":
+                for filename in ("LICENSE", "THIRD_PARTY_NOTICES.txt"):
+                    if archive.read(f"META-INF/{filename}") != (ROOT / filename).read_bytes():
+                        raise ReleaseError(f"Sources JAR does not retain original {filename}: {path.name}")
     except zipfile.BadZipFile as error:
         raise ReleaseError(f"Invalid JAR: {path.name}") from error
 
@@ -369,6 +412,8 @@ def record_part(output: Path, part: str, target: str | None) -> None:
                 raise ReleaseError(f"Unexpected Java release artifact: {path.name}")
             if kind == "maven-jar":
                 inspect_java_jar(path, release_version)
+            elif kind in ("maven-sources", "maven-javadoc"):
+                inspect_java_companion_jar(path, release_version, kind)
             if kind == "maven-pom" and path.read_bytes() != (ROOT / "bindings/java/pom.xml").read_bytes():
                 raise ReleaseError(f"Release POM differs from the source POM: {path.name}")
             item = file_record(path, kind=kind)

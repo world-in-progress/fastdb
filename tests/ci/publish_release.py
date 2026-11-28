@@ -17,7 +17,7 @@ import tarfile
 import tempfile
 import time
 import tomllib
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from uuid import UUID, uuid4
@@ -363,6 +363,13 @@ def maven_bundle(bundle: Path, version: str, artifacts: dict[str, bytes], privat
             archive.write(signature, member + ".asc")
 
 
+TRANSIENT_PORTAL_STATUSES = {429, 500, 502, 503, 504}
+
+
+class TransientPortalError(ReleaseError):
+    """Retryable HTTP or transport error while polling Central Portal status."""
+
+
 def central_post(endpoint: str, token: str, *, data: bytes | None = None, content_type: str | None = None) -> bytes:
     headers = {"Authorization": f"Bearer {token}", "User-Agent": MAVEN_USER_AGENT}
     if content_type is not None:
@@ -373,13 +380,23 @@ def central_post(endpoint: str, token: str, *, data: bytes | None = None, conten
     except HTTPError as error:
         with error:
             detail = error.read().decode(errors="replace")
-        raise ReleaseError(f"Central Portal {endpoint} failed with HTTP {error.code}: {detail}") from error
+        message = f"Central Portal {endpoint} failed with HTTP {error.code}: {detail}"
+        error_type = TransientPortalError if error.code in TRANSIENT_PORTAL_STATUSES else ReleaseError
+        raise error_type(message) from error
+    except (URLError, TimeoutError) as error:
+        raise TransientPortalError(f"Central Portal {endpoint} failed: {error}") from error
 
 
 def wait_for_maven(deployment_id: str, token: str, *, attempts: int = 240) -> None:
     endpoint = "status?" + urlencode({"id": deployment_id})
     for attempt in range(attempts):
-        status = json.loads(central_post(endpoint, token))
+        try:
+            status = json.loads(central_post(endpoint, token))
+        except TransientPortalError as error:
+            if attempt + 1 < attempts:
+                time.sleep(5)
+                continue
+            raise ReleaseError(str(error)) from error
         state = status.get("deploymentState")
         if state == "PUBLISHED":
             return
@@ -392,32 +409,60 @@ def wait_for_maven(deployment_id: str, token: str, *, attempts: int = 240) -> No
     raise ReleaseError(f"Central Portal deployment {deployment_id} did not reach PUBLISHED")
 
 
-def publish_maven(stage: Path) -> None:
+def publish_maven(stage: Path, *, deployment_id: str | None = None) -> None:
     plan = json.loads((stage / "publish-plan.json").read_text())
     artifacts = staged_maven_artifacts(stage, plan)
-    variables = ("MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD", "MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE")
-    missing = [name for name in variables if not os.environ.get(name)]
+    resumed_id = (deployment_id or "").strip()
+    required_vars = (
+        ("MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD")
+        if resumed_id
+        else ("MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD", "MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE")
+    )
+    missing = [name for name in required_vars if not os.environ.get(name)]
     if missing:
         raise ReleaseError(f"Maven publication requires {', '.join(missing)}")
-    username, password, private_key, passphrase = (os.environ[name] for name in variables)
+    username = os.environ["MAVEN_CENTRAL_USERNAME"]
+    password = os.environ["MAVEN_CENTRAL_PASSWORD"]
     token = b64encode(f"{username}:{password}".encode()).decode("ascii")
+    if resumed_id:
+        try:
+            normalized_id = str(UUID(resumed_id))
+        except ValueError as error:
+            raise ReleaseError("Invalid Central Portal deployment ID") from error
+        write_json(stage / "deployment.json", {
+            "deployment_id": normalized_id,
+            "source_sha": plan["source_sha"],
+            "version": plan["version"],
+            "resumed": True,
+        })
+        print(f"Resuming Central Portal deployment ID: {normalized_id}", flush=True)
+        wait_for_maven(normalized_id, token)
+        return
+    private_key = os.environ["MAVEN_GPG_PRIVATE_KEY"]
+    passphrase = os.environ["MAVEN_GPG_PASSPHRASE"]
     with tempfile.TemporaryDirectory(prefix="fastdb-central-") as directory:
         bundle = Path(directory) / "fastdb-java.zip"
         maven_bundle(bundle, plan["version"], artifacts, private_key, passphrase)
         boundary = uuid4().hex
         prefix = (
             f'--{boundary}\r\nContent-Disposition: form-data; name="bundle"; filename="{bundle.name}"\r\n'
-            "Content-Type: application/zip\r\n\r\n"
+            "Content-Type: application/octet-stream\r\n\r\n"
         ).encode("ascii")
         body = prefix + bundle.read_bytes() + f"\r\n--{boundary}--\r\n".encode("ascii")
         response = central_post("upload?publishingType=AUTOMATIC", token, data=body,
                                 content_type=f"multipart/form-data; boundary={boundary}")
     try:
-        deployment_id = str(UUID(response.decode().strip()))
+        normalized_id = str(UUID(response.decode().strip()))
     except ValueError as error:
         raise ReleaseError("Central Portal upload did not return a deployment ID") from error
-    print(f"Central Portal deployment ID: {deployment_id}", flush=True)
-    wait_for_maven(deployment_id, token)
+    write_json(stage / "deployment.json", {
+        "deployment_id": normalized_id,
+        "source_sha": plan["source_sha"],
+        "version": plan["version"],
+        "resumed": False,
+    })
+    print(f"Central Portal deployment ID: {normalized_id}", flush=True)
+    wait_for_maven(normalized_id, token)
 
 
 def main() -> int:
@@ -435,6 +480,8 @@ def main() -> int:
     for command in ("publish-crates", "publish-maven", "verify-registry"):
         item = sub.add_parser(command)
         item.add_argument("--stage", type=Path, required=True)
+        if command == "publish-maven":
+            item.add_argument("--deployment-id", default="")
     args = parser.parse_args()
     if args.command == "check-ci":
         print(json.dumps(check_ci(args.run_id, args.source_sha), sort_keys=True))
@@ -443,7 +490,7 @@ def main() -> int:
     elif args.command == "publish-crates":
         publish_crates(args.stage)
     elif args.command == "publish-maven":
-        publish_maven(args.stage)
+        publish_maven(args.stage, deployment_id=args.deployment_id or None)
     else:
         plan = json.loads((args.stage / "publish-plan.json").read_text())
         verify_registry(plan)
