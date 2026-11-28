@@ -42,7 +42,7 @@ through a stable C ABI.
 | Rust | [`fastdb`](https://crates.io/crates/fastdb) (+ raw [`fastdb-sys`](https://crates.io/crates/fastdb-sys)) | crates.io + matching Core bundle |
 | Python 3.10+ | [`fastdb4py`](https://pypi.org/project/fastdb4py/) | PyPI |
 | TypeScript / WASM | [`fastdb4ts`](https://www.npmjs.com/package/fastdb4ts) | npm |
-| Java 17+ | [`io.fastdb:fastdb-java`](bindings/java/README.md) | Source build |
+| Java 17+ | [`io.github.world-in-progress:fastdb-java`](bindings/java/README.md) | Maven Central |
 
 The Rust, Python, TypeScript/WASM, and Java portable APIs use the same Core
 parser, layout, and digest implementation.
@@ -69,9 +69,10 @@ set `FASTDB_PAYLOAD_LINK_MODE=system` and set
 `FASTDB_PAYLOAD_SYSTEM_LIB_DIR` to the absolute extracted `lib` directory. See the
 [linking contract](bindings/rust/fastdb-sys/README.md) for details.
 
-**Java 17+** — build the JNI library with CMake and the JAR with Maven.
-`io.fastdb:fastdb-java:0.4.0-SNAPSHOT` is available from source and is
-unpublished on Maven Central. [Java build and runtime instructions](bindings/java/README.md)
+**Java 17+** — add `io.github.world-in-progress:fastdb-java:0.4.0` as a Maven
+dependency. The release JAR loads its bundled native library on Linux x86_64,
+macOS arm64, and Windows x64.
+[Java build and runtime instructions](bindings/java/README.md)
 
 **C++** — use a Core bundle from a tagged release, or build from source with
 CMake (see [fastcarto/README.md](fastcarto/README.md)).
@@ -172,7 +173,7 @@ whose raw arrays cannot be revoked after export. See
 - Python binding (`fastdb4py`): [`python/README.md`](python/README.md)
 - TypeScript/WASM binding (`fastdb4ts`): [`ts/fastdb4ts/README.md`](ts/fastdb4ts/README.md)
 - Rust crates (`fastdb`, `fastdb-sys`): [`bindings/rust/fastdb/README.md`](bindings/rust/fastdb/README.md)
-- Java binding (`io.fastdb:fastdb-java`): [`bindings/java/README.md`](bindings/java/README.md)
+- Java binding (`io.github.world-in-progress:fastdb-java`): [`bindings/java/README.md`](bindings/java/README.md)
 - C++ core (`fastcarto/fastdb`): [`fastcarto/README.md`](fastcarto/README.md)
 - Accepted design: [portable payload foundation](docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
 - Decisions and status: [`docs/decisions/`](docs/decisions/), [implementation status](docs/issues/0002-portable-payload-foundation-implementation-status.md)

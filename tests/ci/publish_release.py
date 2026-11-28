@@ -4,20 +4,26 @@
 from __future__ import annotations
 
 import argparse
+from base64 import b64encode
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import shutil
 import struct
+import subprocess
 import tarfile
+import tempfile
 import time
 import tomllib
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+from uuid import UUID, uuid4
+import zipfile
 
-from release_artifacts import ReleaseError, digest, verify, write_json
+from release_artifacts import MAVEN_ARTIFACT, MAVEN_GROUP, MAVEN_KINDS, ROOT, ReleaseError, digest, maven_files, verify, write_json
 
 
 REPOSITORY = "world-in-progress/fastdb"
@@ -26,7 +32,12 @@ REQUIRED_PROOFS = {
     "projection_parity": 1, "generated_projections": 1, "wasm_core": 1,
     "native_tests": 2, "native_sanitizers": 1, "package_tests": 2, "test": 1,
     "windows_native_tests": 1, "windows_python_tests": 1,
+    "java_payload": 3,
 }
+MAVEN_PATH = f"{MAVEN_GROUP.replace('.', '/')}/{MAVEN_ARTIFACT}"
+MAVEN_REPOSITORY = "https://repo1.maven.org/maven2"
+CENTRAL_PUBLISHER = "https://central.sonatype.com/api/v1/publisher"
+MAVEN_USER_AGENT = "fastdb-release/0.4.0 (https://github.com/world-in-progress/fastdb)"
 
 
 def request_json(url: str, *, token: str | None = None, missing_ok: bool = False, data: bytes | None = None, no_cache: bool = False) -> dict | None:
@@ -87,6 +98,15 @@ def check_ci(run_id: str, commit: str, *, require_workflow_source: bool = True) 
     assert_dispatch_ref()
     run = github(f"actions/runs/{run_id}")
     assert_source_run(run, commit, "release-artifacts.yml")
+    required = REQUIRED_PROOFS.copy()
+    if not require_workflow_source:
+        # The Python retry/backfill controller can verify tags created before
+        # Java joined the proof matrix. Use the selected source's workflow.
+        workflow = subprocess.check_output(
+            ["git", "show", f"{commit}:.github/workflows/tests.yml"], cwd=ROOT, text=True,
+        )
+        if re.search(r"^  java_payload:", workflow, re.MULTILINE) is None:
+            del required["java_payload"]
     query = urlencode({"head_sha": commit, "event": "push", "branch": "main", "per_page": 100})
     proofs = github(f"actions/workflows/tests.yml/runs?{query}")["workflow_runs"]
     for proof in proofs:
@@ -100,13 +120,18 @@ def check_ci(run_id: str, commit: str, *, require_workflow_source: bool = True) 
             if job["conclusion"] == "success":
                 name = job["name"].split(" (", 1)[0]
                 completed[name] = completed.get(name, 0) + 1
-        if all(completed.get(name, 0) >= count for name, count in REQUIRED_PROOFS.items()):
+        if all(completed.get(name, 0) >= count for name, count in required.items()):
             return {"artifact_run_id": run["id"], "artifact_run_attempt": run["run_attempt"], "proof_run_id": proof["id"], "source_sha": commit}
     raise ReleaseError("No complete successful Run Tests proof matrix exists for this exact main SHA")
 
 
 def select_records(document: dict, ecosystem: str) -> list[dict]:
-    kinds = {"pypi": {"python-wheel", "python-sdist"}, "npm": {"typescript-package"}, "crates": {"rust-crate"}}
+    kinds = {
+        "pypi": {"python-wheel", "python-sdist"},
+        "npm": {"typescript-package"},
+        "crates": {"rust-crate"},
+        "maven": set(MAVEN_KINDS.values()),
+    }
     return [record for record in document["artifacts"] if record["kind"] in kinds[ecosystem]]
 
 
@@ -119,11 +144,23 @@ def existing_hashes(ecosystem: str, version: str) -> dict[str, str]:
         if result is None:
             return {}
         # npm exposes SHA-512 integrity; compare the actual published tarball SHA-256.
-        import hashlib
         url = f"https://registry.npmjs.org/fastdb4ts/-/fastdb4ts-{version}.tgz"
         with urlopen(url, timeout=60) as response:
             checksum = hashlib.sha256(response.read()).hexdigest()
         return {f"fastdb4ts-{version}.tgz": checksum}
+    if ecosystem == "maven":
+        result = {}
+        for filename in maven_files(version):
+            url = f"{MAVEN_REPOSITORY}/{MAVEN_PATH}/{version}/{filename}"
+            request = Request(url, headers={"User-Agent": MAVEN_USER_AGENT, "Cache-Control": "no-cache"})
+            try:
+                with urlopen(request, timeout=60) as response:
+                    result[filename] = hashlib.file_digest(response, "sha256").hexdigest()
+            except HTTPError as error:
+                error.close()
+                if error.code != 404:
+                    raise ReleaseError(f"Maven Central request failed with HTTP {error.code}: {url}") from error
+        return result
     result = {}
     for name in ("fastdb-sys", "fastdb"):
         package = request_json(f"https://crates.io/api/v1/crates/{name}/{version}", missing_ok=True, no_cache=True)
@@ -180,7 +217,12 @@ def prepare(directory: Path, output: Path, ecosystem: str, run_id: str, commit: 
     if document.get("repository") != REPOSITORY or str(document.get("build_run_id")) != run_id or str(document.get("build_run_attempt")) != str(ci["artifact_run_attempt"]):
         raise ReleaseError("Downloaded manifest does not belong to the verified artifact run/attempt")
     records = select_records(document, ecosystem)
-    pending = pending_records(records, existing_hashes(ecosystem, document["version"]))
+    existing = existing_hashes(ecosystem, document["version"])
+    pending = pending_records(records, existing)
+    if ecosystem == "maven" and existing:
+        # Central deploys the full coordinate together. Partial visibility is
+        # handled by the public hash check without reuploading the coordinate.
+        pending = []
     output.mkdir(parents=True, exist_ok=False)
     packages = output / "packages"
     packages.mkdir()
@@ -231,9 +273,9 @@ def crate_upload_body(path: Path, commit: str) -> bytes:
     return struct.pack("<I", len(metadata_bytes)) + metadata_bytes + struct.pack("<I", len(archive_bytes)) + archive_bytes
 
 
-def verify_registry(plan: dict, *, attempts: int = 120) -> None:
-    # npm can accept an upload before its asynchronous processing exposes the
-    # new version. Poll public bytes for up to ten minutes without republishing.
+def verify_registry(plan: dict, *, attempts: int | None = None) -> None:
+    if attempts is None:
+        attempts = 240 if plan["ecosystem"] == "maven" else 120
     for attempt in range(attempts):
         pending = pending_records(plan["artifacts"], existing_hashes(plan["ecosystem"], plan["version"]))
         if not pending:
@@ -269,6 +311,160 @@ def publish_crates(stage: Path) -> None:
         wait_for_crate_index(name, plan["version"], records[0]["sha256"])
 
 
+def staged_maven_artifacts(stage: Path, plan: dict) -> dict[str, bytes]:
+    version = plan["version"]
+    if plan["ecosystem"] != "maven" or re.fullmatch(r"\d+\.\d+\.\d+", version) is None:
+        raise ReleaseError("Expected a Maven publication plan with a release version")
+    records = plan["artifacts"]
+    expected = maven_files(version)
+    if (len(records) != len(expected)
+            or {item["name"]: item["kind"] for item in records} != expected
+            or sorted(plan["pending"]) != sorted(expected)):
+        raise ReleaseError("A Maven deployment requires the complete staged release inventory")
+    packages = stage / "packages"
+    if {path.name for path in packages.iterdir()} != set(expected):
+        raise ReleaseError("Staged Maven files do not match the release inventory")
+    artifacts = {}
+    for record in records:
+        path = packages / record["name"]
+        if path.is_symlink() or not path.is_file():
+            raise ReleaseError(f"Invalid staged Maven file: {path.name}")
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != record["sha256"] or len(data) != record["bytes"]:
+            raise ReleaseError(f"Staged Maven artifact changed: {path.name}")
+        artifacts[path.name] = data
+    return artifacts
+
+
+def maven_bundle(bundle: Path, version: str, artifacts: dict[str, bytes], private_key: str, passphrase: str) -> None:
+    gnupg = bundle.parent / "gnupg"
+    gnupg.mkdir(mode=0o700)
+    env = {key: value for key, value in os.environ.items() if not key.startswith("MAVEN_")}
+    env["GNUPGHOME"] = str(gnupg)
+
+    def gpg(args: list[str], input_bytes: bytes) -> None:
+        result = subprocess.run(["gpg", "--no-options", "--batch", "--yes", *args],
+                                input=input_bytes, env=env, capture_output=True)
+        if result.returncode:
+            raise ReleaseError(f"GPG failed ({result.returncode}): {result.stderr.decode(errors='replace').strip()}")
+
+    gpg(["--import"], private_key.encode())
+    with zipfile.ZipFile(bundle, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for filename, data in artifacts.items():
+            path = bundle.parent / filename
+            signature = path.with_suffix(path.suffix + ".asc")
+            path.write_bytes(data)
+            gpg(["--armor", "--detach-sign", "--pinentry-mode", "loopback", "--passphrase-fd", "0",
+                 "--output", str(signature), str(path)], (passphrase + "\n").encode())
+            member = f"{MAVEN_PATH}/{version}/{filename}"
+            archive.writestr(member, data)
+            archive.writestr(member + ".md5", hashlib.md5(data, usedforsecurity=False).hexdigest())
+            archive.writestr(member + ".sha1", hashlib.sha1(data, usedforsecurity=False).hexdigest())
+            archive.write(signature, member + ".asc")
+
+
+TRANSIENT_PORTAL_STATUSES = {429, 500, 502, 503, 504}
+
+
+class TransientPortalError(ReleaseError):
+    """Retryable HTTP or transport error while polling Central Portal status."""
+
+
+def central_post(endpoint: str, token: str, *, data: bytes | None = None, content_type: str | None = None) -> bytes:
+    headers = {"Authorization": f"Bearer {token}", "User-Agent": MAVEN_USER_AGENT}
+    if content_type is not None:
+        headers["Content-Type"] = content_type
+    try:
+        with urlopen(Request(f"{CENTRAL_PUBLISHER}/{endpoint}", data=data, headers=headers, method="POST"), timeout=60) as response:
+            return response.read()
+    except HTTPError as error:
+        with error:
+            detail = error.read().decode(errors="replace")
+        message = f"Central Portal {endpoint} failed with HTTP {error.code}: {detail}"
+        error_type = TransientPortalError if error.code in TRANSIENT_PORTAL_STATUSES else ReleaseError
+        raise error_type(message) from error
+    except (URLError, TimeoutError) as error:
+        raise TransientPortalError(f"Central Portal {endpoint} failed: {error}") from error
+
+
+def wait_for_maven(deployment_id: str, token: str, *, attempts: int = 240) -> None:
+    endpoint = "status?" + urlencode({"id": deployment_id})
+    for attempt in range(attempts):
+        try:
+            status = json.loads(central_post(endpoint, token))
+        except TransientPortalError as error:
+            if attempt + 1 < attempts:
+                time.sleep(5)
+                continue
+            raise ReleaseError(str(error)) from error
+        state = status.get("deploymentState")
+        if state == "PUBLISHED":
+            return
+        if state == "FAILED":
+            raise ReleaseError(f"Central Portal deployment {deployment_id} failed: {json.dumps(status, ensure_ascii=False)}")
+        if state not in {"PENDING", "VALIDATING", "VALIDATED", "PUBLISHING"}:
+            raise ReleaseError(f"Unexpected Central Portal status for {deployment_id}: {status}")
+        if attempt + 1 < attempts:
+            time.sleep(5)
+    raise ReleaseError(f"Central Portal deployment {deployment_id} did not reach PUBLISHED")
+
+
+def publish_maven(stage: Path, *, deployment_id: str | None = None) -> None:
+    plan = json.loads((stage / "publish-plan.json").read_text())
+    artifacts = staged_maven_artifacts(stage, plan)
+    resumed_id = (deployment_id or "").strip()
+    required_vars = (
+        ("MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD")
+        if resumed_id
+        else ("MAVEN_CENTRAL_USERNAME", "MAVEN_CENTRAL_PASSWORD", "MAVEN_GPG_PRIVATE_KEY", "MAVEN_GPG_PASSPHRASE")
+    )
+    missing = [name for name in required_vars if not os.environ.get(name)]
+    if missing:
+        raise ReleaseError(f"Maven publication requires {', '.join(missing)}")
+    username = os.environ["MAVEN_CENTRAL_USERNAME"]
+    password = os.environ["MAVEN_CENTRAL_PASSWORD"]
+    token = b64encode(f"{username}:{password}".encode()).decode("ascii")
+    if resumed_id:
+        try:
+            normalized_id = str(UUID(resumed_id))
+        except ValueError as error:
+            raise ReleaseError("Invalid Central Portal deployment ID") from error
+        write_json(stage / "deployment.json", {
+            "deployment_id": normalized_id,
+            "source_sha": plan["source_sha"],
+            "version": plan["version"],
+            "resumed": True,
+        })
+        print(f"Resuming Central Portal deployment ID: {normalized_id}", flush=True)
+        wait_for_maven(normalized_id, token)
+        return
+    private_key = os.environ["MAVEN_GPG_PRIVATE_KEY"]
+    passphrase = os.environ["MAVEN_GPG_PASSPHRASE"]
+    with tempfile.TemporaryDirectory(prefix="fastdb-central-") as directory:
+        bundle = Path(directory) / "fastdb-java.zip"
+        maven_bundle(bundle, plan["version"], artifacts, private_key, passphrase)
+        boundary = uuid4().hex
+        prefix = (
+            f'--{boundary}\r\nContent-Disposition: form-data; name="bundle"; filename="{bundle.name}"\r\n'
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ).encode("ascii")
+        body = prefix + bundle.read_bytes() + f"\r\n--{boundary}--\r\n".encode("ascii")
+        response = central_post("upload?publishingType=AUTOMATIC", token, data=body,
+                                content_type=f"multipart/form-data; boundary={boundary}")
+    try:
+        normalized_id = str(UUID(response.decode().strip()))
+    except ValueError as error:
+        raise ReleaseError("Central Portal upload did not return a deployment ID") from error
+    write_json(stage / "deployment.json", {
+        "deployment_id": normalized_id,
+        "source_sha": plan["source_sha"],
+        "version": plan["version"],
+        "resumed": False,
+    })
+    print(f"Central Portal deployment ID: {normalized_id}", flush=True)
+    wait_for_maven(normalized_id, token)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -278,12 +474,14 @@ def main() -> int:
     stage = sub.add_parser("prepare")
     stage.add_argument("--directory", type=Path, required=True)
     stage.add_argument("--output", type=Path, required=True)
-    stage.add_argument("--ecosystem", choices=("pypi", "npm", "crates"), required=True)
+    stage.add_argument("--ecosystem", choices=("pypi", "npm", "crates", "maven"), required=True)
     stage.add_argument("--run-id", required=True)
     stage.add_argument("--source-sha", required=True)
-    for command in ("publish-crates", "verify-registry"):
+    for command in ("publish-crates", "publish-maven", "verify-registry"):
         item = sub.add_parser(command)
         item.add_argument("--stage", type=Path, required=True)
+        if command == "publish-maven":
+            item.add_argument("--deployment-id", default="")
     args = parser.parse_args()
     if args.command == "check-ci":
         print(json.dumps(check_ci(args.run_id, args.source_sha), sort_keys=True))
@@ -291,6 +489,8 @@ def main() -> int:
         prepare(args.directory, args.output, args.ecosystem, args.run_id, args.source_sha)
     elif args.command == "publish-crates":
         publish_crates(args.stage)
+    elif args.command == "publish-maven":
+        publish_maven(args.stage, deployment_id=args.deployment_id or None)
     else:
         plan = json.loads((args.stage / "publish-plan.json").read_text())
         verify_registry(plan)

@@ -17,6 +17,7 @@ import subprocess
 import tarfile
 import tempfile
 import tomllib
+import xml.etree.ElementTree as ET
 import zipfile
 
 
@@ -49,6 +50,20 @@ PARTS = (
     "core-windows-arm64",
     "python",
     "typescript",
+    "java",
+)
+MAVEN_GROUP = "io.github.world-in-progress"
+MAVEN_ARTIFACT = "fastdb-java"
+MAVEN_KINDS = {
+    ".jar": "maven-jar",
+    "-sources.jar": "maven-sources",
+    "-javadoc.jar": "maven-javadoc",
+    ".pom": "maven-pom",
+}
+JAVA_NATIVE_LIBRARIES = (
+    "META-INF/native/linux-x86_64/libfastdb_java.so",
+    "META-INF/native/macos-arm64/libfastdb_java.dylib",
+    "META-INF/native/windows-x86_64/fastdb_java.dll",
 )
 # Wheel platform -> the release target it must be recorded under.
 WHEEL_PLATFORM_TARGETS = {
@@ -125,10 +140,25 @@ def source_sha() -> str:
     return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
 
 
-def version() -> str:
+def java_version() -> str | None:
+    namespaces = {"pom": "http://maven.apache.org/POM/4.0.0"}
+    try:
+        pom = ET.parse(ROOT / "bindings/java/pom.xml")
+    except ET.ParseError as error:
+        raise ReleaseError(f"Invalid Java POM: {error}") from error
+    group = pom.findtext("pom:groupId", namespaces=namespaces)
+    artifact = pom.findtext("pom:artifactId", namespaces=namespaces)
+    if (group, artifact) != (MAVEN_GROUP, MAVEN_ARTIFACT):
+        raise ReleaseError(f"Java POM coordinates must be {MAVEN_GROUP}:{MAVEN_ARTIFACT}")
+    return pom.findtext("pom:version", namespaces=namespaces)
+
+
+def version(*, include_java: bool = True) -> str:
     python = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
     versions = [python, json.loads((ROOT / "ts/fastdb4ts/package.json").read_text())["version"]]
     versions.extend(tomllib.loads((ROOT / f"bindings/rust/{name}/Cargo.toml").read_text())["package"]["version"] for name in ("fastdb", "fastdb-sys"))
+    if include_java:
+        versions.append(java_version())
     if any(value != python for value in versions) or re.fullmatch(r"\d+\.\d+\.\d+", python) is None:
         raise ReleaseError(f"Release package versions must match: {versions}")
     return python
@@ -296,13 +326,98 @@ def inspect_wheel(path: Path, release_version: str) -> str:
     return "cp314t" if pieces[-2] == "cp314t" else pieces[-3]
 
 
+def maven_files(release_version: str) -> dict[str, str]:
+    return {f"{MAVEN_ARTIFACT}-{release_version}{suffix}": kind for suffix, kind in MAVEN_KINDS.items()}
+
+
+def check_elf_x86_64_binary(data: bytes, label: str) -> None:
+    if len(data) < 20 or data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        raise ReleaseError(f"Expected a 64-bit little-endian ELF binary: {label}")
+    machine = struct.unpack_from("<H", data, 18)[0]
+    if machine != 62:
+        raise ReleaseError(f"Unexpected ELF binary architecture 0x{machine:04x} for Linux x86_64: {label}")
+
+
+def check_macho_arm64_binary(data: bytes, label: str) -> None:
+    if len(data) < 8 or data[:4] != b"\xcf\xfa\xed\xfe":
+        raise ReleaseError(f"Expected a 64-bit little-endian Mach-O binary: {label}")
+    cputype = struct.unpack_from("<I", data, 4)[0]
+    if cputype != 0x0100000C:
+        raise ReleaseError(f"Unexpected Mach-O binary architecture 0x{cputype:08x} for macOS arm64: {label}")
+
+
+def inspect_java_jar(path: Path, release_version: str) -> None:
+    if path.name != f"{MAVEN_ARTIFACT}-{release_version}.jar":
+        raise ReleaseError(f"Unexpected main JAR name/version: {path.name}")
+    required = (
+        "io/fastdb/payload/CompiledSpec.class",
+        "META-INF/LICENSE",
+        "META-INF/THIRD_PARTY_NOTICES.txt",
+        *JAVA_NATIVE_LIBRARIES,
+    )
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = archive.namelist()
+            for member in required:
+                if members.count(member) != 1 or not archive.getinfo(member).file_size:
+                    raise ReleaseError(f"JAR requires exactly one nonempty {member}: {path.name}")
+            for filename in ("LICENSE", "THIRD_PARTY_NOTICES.txt"):
+                if archive.read(f"META-INF/{filename}") != (ROOT / filename).read_bytes():
+                    raise ReleaseError(f"JAR does not retain original {filename}: {path.name}")
+            linux_so, macos_dylib, windows_dll = JAVA_NATIVE_LIBRARIES
+            check_elf_x86_64_binary(archive.read(linux_so), f"{path.name}/{linux_so}")
+            check_macho_arm64_binary(archive.read(macos_dylib), f"{path.name}/{macos_dylib}")
+            check_windows_binary(archive.read(windows_dll), WINDOWS_TARGET, f"{path.name}/{windows_dll}")
+    except zipfile.BadZipFile as error:
+        raise ReleaseError(f"Invalid JAR: {path.name}") from error
+
+
+def inspect_java_companion_jar(path: Path, release_version: str, kind: str) -> None:
+    suffix = "-sources.jar" if kind == "maven-sources" else "-javadoc.jar"
+    if path.name != f"{MAVEN_ARTIFACT}-{release_version}{suffix}":
+        raise ReleaseError(f"Unexpected {kind} JAR name/version: {path.name}")
+    required = (
+        ("io/fastdb/payload/CompiledSpec.java", "META-INF/LICENSE", "META-INF/THIRD_PARTY_NOTICES.txt")
+        if kind == "maven-sources"
+        else ("index.html",)
+    )
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = archive.namelist()
+            if any(member.startswith("META-INF/native/") for member in members):
+                raise ReleaseError(f"Companion JAR must not bundle native libraries: {path.name}")
+            for member in required:
+                if members.count(member) != 1 or not archive.getinfo(member).file_size:
+                    raise ReleaseError(f"JAR requires exactly one nonempty {member}: {path.name}")
+            if kind == "maven-sources":
+                for filename in ("LICENSE", "THIRD_PARTY_NOTICES.txt"):
+                    if archive.read(f"META-INF/{filename}") != (ROOT / filename).read_bytes():
+                        raise ReleaseError(f"Sources JAR does not retain original {filename}: {path.name}")
+    except zipfile.BadZipFile as error:
+        raise ReleaseError(f"Invalid JAR: {path.name}") from error
+
+
 def record_part(output: Path, part: str, target: str | None) -> None:
-    release_version = version()
+    # Python-only artifact reuse can target releases that predate the POM.
+    # Candidate assembly still checks the version of every ecosystem.
+    release_version = version(include_java=part != "python")
+    java_files = maven_files(release_version)
     records = []
     for path in sorted(output.iterdir()):
         if not path.is_file() or path.suffix == ".json":
             continue
-        if path.name.endswith(".whl"):
+        if part == "java":
+            kind = java_files.get(path.name)
+            if kind is None:
+                raise ReleaseError(f"Unexpected Java release artifact: {path.name}")
+            if kind == "maven-jar":
+                inspect_java_jar(path, release_version)
+            elif kind in ("maven-sources", "maven-javadoc"):
+                inspect_java_companion_jar(path, release_version, kind)
+            if kind == "maven-pom" and path.read_bytes() != (ROOT / "bindings/java/pom.xml").read_bytes():
+                raise ReleaseError(f"Release POM differs from the source POM: {path.name}")
+            item = file_record(path, kind=kind)
+        elif path.name.endswith(".whl"):
             abi = inspect_wheel(path, release_version)
             if part == "python":
                 target = wheel_platform_target(path.name)
@@ -335,14 +450,19 @@ def wheel_platform_target(name: str) -> str:
 
 
 def check_complete(records: list[dict], release_version: str) -> None:
+    java_files = maven_files(release_version)
     expected_fixed = {
         *(f"fastdb-core-{release_version}-{target}.tar.gz" for target in TARGETS),
         f"fastdb-sys-{release_version}.crate", f"fastdb-{release_version}.crate",
         f"fastdb4py-{release_version}.tar.gz", f"fastdb4ts-{release_version}.tgz",
+        *java_files,
     }
     fixed = {item["name"] for item in records if item["kind"] != "python-wheel"}
     if fixed != expected_fixed:
         raise ReleaseError(f"Incomplete fixed release artifacts: {fixed ^ expected_fixed}")
+    actual_java = {item["name"]: item["kind"] for item in records if item["kind"] in MAVEN_KINDS.values()}
+    if actual_java != java_files:
+        raise ReleaseError("Maven artifact names and kinds must match the release inventory")
     for item in records:
         if item["kind"] != "python-wheel":
             continue

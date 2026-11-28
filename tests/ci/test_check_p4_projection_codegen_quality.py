@@ -491,6 +491,17 @@ class ProjectionMapTests(unittest.TestCase):
             with self.assertRaises(MODULE.QualityError):
                 MODULE.check_documentation(changed.__getitem__)
 
+    def test_rejects_stale_rust_readme_versions(self) -> None:
+        sources = {
+            relative: "\n".join(markers)
+            for relative, markers in MODULE.DOCUMENTATION_MARKERS.items()
+        }
+        for crate in ("fastdb", "fastdb-sys"):
+            relative = f"bindings/rust/{crate}/README.md"
+            changed = {**sources, relative: sources[relative].replace("0.4.0", "0.0.0")}
+            with self.subTest(crate=crate), self.assertRaises(MODULE.QualityError):
+                MODULE.check_documentation(changed.__getitem__)
+
     def test_rejects_abi_count_order_or_shape_drift(self) -> None:
         external_bytes = "fdb_payload_v1_builder_value_external_bytes"
         exact = [external_bytes] + [

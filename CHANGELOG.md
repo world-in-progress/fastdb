@@ -2,10 +2,11 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
-## Unreleased
+## 0.4.0
 
 - Add Java payload code generation through `FDB_PAYLOAD_CODEGEN_TARGET_JAVA` and a Java 17+ JNI runtime in [`bindings/java`](bindings/java/README.md).
 - Require JNI builds, Maven tests, and JAR packaging on Linux x86_64, macOS arm64, and Windows x64 for Core, Java binding, and runtime workflow changes.
+- Synchronize the Python, Rust, TypeScript/WASM, Java, and Core releases at 0.4.0. Package the three JNI libraries in the Maven Central JAR and publish it with the exact-source POM, sources JAR, and Javadoc JAR.
 
 ## 0.3.0 — 2026-11-22
 
