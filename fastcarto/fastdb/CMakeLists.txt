@@ -5,6 +5,7 @@ set(PROJECT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 option(USE_SWIG_PYTHON "use swig python wrapper" OFF)
 option(USE_SWIG_NODE   "use swig node wrapper" OFF)
 option(USE_SWIG_GO     "use swig go wrapper"   OFF)
+option(FASTDB_BUILD_JAVA_JNI "Build FastDB Java JNI native library" OFF)
 
 add_definitions(-DFASTDB_EXPORT)
 
@@ -137,6 +138,18 @@ target_link_libraries(
         fastdb_picosha2
 )
 fastdb_apply_sanitizers(fastdb_payload_native)
+
+if(FASTDB_BUILD_JAVA_JNI)
+    if(CMAKE_VERSION VERSION_LESS 3.24)
+        find_package(JNI REQUIRED)
+    else()
+        find_package(JNI REQUIRED COMPONENTS JVM)
+    endif()
+    add_subdirectory(
+        "${PROJECT_DIR}/../../bindings/java/native"
+        "${CMAKE_CURRENT_BINARY_DIR}/java"
+    )
+endif()
 
 if(is_emscripten)
     set(BUILD_TYPE STATIC)
