@@ -399,7 +399,8 @@ class ProjectionMapTests(unittest.TestCase):
             )
 
     def test_validates_path_aware_workflow_results(self) -> None:
-        scope_names = ("CORE", "RUST", "PYTHON", "TS", "WORKFLOW")
+        projection_scopes = ("CORE", "RUST", "PYTHON", "TS", "WORKFLOW")
+        scope_names = (*projection_scopes, "JAVA")
         for bits in range(1 << len(scope_names)):
             active = {
                 name: bool(bits & (1 << index))
@@ -414,12 +415,14 @@ class ProjectionMapTests(unittest.TestCase):
                 if active["CORE"] or active["RUST"] or active["WORKFLOW"]
                 else "skipped"
             )
-            environment["PROJECTION_PARITY_RESULT"] = (
-                "success" if any(active.values()) else "skipped"
+            environment["JAVA_PAYLOAD_RESULT"] = (
+                "success"
+                if active["CORE"] or active["JAVA"] or active["WORKFLOW"]
+                else "skipped"
             )
-            environment["GENERATED_PROJECTIONS_RESULT"] = (
-                "success" if any(active.values()) else "skipped"
-            )
+            projection_result = "success" if any(active[name] for name in projection_scopes) else "skipped"
+            environment["PROJECTION_PARITY_RESULT"] = projection_result
+            environment["GENERATED_PROJECTIONS_RESULT"] = projection_result
             environment["WINDOWS_NATIVE_TESTS_RESULT"] = (
                 "success" if active["CORE"] or active["WORKFLOW"] else "skipped"
             )
@@ -432,6 +435,7 @@ class ProjectionMapTests(unittest.TestCase):
 
             for key in (
                 "RUST_PAYLOAD_RESULT",
+                "JAVA_PAYLOAD_RESULT",
                 "PROJECTION_PARITY_RESULT",
                 "GENERATED_PROJECTIONS_RESULT",
                 "WINDOWS_NATIVE_TESTS_RESULT",
@@ -447,10 +451,14 @@ class ProjectionMapTests(unittest.TestCase):
                         with self.assertRaises(MODULE.QualityError):
                             MODULE.check_workflow_results(wrong)
 
-        invalid_scope = dict(environment)
-        invalid_scope["CORE_SCOPE"] = "unknown"
-        with self.assertRaises(MODULE.QualityError):
-            MODULE.check_workflow_results(invalid_scope)
+        for scope in ("CORE_SCOPE", "JAVA_SCOPE"):
+            with self.subTest(scope=scope):
+                invalid_scope = dict(environment, **{scope: "unknown"})
+                with self.assertRaisesRegex(MODULE.QualityError, scope):
+                    MODULE.check_workflow_results(invalid_scope)
+                del invalid_scope[scope]
+                with self.assertRaisesRegex(MODULE.QualityError, scope):
+                    MODULE.check_workflow_results(invalid_scope)
 
     def test_rejects_false_hosted_or_independent_claims(self) -> None:
         document = valid_document()

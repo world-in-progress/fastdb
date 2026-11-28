@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 
 final class NativeBackingTest {
     static {
+        // Load the runtime DLL before loading the test DLL that depends on it.
+        CompiledSpec.sourceSchemaSha256();
         String path = System.getProperty("fastdb.java.library.path");
         if (path == null || path.isBlank()) {
             path = System.getenv("FASTDB_JAVA_LIBRARY_PATH");

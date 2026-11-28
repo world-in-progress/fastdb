@@ -13,8 +13,8 @@ binary layout, so the same data means the same bytes in every language.
 FastDB is an in-process library, not a database server: there is no network
 protocol, query planner, or SQL surface. One C++ core owns portable-payload
 schema compilation, canonicalization, binary layout, and lifetime semantics.
-The Rust, Python, and TypeScript/WASM portable APIs project that core through
-a stable C ABI.
+The Rust, Python, TypeScript/WASM, and Java portable APIs project that core
+through a stable C ABI.
 
 ## What you can do with it
 
@@ -27,9 +27,9 @@ a stable C ABI.
   ownership/invalidation model for views over native memory.
 - **Portable payload exchange** — compile a payload specification once and
   get canonical identity, validated binary payloads, checked views,
-  materialization, and stable structured errors, identically in C++, Rust,
-  Python, and TypeScript/WASM. The core can also generate ready-to-use
-  payload code for all four languages.
+  materialization, and stable structured errors in C++, Rust, Python,
+  TypeScript/WASM, and Java. Core generates typed payload code for all five
+  languages.
 - **Compact binary persistence** — save and load databases as files or
   buffers; the Python binding additionally supports shared-memory handoff
   between processes.
@@ -42,10 +42,11 @@ a stable C ABI.
 | Rust | [`fastdb`](https://crates.io/crates/fastdb) (+ raw [`fastdb-sys`](https://crates.io/crates/fastdb-sys)) | crates.io + matching Core bundle |
 | Python 3.10+ | [`fastdb4py`](https://pypi.org/project/fastdb4py/) | PyPI |
 | TypeScript / WASM | [`fastdb4ts`](https://www.npmjs.com/package/fastdb4ts) | npm |
+| Java 17+ | [`io.fastdb:fastdb-java`](bindings/java/README.md) | Source build |
 
-The Rust, Python, and TypeScript portable APIs are thin projections of one core;
-none contains an independent payload parser, layout, or digest implementation
-([ADR-0001](docs/decisions/0001-portable-payload-core-authority.md)).
+The Rust, Python, TypeScript/WASM, and Java portable APIs use the same Core
+parser, layout, and digest implementation.
+[ADR-0001](docs/decisions/0001-portable-payload-core-authority.md)
 
 ## Installation
 
@@ -67,6 +68,10 @@ Core bundle matching your crate version from the GitHub release page, then
 set `FASTDB_PAYLOAD_LINK_MODE=system` and set
 `FASTDB_PAYLOAD_SYSTEM_LIB_DIR` to the absolute extracted `lib` directory. See the
 [linking contract](bindings/rust/fastdb-sys/README.md) for details.
+
+**Java 17+** — build the JNI library with CMake and the JAR with Maven.
+`io.fastdb:fastdb-java:0.4.0-SNAPSHOT` is available from source and is
+unpublished on Maven Central. [Java build and runtime instructions](bindings/java/README.md)
 
 **C++** — use a Core bundle from a tagged release, or build from source with
 CMake (see [fastcarto/README.md](fastcarto/README.md)).
@@ -129,12 +134,12 @@ from a portable specification. See
 FastDB exposes two complementary APIs:
 
 - **The portable payload API** (`fastdb4py.payload`, Rust `fastdb`,
-  `fastdb4ts/payload`, C++ `fastdb_payload.h`/`fastdb_payload.hpp`) is the
+  `fastdb4ts/payload`, Java `io.fastdb.payload`, C++ `fastdb_payload.h`/`fastdb_payload.hpp`) is the
   cross-language exchange path. A specification is compiled once by the core
   into an immutable `CompiledSpec` with a SHA-256 identity; payloads built
   from it have one validated binary meaning (`fastdb.payload.bin.v1`) across
   languages, with checked views, invalidation, detached materialization, and
-  deterministic C++/Rust/Python/TypeScript code generation.
+  deterministic C++, Rust, Python, TypeScript, and Java code generation.
 - **The standalone engines** are the in-process storage paths. `RecordEngine`
   manages fixed-size tables of typed records (AoS layout with strided field
   access), and `ObjectEngine` manages dynamically growing tables and typed
@@ -167,6 +172,7 @@ whose raw arrays cannot be revoked after export. See
 - Python binding (`fastdb4py`): [`python/README.md`](python/README.md)
 - TypeScript/WASM binding (`fastdb4ts`): [`ts/fastdb4ts/README.md`](ts/fastdb4ts/README.md)
 - Rust crates (`fastdb`, `fastdb-sys`): [`bindings/rust/fastdb/README.md`](bindings/rust/fastdb/README.md)
+- Java binding (`io.fastdb:fastdb-java`): [`bindings/java/README.md`](bindings/java/README.md)
 - C++ core (`fastcarto/fastdb`): [`fastcarto/README.md`](fastcarto/README.md)
 - Accepted design: [portable payload foundation](docs/superpowers/specs/2026-07-16-portable-payload-foundation-design.md)
 - Decisions and status: [`docs/decisions/`](docs/decisions/), [implementation status](docs/issues/0002-portable-payload-foundation-implementation-status.md)
@@ -187,7 +193,7 @@ npm run test:ts                    # TypeScript tests
 Layer requirements: Python binding — C++17 compiler, CMake ≥ 3.16, SWIG ≥ 4.4,
 NumPy; TypeScript/WASM — Emscripten, Node.js, npm; core — C++17 compiler and
 CMake. When C++ binary or ABI behavior changes, revalidate the C++, Rust,
-Python, and TypeScript consumers together. See
+Python, TypeScript/WASM, and Java consumers together. See
 [`fastcarto/README.md`](fastcarto/README.md) for native internals and
 [AGENTS.md](AGENTS.md) for repository conventions.
 

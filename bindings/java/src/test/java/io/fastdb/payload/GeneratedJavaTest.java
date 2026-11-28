@@ -134,6 +134,113 @@ final class GeneratedJavaTest {
     }
 
     @Test
+    void generatedGraphRoundTripsKeywordAndPrefixCollisions() throws Exception {
+        String source = """
+                {"schema":"fastdb.payload.v1","profile":"object_graph.v1",
+                 "entries":[
+                   {"id":"class","cardinality":"one","type":{"kind":"component","id":"type"}},
+                   {"id":"fdb_java_id_636c617373","cardinality":"many",
+                    "type":{"kind":"ref","target":"type","nullable":true}}],
+                 "components":[{"id":"type","kind":"record","fields":[
+                   {"id":"match","type":{"kind":"u32"}},
+                   {"id":"interface","type":{"kind":"ref","target":"type","nullable":true}},
+                   {"id":"fdb_java_id_696e74657266616365",
+                    "type":{"kind":"list","items":{"kind":"ref","target":"type"}}}]}]}
+                """;
+        String refsId = "fdb_java_id_636c617373";
+        try (CompiledSpec original = CompiledSpec.compile(source);
+             Generated generated = generate(original);
+             CompiledSpec spec = generated.compileSpec();
+             Builder builder = Builder.create(spec)) {
+            assertArrayEquals(original.sha256(), spec.sha256());
+            ObjectHandle node = generated.declare(builder, "type");
+            builder.objectFillBegin(node).valueU32(42).valueRef(node).valueListBegin(1).valueRef(node);
+            generated.begin(builder, "class", 1).valueObject(node);
+            generated.begin(builder, refsId, 2).valueRef(node).valueNull();
+
+            try (BuildPlan plan = builder.freeze();
+                 ExecutionResult result = plan.execute(BuildPolicy.ALLOW_STAGING);
+                 AutoCloseable root = generated.entry(result.payload(), "class");
+                 AutoCloseable refs = generated.entry(result.payload(), refsId);
+                 View row = (View) invoke(root, "at", new Class<?>[] {long.class}, 0L);
+                 AutoCloseable typed = generated.component("type", row);
+                 View peer = (View) invoke(typed, symbol("interface") + "_refTarget");
+                 View peers = field(typed, "fdb_java_id_696e74657266616365");
+                 View listRef = peers.at(0);
+                 View listTarget = listRef.refTarget();
+                 View entryTarget = (View) invoke(refs, "atRefTarget", new Class<?>[] {long.class}, 0L);
+                 View absent = (View) invoke(refs, "at", new Class<?>[] {long.class}, 1L)) {
+                assertEquals(42L, scalar(typed, "match"));
+                assertEquals(2L, invoke(refs, "length"));
+                assertEquals(row.graphIdentity(), peer.graphIdentity());
+                assertEquals(row.graphIdentity(), listTarget.graphIdentity());
+                assertEquals(row.graphIdentity(), entryTarget.graphIdentity());
+                assertTrue(absent.isNull());
+            }
+        }
+    }
+
+    @Test
+    void generatedRecursiveListsPreserveNullEmptyAndPopulatedLists() throws Exception {
+        try (CompiledSpec original = GoldensTest.spec("nested-lists");
+             Generated generated = generate(original);
+             CompiledSpec spec = generated.compileSpec();
+             Builder builder = Builder.create(spec)) {
+            assertArrayEquals(original.sha256(), spec.sha256());
+            GoldenScenarios.author(spec, builder, "nested_lists");
+            try (BuildPlan plan = builder.freeze();
+                 ExecutionResult result = plan.execute(BuildPolicy.ALLOW_STAGING);
+                 AutoCloseable envelopes = generated.entry(result.payload(), "envelopes");
+                 AutoCloseable matrices = generated.entry(result.payload(), "matrices");
+                 View row = (View) invoke(envelopes, "at", new Class<?>[] {long.class}, 0L);
+                 AutoCloseable envelope = generated.component("Envelope", row);
+                 View groups = field(envelope, "text_groups");
+                 View matrix = (View) invoke(matrices, "at", new Class<?>[] {long.class}, 0L);
+                 View absent = groups.at(0);
+                 View empty = groups.at(1);
+                 View inner = groups.at(2);
+                 View innerNull = inner.at(1);
+                 View text = inner.at(2);
+                 View matrixRow = matrix.at(2);
+                 View tail = matrixRow.at(2)) {
+                assertArrayEquals(GoldensTest.binary("nested-lists"), result.payload().binaryBytes());
+                assertTrue(absent.isNull());
+                assertFalse(empty.isNull());
+                assertEquals(0L, empty.length());
+                assertTrue(innerNull.isNull());
+                assertEquals("alpha", text.getStr());
+                assertEquals("tail", tail.getStr());
+            }
+        }
+    }
+
+    @Test
+    void generatedHelpersRejectForeignSpecWithMatchingLayout() throws Exception {
+        String source = """
+                {"schema":"fastdb.payload.v1","profile":"record.v1",
+                 "entries":[{"id":"rows","cardinality":"one","type":{"kind":"component","id":"Row"}}],
+                 "components":[{"id":"Row","kind":"record",
+                                "fields":[{"id":"value","type":{"kind":"u8"}}]}]}
+                """;
+        try (CompiledSpec original = CompiledSpec.compile(source);
+             Generated generated = generate(original);
+             CompiledSpec foreign = CompiledSpec.compile(source.replace("\"value\"", "\"other\""));
+             Builder builder = Builder.create(foreign)) {
+            assertNotEquals(original.sha256Hex(), foreign.sha256Hex());
+            assertDigestMismatch(() -> generated.begin(builder, "rows", 1));
+            builder.entryBegin(foreign.entryIndex("rows"), 1).valueComponentBegin().valueU8(42);
+            try (BuildPlan plan = builder.freeze();
+                 ExecutionResult result = plan.execute(BuildPolicy.ALLOW_STAGING);
+                 View entry = result.payload().entryView(foreign.entryIndex("rows"));
+                 View row = entry.at(0)) {
+                assertEquals(original.componentIndex("Row"), row.componentIndex());
+                assertDigestMismatch(() -> generated.entry(result.payload(), "rows").close());
+                assertDigestMismatch(() -> generated.component("Row", row).close());
+            }
+        }
+    }
+
+    @Test
     void generatedLargeSpecCompilesAndRuns() throws Exception {
         var entries = new StringJoiner(",");
         for (int i = 0; i < 280; i++) {
@@ -223,6 +330,12 @@ final class GeneratedJavaTest {
         FastDbException error = assertThrows(FastDbException.class, action);
         assertEquals(FastDbException.E_VIEW_INVALIDATED, error.code());
         assertEquals("VIEW_INVALIDATED", error.symbol());
+    }
+
+    private static void assertDigestMismatch(org.junit.jupiter.api.function.Executable action) {
+        FastDbException error = assertThrows(FastDbException.class, action);
+        assertEquals(3006, error.code());
+        assertEquals("DIGEST_MISMATCH", error.symbol());
     }
 
     private record Generated(URLClassLoader loader, Class<?> type) implements AutoCloseable {

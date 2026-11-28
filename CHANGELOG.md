@@ -2,6 +2,11 @@
 
 All notable changes to `fastdb` and its bindings are documented here. Release entries are retained after publication. Historical implementation notes below preserve the evidence available at their original date.
 
+## Unreleased
+
+- Add Java payload code generation through `FDB_PAYLOAD_CODEGEN_TARGET_JAVA` and a Java 17+ JNI runtime in [`bindings/java`](bindings/java/README.md).
+- Require JNI builds, Maven tests, and JAR packaging on Linux x86_64, macOS arm64, and Windows x64 for Core, Java binding, and runtime workflow changes.
+
 ## 0.3.0 — 2026-11-22
 
 - Add the `fastdb4py.core._payload_ext` native extension for CPython 3.10 through 3.14, including free-threaded 3.14. Python `ExternalBytes` pins C-contiguous read-only buffers without copying, snapshots writable buffers, and supports idempotent `close()`. `Payload.memoryview()` and `Access.memoryview()` export read-only views that retain backing. `DirectBacking` and `WritableBufferBacking` let build plans write into caller-provided storage (PR #48, PR #49).

@@ -139,6 +139,9 @@ platforms; Windows ARM64 NumPy wheels require Python 3.11+. The original
 0.2.2 `setup.py` forces x64, so ARM64 requires the new architecture fix and
 a new source release; no tag or published sdist is patched for backfill.
 
+The source-built [Java 17+ binding](../../bindings/java/README.md) adds a
+`java_payload` CI gate for Linux x86_64, macOS arm64, and Windows x64.
+
 ### Why it is deferred
 
 ABI calling convention, alignment, compiler behavior, sanitizers, text encoding bridges, packaging, and endianness need real target verification. Declaring support from format intent alone would overstate shipped behavior.

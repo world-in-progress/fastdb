@@ -27,6 +27,7 @@ JOBS = {
 # current inventory rather than silently accepting arbitrary extra jobs.
 POST_P2_JOBS = {
   "rust_payload" => %w[core rust workflow],
+  "java_payload" => %w[core java workflow],
   "projection_parity" => %w[core python rust ts workflow],
   "generated_projections" => %w[core python rust ts workflow],
   "windows_native_tests" => %w[core workflow],
@@ -217,7 +218,7 @@ def check_workflow
   jobs = workflow.fetch("jobs")
   detect = jobs.fetch("detect_changes")
   require_quality(detect.fetch("outputs").keys.sort ==
-                    %w[core python release rust ts workflow],
+                    %w[core java python release rust ts workflow],
                   "detect_changes outputs are not exact")
   filter_step = detect.fetch("steps").find { |step| step["id"] == "filter" }
   require_quality(!filter_step.nil?, "detect_changes lacks its path filter")
@@ -229,6 +230,7 @@ def check_workflow
                  tools/check_payload_binary_corpus.py],
     "python" => %w[tools/check_python_package_inventory.py],
     "rust" => %w[bindings/rust/** tests/rust/**],
+    "java" => %w[bindings/java/**],
     "workflow" => %w[.github/workflows/tests.yml tests/ci/check_* tests/ci/test_check_*],
     "release" => %w[.github/workflows/** tests/ci/** README.md AGENTS.md CHANGELOG.md docs/**]
   }.each do |scope, required_paths|
@@ -420,9 +422,11 @@ def check_workflow
   aggregate_env = aggregate_step.fetch("env")
   {
     "RUST_SCOPE" => "${{ needs.detect_changes.outputs.rust }}",
+    "JAVA_SCOPE" => "${{ needs.detect_changes.outputs.java }}",
     "RELEASE_SCOPE" => "${{ needs.detect_changes.outputs.release }}",
     "RELEASE_TOOLS_RESULT" => "${{ needs.release_tools.result }}",
     "RUST_PAYLOAD_RESULT" => "${{ needs.rust_payload.result }}",
+    "JAVA_PAYLOAD_RESULT" => "${{ needs.java_payload.result }}",
     "PROJECTION_PARITY_RESULT" => "${{ needs.projection_parity.result }}",
     "WINDOWS_NATIVE_TESTS_RESULT" => "${{ needs.windows_native_tests.result }}",
     "WINDOWS_PYTHON_TESTS_RESULT" => "${{ needs.windows_python_tests.result }}"
